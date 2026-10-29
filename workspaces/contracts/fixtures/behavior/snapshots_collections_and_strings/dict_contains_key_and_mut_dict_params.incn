@@ -1,4 +1,4 @@
-# behavior: dict membership through contains_key, in and not in, and inserts through mut dict parameters, are visible to the caller (#1668)
+# behavior: dict membership and mutable inserts retain string, integer and bytes keys (#1668, #2256)
 # expect-stdout:
 #   true
 #   false
@@ -8,6 +8,8 @@
 #   1
 #   true
 #   alpha
+#   true
+#   false
 
 def has_manifest(files: Dict[str, str]) -> bool:
     return files.contains_key("loaf.toml")
@@ -56,3 +58,7 @@ def main() -> None:
     mut tallies: Dict[int, int] = {}
     println(tally(tallies, 3))
     println(recorded["a.incn"])
+    mut binary: Dict[bytes, int] = {}
+    binary[b"id"] = 3
+    println(b"id" in binary)
+    println(binary.contains_key(b"missing"))

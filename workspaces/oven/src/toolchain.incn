@@ -12,6 +12,7 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
   manifest dependency takes precedence over a support crate's ambient alias.
 - `search`: the directories the dependencies of those crates live in.
 - `registry_units`: the prepared registry closure (`incan.oven.closure/1`) available to this toolchain.
+- `registry_lock`: an optional producer closure whose exact entries decide registry root selection.
 
 Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
 used as written (a bootstrap home that has not been packed).
@@ -22,7 +23,7 @@ from std.json import JsonValue
 from files import read_json
 from home import TOOLCHAIN, home
 from json_fields import array, field, strings, text_field
-
+from native_closure_input import NativeClosureInput
 
 pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
 
@@ -50,6 +51,12 @@ pub model Toolchain:
     # When set, a path prefix: the compiler writes its standard output to `<prefix>.out` and its standard error to
     # `<prefix>.err` instead of the caller's streams, so a resident owner can report them without owning a terminal.
     pub console: str = ""
+    # A resident owner's worker selection, held only while it watches the compiler inputs and its inherited
+    # environment stays unchanged. Ordinary toolchain loading leaves this empty and derives the selection afresh.
+    pub worker_generation: str = ""
+    # Published linking fields are read once within this selection, never retained across owner requests blindly.
+    pub native_closures: NativeClosureInput = NativeClosureInput()
+    pub registry_lock: str = ""
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
@@ -63,8 +70,12 @@ pub def toolchain_directory() -> Result[Path, str]:
 
 
 pub def load_toolchain() -> Result[Toolchain, str]:
-    """The description of this Oven's toolchain, from its home directory."""
-    return read_toolchain(toolchain_directory()?)
+    """Read the installed toolchain through its physical directory so aliases share native preparation and exports."""
+    directory = toolchain_directory()?
+    if directory.is_dir():
+        physical = directory.resolve().map_err((error) => error.message())?
+        return read_toolchain(physical)
+    return read_toolchain(directory)
 
 
 pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
@@ -75,11 +86,12 @@ pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
     document = read_json(path)?
     match toolchain_of(document, directory):
         Ok(toolchain) => return Ok(toolchain)
-        Err(failed) => return Err(f"{path.0}: `{'.'.join(failed)}` is missing or malformed")
+        Err(failed) => return Err(f"{path.0}: `{".".join(failed)}` is missing or malformed")
 
 
 pub def located(directory: Path, path: str) -> str:
-    """A manifest path as a usable one: relative to the toolchain `directory`, or as written when absolute.
+    """
+    A manifest path as a usable one: relative to the toolchain `directory`, or as written when absolute.
 
     A relative path is joined lexically with `.` and `..` collapsed, so one artifact named from different documents has
     one spelling and equal artifacts compare equal.
@@ -129,8 +141,22 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             externs=externs,
             search=[located(directory, item) for item in search],
             registry_units=located(directory, text_field(document, "registry_units", [])?),
+            console="",
+            worker_generation="",
+            native_closures=NativeClosureInput(),
+            registry_lock=optional_path(document, "registry_lock", directory)?,
         ),
     )
+
+
+def optional_path(document: JsonValue, key: str, directory: Path) -> Result[str, list[str]]:
+    """Locate an optional recorded input without treating an empty path as the toolchain directory."""
+    if document.get(key) == None:
+        return Ok("")
+    value = text_field(document, key, [])?
+    if value == "":
+        return Ok("")
+    return Ok(located(directory, value))
 
 
 pub def toolchain_file() -> Result[Path, str]:

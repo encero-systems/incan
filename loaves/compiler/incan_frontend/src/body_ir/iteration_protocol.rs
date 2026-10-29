@@ -5,7 +5,7 @@ use super::primitives::{collection_member_types, result_error_type};
 use super::{BodyBuilder, HirSourceSpan, IncanType, SemanticSourceTargetKind, ast, bir};
 use crate::symbols::canonical_builtin_constructor_identity;
 use crate::typechecker::BodyIrProtocolCallInfo;
-use incan_lang::lang::surface::constructors::ConstructorId;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 
 impl BodyBuilder<'_, '_> {
@@ -24,13 +24,7 @@ impl BodyBuilder<'_, '_> {
     ) -> Result<(bir::LocalId, usize, bool), String> {
         let iterable = self.lower_expr_to_place(expression, scope, out);
         let initializer = out.len();
-        if let Some(hooks) = self
-            .type_info
-            .rust
-            .iteration_hooks
-            .get(&(protocol_span.start, protocol_span.end))
-            .cloned()
-        {
+        if let Some(hooks) = self.type_info.rust.iteration_hooks.get(&protocol_span).cloned() {
             let result = self.native_iteration_call(&hooks.iter, iterable, scope, span, out)?;
             return match result {
                 bir::Operand::Place(read) => read
@@ -46,10 +40,23 @@ impl BodyBuilder<'_, '_> {
                 .type_info
                 .protocols
                 .body_ir_iterations
-                .get(&(protocol_span.start, protocol_span.end))
+                .get(&protocol_span)
                 .ok_or("iteration without retained checked hooks")?
                 .clone();
-            let result = self.checked_protocol_call(&hooks.iter, iterable, scope, span, out)?;
+            let result = match &hooks.iter {
+                Some(hook) => self.checked_protocol_call(hook, iterable, scope, span, out)?,
+                None => {
+                    let iterator = self.new_temp(self.retained_expression_type(expression), scope, span);
+                    out.push(bir::Statement {
+                        kind: bir::StatementKind::Assign {
+                            place: bir::Place::from_local(iterator),
+                            rvalue: bir::Rvalue::Use(bir::Operand::place(iterable, bir::OwnershipFact::Move, true)),
+                        },
+                        span,
+                    });
+                    bir::Operand::place(bir::Place::from_local(iterator), bir::OwnershipFact::Move, true)
+                }
+            };
             return match result {
                 bir::Operand::Place(read) => read
                     .place
@@ -107,7 +114,7 @@ impl BodyBuilder<'_, '_> {
                 fact == bir::OwnershipFact::Move,
             ))],
             bir::ArgumentBinding::resolved_positional(1),
-            ast::Span::new(span.start, span.end),
+            span,
             scope,
             out,
         )
@@ -156,6 +163,7 @@ impl BodyBuilder<'_, '_> {
             intrinsic_carrier: None,
             reflection: None,
             loaf_trait: None,
+            trait_arguments: self.checked_trait_arguments(hook.dispatch.as_ref()),
             type_args: hook.type_args.iter().map(|ty| self.checked_type(ty)).collect(),
             binding,
         };
@@ -183,12 +191,7 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Result<(), String> {
         // ---- Checked result carrier ----
-        let native = self
-            .type_info
-            .rust
-            .iteration_hooks
-            .get(&(protocol_span.start, protocol_span.end))
-            .cloned();
+        let native = self.type_info.rust.iteration_hooks.get(&protocol_span).cloned();
         let (returned, polled) = if let Some(hooks) = native {
             self.native_enum_payload_bindings.insert(item);
             let returned = hooks
@@ -205,7 +208,7 @@ impl BodyBuilder<'_, '_> {
                 .type_info
                 .protocols
                 .body_ir_iterations
-                .get(&(protocol_span.start, protocol_span.end))
+                .get(&protocol_span)
                 .ok_or("iteration poll without retained checked hooks")?
                 .next
                 .clone();
@@ -238,7 +241,7 @@ impl BodyBuilder<'_, '_> {
         let some = bir::Pattern::Enum {
             canonical: Some(canonical_builtin_constructor_identity(ConstructorId::Some)),
             name: "Option".into(),
-            variant: "Some".into(),
+            variant: constructors::as_str(ConstructorId::Some).into(),
             fields: vec![bir::Pattern::Var(bir::PatternBinding {
                 local: payload,
                 fact: bir::OwnershipFact::Move,

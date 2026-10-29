@@ -1,0 +1,19 @@
+# behavior: a `main` in another module is an ordinary function (incan-1.6): calling it installs no second panic hook over the program's own, and an async one is awaited like any coroutine
+# expect-stdout:
+#   helper main
+#   7
+#   custom hook
+# expect-exit: 101
+
+import helper
+import std.async
+import worker
+from rust::std::panic import set_hook, panic_any
+
+
+async def main() -> None:
+    """Replace the panic hook, call both modules' main functions, then panic."""
+    set_hook((info) => println("custom hook"))
+    helper.main()
+    println(await worker.main())
+    panic_any("boom")

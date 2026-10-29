@@ -1,10 +1,12 @@
-# behavior: a provider and consumer share a generic model's storage across different type arguments, and Debug shows only authored fields when a type parameter has no field
+# behavior: generic libraries retain source fields, native frozen storage and unimported records (#2256)
 # expect-stdout:
 #   Parcel { value: 7 }
 #   ok
 #   Marker { label: "hidden" }
+#   visible
+#   ["visible"]
 
-from pub::parcels import Marker, Parcel, unpack, wrap
+from pub::parcels import Marker, Parcel, entries, freeze_values, frozen_count, unpack, wrap
 
 
 def main() -> None:
@@ -14,3 +16,8 @@ def main() -> None:
     println(unpack(Parcel[str](value="ok")))
     marker = Marker[int](label="hidden")
     println(f"{marker:?}")
+    for entry in entries():
+        println(entry.value)
+    values = [entry.value for entry in entries()]
+    println(f"{values:?}")
+    assert frozen_count(freeze_values([4, 5])) == 2

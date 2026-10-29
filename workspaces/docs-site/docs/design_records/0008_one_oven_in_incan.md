@@ -29,6 +29,7 @@ Until 0.6.0-dev.8 Oven had two halves. The Rust crates under `loaves/oven/` and 
 - Reading `loaf.toml`. Oven is the only reader of a project manifest.
 - Resolving Loaves and writing the lock (`oven.lock`).
 - The Rust facet of every unit: the `crates-io/*` Loaves it links, their `cfg` and feature activation, and the `rustc` invocation of each Rust unit.
+- Native Incan compilation policy: debug units use optimization level 0, preserving the existing assertion and overflow policy; other profiles retain the driver's optimization. The selected flags are part of the unit's reuse identity.
 - Unit orchestration: every Loaf a unit reaches is compiled before the unit (DD-0005), standard packages included (DD-0007).
 - The store: prepared units, their identities and their reuse, so that unchanged work is never repeated (DD-0005).
 - The toolchain and home layout.
@@ -50,7 +51,7 @@ Oven's decisions and the actions they lead to run in one program, so they share 
 
 Until a dev.8 toolchain builds itself, the frozen 0.6.0-dev.7 builder compiles Oven and the dev.8 compiler.
 
-During bootstrap, `incan.toolchain/1` names the prepared registry closure in `registry_units`. This is an explicit stand-in for incan.pub's baked Loaves until Oven fetches them. Oven selects a compatible compiled registry unit from this closure for each active manifest requirement, builds local Rust facets through its existing unit compiler, and writes exact `externs`, `search`, and `rust_abi` inputs into `incan.unit/1`. Checking and compilation consume these same fields; a search directory never substitutes for a named artifact. Temporary bootstrap helpers stay outside the repository and retire with self-hosting.
+During bootstrap, `incan.toolchain/1` names the prepared registry catalog in `registry_units` and may name the standard producer's exact closure in `registry_lock`. These are explicit stand-ins for incan.pub's baked Loaves until Oven fetches them. Oven selects one coherent compiled closure for the active manifest requirements, honoring recorded producer entries and refusing an undecided ambiguity, builds local Rust facets through its existing unit compiler, and writes exact `externs`, `search`, and `rust_abi` inputs into `incan.unit/1`. Checking and compilation consume these same fields; a search directory never substitutes for a named artifact. Published Loaf native bindings remain ownership evidence when a source graph replaces an ambient alias. The directories of a toolchain generation, its own and its registry's, are named once by a content-addressed search index rather than listed in every description and native closure. Temporary bootstrap helpers stay outside the repository and retire with self-hosting.
 
 ## Consequences
 

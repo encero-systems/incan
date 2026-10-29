@@ -2,7 +2,7 @@
 
 A project fixture whose Rust crate, `rust/borrow_fixture`, counts copies. `Clone for Item` adds one to a counter for every node it copies, and `clones()` reads the counter. The clone of a `Table` clones its map, so a copy costs one count per node copied: `document()` (`Table{project: Table{count: Integer(7)}}`) costs 3, its `project` child costs 2, and an `Integer` leaf costs 1.
 
-Each expected line of the program (`main.incn`) is a program step, the step's result, and the running count after it. A step that lends its value adds nothing; a step that copies adds the size of what it copies. The borrow inference in `loaves/compiler/incan_ir/src/borrow_inference.rs` decides which: its `SharedUse` proof accepts only shared receiver contracts and same-root cursor reassignments, and its `Escapes` pass keeps the owned ABI for a function named outside a direct call or called with overlapping arguments.
+Each expected line of the program (`main.incn`) is a program step, the step's result, and the running count after it. A step that lends its value adds nothing; a step that copies adds the size of what it copies. Checked ownership facts reach native lowering through `loaves/compiler/incan_frontend/src/body_ir/reads.rs`; the contract measures the resulting copies rather than depending on the retired emitter's borrow-inference passes.
 
 | Line | Program step | Copies | Why |
 |---|---|---|---|
@@ -21,6 +21,7 @@ Each expected line of the program (`main.incn`) is a program step, the step's re
 | `select` | `select_owned`: the cursor is returned | 0 | a returned cursor is an escape, so `item` and `current` stay owned and move |
 | `clear` | `clear`: `current.clear()`, then `child_count()` is 0 | 0 | `clear(&mut self)` is not a shared contract, so the parameter stays owned and moves |
 | `trait callback` | `Factory.callback` default returns `is_table_callback`, called once | 0 | the same escaping classifier, reached through a trait default |
+| `exclusive forward` | `forward_clear_ref` -> `clear_ref`, then `child_count()` is 0 | 0 | both helpers declare `mut item: &mut Item`, so the exclusive loan forwards the original owner |
 
 `is_table` and `is_table_callback` are two functions on purpose: a classifier that escapes as a callable value keeps the owned ABI, and one that only a direct call reaches is lent its argument. One function cannot show both.
 

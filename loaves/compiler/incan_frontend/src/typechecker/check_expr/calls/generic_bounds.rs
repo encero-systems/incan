@@ -1,5 +1,7 @@
 //! Generic call-site inference, monomorph recording, and explicit bound validation.
 
+use std::collections::HashMap;
+
 use super::TypeChecker;
 use crate::ast::{CallArg, DictEntry, Expr, ListEntry, Literal, ParamKind, Span, Spanned, Type, UnaryOp};
 use crate::diagnostics::CompileError;
@@ -15,6 +17,41 @@ use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::CanonicalSymbolId;
+
+/// Settled function-call facts consumed by result and monomorph publication. Owned inventories move from the
+/// validator; argument type references still borrow its live substituted parameter inventory.
+struct FunctionCallCompletion<'call> {
+    func_name: &'call str,
+    info: &'call FunctionInfo,
+    explicit_type_args: &'call [Spanned<Type>],
+    args: &'call [CallArg],
+    call_span: Span,
+    errors_before_call: usize,
+    callee_identity: Option<CanonicalSymbolId>,
+    contextual_params: Vec<CallableParam>,
+    type_bindings: HashMap<String, ResolvedType>,
+    instantiation: HashMap<String, ResolvedType>,
+    arguments: Vec<(&'call Spanned<Expr>, &'call ResolvedType)>,
+}
+
+/// Settled method-call facts retained after receiver substitution and argument validation. The method's owned
+/// declaration and result carrier move into completion without adding declaration or type snapshots.
+struct MethodCallCompletion<'call> {
+    method: &'call str,
+    method_info: MethodInfo,
+    explicit_type_args: &'call [Spanned<Type>],
+    args: &'call [CallArg],
+    call_site_span: Span,
+    receiver_ty: &'call ResolvedType,
+    expected_return_ty: Option<&'call ResolvedType>,
+    errors_before_call: usize,
+    explicit_arity_ok: bool,
+    contextual_params: Vec<CallableParam>,
+    type_bindings: HashMap<String, ResolvedType>,
+    instantiation: HashMap<String, ResolvedType>,
+    arguments: Vec<(&'call Spanned<Expr>, &'call ResolvedType)>,
+    return_type: ResolvedType,
+}
 
 impl TypeChecker {
     /// Check one method call after overload/trait resolution proved the selected declaration.
@@ -49,7 +86,7 @@ impl TypeChecker {
             receiver_ty,
             expected_return_ty,
         );
-        let site = (call_site_span.start, call_site_span.end);
+        let site = call_site_span;
         self.type_info.calls.body_ir_self_result_methods.remove(&site);
         if returns_receiver
             && self.errors.len() == first_error
@@ -106,6 +143,7 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let errors_before_call = self.errors.len();
+        let callee_identity = self.called_function_identity(func_name);
         let mut seeded_type_bindings: std::collections::HashMap<String, ResolvedType> =
             std::collections::HashMap::new();
         if !explicit_type_args.is_empty() {
@@ -187,7 +225,6 @@ impl TypeChecker {
                 call_span,
             );
         }
-        let callee_identity = self.called_function_identity(func_name);
         self.refuse_unhashable_type_arguments(
             func_name,
             callee_identity.as_ref(),
@@ -195,6 +232,37 @@ impl TypeChecker {
             &instantiation,
             call_span,
         );
+        self.finish_checked_function_call(FunctionCallCompletion {
+            func_name,
+            info,
+            explicit_type_args,
+            args,
+            call_span,
+            errors_before_call,
+            callee_identity,
+            contextual_params,
+            type_bindings,
+            instantiation,
+            arguments,
+        })
+    }
+
+    /// Publish a checked function call's parameter, bound, constructor and result facts in their established order.
+    /// Conditional facts use the validator's original diagnostic checkpoint, including explicit arity refusals.
+    fn finish_checked_function_call(&mut self, completion: FunctionCallCompletion<'_>) -> ResolvedType {
+        let FunctionCallCompletion {
+            func_name,
+            info,
+            explicit_type_args,
+            args,
+            call_span,
+            errors_before_call,
+            callee_identity,
+            contextual_params,
+            type_bindings,
+            instantiation,
+            arguments,
+        } = completion;
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         if self.literal_argument_spells_a_type_param(&info.type_params, &info.params, args)
             && resolved_params
@@ -264,8 +332,9 @@ impl TypeChecker {
         }
         self.type_info
             .calls
-            .inferred_call_result_types
-            .get(&(call_span.start, call_span.end))
+            .body_ir_call_result_types
+            .get(&call_span)
+            .or_else(|| self.type_info.calls.inferred_call_result_types.get(&call_span))
             .cloned()
             .unwrap_or_else(|| substitute_resolved_type(&info.return_type, &type_bindings))
     }
@@ -748,7 +817,7 @@ impl TypeChecker {
         self.type_info
             .calls
             .call_site_monomorph_type_args
-            .insert((call_span.start, call_span.end), out);
+            .insert(call_span, out);
     }
 
     /// Preserve checked partial factory inference before the legacy complete-only record is considered.
@@ -773,7 +842,7 @@ impl TypeChecker {
             })
             .collect();
         self.type_info.declarations.body_ir_decorator_applications.insert(
-            (call_span.start, call_span.end),
+            call_span,
             BodyIrDecoratorApplication {
                 callable_type: ResolvedType::Unknown,
                 type_bindings: std::collections::HashMap::new(),
@@ -795,13 +864,7 @@ impl TypeChecker {
         concrete.retain(|_, ty| first_open_type_param(ty, type_params).is_none());
         let mut has_constructor_fact = false;
         for (expr, parameter) in arguments {
-            if let Some(actual) = self
-                .type_info
-                .calls
-                .inferred_constructor_types
-                .get(&(expr.span.start, expr.span.end))
-                .cloned()
-            {
+            if let Some(actual) = self.type_info.calls.inferred_constructor_types.get(&expr.span).cloned() {
                 has_constructor_fact = true;
                 self.infer_type_param_bindings(parameter, &actual, &mut concrete);
             }
@@ -810,10 +873,10 @@ impl TypeChecker {
             return;
         }
         self.record_call_site_monomorph_if_complete(call_span, type_params, &concrete);
-        self.type_info.calls.inferred_call_result_types.insert(
-            (call_span.start, call_span.end),
-            substitute_resolved_type(return_type, &concrete),
-        );
+        self.type_info
+            .calls
+            .inferred_call_result_types
+            .insert(call_span, substitute_resolved_type(return_type, &concrete));
     }
 
     /// Close one executable call from Body IR-only constructor facts, preserving every legacy-read call table.
@@ -837,12 +900,7 @@ impl TypeChecker {
             .collect::<std::collections::HashMap<_, _>>();
         let mut has_constructor = false;
         for (expression, parameter) in arguments {
-            if let Some(actual) = self
-                .type_info
-                .calls
-                .body_ir_constructor_types
-                .get(&(expression.span.start, expression.span.end))
-            {
+            if let Some(actual) = self.type_info.calls.body_ir_constructor_types.get(&expression.span) {
                 has_constructor = true;
                 self.infer_type_param_bindings(parameter, actual, &mut concrete);
             }
@@ -871,14 +929,11 @@ impl TypeChecker {
             .iter()
             .filter_map(|parameter| concrete.get(parameter).cloned())
             .collect();
-        self.type_info
-            .calls
-            .body_ir_call_type_arguments
-            .insert((span.start, span.end), ordered);
+        self.type_info.calls.body_ir_call_type_arguments.insert(span, ordered);
         self.type_info
             .calls
             .body_ir_call_result_types
-            .insert((span.start, span.end), substitute_resolved_type(returned, &concrete));
+            .insert(span, substitute_resolved_type(returned, &concrete));
     }
 
     /// Seed owner type-parameter bindings from the concrete receiver type.
@@ -950,7 +1005,7 @@ impl TypeChecker {
     /// # Parameters
     ///
     /// - `method`: Method name (for diagnostics).
-    /// - `method_info`: Declared [`MethodInfo`] for that method (owned and temporarily mutated for substitution).
+    /// - `method_info`: Owned selected [`MethodInfo`] whose checked receiver and binders determine substitution.
     /// - `explicit_type_args`: AST types inside `[...]` before `(`; empty if the call omitted brackets.
     /// - `args`: Call arguments. The selected method parameters are threaded back into these expressions so inline
     ///   collection literals can adopt contextual element types.
@@ -975,27 +1030,13 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let errors_before_call = self.errors.len();
-        let mut type_bindings = self.receiver_type_param_bindings(receiver_ty);
-        let explicit_arity_ok =
-            explicit_type_args.is_empty() || explicit_type_args.len() == method_info.type_params.len();
-
-        // ---- RFC 054: explicit bracketed type arguments (partial map; `_` → CallSiteInfer omitted) ----
-        if !explicit_type_args.is_empty() {
-            if !explicit_arity_ok {
-                self.errors.push(errors::explicit_type_arg_arity(
-                    method,
-                    &method_info.type_params,
-                    &Self::written_type_args(explicit_type_args),
-                    call_site_span,
-                ));
-            } else {
-                let resolved: Vec<ResolvedType> = explicit_type_args
-                    .iter()
-                    .map(|ty| self.resolve_type_checked(ty))
-                    .collect();
-                type_bindings.extend(type_param_subst_map_call_site(&method_info.type_params, &resolved));
-            }
-        }
+        let (mut type_bindings, explicit_arity_ok) = self.initial_generic_method_call_bindings(
+            method,
+            &method_info,
+            explicit_type_args,
+            call_site_span,
+            receiver_ty,
+        );
 
         // ---- Call-site `Self`, value-arg compatibility ----
         let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
@@ -1068,6 +1109,74 @@ impl TypeChecker {
                 call_site_span,
             );
         }
+        self.finish_checked_method_call(MethodCallCompletion {
+            method,
+            method_info,
+            explicit_type_args,
+            args,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+            errors_before_call,
+            explicit_arity_ok,
+            contextual_params,
+            type_bindings,
+            instantiation,
+            arguments,
+            return_type,
+        })
+    }
+
+    /// Seed receiver binders before explicit method arguments, preserving partial-map inference markers and the
+    /// existing arity diagnostic. Invalid explicit arity still leaves receiver-derived bindings available.
+    fn initial_generic_method_call_bindings(
+        &mut self,
+        method: &str,
+        info: &MethodInfo,
+        explicit_type_args: &[Spanned<Type>],
+        span: Span,
+        receiver_ty: &ResolvedType,
+    ) -> (HashMap<String, ResolvedType>, bool) {
+        let mut bindings = self.receiver_type_param_bindings(receiver_ty);
+        let arity_ok = explicit_type_args.is_empty() || explicit_type_args.len() == info.type_params.len();
+        if !explicit_type_args.is_empty() {
+            if !arity_ok {
+                self.errors.push(errors::explicit_type_arg_arity(
+                    method,
+                    &info.type_params,
+                    &Self::written_type_args(explicit_type_args),
+                    span,
+                ));
+            } else {
+                let resolved = explicit_type_args
+                    .iter()
+                    .map(|ty| self.resolve_type_checked(ty))
+                    .collect::<Vec<_>>();
+                bindings.extend(type_param_subst_map_call_site(&info.type_params, &resolved));
+            }
+        }
+        (bindings, arity_ok)
+    }
+
+    /// Retain the checked method's parameter, capturing-callable, bound and result facts after argument validation.
+    /// Method-specific guards and their ordering remain distinct from function-call completion.
+    fn finish_checked_method_call(&mut self, completion: MethodCallCompletion<'_>) -> ResolvedType {
+        let MethodCallCompletion {
+            method,
+            method_info,
+            explicit_type_args,
+            args,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+            errors_before_call,
+            explicit_arity_ok,
+            contextual_params,
+            type_bindings,
+            instantiation,
+            arguments,
+            return_type,
+        } = completion;
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params_exact(call_site_span, &resolved_params);
@@ -1148,7 +1257,12 @@ impl TypeChecker {
                 method_info.identity.as_ref(),
             );
         }
-        substitute_resolved_type(&return_type, &type_bindings)
+        self.type_info
+            .calls
+            .body_ir_call_result_types
+            .get(&call_site_span)
+            .cloned()
+            .unwrap_or_else(|| substitute_resolved_type(&return_type, &type_bindings))
     }
 
     /// Project a generic `CallableN` bound into the contextual function type used to check a callback argument.
@@ -1168,15 +1282,11 @@ impl TypeChecker {
                     ResolvedType::TypeVar(name) | ResolvedType::Named(name) => Some(name.as_str()),
                     _ => None,
                 };
-                let ty = if let Some(span) = closure_params.get(&index) {
-                    if let Some(signature) = generic_name
+                let ty = if closure_params.contains_key(&index)
+                    && let Some(signature) = generic_name
                         .and_then(|name| self.source_callable_signature_for_param(name, bound_details, bindings))
-                    {
-                        self.type_info.record_source_callable_closure(*span);
-                        signature
-                    } else {
-                        param.ty.clone()
-                    }
+                {
+                    signature
                 } else {
                     param.ty.clone()
                 };

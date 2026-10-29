@@ -1,0 +1,8 @@
+"""A module whose ordinary async function is spelled `main`."""
+
+import std.async
+
+
+pub async def main() -> int:
+    """Return a value to an awaiting caller."""
+    return 7

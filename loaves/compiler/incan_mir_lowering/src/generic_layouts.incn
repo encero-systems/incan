@@ -1,21 +1,51 @@
 """Generic native ADTs published by their declaring Loaf, without consumer-owned replacement structs."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, IncanCallableParam, IncanCallableParamKind
-from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
-from pub::incan_mir_plan import GenericLayoutType, GenericLayoutField, GenericModelDeclaration, SourceSpan
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    SemanticSourceTargetKind,
+    IncanCallableParam,
+    IncanCallableParamKind,
+)
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    NominalDeclaration,
+    StaticInitializer,
+    EnumDeclaration as RustEnumDeclaration,
+)
+from pub::incan_mir_plan import (
+    GenericLayoutType,
+    GenericLayoutField,
+    GenericModelDeclaration,
+    SourceSpan,
+    EnumDeclaration,
+)
 from nominal_instances import NominalInstance
 from decls import library_item
-from unions import native_source_type
+from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from closures import callable_component, packed_input
+from table_views import borrowed_table
+from pub::incan_mir_plan import source_span as plan_span
 
 
 pub def generic_models(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     instances: list[NominalInstance],
     file: str,
 ) -> Result[list[GenericModelDeclaration], str]:
-    """Retain public model/class templates; uninstantiated newtypes remain governed, and linked Loaves own their ADTs."""
+    """
+    Retain source model/class templates needed by consumers; linked Loaves own their existing ADTs.
+
+    1. Inventory template references in checked frame and field types.
+    2. Select public, instantiated or referenced source templates.
+    3. Validate their fields and derives before emitting native declarations.
+    """
+    # 1. Inventory references before a consumer closes the producer's governed bodies.
+    referenced = referenced_templates(module)
     mut models: list[GenericModelDeclaration] = []
+    # 2. Keep private templates that a retained source frame or field can instantiate later.
     for declaration in module.nominal_declarations:
         if len(declaration.type_parameters) == 0 or library_item(declaration) != "":
             continue
@@ -23,48 +53,124 @@ pub def generic_models(
         for instance in instances:
             if instance.declaration.canonical == declaration.canonical:
                 instantiated = true
-        if not declaration.public and not instantiated:
+        if not declaration.public and not instantiated and str(declaration.name) not in referenced:
             continue
         if declaration.canonical.kind == SemanticSourceTargetKind.Newtype:
             if not instantiated:
                 continue
             return Err("unsupported Body IR generic Loaf newtype layout")
+        # 3. Validate native layout and derive requirements before publishing this declaration.
         mut fields: list[GenericLayoutField] = []
         for index in range(len(declaration.fields)):
             mut field_type = GenericLayoutType.Parameter("")
-            match generic_field_type(module, declaration.field_types[index], declaration.type_parameters.clone()):
+            match generic_field_type(
+                constructors,
+                module,
+                declaration.field_types[index],
+                declaration.type_parameters.clone(),
+            ):
                 Ok(ty) => field_type = ty
                 Err(error) => return Err(f"{declaration.name}.{declaration.fields[index]}: {error}")
-            fields.append(GenericLayoutField(
-                name=str(declaration.fields[index]),
-                ty=field_type,
-                public=declaration.field_public[index],
-            ))
+            fields.append(
+                GenericLayoutField(
+                    name=str(declaration.fields[index]),
+                    ty=field_type,
+                    public=declaration.field_public[index],
+                ),
+            )
         mut derives: list[str] = []
         for derive in declaration.derives:
             # Construction defaults and reflection stay in their checked Incan records, rather than native derives.
             if derive in ["Default", "FieldInfo", "IncanClass"]:
                 continue
-            if derive not in ["Clone", "Debug", "PartialEq", "Eq", "PartialOrd", "Ord", "Hash", "serde::Serialize", "serde::Deserialize"]:
+            if derive not in [
+                "Clone",
+                "Debug",
+                "Display",
+                "PartialEq",
+                "Eq",
+                "PartialOrd",
+                "Ord",
+                "Hash",
+                "serde::Serialize",
+                "serde::Deserialize",
+            ]:
                 return Err(f"unsupported Body IR generic Loaf derive {derive}")
             derives.append(str(derive))
         if "serde::Serialize" in derives or "serde::Deserialize" in derives:
             for alias in declaration.field_aliases:
                 match alias:
-                    Some(_name) => return Err(f"unsupported Body IR generic Loaf serde field alias on {declaration.name}")
+                    Some(_name) =>
+                        return Err(f"unsupported Body IR generic Loaf serde field alias on {declaration.name}")
                     None => pass
-        models.append(GenericModelDeclaration(
-            name=str(declaration.name),
-            source_name=str(declaration.canonical.declaration_name),
-            parameters=declaration.type_parameters.clone(),
-            fields=fields,
-            derives=derives,
-            span=SourceSpan(file=file, line=1, column=1),
-        ))
+        models.append(
+            GenericModelDeclaration(
+                name=str(declaration.name),
+                source_name=str(declaration.canonical.declaration_name),
+                parameters=declaration.type_parameters.clone(),
+                fields=fields,
+                derives=derives,
+                span=plan_span(file=file, line=1, column=1),
+            ),
+        )
     return Ok(models)
 
 
-def generic_field_type(module: &BodyIrModule, ty: &RustType, parameters: list[str]) -> Result[GenericLayoutType, str]:
+def referenced_templates(module: &BodyIrModule) -> list[str]:
+    """Inventory checked template heads without selecting implementations or inferring bindings from source names."""
+    mut referenced: list[str] = []
+    for body in module.bodies:
+        retain_frame_templates(body, referenced)
+    for declaration in module.nominal_declarations:
+        for field in declaration.field_types:
+            retain_type_templates(field, referenced)
+    for declaration in module.type_alias_declarations:
+        retain_type_templates(declaration.ty, referenced)
+    for declaration in module.enum_declarations:
+        for variant in declaration.variants:
+            for field in variant.fields:
+                retain_type_templates(field, referenced)
+    for declaration in module.static_declarations:
+        match declaration.initial:
+            StaticInitializer.Computed(body) => retain_frame_templates(body, referenced)
+            _ => pass
+    return referenced
+
+
+def retain_frame_templates(body: &Body, mut referenced: list[str]) -> None:
+    """Preserve template requirements from checked locals, including parameters, and the frame's return type."""
+    retain_type_templates(body.return_type, referenced)
+    for local in body.locals:
+        retain_type_templates(local.ty, referenced)
+
+
+def retain_type_templates(ty: &RustType, mut referenced: list[str]) -> None:
+    """Record exact checked generic heads through the structural types a retained frame may instantiate."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if str(base) not in referenced:
+                referenced.append(str(base))
+            for argument in arguments:
+                retain_type_templates(argument, referenced)
+        RustType.Tuple(elements) =>
+            for element in elements:
+                retain_type_templates(element, referenced)
+        RustType.Ref(inner) => retain_type_templates(inner, referenced)
+        RustType.RefMut(inner) => retain_type_templates(inner, referenced)
+        RustType.NativeArray(element=element, length=_length) => retain_type_templates(element, referenced)
+        RustType.Function(params=parameters, return_type=result) =>
+            for parameter in parameters:
+                retain_type_templates(parameter.ty, referenced)
+            retain_type_templates(result, referenced)
+        _ => pass
+
+
+def generic_field_type(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    ty: &RustType,
+    parameters: list[str],
+) -> Result[GenericLayoutType, str]:
     """Translate a checked field structurally, preserving binders and exact nominal owners before native instantiation."""
     match ty:
         RustType.TypeVar(name) =>
@@ -75,24 +181,37 @@ def generic_field_type(module: &BodyIrModule, ty: &RustType, parameters: list[st
             path = generic_layout_path(module, str(base))?
             mut args: list[GenericLayoutType] = []
             for argument in arguments:
-                args.append(generic_field_type(module, argument, parameters)?)
+                args.append(generic_field_type(constructors, module, argument, parameters)?)
             return Ok(GenericLayoutType.Applied(path, args))
         RustType.Tuple(elements) =>
             mut fields: list[GenericLayoutType] = []
             for element in elements:
-                fields.append(generic_field_type(module, element, parameters)?)
+                fields.append(generic_field_type(constructors, module, element, parameters)?)
             return Ok(GenericLayoutType.Tuple(fields))
         RustType.Function(params=inputs, return_type=output) =>
             mut signature: list[GenericLayoutType] = []
             for parameter in inputs:
-                signature.append(generic_callable_input(module, parameter, parameters)?)
-            signature.append(generic_field_type(module, output, parameters)?)
+                signature.append(generic_callable_input(constructors, module, parameter, parameters)?)
+            signature.append(generic_field_type(constructors, module, output, parameters)?)
             return Ok(GenericLayoutType.FunctionPointer(signature))
-        _ => return Ok(GenericLayoutType.Concrete(native_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], ty, [])?))
+        _ =>
+            unions: list[RustType] = []
+            intrinsics: list[EnumDeclaration] = []
+            nominals: &list[NominalDeclaration] = borrowed_table(module.nominal_declarations)
+            enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
+            return Ok(
+                GenericLayoutType.Concrete(native_source_type(constructors, nominals, enums, unions, ty, intrinsics)?),
+            )
 
 
-def generic_callable_input(module: &BodyIrModule, parameter: &IncanCallableParam, parameters: list[str]) -> Result[GenericLayoutType, str]:
-    """Retain an owned declaration binder; closed inputs reuse the ordinary callable ABI policy.
+def generic_callable_input(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    parameter: &IncanCallableParam,
+    parameters: list[str],
+) -> Result[GenericLayoutType, str]:
+    """
+    Retain an owned declaration binder; closed inputs reuse the ordinary callable ABI policy.
 
     Mutable and rest inputs whose storage depends on an open binder remain refused, as do unclosed aggregate inputs.
     """
@@ -100,10 +219,10 @@ def generic_callable_input(module: &BodyIrModule, parameter: &IncanCallableParam
         RustType.TypeVar(_name) =>
             if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
                 return Err("unsupported Body IR generic callable field input ownership")
-            return generic_field_type(module, parameter.ty, parameters)
+            return generic_field_type(constructors, module, parameter.ty, parameters)
         _ => pass
     component = callable_component(parameter.ty)?
-    storage = packed_input(component, parameter.kind, parameter.is_mut)?
+    storage = packed_input(component, parameter.kind, parameter.is_mut, parameter.native_owned)?
     return Ok(GenericLayoutType.Concrete(storage))
 
 

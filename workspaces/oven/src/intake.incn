@@ -2,7 +2,6 @@
 
 # Explicit payload import until foreign None type qualification is fixed (#2010).
 from std.toml import TomlLocation
-
 from std import toml
 from std.toml import TomlValue, TomlKind
 from std.fs import Path
@@ -10,11 +9,24 @@ from std.hash import sha256
 from std.graph import Dag, NodeId
 from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
-
+from jec import begin, record, text_size
+from observation import observe
+from rust::std::rc import Rc
+from rust::std::cell import RefCell
+from rust::std::ops import DerefMut
 
 # The manifest's tables.
-const ROOT_TABLES: FrozenList[str] = ["project", "dependencies", "rust-dependencies", "build", "rust", "vocab", "tool", "interop"]
-
+const ROOT_TABLES: FrozenList[str] = [
+    "project",
+    "dependencies",
+    "rust-dependencies",
+    "build",
+    "rust",
+    "vocab",
+    "tool",
+    "interop",
+    "envs",
+]
 # The keys of `[project]`.
 const PROJECT_KEYS: FrozenList[str] = [
     "name",
@@ -92,9 +104,7 @@ pub model ProjectIntent:
     pub scripts: Dict[str, str]
     pub dependencies: list[LocalDependency]
     pub rust_inputs: list[RustInputRequest]
-    pub target: Option[str]
-    pub profile: Option[str]
-    pub rust_edition: Option[str]
+    pub rust_edition: str
     # The declared package features by name.
     pub features: Dict[str, FeatureDeclaration] = {}
     # The source root `[build] source-root` names, project-relative, when it names one.
@@ -103,6 +113,8 @@ pub model ProjectIntent:
     pub contract_models: list[str] = []
     # The C headers the `[interop.c]` targets declare, project-relative.
     pub c_headers: list[str] = []
+    # The Incan module registering this Loaf's vocabulary, project-relative.
+    pub vocab_entry: Option[str] = None
 
 
 pub model LocalProject:
@@ -111,6 +123,8 @@ pub model LocalProject:
     pub root: str
     pub evidence: ManifestEvidence
     pub intent: ProjectIntent
+    # The same parse used for intent, retained for dependency and Rust-facet views.
+    pub parsed: TomlValue
 
 
 pub model DependencyEdge:
@@ -126,7 +140,33 @@ pub model LocalIntake:
 
     pub projects: list[LocalProject]
     pub edges: list[DependencyEdge]
-    pub dependency_order: list[str]
+
+
+pub model ManifestSnapshot:
+    """One exact source generation and its parsed document, before any view imposes its own validation policy."""
+
+    pub evidence: ManifestEvidence
+    pub parsed: TomlValue
+
+
+model ManifestReading:
+    """A parsed snapshot bound to the unchanged filesystem generation it was read from."""
+
+    stamp: str
+    snapshot: ManifestSnapshot
+
+
+model ManifestStore:
+    """Mutable memo state owned by one preparation context, never by process-global collection storage."""
+
+    pub manifests: Dict[str, ManifestReading] = {}
+    pub projects: Dict[str, LocalProject] = {}
+
+
+pub model ManifestReader:
+    """One preparation's shared source readings; cloning its handle never snapshots the memo's document trees."""
+
+    pub state: Rc[RefCell[ManifestStore]] = Rc.new(RefCell.new(ManifestStore()))
 
 
 def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
@@ -171,7 +211,10 @@ def required(values: Dict[str, TomlValue], key: str, manifest: str, field: list[
 
 pub def parse_intent(source: str, manifest: str) -> Result[ProjectIntent, IntakeError]:
     """Parse effective intent and retain source spans for literal diagnostic key paths."""
-    return parse_raw_intent(source, manifest).map_err((error) => error.with_source(source))
+    clock = begin()
+    result = parse_raw_intent(source, manifest).map_err((error) => error.with_source(source))
+    record("manifest_parse", manifest, clock, text_size(source, clock))
+    return result
 
 
 pub model ManifestDocument:
@@ -202,21 +245,50 @@ pub def parse_document(raw: bytes, manifest: str) -> Result[ManifestDocument, In
     ", "loaf.toml")?
             assert document.intent.name == "catalog"
     """
+    snapshot = decoded_manifest(raw, manifest)?
+    intent = intent_from_snapshot(snapshot)?
+    return Ok(ManifestDocument(intent=intent, evidence=snapshot.evidence))
+
+
+def decoded_manifest(raw: bytes, manifest: str) -> Result[ManifestSnapshot, IntakeError]:
+    """Parse and hash one immutable byte snapshot once, retaining provenance for every later view."""
     source = str(from_utf8(raw).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, str(error)))?)
-    # TODO: inline this binding once #1462 is fixed. Named constructor arguments reorder evaluation and can
-    # move a value before an earlier argument reads it, so the parse is sequenced explicitly.
-    intent = parse_intent(source, manifest)?
+    mut clock = begin()
+    parsed = toml.parse(source)
+    record("manifest_parse", manifest, clock, len(raw))
+    document = parsed.map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    clock = begin()
     digest = sha256.digest(raw)
+    record("file_hash", manifest, clock, len(raw))
     evidence = ManifestEvidence(path=manifest, raw_bytes=raw, source=source, sha256_digest=digest)
-    return Ok(ManifestDocument(intent=intent, evidence=evidence))
+    return Ok(ManifestSnapshot(evidence=evidence, parsed=document))
+
+
+def intent_from_snapshot(snapshot: ManifestSnapshot) -> Result[ProjectIntent, IntakeError]:
+    """Validate an already parsed source generation, attaching errors to the exact bytes that produced it."""
+    return intent_from_document(snapshot.parsed, snapshot.evidence.path).map_err(
+        (error) => error.with_source(snapshot.evidence.source),
+    )
 
 
 def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, IntakeError]:
     """Validate every supported table before projecting effective local intent."""
     parsed = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    return intent_from_document(parsed, manifest)
+
+
+def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectIntent, IntakeError]:
+    """Project effective intent from an existing parse without rereading or reinterpreting source bytes."""
     root = table(parsed, manifest, [])?
     if "sdk" in root:
-        return Err(refusal(manifest, ["sdk"], IntakeErrorKind.Unsupported, "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses"))
+        return Err(
+            refusal(
+                manifest,
+                ["sdk"],
+                IntakeErrorKind.Unsupported,
+                "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses",
+            ),
+        )
     allowed(root, list(ROOT_TABLES), manifest, [])?
     if "project" not in root:
         return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
@@ -232,25 +304,26 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     dependencies, rust_inputs = parse_dependencies(root, manifest)?
     features = parse_features(project, dependencies, manifest, rust_inputs)?
     validate_facets(root, manifest)?
-    mut target: Option[str] = None
-    mut profile: Option[str] = None
-    mut edition: Option[str] = None
+    validate_environments(root, manifest)?
+    mut edition = "2024"
     mut source_root: Option[str] = None
+    if "build" in root:
+        build = table(root["build"], manifest, ["build"])?
+        allowed(build, ["target", "profile", "rust-edition", "source-root", "registry-lock"], manifest, ["build"])?
+        if "target" in build:
+            required(build, "target", manifest, ["build", "target"])?
+        if "profile" in build:
+            required(build, "profile", manifest, ["build", "profile"])?
+        if "rust-edition" in build:
+            edition = required(build, "rust-edition", manifest, ["build", "rust-edition"])?
+        if "source-root" in build:
+            source_root = Some(required(build, "source-root", manifest, ["build", "source-root"])?)
+        if "registry-lock" in build:
+            required(build, "registry-lock", manifest, ["build", "registry-lock"])?
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
         if "edition" in rust_facet:
-            edition = Some(required(rust_facet, "edition", manifest, ["rust", "edition"])?)
-    if "build" in root:
-        build = table(root["build"], manifest, ["build"])?
-        allowed(build, ["target", "profile", "rust-edition", "source-root"], manifest, ["build"])?
-        if "target" in build:
-            target = Some(required(build, "target", manifest, ["build", "target"])?)
-        if "profile" in build:
-            profile = Some(required(build, "profile", manifest, ["build", "profile"])?)
-        if "rust-edition" in build:
-            edition = Some(required(build, "rust-edition", manifest, ["build", "rust-edition"])?)
-        if "source-root" in build:
-            source_root = Some(required(build, "source-root", manifest, ["build", "source-root"])?)
+            edition = required(rust_facet, "edition", manifest, ["rust", "edition"])?
     return Ok(
         ProjectIntent(
             name=name,
@@ -258,15 +331,27 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
             scripts=scripts,
             dependencies=dependencies,
             rust_inputs=rust_inputs,
-            target=target,
-            profile=profile,
             rust_edition=edition,
             features=features,
             source_root=source_root,
             contract_models=parse_contract_models(root, manifest)?,
             c_headers=parse_c_headers(root, manifest)?,
+            vocab_entry=parse_vocab_entry(root, manifest)?,
         ),
     )
+
+
+def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """Admit inactive environment tables without treating their partial dependency overrides as production edges."""
+    if "envs" not in root:
+        return Ok(None)
+    environments = table(root["envs"], manifest, ["envs"])?
+    for name in sorted([name for name in environments.keys()]):
+        environment = table(environments[name], manifest, ["envs", name])?
+        allowed(environment, ["dependencies", "rust-dependencies"], manifest, ["envs", name])?
+        for group in sorted([group for group in environment.keys()]):
+            table(environment[group], manifest, ["envs", name, group])?
+    return Ok(None)
 
 
 def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
@@ -278,11 +363,19 @@ def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[lis
     return Ok(items)
 
 
-def flag(values: Dict[str, TomlValue], key: str, fallback: bool, manifest: str, field: list[str]) -> Result[bool, IntakeError]:
+def flag(
+    values: Dict[str, TomlValue],
+    key: str,
+    fallback: bool,
+    manifest: str,
+    field: list[str],
+) -> Result[bool, IntakeError]:
     """An optional boolean field, `fallback` when absent."""
     if key not in values:
         return Ok(fallback)
-    return values[key].as_bool().map_err((error) => refusal(manifest, field + [key], IntakeErrorKind.Invalid, error.message()))
+    return values[key]
+        .as_bool()
+        .map_err((error) => refusal(manifest, field + [key], IntakeErrorKind.Invalid, error.message()))
 
 
 def parse_features(
@@ -338,8 +431,10 @@ def check_feature_names(
     manifest: str,
     field: list[str],
 ) -> Result[None, IntakeError]:
-    """Refuse a feature that includes an undeclared feature, activates a dependency that is not optional, or requests
-    features of something that is not a dependency."""
+    """
+    Refuse a feature that includes an undeclared feature, activates a dependency that is not optional, or requests
+    features of something that is not a dependency.
+    """
     for included in declaration.includes:
         if included not in features:
             detail = f"includes `{included}`, which the package does not declare"
@@ -361,8 +456,7 @@ def feature_cycle(features: Dict[str, FeatureDeclaration]) -> str:
         mut chain: list[str] = [start]
         mut frontier: list[list[str]] = [chain]
         while len(frontier) > 0:
-            path = frontier[len(frontier) - 1]
-            frontier = frontier[0:len(frontier) - 1]
+            path = frontier.pop()
             last = path[len(path) - 1]
             if last not in features:
                 continue
@@ -394,7 +488,9 @@ def compact_feature(value: TomlValue, manifest: str, field: list[str]) -> Result
         elif "/" in entry:
             parts = entry.split("/")
             if len(parts) != 2 or parts[0] == "" or parts[1] == "":
-                return Err(refusal(manifest, field, IntakeErrorKind.Invalid, f"`{entry}` is not `<dependency>/<feature>`"))
+                return Err(
+                    refusal(manifest, field, IntakeErrorKind.Invalid, f"`{entry}` is not `<dependency>/<feature>`"),
+                )
             mut requested: list[str] = []
             if parts[0] in declaration.dependency_features:
                 requested = declaration.dependency_features[parts[0]]
@@ -413,11 +509,19 @@ def expanded_feature(value: TomlValue, manifest: str, field: list[str]) -> Resul
     if "includes" in entries:
         declaration.includes = string_list(entries["includes"], manifest, field + ["includes"])?
     if "optional-dependencies" in entries:
-        declaration.optional_dependencies = string_list(entries["optional-dependencies"], manifest, field + ["optional-dependencies"])?
+        declaration.optional_dependencies = string_list(
+            entries["optional-dependencies"],
+            manifest,
+            field + ["optional-dependencies"],
+        )?
     if "dependency-features" in entries:
         requests = table(entries["dependency-features"], manifest, field + ["dependency-features"])?
         for alias in sorted([key for key in requests.keys()]):
-            declaration.dependency_features[alias] = string_list(requests[alias], manifest, field + ["dependency-features", alias])?
+            declaration.dependency_features[alias] = string_list(
+                requests[alias],
+                manifest,
+                field + ["dependency-features", alias],
+            )?
     return Ok(declaration)
 
 
@@ -463,7 +567,9 @@ def parse_c_headers(root: Dict[str, TomlValue], manifest: str) -> Result[list[st
     c = table(interop["c"], manifest, ["interop", "c"])?
     if "targets" not in c:
         return Ok([])
-    targets = c["targets"].as_array().map_err((error) => refusal(manifest, ["interop", "c", "targets"], IntakeErrorKind.Invalid, error.message()))?
+    targets = c["targets"]
+        .as_array()
+        .map_err((error) => refusal(manifest, ["interop", "c", "targets"], IntakeErrorKind.Invalid, error.message()))?
     mut headers: list[str] = []
     for index in range(len(targets)):
         field = ["interop", "c", "targets", str(index)]
@@ -518,10 +624,22 @@ def parse_dependencies(
             else:
                 entry = table(value, manifest, [group, alias])?
                 if "standard" in entry:
-                    return Err(refusal(manifest, [group, alias, "standard"], IntakeErrorKind.Unsupported, "standard packages are ambient: a unit reaches every standard package it uses, and none is declared"))
+                    return Err(
+                        refusal(
+                            manifest,
+                            [group, alias, "standard"],
+                            IntakeErrorKind.Unsupported,
+                            "standard packages are ambient: a unit reaches every standard package it uses, and none is declared",
+                        ),
+                    )
                 if "path" in entry:
                     field = [group, alias]
-                    allowed(entry, ["loaf", "path", "version", "optional", "default-features", "features"], manifest, field)?
+                    allowed(
+                        entry,
+                        ["loaf", "path", "version", "optional", "default-features", "features"],
+                        manifest,
+                        field,
+                    )?
                     path = required(entry, "path", manifest, field + ["path"])?
                     mut features: list[str] = []
                     if "features" in entry:
@@ -545,7 +663,7 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
     """Validate authored facet metadata even when local intake does not execute it."""
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
-        allowed(rust_facet, ["name", "type", "edition", "source"], manifest, ["rust"])?
+        allowed(rust_facet, ["name", "type", "edition", "source", "bin", "lib"], manifest, ["rust"])?
         for key in ["name", "type", "edition"]:
             if key in rust_facet:
                 value = required(rust_facet, key, manifest, ["rust", key])?
@@ -559,8 +677,26 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
             required(source, "root", manifest, ["rust", "source", "root"])?
     if "vocab" in root:
         vocab = table(root["vocab"], manifest, ["vocab"])?
-        allowed(vocab, ["crate"], manifest, ["vocab"])?
+        if "crate" in vocab:
+            return Err(
+                refusal(
+                    manifest,
+                    ["vocab", "crate"],
+                    IntakeErrorKind.Unsupported,
+                    "[vocab] crate is refused; declare [vocab] entry",
+                ),
+            )
+        allowed(vocab, ["entry"], manifest, ["vocab"])?
+        required(vocab, "entry", manifest, ["vocab", "entry"])?
     return Ok(None)
+
+
+def parse_vocab_entry(root: Dict[str, TomlValue], manifest: str) -> Result[Option[str], IntakeError]:
+    """Read the validated vocabulary entry without resolving its filesystem path."""
+    if "vocab" not in root:
+        return Ok(None)
+    vocab = table(root["vocab"], manifest, ["vocab"])?
+    return Ok(Some(required(vocab, "entry", manifest, ["vocab", "entry"])?))
 
 
 def validate_target(value: str) -> Result[None, str]:
@@ -720,13 +856,87 @@ def request_flag(value: TomlValue, manifest: str, field: list[str]) -> Result[bo
     return value.as_bool().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
 
 
-pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
-    """Read one byte snapshot and validate script paths; conventional library and test-only packages need no script."""
+pub def read_manifest_snapshot(
+    root: Path,
+    reader: ManifestReader = ManifestReader(),
+) -> Result[ManifestSnapshot, IntakeError]:
+    """
+    Read and parse one file generation for the current command, without imposing project-intent policy.
+
+    Reuse requires the same filesystem identity. A rewrite or replacement is read again, a missing file refuses,
+    and a generation changed during the read never enters the snapshot table. The caller owns the context's lifetime.
+    """
+    mut held = reader.state.as_ref().borrow_mut()
+    return snapshot_in(root, held.deref_mut())
+
+
+def snapshot_in(root: Path, mut store: &mut ManifestStore) -> Result[ManifestSnapshot, IntakeError]:
+    """Read or recall a snapshot while holding the preparation's one mutable memo view."""
     manifest = root.joinpath("loaf.toml")
+    observed = observe(manifest).map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error))?
+    if manifest.0 in store.manifests:
+        previous = store.manifests[manifest.0]
+        if previous.stamp == observed.stamp:
+            return Ok(previous.snapshot)
+    clock = begin()
     raw = manifest.read_bytes().map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error.message()))?
-    document = parse_document(raw, manifest.0)?
-    intent = document.intent
-    source = document.evidence.source
+    record("file_read", manifest.0, clock, len(raw))
+    snapshot = decoded_manifest(raw, manifest.0)?
+    current = observe(manifest).map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error))?
+    if current.stamp == observed.stamp:
+        store.manifests[manifest.0] = ManifestReading(stamp=observed.stamp, snapshot=snapshot)
+    return Ok(snapshot)
+
+
+pub def read_project(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalProject, IntakeError]:
+    """Normalize one parsed generation once, preserving its raw evidence and the independent parsed view."""
+    snapshot = read_manifest_snapshot(root, reader)?
+    mut held = reader.state.as_ref().borrow_mut()
+    return project_in(root, snapshot, held.deref_mut())
+
+
+def project_in(
+    root: Path,
+    snapshot: ManifestSnapshot,
+    mut store: &mut ManifestStore,
+) -> Result[LocalProject, IntakeError]:
+    """Normalize an exact snapshot once within the caller-owned preparation context."""
+    if root.0 in store.projects:
+        previous = store.projects[root.0]
+        if previous.evidence.sha256_digest == snapshot.evidence.sha256_digest:
+            return Ok(previous)
+    intent = intent_from_snapshot(snapshot)?
+    project = LocalProject(root=root.0, intent=intent, evidence=snapshot.evidence, parsed=snapshot.parsed)
+    store.projects[root.0] = project
+    return Ok(project)
+
+
+pub def source_root_of(project: LocalProject) -> str:
+    """The declared source root, otherwise `src` when present, otherwise the project root."""
+    return source_root_for(Path(project.root), project.intent)
+
+
+def source_root_for(root: Path, intent: ProjectIntent) -> str:
+    """Apply source-root policy to an already read intent without rediscovering the manifest."""
+    if let Some(declared) = intent.source_root:
+        return root.joinpath(declared).0
+    if root.joinpath("src").is_dir():
+        return root.joinpath("src").0
+    return root.0
+
+
+pub def library_source(root: Path, reader: ManifestReader = ManifestReader()) -> Result[Path, str]:
+    """Locate an Incan library through the same source-root policy as its compiler unit."""
+    project = read_project(root, reader).map_err((error) => error.message())?
+    return Ok(Path(source_root_of(project)).joinpath("lib.incn"))
+
+
+pub def load_project(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalProject, IntakeError]:
+    """Validate script paths against one snapshot; conventional libraries and test-only packages need no script."""
+    project = read_project(root, reader)?
+    intent = project.intent
+    source = project.evidence.source
+    manifest = root.joinpath("loaf.toml")
     for script in intent.scripts.keys():
         path = root.joinpath(intent.scripts[script])
         if not path.is_file():
@@ -738,7 +948,7 @@ pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
             .map_err(
                 (error) => refusal(manifest.0, ["project", "scripts", script], IntakeErrorKind.Invalid, error.message()),
             )?
-        library = root.joinpath("src/lib.incn")
+        library = Path(source_root_for(root, intent)).joinpath("lib.incn")
         if library.is_file():
             canonical = library
                 .resolve()
@@ -768,16 +978,20 @@ pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
                 "expected a conventional library or explicit script",
             ),
         )
-    return Ok(LocalProject(root=root.0, intent=intent, evidence=document.evidence))
+    return Ok(project)
 
 
 def declares_no_entry(root: Path, intent: ProjectIntent) -> bool:
-    """Whether a project has no script, no conventional library and no `tests` directory to run."""
-    has_library = root.joinpath("src/lib.incn").is_file()
+    """
+    Whether a project has no script, no conventional library in either language and no `tests` directory: an Incan
+    `lib.incn` under its source root, or a Rust `src/lib.rs`.
+    """
+    incan_library = Path(source_root_for(root, intent)).joinpath("lib.incn").is_file()
+    has_library = incan_library or root.joinpath("src/lib.rs").is_file()
     return len(intent.scripts) == 0 and not has_library and not root.joinpath("tests").is_dir()
 
 
-pub def intake(root: Path) -> Result[LocalIntake, IntakeError]:
+pub def intake(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalIntake, IntakeError]:
     """
     Read reachable local package requests and return their dependency-first topology.
 
@@ -801,7 +1015,7 @@ pub def intake(root: Path) -> Result[LocalIntake, IntakeError]:
     mut edges: list[DependencyEdge] = []
     mut index = 0
     while index < len(roots):
-        project = load_project(Path(roots[index]))?
+        project = load_project(Path(roots[index]), reader)?
         for dependency in project.intent.dependencies:
             if dependency.rust_facet:
                 continue
@@ -839,11 +1053,4 @@ pub def intake(root: Path) -> Result[LocalIntake, IntakeError]:
                         error.message(),
                     ).with_source(sources[edge.requester_root]),
                 )?
-    mut order: list[str] = []
-    for node in graph.topological_order():
-        order.append(
-            graph
-                .node_payload(node)
-                .map_err((error) => refusal(canonical.0, [], IntakeErrorKind.Invalid, error.message()))?,
-        )
-    return Ok(LocalIntake(projects=projects, edges=edges, dependency_order=order))
+    return Ok(LocalIntake(projects=projects, edges=edges))

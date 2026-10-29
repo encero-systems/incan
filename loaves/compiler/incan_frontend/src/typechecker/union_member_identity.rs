@@ -1,5 +1,4 @@
-//! Union member identity: a member that names a model, class, enum or newtype is the declaration its name resolves to
-//! where the union is written (#1796).
+//! Nominal declaration identity for retained values and union members (#1796).
 //!
 //! The checker spells a nominal type by its bare name, so `Product | int` written in two modules that each declare
 //! `Product` was one union type, and a value of one module's union was accepted where the other's was expected. When
@@ -68,6 +67,55 @@ fn identity_module_path(identity: &CanonicalSymbolId) -> Option<Vec<String>> {
 }
 
 impl TypeChecker {
+    /// Return the retained carrier of an accepted source type binding, including a provider-qualified import. No
+    /// declaration is inferred from a display spelling.
+    pub(in crate::typechecker) fn source_nominal_carrier_key(&self, name: &str) -> Option<String> {
+        self.public_library_type_identities
+            .get(name)
+            .and_then(|identity| identity.canonical.as_ref())
+            .or_else(|| self.symbols.module_type_identity(name))
+            .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+    }
+
+    /// Compare a retained nominal carrier with its accepted source binding before checking its exact nested arguments.
+    /// Equal-spelled declarations from other modules never establish compatibility. A bare carrier of a declaration
+    /// with type parameters, such as a payload-free generic enum variant, takes its arguments from the other side, as
+    /// a bare source name does.
+    pub(super) fn retained_nominal_types_compatible(
+        &self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+    ) -> Option<bool> {
+        let (actual_name, actual_args) = nominal_parts(actual)?;
+        let (expected_name, expected_args) = nominal_parts(expected)?;
+        let same_declaration = self.source_nominal_carrier_key(expected_name).as_deref() == Some(actual_name)
+            || self.source_nominal_carrier_key(actual_name).as_deref() == Some(expected_name);
+        if !same_declaration {
+            return None;
+        }
+        if actual_args.is_empty() != expected_args.is_empty() {
+            return Some(self.declares_type_parameters(actual_name) || self.declares_type_parameters(expected_name));
+        }
+        Some(
+            actual_args.len() == expected_args.len()
+                && actual_args
+                    .iter()
+                    .zip(expected_args)
+                    .all(|(actual, expected)| self.nested_types_compatible(actual, expected)),
+        )
+    }
+
+    /// Whether a source or carrier name selects a model, class, newtype or enum declaration with type parameters.
+    fn declares_type_parameters(&self, name: &str) -> bool {
+        match self.lookup_semantic_type_info(name) {
+            Some(TypeInfo::Model(model)) => !model.type_params.is_empty(),
+            Some(TypeInfo::Class(class)) => !class.type_params.is_empty(),
+            Some(TypeInfo::Newtype(newtype)) => !newtype.type_params.is_empty(),
+            Some(TypeInfo::Enum(enum_info)) => !enum_info.type_params.is_empty(),
+            _ => false,
+        }
+    }
+
     /// Record which modules of a check declare each nominal name: the checked program and every source dependency.
     ///
     /// Called before any dependency is imported, so every union a dependency's signatures or aliases spell is already
@@ -424,24 +472,6 @@ impl TypeChecker {
             .iter()
             .filter(|(_, alias)| alias.type_params.is_empty())
             .map(|(name, alias)| (name.clone(), alias.target.clone()))
-            .collect();
-    }
-
-    /// Retain, for lowering, the one module of this check that declares each nominal name no other module declares.
-    ///
-    /// A union that reached this module through another module's signature spells such a member bare, and lowering
-    /// places its wrapper payload at this declaring module even where no binding of this module names it.
-    pub(super) fn export_unique_nominal_declaring_modules(&mut self) {
-        self.type_info.declarations.unique_nominal_declaring_modules = self
-            .nominal_declarations
-            .declaring_modules
-            .iter()
-            .filter_map(|(name, modules)| {
-                let [module_path] = modules.iter().collect::<Vec<_>>()[..] else {
-                    return None;
-                };
-                (!module_path.is_empty()).then(|| (name.clone(), module_path.clone()))
-            })
             .collect();
     }
 }

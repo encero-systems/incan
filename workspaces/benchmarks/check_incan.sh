@@ -1,42 +1,17 @@
 #!/usr/bin/env bash
+# Build every benchmark with the installed toolchain, without executing workloads.
 set -euo pipefail
-
-# Quick smoke-check for benchmark Incan sources without running Python/Rust comparisons.
-#
-# This is meant for CI/dev sanity: ensure all benchmark `.incn` files can be built
-# (typecheck + codegen + Rust build) by the Incan compiler.
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
-echo "Incan benchmark smoke-check (build only)"
-echo "  root:  $PROJECT_ROOT"
-echo ""
-
-cd "$PROJECT_ROOT"
-TARGET_DIR="${CARGO_TARGET_DIR:-$PROJECT_ROOT/target}"
-INCAN="$TARGET_DIR/release/incan"
-if [[ ! -x "$INCAN" ]]; then
-  cargo build --release --quiet
-fi
-
+source "$SCRIPT_DIR/toolchain.sh"
+benchmark_toolchain
 failures=0
 checked=0
-
 while IFS= read -r -d '' file; do
-  checked=$((checked + 1))
-  echo "==> build: ${file#$PROJECT_ROOT/}"
-  if ! "$INCAN" build "$file"; then
-    echo "FAILED: $file"
-    failures=$((failures + 1))
-  fi
-done < <(find "$SCRIPT_DIR" -type f -name "*.incn" -print0)
-
-echo ""
-echo "Summary:"
-echo "  checked: $checked"
-echo "  failed:  $failures"
-
-if [[ "$failures" -ne 0 ]]; then
-  exit 1
-fi
+    checked=$((checked + 1))
+    echo "==> build: ${file#$SCRIPT_DIR/}"
+    if ! "$INCAN" build "$file" --profile release; then
+        failures=$((failures + 1))
+    fi
+done < <(find "$SCRIPT_DIR/compute" "$SCRIPT_DIR/sorting" "$SCRIPT_DIR/collections" -type d -name target -prune -o -type f -name '*.incn' -print0)
+printf 'checked: %s; failed: %s\n' "$checked" "$failures"
+[[ "$failures" -eq 0 ]]

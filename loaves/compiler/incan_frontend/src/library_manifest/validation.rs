@@ -2,8 +2,8 @@
 //!
 //! This module stays on the transport-facing side of the manifest boundary: it validates decoded `RawLibraryManifest`
 //! values before the rest of the compiler treats them as trustworthy semantic data. The checks here intentionally fail
-//! early on producer mistakes such as unsupported manifest versions, malformed vocab artifacts, invalid soft-keyword
-//! activations, or helper bindings that drift from the exported library surface.
+//! early on producer mistakes such as unsupported manifest versions, malformed vocab artifacts or invalid soft-keyword
+//! activations.
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Component, Path};
@@ -16,7 +16,7 @@ use super::{
     CanonicalIdentityOriginExport, CompiledProviderMetadata, EnumExport, EnumValueExport, EnumValueTypeExport,
     ExportIdentityKind, ExportIdentityProjection, FieldVisibilityExport, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
     LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport, ParamKindExport,
-    PartialExport, ProviderCargoDependencySource, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
+    PartialExport, RUST_ABI_SCHEMA_VERSION,
 };
 use crate::api_metadata::{
     ApiDeclaration, ApiProjectedFunction, CHECKED_API_METADATA_SCHEMA_VERSION, resolve_api_alias_target,
@@ -107,6 +107,15 @@ fn validate_identity_graph(raw: &RawLibraryManifest) -> Result<(), LibraryManife
     if require_members {
         validate_current_identity_graph_coverage(raw)?;
     }
+    validate_nominal_identity_graph_members(raw, require_members)
+}
+
+/// Validate nominal member identities after the graph's export entries and current-schema coverage have passed.
+/// Keep owner-kind order and each enum's variant/method duplicate inventory at this transport trust boundary.
+fn validate_nominal_identity_graph_members(
+    raw: &RawLibraryManifest,
+    require_members: bool,
+) -> Result<(), LibraryManifestError> {
     for model in &raw.exports.models {
         let owner_identity = root_canonical_identity(raw, ExportIdentityKind::Model, &model.name);
         validate_nominal_member_identities(
@@ -335,6 +344,38 @@ fn validate_export_identity_binding(
     entry: &super::ExportIdentity,
     identity: &CanonicalIdentityExport,
 ) -> Result<(), LibraryManifestError> {
+    validate_export_canonical_kind(raw, entry, identity)?;
+    let authoritative_path = validate_export_projection_path(raw, entry, identity)?;
+    if authoritative_path.is_empty() || !canonical_identity_matches_path(siblings, identity, authoritative_path) {
+        // A path can end on an intermediate hop, so report both the path and every public carrier of the identity.
+        let carriers = siblings
+            .iter()
+            .filter(|sibling| sibling.canonical.as_ref() == Some(identity))
+            .map(|sibling| sibling.public_path.join("."))
+            .collect::<Vec<_>>();
+        return Err(LibraryManifestError::Invalid(format!(
+            "identity graph entry `{}` canonical identity disagrees with its authoritative source/projection path: \
+             the path is `{}` while the identity names `{}`, and this package publishes that identity at {}",
+            entry.public_name,
+            authoritative_path.join("."),
+            identity.declaration_name,
+            if carriers.is_empty() {
+                "no other public path".to_string()
+            } else {
+                format!("`{}`", carriers.join("`, `"))
+            }
+        )));
+    }
+    validate_root_export_projection(raw, entry, identity)
+}
+
+/// Require a graph export's canonical kind to match its raw declaration kind. Alias targets retain their own kind;
+/// a newtype's checked raw declaration distinguishes newtype and rusttype identities.
+fn validate_export_canonical_kind(
+    raw: &RawLibraryManifest,
+    entry: &super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<(), LibraryManifestError> {
     let expected_kind = match entry.kind {
         ExportIdentityKind::Function => Some("function"),
         ExportIdentityKind::Partial => Some("partial"),
@@ -362,6 +403,16 @@ fn validate_export_identity_binding(
         )));
     }
 
+    Ok(())
+}
+
+/// Validate the selected projection's shape and return its authoritative source path without inventing a target.
+/// Direct and partial exports name their own canonical declaration; aliases and reexports retain their target hop.
+fn validate_export_projection_path<'entry>(
+    raw: &RawLibraryManifest,
+    entry: &'entry super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<&'entry [String], LibraryManifestError> {
     let authoritative_path = match &entry.projection {
         ExportIdentityProjection::Direct => {
             if matches!(entry.kind, ExportIdentityKind::Alias | ExportIdentityKind::Partial) {
@@ -405,14 +456,8 @@ fn validate_export_identity_binding(
             target_path
         }
         ExportIdentityProjection::Reexport { target_path } => {
-            // No kind restriction, deliberately. A re-export is a projection over an already-declared symbol, and
-            // `pub from <module> import <name>` accepts every public declaration kind -- `CheckedExportKind` maps
-            // all of them onto this projection. Restricting it to aliases and functions rejected the shipped
-            // `pub from pricing import LineItem, subtotal`, whose function half passed while its model half did
-            // not. The invariant that *is* a property of re-exports is the path identity checked below: a
-            // re-export republishes its target rather than renaming it. `LibraryReexportResolver` resolves each
-            // `pub from` item to its target's real kind while keeping this projection, which is why any kind can
-            // legitimately arrive here.
+            // Reexports accept every public declaration kind. Their invariant is path identity: the projection
+            // republishes its resolved target rather than renaming it, regardless of the target's declaration kind.
             if entry.source_path != *target_path {
                 return Err(LibraryManifestError::Invalid(format!(
                     "identity graph reexport `{}` has different source and target paths",
@@ -445,40 +490,22 @@ fn validate_export_identity_binding(
             &entry.source_path
         }
     };
-    if authoritative_path.is_empty() || !canonical_identity_matches_path(siblings, identity, authoritative_path) {
-        // Name the two records this compares. The path may legitimately end on a hop rather than the declaration, so
-        // a bare rejection leaves no way to tell a missing hop from a hop published under a different identity.
-        let carriers = siblings
-            .iter()
-            .filter(|sibling| sibling.canonical.as_ref() == Some(identity))
-            .map(|sibling| sibling.public_path.join("."))
-            .collect::<Vec<_>>();
-        return Err(LibraryManifestError::Invalid(format!(
-            "identity graph entry `{}` canonical identity disagrees with its authoritative source/projection path: \
-             the path is `{}` while the identity names `{}`, and this package publishes that identity at {}",
-            entry.public_name,
-            authoritative_path.join("."),
-            identity.declaration_name,
-            if carriers.is_empty() {
-                "no other public path".to_string()
-            } else {
-                format!("`{}`", carriers.join("`, `"))
-            }
-        )));
-    }
+    Ok(authoritative_path)
+}
 
+/// Bind package-root alias and partial projections to their raw exports after the canonical path proof. Nested
+/// projections retain their existing graph-level validation and do not require a package-root raw declaration.
+fn validate_root_export_projection(
+    raw: &RawLibraryManifest,
+    entry: &super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<(), LibraryManifestError> {
     if entry.public_path.len() == 2 {
         match (&entry.kind, &entry.projection) {
             (ExportIdentityKind::Alias, ExportIdentityProjection::Alias { .. })
             | (ExportIdentityKind::Alias, ExportIdentityProjection::Reexport { .. }) => {
-                // Match the raw export by the public name alone. The two sides record the path of *different hops*
-                // of the same re-export: renaming an export through a facade rewrites its name but leaves the raw
-                // alias pointing at the inner hop it was written on, while the graph entry carries the entrypoint's.
-                // For `items -> pricing -> lib` the raw alias says `["items", "LineItem"]` and the graph entry says
-                // `["pricing", "LineItem"]`. Both are true statements about different hops, so requiring them to be
-                // equal rejected every re-export chain longer than one hop. The public name is unique at the package
-                // root -- the duplicate check above enforces that -- and the identity behind the entry is what
-                // actually binds the two, which `validate_alias_callable_metadata` checks next.
+                // Public names are unique at the package root. A facade's graph and raw export can name different
+                // hops in the same reexport chain, so their canonical target binds them rather than path equality.
                 let raw_alias = raw.exports.aliases.iter().find(|alias| alias.name == entry.public_name);
                 let Some(raw_alias) = raw_alias else {
                     return Err(LibraryManifestError::Invalid(format!(
@@ -884,6 +911,7 @@ fn api_declaration_matches_canonical(
         && identity.kind == kind
         && usize::try_from(identity.declaration_span.start).ok() == Some(anchor.span.start)
         && usize::try_from(identity.declaration_span.end).ok() == Some(anchor.span.end)
+        && identity.declaration_span.expansion == anchor.span.expansion
         && matches!(
             &identity.origin,
             CanonicalIdentityOriginExport::Package {
@@ -1265,17 +1293,8 @@ fn validate_rust_abi(raw: &RawLibraryManifest) -> Result<(), LibraryManifestErro
             abi.schema_version, RUST_ABI_SCHEMA_VERSION
         )));
     }
-    if let Some(digest) = &abi.cache_digest
-        && !digest.strip_prefix("sha256:").is_some_and(|hex| {
-            hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-    {
-        return Err(LibraryManifestError::Invalid(
-            "rust_abi.cache_digest must be a SHA-256 digest".into(),
-        ));
+    if let Some(digest) = &abi.cache_digest {
+        sha256_digest("rust_abi.cache_digest", digest, true).map_err(LibraryManifestError::Invalid)?;
     }
     let mut paths = HashSet::new();
     for item in &abi.items {
@@ -1344,7 +1363,7 @@ fn validate_compiled_provider_metadata(metadata: &CompiledProviderMetadata) -> R
         )));
     }
     if let Some(digest) = &metadata.semantic_source_digest {
-        validate_sha256_digest("provider semantic source", digest)?;
+        sha256_digest("provider semantic source digest", digest, true).map_err(LibraryManifestError::Invalid)?;
     }
     for feature in metadata.public_features.keys() {
         validate_provider_identifier("public feature", feature)?;
@@ -1377,7 +1396,12 @@ fn validate_compiled_provider_metadata(metadata: &CompiledProviderMetadata) -> R
                 dependency.dependency_key
             )));
         }
-        validate_provider_artifact_digest(&dependency.dependency_key, &dependency.artifact_digest)?;
+        sha256_digest(
+            &format!("provider dependency `{}` artifact digest", dependency.dependency_key),
+            &dependency.artifact_digest,
+            true,
+        )
+        .map_err(LibraryManifestError::Invalid)?;
         validate_provider_dependency_artifact_path(&dependency.dependency_key, &dependency.relative_artifact_path)?;
         for feature in &dependency.requested_features {
             validate_provider_identifier("dependency feature", feature)?;
@@ -1430,6 +1454,11 @@ fn validate_compiled_provider_metadata(metadata: &CompiledProviderMetadata) -> R
         validate_provider_identifier("SDK component", component)?;
     }
 
+    validate_provider_operation_descriptors(metadata)
+}
+
+/// Require distinct function operation identities whose requirements are checked capability identities.
+fn validate_provider_operation_descriptors(metadata: &CompiledProviderMetadata) -> Result<(), LibraryManifestError> {
     let mut operation_ids = HashSet::new();
     for descriptor in &metadata.operation_descriptors {
         if descriptor.operation.kind != SemanticSourceTargetKind::Function {
@@ -1451,80 +1480,32 @@ fn validate_compiled_provider_metadata(metadata: &CompiledProviderMetadata) -> R
             )));
         }
     }
-
-    let mut facet_ids = HashSet::new();
-    for facet in &metadata.implementation_facets {
-        validate_provider_identifier("implementation facet", &facet.id)?;
-        if !facet_ids.insert(facet.id.as_str()) {
-            return Err(LibraryManifestError::Invalid(format!(
-                "contract_metadata.provider.implementation_facets contains duplicate id `{}`",
-                facet.id
-            )));
-        }
-        validate_required_features(metadata, &facet.required_features, &facet.id)?;
-        for module in &facet.required_modules {
-            for segment in module {
-                validate_provider_identifier("module segment", segment)?;
-            }
-        }
-        for (crate_name, features) in &facet.cargo_features {
-            validate_provider_identifier("Cargo dependency", crate_name)?;
-            for feature in features {
-                validate_provider_identifier("Cargo feature", feature)?;
-            }
-        }
-        for dependency in &facet.cargo_dependencies {
-            validate_provider_identifier("Cargo dependency", &dependency.crate_name)?;
-            if dependency.version.as_deref().is_some_and(str::is_empty) {
-                return Err(LibraryManifestError::Invalid(format!(
-                    "implementation facet `{}` has an empty Cargo version for `{}`",
-                    facet.id, dependency.crate_name
-                )));
-            }
-            for feature in &dependency.features {
-                validate_provider_identifier("Cargo feature", feature)?;
-            }
-            match &dependency.source {
-                ProviderCargoDependencySource::Registry if dependency.version.is_none() => {
-                    return Err(LibraryManifestError::Invalid(format!(
-                        "implementation facet `{}` registry dependency `{}` has no version",
-                        facet.id, dependency.crate_name
-                    )));
-                }
-                ProviderCargoDependencySource::Toolchain { relative_path } => {
-                    let path = Path::new(relative_path);
-                    if path.is_absolute() || path.components().any(|component| component == Component::ParentDir) {
-                        return Err(LibraryManifestError::Invalid(format!(
-                            "implementation facet `{}` toolchain dependency `{}` has non-relocatable path `{relative_path}`",
-                            facet.id, dependency.crate_name
-                        )));
-                    }
-                }
-                ProviderCargoDependencySource::Registry => {}
-            }
-        }
-    }
     Ok(())
 }
 
-/// Validate the exact SHA-256 identity emitted by the compiled-provider artifact hasher.
-fn validate_provider_artifact_digest(dependency_key: &str, digest: &str) -> Result<(), LibraryManifestError> {
-    validate_sha256_digest(&format!("provider dependency `{dependency_key}` artifact"), digest)
-}
-
-/// Validate one exact SHA-256 identity with a caller-owned diagnostic label.
-fn validate_sha256_digest(label: &str, digest: &str) -> Result<(), LibraryManifestError> {
-    let Some(hex) = digest.strip_prefix("sha256:") else {
-        return Err(LibraryManifestError::Invalid(format!(
-            "{label} digest must start with `sha256:`"
-        )));
+/// Validate one SHA-256 digest exactly as every writer emits it: 64 lowercase hexadecimal characters, after `sha256:`
+/// when `prefixed`. `label` names the field in the refusal; every digest field is checked here and nowhere else.
+pub(crate) fn sha256_digest(label: &str, value: &str, prefixed: bool) -> Result<(), String> {
+    let hex = if prefixed {
+        value.strip_prefix("sha256:")
+    } else {
+        Some(value)
     };
-    if hex.len() != 64 || !hex.chars().all(|character| character.is_ascii_hexdigit()) {
-        return Err(LibraryManifestError::Invalid(format!(
-            "{label} digest must contain 64 hexadecimal characters"
-        )));
+    let lowercase_hex = |hex: &str| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    if hex.is_some_and(lowercase_hex) {
+        return Ok(());
     }
-    Ok(())
+    let form = if prefixed {
+        "`sha256:` and 64 lowercase hexadecimal characters"
+    } else {
+        "64 lowercase hexadecimal characters"
+    };
+    Err(format!("{label} must be a SHA-256 digest: {form}"))
 }
 
 /// Validate one portable artifact-root-relative path while allowing a normalized leading parent traversal.
@@ -1778,6 +1759,14 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         return Ok(());
     };
 
+    if vocab.metadata_version != incan_vocab::VOCAB_METADATA_VERSION {
+        return Err(LibraryManifestError::Invalid(format!(
+            "vocabulary schema version {}; supported version {}",
+            vocab.metadata_version,
+            incan_vocab::VOCAB_METADATA_VERSION,
+        )));
+    }
+
     if vocab.crate_path.trim().is_empty() {
         return Err(LibraryManifestError::Invalid(
             "vocab crate_path cannot be empty".to_string(),
@@ -1789,7 +1778,6 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         ));
     }
 
-    validate_helper_bindings(&raw.exports, &vocab.provider_manifest)?;
     validate_scoped_surface_descriptors(raw)?;
     validate_scoped_symbol_descriptors(raw)?;
 
@@ -1797,16 +1785,19 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         return Ok(());
     };
 
-    if desugarer.abi_version == 0 {
+    if matches!(desugarer.artifact_kind, incan_vocab::DesugarerArtifactKind::WasmModule) {
         return Err(LibraryManifestError::Invalid(
-            "vocab desugarer_artifact.abi_version must be >= 1".to_string(),
+            "WebAssembly vocabulary desugarers are refused; rebuild the Loaf with a native desugarer".to_string(),
         ));
     }
-    if desugarer.abi_version > incan_vocab::WASM_DESUGAR_ABI_VERSION {
+    sha256_digest("native vocabulary unit identity", &desugarer.unit_identity, false)
+        .map_err(LibraryManifestError::Invalid)?;
+
+    if desugarer.abi_version != incan_vocab::VOCAB_SYNTAX_VERSION {
         return Err(LibraryManifestError::Invalid(format!(
-            "vocab desugarer_artifact.abi_version {} is newer than compiler-supported version {}",
+            "vocabulary syntax version {}; supported version {}; rebuild the Loaf",
             desugarer.abi_version,
-            incan_vocab::WASM_DESUGAR_ABI_VERSION
+            incan_vocab::VOCAB_SYNTAX_VERSION
         )));
     }
     if desugarer.relative_path.trim().is_empty() {
@@ -1815,27 +1806,12 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         ));
     }
     validate_relative_artifact_path(&desugarer.relative_path)?;
-    if desugarer.target.trim().is_empty() {
-        return Err(LibraryManifestError::Invalid(
-            "vocab desugarer_artifact.target cannot be empty".to_string(),
-        ));
-    }
-    if desugarer.profile.trim().is_empty() {
-        return Err(LibraryManifestError::Invalid(
-            "vocab desugarer_artifact.profile cannot be empty".to_string(),
-        ));
-    }
-    if desugarer.entrypoint.trim().is_empty() {
-        return Err(LibraryManifestError::Invalid(
-            "vocab desugarer_artifact.entrypoint cannot be empty".to_string(),
-        ));
-    }
     if desugarer.sha256.trim().is_empty() {
         return Err(LibraryManifestError::Invalid(
             "vocab desugarer_artifact.sha256 cannot be empty".to_string(),
         ));
     }
-    validate_sha256_hex(&desugarer.sha256)
+    sha256_digest("vocab desugarer_artifact.sha256", &desugarer.sha256, false).map_err(LibraryManifestError::Invalid)
 }
 
 /// Validate RFC 045 scoped-symbol descriptors before they become compiler-facing manifest data.
@@ -2294,7 +2270,7 @@ fn validate_scoped_surface_eligibility(
             ))),
         },
         incan_vocab::ScopedSurfacePosition::DeclarationHead => Err(LibraryManifestError::Invalid(format!(
-            "scoped surface descriptor `{descriptor_key}` declaration-head eligibility is not supported yet"
+            "scoped surface descriptor `{descriptor_key}` cannot use declaration-head eligibility; select a declaration body, clause body or call argument"
         ))),
         incan_vocab::ScopedSurfacePosition::DeclarationBody => {
             if eligibility.clause.is_some() || eligibility.call.is_some() {
@@ -2525,88 +2501,29 @@ fn validate_relative_artifact_path(relative_path: &str) -> Result<(), LibraryMan
     Ok(())
 }
 
-/// Validate that a manifest-provided SHA-256 digest is a full hexadecimal string.
-///
-/// The compiler uses this value as an integrity check for packaged desugarer artifacts, so partial or malformed digests
-/// are rejected up front instead of weakening the trust boundary.
-fn validate_sha256_hex(sha256: &str) -> Result<(), LibraryManifestError> {
-    if sha256.len() != 64 {
-        return Err(LibraryManifestError::Invalid(format!(
-            "vocab desugarer_artifact.sha256 must be 64 hex characters, got length {}",
-            sha256.len()
-        )));
+#[cfg(test)]
+mod tests {
+    use super::sha256_digest;
+
+    #[test]
+    fn digests_accept_only_the_lowercase_form_writers_emit() {
+        let lower = "a".repeat(64);
+        let upper = "A".repeat(64);
+        assert!(sha256_digest("rust_abi.cache_digest", &format!("sha256:{lower}"), true).is_ok());
+        assert!(sha256_digest("vocab desugarer_artifact.sha256", &lower, false).is_ok());
+        let refused = sha256_digest(
+            "provider dependency `p` artifact digest",
+            &format!("sha256:{upper}"),
+            true,
+        );
+        assert_eq!(
+            refused,
+            Err(
+                "provider dependency `p` artifact digest must be a SHA-256 digest: `sha256:` and 64 lowercase \
+                 hexadecimal characters"
+                    .to_owned()
+            )
+        );
+        assert!(sha256_digest("rust_abi.cache_digest", &lower, true).is_err());
     }
-    if !sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Err(LibraryManifestError::Invalid(
-            "vocab desugarer_artifact.sha256 must contain only hex characters".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-/// Validate symbolic helper bindings exposed by a vocab provider manifest.
-///
-/// A helper binding is only valid when:
-/// - the symbolic key is non-empty,
-/// - the referenced exported symbol name is non-empty,
-/// - the symbolic key is unique within the provider manifest, and
-/// - the referenced export actually exists in the library's published surface.
-fn validate_helper_bindings(
-    exports: &RawLibraryExports,
-    provider_manifest: &VocabProviderManifest,
-) -> Result<(), LibraryManifestError> {
-    let export_names = library_export_names(exports);
-    let mut seen_keys = HashSet::new();
-
-    for binding in &provider_manifest.helper_bindings {
-        if binding.key.trim().is_empty() {
-            return Err(LibraryManifestError::Invalid(
-                "vocab provider_manifest.helper_bindings key cannot be empty".to_string(),
-            ));
-        }
-        if binding.exported_name.trim().is_empty() {
-            return Err(LibraryManifestError::Invalid(format!(
-                "vocab helper binding `{}` must declare a non-empty exported_name",
-                binding.key
-            )));
-        }
-        if !seen_keys.insert(binding.key.as_str()) {
-            return Err(LibraryManifestError::Invalid(format!(
-                "vocab provider_manifest.helper_bindings contains duplicate key `{}`",
-                binding.key
-            )));
-        }
-        if !export_names.contains(binding.exported_name.as_str()) {
-            return Err(LibraryManifestError::Invalid(format!(
-                "vocab helper binding `{}` points to unknown exported symbol `{}`",
-                binding.key, binding.exported_name
-            )));
-        }
-        if let Some(kind) = uncallable_export_kind(exports, binding.exported_name.as_str()) {
-            return Err(LibraryManifestError::Invalid(format!(
-                "vocab helper binding `{}` points to {} `{}`, which cannot be called; bind the helper to a function, \
-                 class, model, newtype, enum variant, partial, or alias",
-                binding.key, kind, binding.exported_name
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-/// Return the noun for an exported name that a helper cannot legally call, or `None` when it is callable.
-///
-/// A helper reference is spliced into call position by the desugarer, so binding one to a trait, constant, static, or
-/// bare enum type produces generated Rust that cannot compile. Rejecting it here fails the provider's own build
-/// rather than every consumer's, which is where the author can actually act on it.
-fn uncallable_export_kind(exports: &RawLibraryExports, name: &str) -> Option<&'static str> {
-    exports.view().uncallable_kind(name)
-}
-
-/// Collect the set of exportable names that helper bindings are allowed to target.
-///
-/// This flattens the public surface into a simple membership check so helper binding validation can reject drift
-/// without re-encoding export-shape logic in multiple places.
-fn library_export_names(exports: &RawLibraryExports) -> HashSet<&str> {
-    exports.view().names()
 }

@@ -32,17 +32,15 @@ impl PatternReadScope<'_> {
 }
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Lower a `match` expression (`ast::Expr::Match`) into a single [`bir::Rvalue::Match`], mirroring the existing
-    /// Rust-emission backend's own `IrExprKind::Match { scrutinee, arms }` node -- see [`bir::Rvalue::Match`]'s docs
-    /// for why matching stays one structured node rather than being decomposed into a chain of `If` statements, and
-    /// [`bir::Pattern`]'s docs for the closed pattern vocabulary, retained union member targets, and the remaining
-    /// RFC 021 field-alias refinement gap.
+    /// Lower a match expression into one structured [`bir::Rvalue::Match`] with arm-scoped bindings and results.
     ///
-    /// Bails the whole expression to an explicit unsupported placeholder *before* lowering the scrutinee when any
-    /// arm's pattern contains a byte-string literal (a pattern form outside Body IR's current closed matching
-    /// vocabulary -- see [`match_pattern_is_supported`]), mirroring [`Self::lower_binary`]'s "check before
-    /// partially lowering" precedent so an unrepresentable pattern never produces a partially-lowered
-    /// `Rvalue::Match`.
+    /// The scrutinee is borrowed; each payload read retains its checked ownership fact. Guards and bodies see only
+    /// their arm's bindings. Range-layout facts after the match are the intersection of the arm outcomes, since
+    /// textual arm order does not establish which arm executes. Source reads in an arm preserve enclosing owners
+    /// across alternative paths; arm-local payload transfers remain governed by their checked pattern facts.
+    ///
+    /// A byte-string literal pattern is outside the supported pattern vocabulary. Refuse the whole expression
+    /// before lowering its scrutinee so an unsupported pattern cannot leave partially lowered effects.
     pub(super) fn lower_match(
         &mut self,
         subject: &ast::Spanned<ast::Expr>,
@@ -104,12 +102,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             self.in_place_pattern = enclosing_in_place;
             if arm.node.guard.is_none() {
-                self.retain_owned_native_payload_move(&scrutinee_place, &mut pattern);
+                self.retain_owned_carrier_payload_move(&scrutinee_place, &mut pattern);
             }
 
             // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
             // ----
             let mut guard_stmts = Vec::new();
+            self.conditional_scopes.push(arm_scope);
             let guard = arm
                 .node
                 .guard
@@ -129,18 +128,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     (stmts, bir::Operand::Constant(bir::Constant::Unit))
                 }
             };
+            self.conditional_scopes.pop();
 
             // ---- Restore the enclosing scope's bindings before moving on to the next (mutually exclusive) arm ----
-            for (name, previous) in saved_bindings {
-                match previous {
-                    Some(local) => {
-                        self.bindings.insert(name, local);
-                    }
-                    None => {
-                        self.bindings.remove(&name);
-                    }
-                }
-            }
+            self.restore_local_bindings(saved_bindings);
             range_layouts_after_arms.push(self.materialized_range_locals.clone());
 
             lowered_arms.push(bir::MatchArm {
@@ -168,12 +159,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Transfer a single owned native payload from an unguarded match on a fresh Option/Result temporary or the last
-    /// read of an owned native iterator item or owned parameter. No later read can reuse that carrier, and a successful
-    /// arm has no other payload to preserve. Borrowed parameters, loop-reused carriers, nested patterns and guards
-    /// retain their facts. Checked non-Clone tuple newtypes retain the same transfer boundary as their native
-    /// payload.
-    fn retain_owned_native_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
+    /// Transfer a single owned native payload from an unguarded match on a fresh enum temporary or the last
+    /// read of an owned native iterator item, local binding or owned parameter. No later read can reuse that carrier,
+    /// and a successful arm has no other payload to preserve. Borrowed parameters, loop-reused carriers, nested
+    /// patterns and guards retain their facts. A final owned local read authorizes transfer independently of whether
+    /// its payload's declaration is available in this consumer. Checked non-Clone tuple newtypes retain the same
+    /// transfer boundary as their native payload; reference payloads retain their existing facts.
+    fn retain_owned_carrier_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
         if !source.projection.is_empty() {
             return;
         }
@@ -183,20 +175,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(local) = self.locals.get(id.index()) else {
             return;
         };
+        if matches!(local.ty, IncanType::Ref(_) | IncanType::RefMut(_)) {
+            return;
+        }
         let owned_last_read = (self.native_enum_payload_bindings.contains(&id)
-            || local.origin == bir::LocalOrigin::Parameter)
+            || matches!(
+                local.origin,
+                bir::LocalOrigin::Parameter | bir::LocalOrigin::UserBinding
+            ))
             && !self.is_borrowed_parameter(id)
             && !self.loop_reuses_local(id)
             && !self.pending_argument_reads.contains(&id)
-            && self.remaining_reads.get(&id).is_some_and(|remaining| *remaining == 1);
-        if (local.origin != bir::LocalOrigin::Temporary && !owned_last_read)
-            || !matches!(&local.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::Option | CollectionTypeId::Result)))
-        {
+            && self
+                .remaining_reads
+                .get(&id)
+                .is_some_and(|remaining| remaining.remaining == 1);
+        if local.origin != bir::LocalOrigin::Temporary && !owned_last_read {
             return;
         }
         let fields = match pattern {
-            bir::Pattern::Result { fields, .. } => fields,
-            bir::Pattern::Enum { name, fields, .. } if name == "Option" => fields,
+            bir::Pattern::Result { fields, .. } | bir::Pattern::Enum { fields, .. } => fields,
             _ => return,
         };
         let [bir::Pattern::Var(binding)] = fields.as_mut_slice() else {
@@ -205,8 +203,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(payload) = self.locals.get(binding.local.index()) else {
             return;
         };
-        let native = self.payload_needs_owned_transfer(&payload.ty);
-        if native
+        let owned_local = local.origin == bir::LocalOrigin::UserBinding
+            && owned_last_read
+            && !matches!(payload.ty, IncanType::Ref(_) | IncanType::RefMut(_));
+        if (owned_local || self.payload_needs_owned_transfer(&payload.ty))
             && matches!(
                 binding.fact,
                 bir::OwnershipFact::Borrow | bir::OwnershipFact::Clone | bir::OwnershipFact::Move
@@ -241,7 +241,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .values()
                 .find(|declaration| &declaration.canonical == identity)
                 .is_some_and(|declaration| {
-                    declaration.fields == ["0"] && !declaration.derives.iter().any(|derive| derive == "Clone")
+                    declaration.fields == ["0"]
+                        && !declaration
+                            .derives
+                            .iter()
+                            .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
                 })
         })
     }
@@ -268,6 +272,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// construct's scrutinee; it applies to the pattern only, never to patterns nested in the body.
     /// Unguarded statement arms use the same checked native payload transfer as expression matches; a fresh owned
     /// Option/Result temporary must not require cloning its payload merely because the source spells `if let`.
+    /// Source reads in the conditional body retain enclosing owners for the other path and its scope-exit drops.
     #[allow(clippy::too_many_arguments)] // The scrutinee's type, place and in-place fact travel together into one arm.
     pub(super) fn lower_statement_pattern_arm(
         &mut self,
@@ -293,22 +298,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             &mut saved_bindings,
         );
         self.in_place_pattern = enclosing_in_place;
-        self.retain_owned_native_payload_move(scrutinee_place, &mut lowered_pattern);
+        self.retain_owned_carrier_payload_move(scrutinee_place, &mut lowered_pattern);
 
         let mut body_stmts = Vec::new();
+        self.conditional_scopes.push(arm_scope);
         self.lower_block_into(body, arm_scope, &mut body_stmts);
+        self.conditional_scopes.pop();
         self.insert_scope_drops(&mut body_stmts, arm_scope);
 
-        for (name, previous) in saved_bindings {
-            match previous {
-                Some(local) => {
-                    self.bindings.insert(name, local);
-                }
-                None => {
-                    self.bindings.remove(&name);
-                }
-            }
-        }
+        self.restore_local_bindings(saved_bindings);
 
         bir::MatchArm {
             pattern: lowered_pattern,
@@ -555,9 +553,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             field_place
                 .projection
                 .push(bir::PlaceElem::structural_field(slot.to_string()));
+            // The checker retained each payload sub-pattern's instantiated payload type at its span; a literal's
+            // storage takes that type, not a guess.
+            let payload_ty = self.resolve_ty(pattern.span);
             let lowered = self.lower_match_pattern(
                 pattern,
-                &IncanType::Unknown,
+                &payload_ty,
                 &field_place,
                 arm_scope,
                 reads,
@@ -661,7 +662,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.type_info
                 .expressions
                 .body_ir_nominal_pattern_owners
-                .get(&(name.span.start, name.span.end))
+                .get(&name.span)
         });
         if let Some(declaration) = self
             .local_nominal_declarations
@@ -840,7 +841,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         .projection
                         .push(bir::PlaceElem::structural_field(positional_index.to_string()));
                     if let Some(ty) = payload_types.as_ref().and_then(|fields| fields.get(positional_index)) {
-                        self.settled_types.insert((pat.span.start, pat.span.end), ty.clone());
+                        self.settled_types.insert(pat.span, ty.clone());
                     }
                     positional_index += 1;
                     let mut lowered = self.lower_match_pattern(

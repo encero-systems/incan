@@ -1,84 +1,20 @@
-# Generated-build storage model
+# Build artifact storage
 
-Normal `incan build`, `incan run`, and `incan test` generate caller-owned Rust source, verify a receipt, select one bounded Oven-native closure, and consume it through direct `rustc`. They do not launch Cargo or inspect a generated Cargo target directory. The store is policy-bounded rather than merely inspectable: admission prunes inactive least-recently-used entries, rejects an oversized single compatibility domain, and never deletes an active lease.
+Dev.8 keeps native build artifacts in the project or installed toolchain that owns them. It does not materialize a generated Cargo project or manage a generated-Cargo cache.
 
-`incan oven` exposes the receipt and store-maintenance boundary. The internal release publisher may prepare a supported typed envelope for a toolchain, but it is never a normal-command fallback. Its receipt, bounded store-owned direct-`rustc` closure, explicit test and binary-run commands, and native test inventory are documented in [Oven Alpha](oven_alpha.md). The generated-Cargo detail retained below is historical material, not normal execution architecture.
+| Artifact | Location |
+| --- | --- |
+| Program executable | `<project>/target/incan/<profile>/bin/<crate>` |
+| Path dependency library and sidecars | `<consumer>/target/incan/loaves/<package>/<profile>/` |
+| Standard package library and sidecars | `<home>/toolchains/0.6.0-dev.8/loaves/<package>/<profile>/` |
+| Unit input observations | `<project>/target/incan/observations/` |
+| Graph inspection cache | `<project>/target/incan/codegraph/` |
+| Resident owner endpoints | `<home>/owners/` |
 
-!!! note "Historical generated-Cargo audit"
-    The remaining sections preserve the measurements and ownership model that preceded Oven Alpha. Commands and CI topology described there are evidence for the retired normal backend unless a paragraph explicitly identifies a current publisher or compiler-development use.
+A library's native output and checked sidecars form one artifact set. Copying only an rlib or only an `.incnlib` does not preserve the package. Toolchain packing collects the installed closure and rewrites its path-bearing documents for relocation.
 
-## Legacy generated-Cargo storage (historical)
+A native support producer also retains a content proof alongside its local filesystem stamp. When its artifact store moves, Oven can validate the same source project, pinned compiler and SDK, build arguments, environment, exact dependency bytes and complete output bytes before recording the new filesystem identities. This preserves one native producer without treating copied files as unchanged by their old inode records. Missing proofs or changed inputs and outputs still refuse reuse; a changed graph observer refreshes the checked graph separately.
 
-| Category                                                | Default owner and location                                                                                                                      | Lifecycle                                                                                                                                                                                                               |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Generated Rust source and manifests                     | Project `target/incan/`, `target/incan_tests/`, and `target/incan_lock/` by default; a caller-selected generated output directory when supplied | Recreated from Incan source; remains caller/project-owned                                                                                                                                                               |
-| Generated Cargo dependency and intermediate output      | `$INCAN_HOME/cache/generated-cargo/v1/<identity>/target/`                                                                                       | Shared by compatible commands; idle domains are LRU-pruned toward a 20 GiB soft limit, and an idle domain whose measured output exceeds its 20 GiB default safety bound has only its rebuildable Cargo target discarded |
-| Published executable                                    | The generated project below project `target/incan/` by default, or below a caller-selected generated output directory                           | Copied atomically from Cargo output after a successful build; never pruned by `incan cache`                                                                                                                             |
-| Test harness and rust-inspect workspace source/metadata | Project `target/incan_tests/` and `target/incan_lock/rust_inspect/`                                                                             | Project-local generated inputs; their Cargo output uses the applicable shared or explicit target                                                                                                                        |
-| Compiled SDK providers                                  | The selected SDK provider store below `INCAN_HOME`, or an explicit provider-store override                                                      | Content-addressed SDK lifecycle; not removed by generated-cache pruning                                                                                                                                                 |
-| Vocab companion metadata                                | `<generated-target>/incan-vocab-cache`, unless `INCAN_VOCAB_COMPANION_CACHE_DIR` overrides it                                                   | Pruned with a managed generated target; an explicit override is caller-owned and not pruned by `incan cache`                                                                                                            |
-| Durable Incan library                                   | Project `target/lib/*.incnlib`                                                                                                                  | User-facing build artifact; never removed by generated-cache pruning                                                                                                                                                    |
-| Incan compiler repository build                         | Repository `target/`                                                                                                                            | Ordinary Cargo development state, outside the installed compiler's generated-cache manager                                                                                                                              |
-| Legacy Rust `CompilationPlan` executor output           | Caller-selected plan output directory                                                                                                           | Caller-owned compatibility API; contained below that output and not used by CLI build, run, test, lock, or library paths                                                                                                |
+Executable reuse depends on observed input and output identities. Replacing a file can invalidate reuse even when its length and modification time match. Owner reuse avoids repeated preparation; it does not skip fresh program or test execution.
 
-`incan inspect rust` locates generated output for tooling: it reports generated project paths and files as a structured report, where `--emit-rust` prints source for a person to read.
-
-The cache reports recursive logical file lengths. These are useful for deterministic category comparisons but are not the same as allocated or uniquely reclaimable filesystem blocks on APFS, sparse, compressed, cloned, or hardlinked storage.
-
-## Compatibility and bounded growth
-
-A compatibility identity includes the Incan version, selected Rust backend command and verbose host/version output, Rust/Cargo target, profile, and flag environment selectors, the Cargo executable and verbose version, Cargo profile, normalized dependency lock, Cargo feature selection, and Cargo arguments that can affect compiled artifacts. Execution-only offline, lock-enforcement, timing, verbosity, and color policy does not split otherwise compatible domains. Cargo fingerprints its remaining compiler and configuration inputs inside the domain. Cargo passthrough cannot set `--target-dir` or load a file-valued `--config`, because either could move artifacts outside the directory protected and reported by Incan; use the explicit generated-target override instead. Generated binary target names use a path-independent digest of generated root source plus package, dependency, provider, lock, edition, and feature inputs, so an unchanged logical fixture does not leave a new top-level binary and incremental tree merely because a temporary project directory changed. A per-root exclusive lock spans Cargo execution and atomic project-local publication; the executable path itself comes from Cargo's JSON artifact message, including target-triple layouts.
-
-Incan takes a shared activity lease before Cargo can use a domain. Cleanup takes an exclusive lease and skips active domains. Automatic cleanup runs before acquiring the requested domain and again after a completed lease makes new usage idle. The total limit is therefore soft only while domains are active; each completion brings the measurable idle set back toward the limit. When the final Cargo lease ends, Incan measures the domain; if it exceeds the per-domain safety bound, Incan discards that domain's rebuildable `target/` tree while preserving its identity metadata. The same recovery runs before reusing an interrupted idle domain, so repeated crashes cannot retain unmeasured growth indefinitely. Set `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES` to change the bound, or use an explicit generated-target override when an external system owns a larger target lifecycle. The lease ends after Cargo has published the project-local executable and before `incan run` starts user code.
-
-If a build process exits before releasing its lease, the next acquisition of that idle identity treats its unmeasured size as unknown, measures the partial domain before taking the new shared lease, and discards an oversized rebuildable target. Acquiring a different identity also includes the interrupted idle domain in ordinary LRU pruning.
-
-## Historical repository CI ownership
-
-Before Oven Alpha, repository CI supplied `INCAN_GENERATED_CARGO_TARGET_DIR`, transferred Nextest archives, and split the suite into Cargo-backed shards. The measurements below explain why that topology was selected at the time; they are not the current #1005 CI architecture. Pull-request CI now runs focused Oven regressions plus Cargo-guarded `build`, `run`, and `test` smoke checks with Rust 1.98.0 on Linux and macOS. The separate **Oven Release Evidence** workflow runs the complete prepared suite through the Cargo-guarded Oven runner on those two platform lanes for release branches or an explicit maintainer dispatch. This keeps the expensive cold publication proof out of every commit without returning repository execution to Cargo or Nextest.
-
-## Reproducing the audit
-
-Use an isolated `INCAN_HOME` and the same compiler binary for every sample. For offline warm-cache evidence, seed Cargo's registry first, then set `CARGO_NET_OFFLINE=true` for both runs.
-
-1. Remove only the task-local project targets and task-local `INCAN_HOME`.
-2. Run `incan build`, `incan run`, `incan test`, and `incan build --lib` once and record `/usr/bin/time -p`.
-3. Record `incan cache inspect --format json` and `du -sk` for each project-local category in the table above.
-4. Repeat the unchanged command, then repeat it from a compatible clean project or worktree.
-5. Compare compatibility-identity count and category growth. Do not use one platform-specific absolute byte ceiling as a regression assertion.
-
-### v0.5 cache evidence
-
-On 2026-07-20, a macOS APFS canary used two separate projects with the same `serde_json` dependency graph, an isolated `INCAN_HOME`, and `CARGO_NET_OFFLINE=true`:
-
-| Scenario                | First project | Compatible second project | Result after both                                                             |
-| ----------------------- | ------------: | ------------------------: | ----------------------------------------------------------------------------- |
-| `incan build` (release) | 67.74 s       | 0.43 s                    | One 58,829,076-logical-byte release domain; both final binaries project-local |
-| `incan run` (debug)     | 6.94 s        | 0.44 s                    | One additional 113,103,114-logical-byte debug domain, separated by profile    |
-
-After both scenarios, project-local generated source plus published output was 436 KiB per project; the managed cache reported 171,932,190 logical bytes across the two intentional profile domains. The second runs compiled only their root crate, demonstrating offline dependency reuse without an explicit target override.
-
-The CI-focused audit also found that path-derived binary names made an unchanged 11-fixture rerun grow one shared target from 241,280 KiB to 285,924 KiB (+44,644 KiB) while the provider store stayed at 6,140 KiB. The path-independent generated source identity above fixes that demonstrated root-artifact growth mechanism. Regression checks assert stable identities rather than those machine-specific byte totals.
-
-The completed audit recorded one observational matrix on 2026-07-22 under the uncontended `/private/tmp/incan-v05-heavy-gate.lease`. The small fixture used `serde_json`; the downstream-shaped fixture retained InQL's DataFusion 53, DataFusion-Substrait 53, Substrait 0.63, and Prost 0.14 dependency graph while using minimal current Incan source, because the copied older InQL source itself no longer typechecked on current main. Cargo sources were seeded first, and every measured command ran with `CARGO_NET_OFFLINE=true` and `CARGO_BUILD_JOBS=2`.
-
-| Package and command             | Cold     | Unchanged warm | Managed logical bytes after the command pair                                 |
-| ------------------------------- | -------: | -------------: | ---------------------------------------------------------------------------: |
-| Small `build`                   | 295.41 s | 8.14 s         | 166,001,563 across canonical-lock preheat, release, and rust-inspect domains |
-| Small `run`                     | 12.78 s  | 8.09 s         | 114,226,194 across debug and rust-inspect domains                            |
-| Small `test`                    | 15.19 s  | 10.65 s        | 114,908,627 across test and rust-inspect domains                             |
-| Small `build --lib`             | 300.59 s | 9.07 s         | 51,703,901 across release and rust-inspect domains                           |
-| DataFusion-shaped `build`       | 564.69 s | 11.30 s        | 1,161,099,759 in the release domain; shared-home totals are below            |
-| DataFusion-shaped `run`         | 151.15 s | 10.21 s        | 4,097,273,097 in the debug domain                                            |
-| DataFusion-shaped `test`        | 141.05 s | 13.95 s        | 3,794,476,320 in the test domain                                             |
-| DataFusion-shaped `build --lib` | 658.15 s | 77.87 s        | 1,187,893,210 across release and rust-inspect domains                        |
-
-The first small build and library samples each crossed a compiler-binary identity change during the audit and therefore include a fresh SDK-provider preparation; that is why their cold time is much larger than small run or test. One provider identity occupied about 6 MiB. The task-local store contained two 6 MiB identities after the compiler fix, which is expected content-addressed invalidation rather than generated-Cargo duplication.
-
-After build, run, and test shared one heavy-package home, `incan cache inspect --format json` reported 9,052,850,583 logical bytes: 4,097,273,097 debug, 3,794,476,320 test, 1,161,099,759 release, and a metadata-only rust-inspect domain. The project-owned `target` was about 394 MiB, dominated by the final generated executable; generated test source was 88 KiB, lock/preheat source and metadata 604 KiB, and the durable `.incnlib` output 136 KiB. The fixture exercised no vocab surface, so it created no vocab companion cache. These numbers show that Cargo intermediates are the dominant cost and that the default 20 GiB managed soft limit bounds them independently of project source and durable artifacts.
-
-The release-test topology was also measured with the same warmed binaries, shared generated target, provider store, inner `CARGO_BUILD_JOBS=2`, and 12 representative nested-Cargo CLI regressions. These machine-specific timings are evidence for that historical topology, not a portable benchmark claim. Outer Nextest limits of 12, 6, 4, and 2 completed in 18.45 s, 25.10 s, 39.03 s, and 62.21 s respectively. The provisional limit of 2 was therefore rejected as a 3.4x warmed-throughput regression. The limit of 6 halved the previous outer fan-out while remaining 2.5x faster than 2 on the cache-identical sample. At the time, repository CI transferred the compiled test inventory, supplied ordinary shards with a prepared SDK provider store, and scheduled empty-provider proofs separately. #1005 replaces that repository-suite topology with one Loaf bake and a Cargo-guarded prepared replay.
-
-## Historical Cargo-owned cost
-
-The shared domain still contains Cargo's dependency objects, build-script output, fingerprints, and incremental state. Different profiles, compiler/toolchain contracts, target selectors, features, or dependency locks intentionally create separate compatibility domains. `incan cache inspect` reports logical file lengths without creating a cache-management lock; `incan cache prune --dry-run` previews the resulting logical usage, and exact idle identities can be removed with `incan cache prune --identity <SHA256>`.
+Stop commands using a generated tree before removing it. Keep source, manifests and installed standard packages separate from disposable project build output. The CLI has no cache-inspection or cache-pruning command.

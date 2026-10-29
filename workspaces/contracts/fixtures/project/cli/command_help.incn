@@ -1,0 +1,45 @@
+# behavior: Every command provides usage, options, an example and the reference before requiring operands.
+# cli-commands:
+#   run --help
+#   check --help
+#   test --help
+#   describe-unit --help
+#   build --help
+#   fmt --help
+#   owner stop --help
+#   inspect codegraph --help
+#   mcp --help
+#   toolchain pack --help
+#   toolchain install --help
+#   --version --help
+#   run -h
+#   check -h
+#   test -h
+#   describe-unit -h
+#   build -h
+#   fmt -h
+#   owner stop -h
+#   inspect codegraph -h
+#   mcp -h
+#   toolchain pack -h
+#   toolchain install -h
+#   --version -h
+#   run missing.incn --help
+#   check missing.incn --format json --help
+#   test missing.incn --help
+#   describe-unit missing.incn --help
+#   build missing.incn --help
+#   fmt missing.incn --help
+#   inspect codegraph missing.incn --query defs main --help
+#   mcp missing.incn --help
+#   toolchain pack missing.tar.zst --help
+#   toolchain install missing.tar.zst --help
+# expect-stdout-contains:
+#   Options:
+#   Example:
+#   Reference: https://incan.io/latest/tooling/reference/cli_reference/
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; help runs without compiling it."""
+    pass

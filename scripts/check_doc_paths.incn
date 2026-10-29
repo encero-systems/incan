@@ -1,0 +1,266 @@
+"""Check concrete repository paths in contributor Markdown against the current tree."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.regex import Regex
+from check_support import read, repository_root, source_lines, write_stderr
+
+const HELP: str = """usage: check_doc_paths.py [-h] [--root ROOT] [--allow ALLOW] [--list]
+
+Check concrete repository paths in contributor Markdown against the current
+tree.
+
+options:
+  -h, --help     show this help message and exit
+  --root ROOT
+  --allow ALLOW  override the repository's scripts/check_doc_paths.allow
+  --list         also print each checked mention"""
+
+
+model Options:
+    """The repository, optional exception file and mention-listing flag."""
+    root: Path
+    allow: str = ""
+    list: bool = False
+
+
+pub model ExceptionRule:
+    """A documented exception scoped to one document and an exact path or named subtree."""
+    pub document: str
+    pub token: str
+    pub reason: str
+
+    def matches(self, document: str, token: str) -> bool:
+        """Match subtree exceptions only beneath their slash boundary."""
+        if self.document != "*" and self.document != document:
+            return False
+        if self.token.endswith("/**"):
+            return token.startswith(self.token[:-2])
+        return self.token == token
+
+
+def main() -> None:
+    """Run the path audit, retaining status 2 for input and configuration errors."""
+    match run():
+        Ok(code) =>
+            if code == 0:
+                exit(0)
+            exit(1)
+        Err(message) =>
+            write_stderr(f"doc path audit: {message}\n")
+            exit(2)
+
+
+def run() -> Result[int, str]:
+    """
+    Audit contributor paths and return the gate result.
+
+    1. Read command options and documented exceptions.
+    2. Discover contributor Markdown and expand each path mention.
+    3. Report unresolved paths or the checked inventory.
+    """
+    # 1. Read options and fail closed on malformed exceptions.
+    arguments: list[str] = [argument for argument in args()]
+    options = command_options(arguments[1:])
+    root = options.root.resolve().map_err((error) => error.message())?
+    mut allow_path = root.joinpath("scripts/check_doc_paths.allow")
+    if options.allow != "":
+        allow_path = Path(options.allow)
+    allowed = read_allowlist(allow_path)?
+    pattern = Regex(
+        "(?:^|[^\\w/.-])((?:src|crates|loaves|workspaces|tests|scripts|\\.agents|\\.github)/[A-Za-z0-9_./*{},?-]*)"
+    ).map_err((error) => error.message())?
+
+    # 2. Inventory and check every expanded path.
+    mut checked = 0
+    mut exempted = 0
+    mut missing: list[str] = []
+    for document in documents(root)?:
+        path = root.joinpath(document)
+        lines = source_lines(read(path)?)?
+        for index in range(len(lines)):
+            for capture in pattern.captures_iter(lines[index]):
+                original = trim_punctuation(capture.group(1).unwrap_or(""))
+                for token in expand_braces(original)?:
+                    checked += 1
+                    if options.list:
+                        println(f"{document}:{index + 1}: {token}")
+                    if exempt(document, token, allowed):
+                        exempted += 1
+                    elif not resolves(root, token)?:
+                        missing.append(f"  {document}:{index + 1}: {token}")
+
+    # 3. Print all unresolved mentions in deterministic source order.
+    if len(missing) > 0:
+        println(f"{len(missing)} of {checked} repository paths do not exist ({exempted} explicit exceptions):")
+        for finding in missing:
+            println(finding)
+        return Ok(1)
+    println(f"doc path audit passed: {checked} mentions, {exempted} explicit exceptions")
+    return Ok(0)
+
+
+def command_options(arguments: list[str]) -> Options:
+    """Preserve argparse's diagnostic stream and exit status for malformed options."""
+    match parse_options(arguments):
+        Ok(options) => return options
+        Err(message) =>
+            usage = "usage: check_doc_paths.py [-h] [--root ROOT] [--allow ALLOW] [--list]"
+            write_stderr(f"{usage}\ncheck_doc_paths.py: error: {message}\n")
+            exit(2)
+
+
+def parse_options(arguments: list[str]) -> Result[Options, str]:
+    """Read the existing --root, --allow and --list options."""
+    mut options = Options(root=repository_root()?)
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--help" or argument == "-h":
+            println(HELP)
+            exit(0)
+        elif argument == "--list":
+            options.list = True
+        elif argument == "--root" or argument == "--allow":
+            index += 1
+            if index >= len(arguments):
+                return Err(f"argument {argument}: expected one argument")
+            if argument == "--root":
+                options.root = Path(arguments[index])
+            else:
+                options.allow = arguments[index]
+        elif argument.startswith("--root="):
+            options.root = Path(argument[len("--root="):])
+        elif argument.startswith("--allow="):
+            options.allow = argument[len("--allow="):]
+        else:
+            return Err(f"unrecognized arguments: {argument}")
+        index += 1
+    return Ok(options)
+
+
+pub def documents(root: Path) -> Result[list[str], str]:
+    """Inventory contributor Markdown deterministically, excluding private runtime state."""
+    mut names: list[str] = []
+    for name in ["AGENTS.md", "CONTRIBUTING.md", "README.md"]:
+        if root.joinpath(name).is_file():
+            names.append(name)
+    for tree in ["workspaces/docs-site/docs/contributing", ".agents", "loaves"]:
+        directory = root.joinpath(tree)
+        if not directory.is_dir():
+            continue
+        mut pattern = "*.md"
+        if tree == "loaves":
+            pattern = "README.md"
+        for path in directory.rglob(pattern).map_err((error) => error.message())?:
+            relative = path.0[len(root.0) + 1:]
+            if path.is_file() and not relative.startswith(".agents/state/") and relative not in names:
+                names.append(relative)
+    return sorted_paths(names)
+
+
+def sorted_paths(paths: list[str]) -> Result[list[str], str]:
+    """Sort path components like Python Path values, putting a finished component before a longer sibling."""
+    separator = RustString.from_utf8(b"\0").map_err((error) => error.to_string())?
+    keys = [path.replace("/", separator) for path in paths]
+    return Ok([key.replace(separator, "/") for key in sorted(keys)])
+
+
+pub def expand_braces(token: str) -> Result[list[str], str]:
+    """Expand each small brace list recursively, preserving alternative order."""
+    pattern = Regex("\\{([^{}]+)\\}").map_err((error) => error.message())?
+    if let Some(capture) = pattern.captures(token):
+        if let Some(found) = capture.full_match():
+            mut result: list[str] = []
+            for alternative in capture.group(1).unwrap_or("").split(","):
+                expanded = token[:found.start()] + alternative + token[found.end():]
+                result.extend(expand_braces(expanded)?)
+            return Ok(result)
+    return Ok([token])
+
+
+pub def resolves(root: Path, token: str) -> Result[bool, str]:
+    """Require an existing concrete path or nonempty component glob within the canonical repository."""
+    if not lexical_inside(token):
+        return Ok(False)
+    for candidate in glob_candidates(root, token.split("/"), 0)?:
+        if candidate.exists():
+            canonical = candidate.resolve().map_err((error) => error.message())?
+            if canonical.0 == root.0 or canonical.0.startswith(root.0 + "/"):
+                return Ok(True)
+    return Ok(False)
+
+
+def lexical_inside(token: str) -> bool:
+    """Reject lexical traversal above the repository before querying filesystem candidates."""
+    mut depth = 0
+    for component in token.split("/"):
+        if component == "..":
+            depth -= 1
+        elif component != "" and component != ".":
+            depth += 1
+        if depth < 0:
+            return False
+    return not token.startswith("/")
+
+
+def glob_candidates(directory: Path, components: list[str], index: int) -> Result[list[Path], str]:
+    """Resolve path components with Python-style recursive ** and ordinary filename glob segments."""
+    if index == len(components):
+        return Ok([directory])
+    component = components[index]
+    if component == "":
+        return glob_candidates(directory, components, index + 1)
+    if "*" not in component and "?" not in component:
+        return glob_candidates(directory.joinpath(component), components, index + 1)
+    if not directory.is_dir():
+        return Ok([])
+    mut result: list[Path] = []
+    if component == "**":
+        result.extend(glob_candidates(directory, components, index + 1)?)
+        for child in directory.iterdir().map_err((error) => error.message())?:
+            if child.is_dir() and not child.is_symlink():
+                result.extend(glob_candidates(child, components, index)?)
+        return Ok(result)
+    for child in directory.glob(component).map_err((error) => error.message())?:
+        result.extend(glob_candidates(child, components, index + 1)?)
+    return Ok(result)
+
+
+pub def read_allowlist(path: Path) -> Result[list[ExceptionRule], str]:
+    """Require a nonempty document, path and reason separated by tabs on each exception line."""
+    mut allowed: list[ExceptionRule] = []
+    lines = source_lines(read(path)?)?
+    for index in range(len(lines)):
+        line = lines[index]
+        if line.strip() == "" or line.strip().startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) < 3 or fields[0].strip() == "" or fields[1].strip() == "":
+            return Err(f"{path.0}:{index + 1}: expected document, path and reason separated by tabs")
+        reason = "\t".join(fields[2:]).strip()
+        if reason == "":
+            return Err(f"{path.0}:{index + 1}: expected document, path and reason separated by tabs")
+        document = fields[0].strip()
+        if document != "*" and not document.endswith(".md"):
+            return Err(f"{path.0}:{index + 1}: document must be a Markdown path or *")
+        allowed.append(ExceptionRule(document=document, token=fields[1].strip(), reason=reason))
+    return Ok(allowed)
+
+
+def trim_punctuation(token: str) -> str:
+    """Drop the original checker's trailing sentence period and comma punctuation."""
+    mut end = len(token)
+    while end > 0 and (token[end - 1] == "." or token[end - 1] == ","):
+        end -= 1
+    return token[:end]
+
+
+def exempt(document: str, token: str, allowed: list[ExceptionRule]) -> bool:
+    """Require one complete document-and-path exception match."""
+    for rule in allowed:
+        if rule.matches(document, token):
+            return True
+    return False

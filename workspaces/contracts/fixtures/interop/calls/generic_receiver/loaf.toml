@@ -6,6 +6,7 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [dependencies]
+regex = { loaf = "crates-io/regex", version = "1" }
 byteorder = { loaf = "crates-io/byteorder", version = "1", features = [], default-features = true }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }
 rand = { loaf = "crates-io/rand", version = "0.8", features = [], default-features = true }

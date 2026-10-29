@@ -15,6 +15,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// elements around it exactly as written. Each source is captured into an owned temporary using its checked
     /// ownership fact before later entries run. A spread contributes one [`bir::ArgumentElement::Spread`] whose
     /// length is a runtime fact; surrounding fixed elements keep their positions relative to it.
+    /// Metadata-selected native element adjustments execute before a contextually typed native list is assembled.
     pub(super) fn lower_list_literal(
         &mut self,
         entries: &[ast::ListEntry],
@@ -27,7 +28,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         for entry in entries {
             match entry {
                 ast::ListEntry::Element(item) => {
-                    let value = self.lower_expr_to_operand(item, scope, out);
+                    let value = match self.lower_adjusted_argument(item, scope, out) {
+                        Some(Ok(value)) => value,
+                        Some(Err(reason)) => self.unsupported_operand(reason, scope, hir_span(item.span), out),
+                        None => self.lower_expr_to_operand(item, scope, out),
+                    };
                     let value = self.retain_evaluated_value_read(item, value, scope, out);
                     elements.push(bir::ArgumentElement::One(value));
                 }
@@ -325,18 +330,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower an f-string `f"...{expr}...{expr!r}..."` to a [`bir::Rvalue::Format`]. Literal text chunks are
     /// carried through verbatim; each embedded expression is lowered through the same
     /// [`Self::lower_expr_to_operand`] path as any other read, so ownership facts and last-use tracking apply to
-    /// f-string interpolations exactly like any other expression use. Mirrors the existing Rust-emission backend's
-    /// dedicated `Format` node (`loaves/compiler/incan_ir/src/lower/expr/mod.rs`) rather than desugaring into a helper
-    /// call -- see [`bir::Rvalue::Format`]'s own docs for why this needed its own `Rvalue` shape. A displayed value
+    /// f-string interpolations exactly like any other expression use. See [`bir::Rvalue::Format`]'s docs for why
+    /// formatting has its own `Rvalue` shape rather than desugaring into a helper call. A displayed value
     /// whose checked type is a type parameter keeps that fact as [`bir::FormatStyle::TypeParameterDisplay`] before
     /// specialization replaces its type with a concrete carrier, because the generic display contract can differ from
     /// that carrier's direct adapter.
     ///
-    /// Building the formatted string always allocates and always needs the `fstring` runtime helper
-    /// (`incan_std_core::strings::fstring`, the function the existing Rust-emission backend's `Format` node itself
-    /// compiles down to -- see `loaves/compiler/incan_emit/src/emit/expressions/format.rs`), so both requirements are
-    /// recorded unconditionally here, the same way [`Self::lower_binary_from_operands`] records requirements for
-    /// its own compiler-owned string helpers.
+    /// Record allocator and formatting runtime requirements unconditionally: constructing the formatted string
+    /// allocates and invokes the formatting operation.
     pub(super) fn lower_fstring(
         &mut self,
         parts: &[ast::FStringPart],
@@ -352,6 +353,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::FStringPart::Expr { expr, format } => {
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     let operand = self.retain_evaluated_value_read(expr, operand, scope, out);
+                    let operand = if matches!(format, ast::FStringFormat::Display) {
+                        self.lower_selected_display_operand(expr.span, operand, scope, out)
+                    } else {
+                        operand
+                    };
                     let style = match format {
                         ast::FStringFormat::Display if matches!(self.resolve_ty(expr.span), IncanType::TypeVar(_)) => {
                             bir::FormatStyle::TypeParameterDisplay
@@ -489,8 +495,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Dispatch is on the surface **key**, not the payload shape. `SurfaceExprPayload::PrefixUnary` is generic over
     /// any prefix soft keyword and `await` merely happens to be the only one registered today, so matching the
     /// payload alone would silently accept a future prefix keyword as an await. The typechecker
-    /// (`check_expr/mod.rs`) and the existing Rust-emission backend (`backend/ir/lower/expr/mod.rs`) both dispatch
-    /// on the key/payload pair for exactly this reason.
+    /// (`check_expr/mod.rs`) dispatches on the key/payload pair for exactly this reason.
     ///
     /// Every other payload -- the scoped-DSL surface nodes -- keeps its existing named refusal. Those reach this
     /// module only when a caller skips the desugar pass the legacy pipeline runs first, and they belong to the Body

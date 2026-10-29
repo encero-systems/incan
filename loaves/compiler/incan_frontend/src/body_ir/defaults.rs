@@ -2,9 +2,9 @@
 
 use super::*;
 
-/// Prove that a declaration-owned default constructs only fresh literal data. This recognizes the same collection
-/// literals after library publication without consulting source syntax or allowing calls, parameter reads, or writes
-/// to existing storage to cross a supplied argument's observable evaluation.
+/// Prove that a declaration-owned default constructs only fresh literal data, including checked enum variants.
+/// Publication preserves this proof without source syntax; calls, parameter reads and writes to existing storage
+/// cannot cross a supplied argument's observable evaluation.
 pub(super) fn is_literal_default(default: &bir::CallableParamDefault) -> bool {
     let bir::CallableParamDefault::Source(computation) = default else {
         return false;
@@ -26,15 +26,21 @@ pub(super) fn is_literal_default(default: &bir::CallableParamDefault) -> bool {
     literal_default_operand(&computation.result, &initialized)
 }
 
-/// Admit builtin literal containers whose elements refer only to constants or preceding fresh literal temporaries.
+/// Admit literal containers and checked enum variants whose payloads refer only to constants or fresh temporaries.
+/// Variant construction has no user callable; retained enum targets supply its declaration-owned layout.
 fn literal_default_rvalue(value: &bir::Rvalue, initialized: &HashSet<bir::LocalId>) -> bool {
     match value {
         bir::Rvalue::Use(operand) => literal_default_operand(operand, initialized),
-        bir::Rvalue::Aggregate(bir::AggregateKind::List | bir::AggregateKind::Set | bir::AggregateKind::Tuple, elements) => {
-            elements.iter().all(|element| {
-                matches!(element, bir::ArgumentElement::One(operand) if literal_default_operand(operand, initialized))
-            })
-        }
+        bir::Rvalue::FieldlessEnumVariant(_) | bir::Rvalue::ValueEnumVariant(_) => true,
+        bir::Rvalue::Aggregate(
+            bir::AggregateKind::List
+            | bir::AggregateKind::Set
+            | bir::AggregateKind::Tuple
+            | bir::AggregateKind::EnumVariant(_),
+            elements,
+        ) => elements.iter().all(|element| {
+            matches!(element, bir::ArgumentElement::One(operand) if literal_default_operand(operand, initialized))
+        }),
         bir::Rvalue::Dict(entries) => entries.iter().all(|entry| {
             matches!(entry, bir::DictEntry::Pair(key, value)
                 if literal_default_operand(key, initialized) && literal_default_operand(value, initialized))
@@ -96,6 +102,7 @@ pub(super) fn attach_nominal_field_defaults(
                 span: hir_span(field.span),
                 default: builder.lower_callable_default(field.node.default.as_ref(), scope),
                 mutable: false,
+                native_owned: false,
             });
         }
 
@@ -110,6 +117,8 @@ pub(super) fn attach_nominal_field_defaults(
         let named_type_identities =
             builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
         declaration.field_default_body = Some(Box::new(bir::Body {
+            trait_default_instantiation: None,
+            nominal_instantiation: Vec::new(),
             type_parameters: Vec::new(),
             decl_id: declaration.direct_declaration_id.clone(),
             direct_call_id: declaration.direct_declaration_id.clone(),
@@ -191,7 +200,7 @@ fn method_partial_frame(
         .type_info
         .declarations
         .method_bindings_by_span
-        .get(&(method.span.start, method.span.end))?
+        .get(&method.span)?
         .identity
         .clone()?;
     if target.kind != SemanticSourceTargetKind::Method

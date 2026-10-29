@@ -3,11 +3,14 @@
 from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin
 from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation, loaf_item_path
 from nominal_frames import closed_arguments
+from table_views import borrowed_at
 
 
 pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:
-    """Identify a generic owner's still-open inherited default arguments before validating concrete slot records."""
-    return not closed_arguments([binding.argument.clone() for binding in implementation.type_arguments])
+    """Identify a generic owner's open slot or inherited default arguments before validating concrete records."""
+    return not closed_arguments(implementation.slot_arguments) or not closed_arguments(
+        [binding.argument.clone() for binding in implementation.type_arguments],
+    )
 
 
 pub def validate_project_implementation(
@@ -34,7 +37,10 @@ pub def validate_project_implementation(
     if not retains_owner(module, implementation.owner):
         return Err("invalid Body IR trait implementation owner")
     if is_protocol_slot(implementation.method):
-        if implementation.implementation == implementation.method or retains_body(modules, implementation.implementation):
+        if (
+            implementation.implementation == implementation.method
+            or retains_body(modules, implementation.implementation)
+        ):
             return Ok(None)
         return Err("invalid Body IR trait implementation without a retained declaration")
     if not declares_slot(modules, implementation.method):
@@ -78,10 +84,12 @@ def fills_its_slot(implementation: &TraitImplementation) -> bool:
 
 def retains_owner(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
     """Whether this module retains the adopter's well-formed model, class or enum layout."""
-    for declaration in module.nominal_declarations:
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
         if declaration.canonical == owner.clone() and module.is_well_formed_nominal_declaration(declaration):
             return true
-    for declaration in module.enum_declarations:
+    for enum_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, enum_position)
         if declaration.canonical == owner.clone() and module.is_well_formed_native_enum_declaration(declaration):
             return true
     return false
@@ -89,7 +97,8 @@ def retains_owner(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
 
 def declares_slot(modules: &list[BodyIrModule], slot: &CanonicalSymbolId) -> bool:
     """Whether the module that declares the slot's trait retains that trait around the slot."""
-    for module in modules:
+    for module_position in range(len(modules)):
+        module = borrowed_at(modules, module_position)
         if module_declares_slot(module, slot):
             return true
     return false
@@ -97,7 +106,8 @@ def declares_slot(modules: &list[BodyIrModule], slot: &CanonicalSymbolId) -> boo
 
 def module_declares_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
     """Whether one module declares, as its own trait, the trait whose span encloses the slot."""
-    for declaration in module.trait_declarations:
+    for protocol_position in range(len(module.trait_declarations)):
+        declaration = borrowed_at(module.trait_declarations, protocol_position)
         if declaration.origin != slot.origin or not contains(declaration, slot):
             continue
         match module.declaration_id_for_canonical(
@@ -112,7 +122,8 @@ def module_declares_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> boo
 
 def retains_body(modules: &list[BodyIrModule], identity: &CanonicalSymbolId) -> bool:
     """Whether some module retains the filling body under its canonical direct-call identity."""
-    for module in modules:
+    for module_position in range(len(modules)):
+        module = borrowed_at(modules, module_position)
         if module_retains_body(module, identity):
             return true
     return false
@@ -120,16 +131,24 @@ def retains_body(modules: &list[BodyIrModule], identity: &CanonicalSymbolId) -> 
 
 def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
     """Whether one module retains a checked body or the exact compiled Loaf declaration that implements the slot."""
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         if body.canonical == Some(identity.clone()) and module.body_has_canonical_direct_call_id(body):
             return true
-    for declaration in module.loaf_callables:
+    for callable_position in range(len(module.loaf_callables)):
+        declaration = borrowed_at(module.loaf_callables, callable_position)
         if declaration.canonical != identity.clone():
             continue
         match loaf_item_path(identity):
             Some(path) =>
-                if declaration.item == path and identity.namespace == SymbolNamespace.Member and identity.scope_discriminant == None and (
-                    identity.kind == SemanticSourceTargetKind.Method or identity.kind == SemanticSourceTargetKind.Property
+                if (
+                    declaration.item == path
+                    and identity.namespace == SymbolNamespace.Member
+                    and identity.scope_discriminant == None
+                    and (
+                        identity.kind == SemanticSourceTargetKind.Method
+                        or identity.kind == SemanticSourceTargetKind.Property
+                    )
                 ):
                     return true
             None => pass

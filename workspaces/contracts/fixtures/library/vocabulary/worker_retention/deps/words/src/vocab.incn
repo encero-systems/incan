@@ -1,0 +1,20 @@
+"""Count the requests one worker process answers, so a check shows how many workers served it."""
+
+from std.vocab import (
+    ClauseSurface, DeclarationSurface, DesugarError, DesugarRequest, DesugarResponse, DslSurface, VocabRegistration,
+)
+
+static calls: int = 0
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register a query whose every expansion the provider refuses."""
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    surface = DslSurface.on_import("words").with_declaration(query.with_clause(ClauseSurface.expr("FROM").required()))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Refuse the node, naming how many requests this worker process has answered."""
+    calls += 1
+    return Err(DesugarError.at(request.node.span(), f"refused on call {calls}"))

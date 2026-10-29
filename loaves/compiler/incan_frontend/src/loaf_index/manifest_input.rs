@@ -1,24 +1,28 @@
-//! Read a compiled manifest and retain its content identity only for an unchanged file generation.
+//! Read a compiled artifact and retain its content identity only for an unchanged file generation.
 //!
 //! Records are optional, private toolchain-home accelerators, under the same trusted-home assumption as the driver
 //! identity proofs. They do not protect against forged records or filesystem metadata. Parsing and semantic validation
 //! still consume the current bytes; missing, corrupt or unwritable records take the full hashing path.
 
-use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::{self, Read, Write};
+use std::fs::{self, File, Metadata};
+use std::io::{self, Read};
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// Maximum encoded digest proof size; oversized optional records never bypass the full content hash.
+const MAX_DIGEST_RECORD_BYTES: u64 = 8192;
+
 /// The generation guards used for a digest, including ctime so restored-mtime edits invalidate it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Generation {
+pub(super) struct Generation {
     device: u64,
     inode: u64,
     size: u64,
+    mode: u32,
     modified: i64,
     modified_ns: i64,
     changed: i64,
@@ -37,6 +41,14 @@ struct Record {
 
 /// Read current UTF-8 bytes, retaining or computing their digest only while descriptor and path stay stable.
 pub(super) fn read(path: &Path) -> io::Result<(String, String)> {
+    let (bytes, digest) = read_bytes(path)?;
+    let content = String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok((content, digest))
+}
+
+/// Read current binary bytes under the same generation guards as manifests. A retained digest never bypasses the
+/// caller's format validation or its comparison with a manifest-authenticated ABI digest.
+pub(super) fn read_bytes(path: &Path) -> io::Result<(Vec<u8>, String)> {
     // ---- Current bytes and their file generation ----
     let canonical = fs::canonicalize(path)?;
     let mut file = File::open(&canonical)?;
@@ -44,9 +56,9 @@ pub(super) fn read(path: &Path) -> io::Result<(String, String)> {
     let key = format!("{:x}", Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
     let cache = cache_path(&key);
     let retained = before.and_then(|state| cache.as_deref().and_then(|path| retained_digest(path, &key, state)));
-    tracing::debug!(target: "incan::invocation", cached = retained.is_some(), "Loaf manifest digest");
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
+    tracing::debug!(target: "incan::invocation", cached = retained.is_some(), path = %path.display(), "Loaf artifact digest");
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)?;
 
     // ---- Stable descriptor and path ----
     if let Some(state) = before
@@ -59,7 +71,7 @@ pub(super) fn read(path: &Path) -> io::Result<(String, String)> {
     if let Some(digest) = retained {
         return Ok((content, digest));
     }
-    let digest = format!("sha256:{:x}", Sha256::digest(content.as_bytes()));
+    let digest = format!("sha256:{:x}", Sha256::digest(&content));
     if let (Some(state), Some(path)) = (before, cache) {
         let _ = store(&path, &key, state, &digest);
     }
@@ -68,7 +80,7 @@ pub(super) fn read(path: &Path) -> io::Result<(String, String)> {
 
 /// Observe the same Unix file-generation fields used by the toolchain's identity proofs.
 #[cfg(unix)]
-fn generation(metadata: &Metadata) -> Option<Generation> {
+pub(super) fn generation(metadata: &Metadata) -> Option<Generation> {
     if !metadata.is_file() {
         return None;
     }
@@ -76,6 +88,7 @@ fn generation(metadata: &Metadata) -> Option<Generation> {
         device: metadata.dev(),
         inode: metadata.ino(),
         size: metadata.len(),
+        mode: metadata.mode(),
         modified: metadata.mtime(),
         modified_ns: metadata.mtime_nsec(),
         changed: metadata.ctime(),
@@ -85,12 +98,12 @@ fn generation(metadata: &Metadata) -> Option<Generation> {
 
 /// Platforms without these generation guards keep the original content-hashing behavior.
 #[cfg(not(unix))]
-fn generation(_metadata: &Metadata) -> Option<Generation> {
+pub(super) fn generation(_metadata: &Metadata) -> Option<Generation> {
     None
 }
 
 /// Use an explicit absolute home, or an installed executable's toolchain home; never write into a build directory.
-fn cache_path(key: &str) -> Option<PathBuf> {
+pub(super) fn cache_path(key: &str) -> Option<PathBuf> {
     let explicit = std::env::var_os("INCAN_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute());
@@ -106,19 +119,20 @@ fn cache_path(key: &str) -> Option<PathBuf> {
 /// Refuse malformed, oversized, symlinked, stale or corrupt records without changing the manifest's acceptance.
 fn retained_digest(path: &Path, key: &str, generation: Generation) -> Option<String> {
     let metadata = fs::symlink_metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > 8192 {
+    if !metadata.is_file() || metadata.len() > MAX_DIGEST_RECORD_BYTES {
         return None;
     }
     let mut bytes = Vec::new();
-    File::open(path).ok()?.take(8192).read_to_end(&mut bytes).ok()?;
+    File::open(path)
+        .ok()?
+        .take(MAX_DIGEST_RECORD_BYTES)
+        .read_to_end(&mut bytes)
+        .ok()?;
     let record: Record = serde_json::from_slice(&bytes).ok()?;
     if record.version != 1 || record.key != key || record.generation != generation {
         return None;
     }
-    let digest = record.digest.strip_prefix("sha256:")?;
-    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
+    crate::library_manifest::sha256_digest("retained manifest digest", &record.digest, true).ok()?;
     if record.checksum != checksum(&record.key, generation, &record.digest).ok()? {
         return None;
     }
@@ -133,10 +147,6 @@ fn checksum(key: &str, generation: Generation, digest: &str) -> io::Result<Strin
 
 /// Publish one complete private record atomically; failures leave the already-computed identity usable.
 fn store(path: &Path, key: &str, generation: Generation, digest: &str) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::other("the manifest record has no parent directory"))?;
-    fs::create_dir_all(parent)?;
     let record = Record {
         version: 1,
         key: key.to_owned(),
@@ -144,16 +154,6 @@ fn store(path: &Path, key: &str, generation: Generation, digest: &str) -> io::Re
         digest: digest.to_owned(),
         checksum: checksum(key, generation, digest)?,
     };
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(&temporary)?;
     let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
-    let result = file.write_all(&bytes).and_then(|()| fs::rename(&temporary, path));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+    super::publish_private_record(path, &bytes, "tmp")
 }

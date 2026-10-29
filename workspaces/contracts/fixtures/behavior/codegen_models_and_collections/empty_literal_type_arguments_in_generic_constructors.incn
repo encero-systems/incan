@@ -1,15 +1,34 @@
-# behavior: an empty list literal in a generic model constructor takes the supplied type argument, whether the names differ, match, or the field is concretely typed (#1507)
+# behavior: generic constructors retain empty literals, checked owner hooks and associated frames (#1507, #2256)
 # expect-stdout:
 #   0
 #   0
 #   0
 #   0
 #   1
+#   3
+#   4
 
 @derive(Clone)
 model Holder[Elem with Clone]:
     items: list[Elem]
     names: list[str]
+
+    @staticmethod
+    def __incan_new(items: list[Elem]) -> Self:
+        """Build a holder through the checked owner-specific constructor hook."""
+        return Holder(items=items, names=[])
+
+    @staticmethod
+    def from_result(items: list[Elem]) -> Result[Self, str]:
+        """Retain an internal nominal layout under the factory's owner before returning a Result carrier."""
+        wrapped = Bag[Elem](items=items)
+        return Ok(Holder(items=wrapped.items, names=[]))
+
+    @staticmethod
+    def relay(items: list[Elem]) -> Result[Self, str]:
+        """Preserve the declaring owner's element through a nested factory and propagation."""
+        value = Holder.from_result(items)?
+        return Ok(value)
 
 
 @derive(Clone)
@@ -43,3 +62,8 @@ def main() -> None:
     k: Holder[int] = build_named[int]()
     println(len(k.items))
     println(len(k.names))
+    via_hook: Holder[int] = Holder[int]([3])
+    println(via_hook.items[0])
+    match Holder.relay([4]):
+        Ok(value) => println(value.items[0])
+        Err(error) => println(error)

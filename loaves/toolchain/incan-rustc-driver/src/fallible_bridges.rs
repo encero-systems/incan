@@ -1,11 +1,13 @@
 //! Native trait ABI forwarding for standard iterator contracts selected by Incan lowering.
 
 use crate::ast_build::{
-    binding, block, expression, expression_statement, global_path, ident, inherited, local, path_ty, self_value,
-    trait_bound,
+    RUST_CLONE_SYMBOL, binding, block, expression, expression_statement, global_path, ident, inherited, local, path_ty,
+    self_value, trait_bound,
 };
 use crate::error::PlanError;
 use crate::plan::{FallibleIteratorMethods, IteratorMethods, ModelDeclaration, Plan, PlanType};
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::traits::{self, TraitId};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, kw, respan};
 use thin_vec::{ThinVec, thin_vec};
@@ -21,7 +23,12 @@ fn validate<'a>(
         function: model.name.clone(),
         reason: "unsupported native fallible iterator bridge ABI".into(),
     };
-    if !model.library_item.is_empty() || !model.derives.iter().any(|derive| derive == "Clone") {
+    if !model.library_item.is_empty()
+        || !model
+            .derives
+            .iter()
+            .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+    {
         return Err(refused());
     }
     checked_poll(plan, owner, model, &methods.next)
@@ -91,7 +98,7 @@ pub(crate) fn ordinary_items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Ite
         };
         let poll = ordinary_poll(plan, owner, model, methods, span)?;
         let path = applied(
-            &["incan_stdlib_core", "derives", "Iterator"],
+            &["incan_stdlib_core", "derives", traits::as_str(TraitId::Iterator)],
             vec![crate::declarations::ty(&methods.item, span)],
             span,
         );
@@ -218,12 +225,19 @@ fn call(segments: &[&str], arguments: ThinVec<Box<ast::Expr>>, span: Span) -> Bo
 
 /// Match the immutable source receiver's value semantics at a default factory boundary.
 fn cloned_self(span: Span) -> Box<ast::Expr> {
-    call(&["std", "clone", "Clone", "clone"], thin_vec![self_value(span)], span)
+    call(
+        &["std", "clone", RUST_CLONE_SYMBOL, "clone"],
+        thin_vec![self_value(span)],
+        span,
+    )
 }
 
 /// Retain the native Clone and exact callable bounds of a generic SDK slot.
 fn parameter(name: &str, callable: Option<Vec<Box<ast::Ty>>>, span: Span) -> ast::GenericParam {
-    let mut bounds = vec![trait_bound(global_path(&["std", "clone", "Clone"], span), span)];
+    let mut bounds = vec![trait_bound(
+        global_path(&["std", "clone", RUST_CLONE_SYMBOL], span),
+        span,
+    )];
     if let Some(arguments) = callable {
         let kind = if arguments.len() == 3 { "Callable2" } else { "Callable1" };
         bounds.push(trait_bound(

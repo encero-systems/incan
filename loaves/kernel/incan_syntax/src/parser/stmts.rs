@@ -238,23 +238,7 @@ impl<'a> Parser<'a> {
             (body, body_item_trailing_commas)
         } else {
             if matches!(spec_declaration_head_kind, incan_vocab::DeclarationHeadKind::Signature) {
-                let name = self.identifier()?;
-                self.expect_punct(PunctuationId::LParen, "Expected '(' after vocabulary signature name")?;
-                let parameters = self.params()?;
-                self.expect_punct(
-                    PunctuationId::RParen,
-                    "Expected ')' after vocabulary signature parameters",
-                )?;
-                let return_type = if self.match_punct(PunctuationId::Arrow) {
-                    Some(self.type_expr()?)
-                } else {
-                    None
-                };
-                signature_head = Some(VocabSignatureHead {
-                    name,
-                    parameters,
-                    return_type,
-                });
+                signature_head = Some(self.parse_vocab_signature_head()?);
             } else if !self.check_punct(PunctuationId::Colon) {
                 header_args.push(self.expression()?);
                 while self.match_punct(PunctuationId::Comma) {
@@ -265,52 +249,11 @@ impl<'a> Parser<'a> {
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
             self.expect_suite_indent("Expected indented block after vocab keyword")?;
 
-            if !spec_valid_decorators.is_empty() {
-                for decorator in &decorators {
-                    let decorator_name = decorator.node.name.as_str();
-                    let decorator_full_name = decorator.node.path.segments.join(".");
-                    let is_valid = spec_valid_decorators.iter().any(|allowed| {
-                        let normalized = allowed.trim().trim_start_matches('@');
-                        normalized == decorator_name || normalized == decorator_full_name
-                    });
-                    if !is_valid {
-                        return Err(errors::expected_token_message(
-                            &format!(
-                                "Decorator `{decorator_full_name}` is not valid on vocab block `{}`",
-                                spec_keyword_name
-                            ),
-                            &format!("{:?}", decorator.node),
-                            decorator.span,
-                        ));
-                    }
-                }
-            }
-
-            // ---- RFC 081 (#1023): descriptor-gated embedded-fragment body ----
-            //
-            // If an activated descriptor claims this declaration's body as a lexical submode, the body is not an
-            // ordinary Incan statement list at all — parse it with the re-entrant submode tokenizer instead of
-            // `self.block()`. `try_embedded_fragment_body` leaves `self.pos` positioned exactly on the matching
-            // `Dedent`, so the ordinary `self.expect(&TokenKind::Dedent, ...)` below still applies unchanged in
-            // both branches.
-            if let Some(body) = self.try_embedded_fragment_body(&keyword_name)? {
-                self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
-                let body_item_trailing_commas = vec![false; body.len()];
-                (body, body_item_trailing_commas)
-            } else {
-                self.vocab_block_stack.push(keyword_name.clone());
-                self.vocab_body_kind_stack.push(spec_clause_body_kind);
-                self.vocab_expression_item_modifier_stack
-                    .push(spec_expression_item_modifiers);
-                let body = self.block();
-                self.vocab_block_stack.pop();
-                self.vocab_body_kind_stack.pop();
-                self.vocab_expression_item_modifier_stack.pop();
-                let body = body?;
-                self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
-                let body_item_trailing_commas = vec![false; body.len()];
-                (body, body_item_trailing_commas)
-            }
+            Self::validate_vocab_block_decorators(&spec_keyword_name, &spec_valid_decorators, &decorators)?;
+            let body =
+                self.parse_indented_vocab_body(&keyword_name, spec_clause_body_kind, spec_expression_item_modifiers)?;
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
         };
 
         Ok(Some(VocabBlockStmt {
@@ -330,6 +273,82 @@ impl<'a> Parser<'a> {
             body,
             body_item_trailing_commas,
         }))
+    }
+
+    /// Parse a descriptor-selected vocabulary signature before the block's header colon.
+    fn parse_vocab_signature_head(&mut self) -> Result<VocabSignatureHead, CompileError> {
+        let name = self.identifier()?;
+        self.expect_punct(PunctuationId::LParen, "Expected '(' after vocabulary signature name")?;
+        let parameters = self.params()?;
+        self.expect_punct(
+            PunctuationId::RParen,
+            "Expected ')' after vocabulary signature parameters",
+        )?;
+        let return_type = if self.match_punct(PunctuationId::Arrow) {
+            Some(self.type_expr()?)
+        } else {
+            None
+        };
+        Ok(VocabSignatureHead {
+            name,
+            parameters,
+            return_type,
+        })
+    }
+
+    /// Validate decorators against a vocabulary descriptor's allowed short or qualified names.
+    fn validate_vocab_block_decorators(
+        keyword: &str,
+        allowed: &[String],
+        decorators: &[Spanned<Decorator>],
+    ) -> Result<(), CompileError> {
+        if allowed.is_empty() {
+            return Ok(());
+        }
+        for decorator in decorators {
+            let decorator_name = decorator.node.name.as_str();
+            let decorator_full_name = decorator.node.path.segments.join(".");
+            let is_valid = allowed.iter().any(|allowed| {
+                let normalized = allowed.trim().trim_start_matches('@');
+                normalized == decorator_name || normalized == decorator_full_name
+            });
+            if !is_valid {
+                return Err(errors::expected_token_message(
+                    &format!("Decorator `{decorator_full_name}` is not valid on vocab block `{keyword}`"),
+                    &format!("{:?}", decorator.node),
+                    decorator.span,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse a vocabulary body after its indent, selecting descriptor-owned embedded grammar when claimed.
+    ///
+    /// Ordinary blocks restore all vocabulary context stacks even on failure. Both grammars leave the matching dedent
+    /// for this boundary to consume, so callers receive a complete body with the same outer token position.
+    fn parse_indented_vocab_body(
+        &mut self,
+        keyword: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        if let Some(body) = self.try_embedded_fragment_body(keyword)? {
+            self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            return Ok(body);
+        }
+
+        self.vocab_block_stack.push(keyword.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+        let body = self.block();
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        let body = body?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+        Ok(body)
     }
 
     /// Parse an indentation-line clause with an inline expression payload, such as `FROM orders`.
@@ -1151,49 +1170,54 @@ impl<'a> Parser<'a> {
         if let Some(op) = compound_op {
             self.advance(); // consume the compound operator
             let rhs = self.expression()?;
-            match expr.node {
-                Expr::Field(object, field) => {
-                    // Convert field += rhs to field = field + rhs
-                    let field_expr = Spanned::new(Expr::Field(object.clone(), field.clone()), expr.span);
-                    let bin_op = op.binary_op();
-                    let new_value = Spanned::new(Expr::Binary(Box::new(field_expr), bin_op, Box::new(rhs)), expr.span);
-                    return Ok(Statement::FieldAssignment(FieldAssignmentStmt {
-                        target_span: expr.span,
-                        object: *object,
-                        field,
-                        compound_op: Some(op),
-                        value: new_value,
-                    }));
-                }
-                Expr::Index(object, index) => {
-                    // Convert arr[i] += rhs to arr[i] = arr[i] + rhs
-                    let index_expr = Spanned::new(Expr::Index(object.clone(), index.clone()), expr.span);
-                    let bin_op = op.binary_op();
-                    let new_value = Spanned::new(Expr::Binary(Box::new(index_expr), bin_op, Box::new(rhs)), expr.span);
-                    return Ok(Statement::IndexAssignment(IndexAssignmentStmt {
-                        object: *object,
-                        index: *index,
-                        compound_op: Some(op),
-                        value: new_value,
-                    }));
-                }
-                Expr::Ident(name) => {
-                    // Fallback: simple ident compound assignment
-                    return Ok(Statement::CompoundAssignment(CompoundAssignmentStmt {
-                        name,
-                        name_span: expr.span,
-                        op,
-                        value: rhs,
-                    }));
-                }
-                _ => {
-                    return Err(errors::invalid_compound_assignment_target(expr.span));
-                }
-            }
+            return Self::compound_assignment_for_target(expr, op, rhs);
         }
 
         // Otherwise it's an expression statement
         Ok(Statement::Expr(expr))
+    }
+
+    /// Preserve the compound operation and its expanded value on a field, index or identifier assignment target.
+    ///
+    /// Invalid targets retain their original span. Field and index expressions are copied into the binary value as
+    /// required by the existing AST representation; later stages still receive the explicit compound-operation fact.
+    fn compound_assignment_for_target(
+        expr: Spanned<Expr>,
+        op: CompoundOp,
+        rhs: Spanned<Expr>,
+    ) -> Result<Statement, CompileError> {
+        match expr.node {
+            Expr::Field(object, field) => {
+                let field_expr = Spanned::new(Expr::Field(object.clone(), field.clone()), expr.span);
+                let bin_op = op.binary_op();
+                let new_value = Spanned::new(Expr::Binary(Box::new(field_expr), bin_op, Box::new(rhs)), expr.span);
+                Ok(Statement::FieldAssignment(FieldAssignmentStmt {
+                    target_span: expr.span,
+                    object: *object,
+                    field,
+                    compound_op: Some(op),
+                    value: new_value,
+                }))
+            }
+            Expr::Index(object, index) => {
+                let index_expr = Spanned::new(Expr::Index(object.clone(), index.clone()), expr.span);
+                let bin_op = op.binary_op();
+                let new_value = Spanned::new(Expr::Binary(Box::new(index_expr), bin_op, Box::new(rhs)), expr.span);
+                Ok(Statement::IndexAssignment(IndexAssignmentStmt {
+                    object: *object,
+                    index: *index,
+                    compound_op: Some(op),
+                    value: new_value,
+                }))
+            }
+            Expr::Ident(name) => Ok(Statement::CompoundAssignment(CompoundAssignmentStmt {
+                name,
+                name_span: expr.span,
+                op,
+                value: rhs,
+            })),
+            _ => Err(errors::invalid_compound_assignment_target(expr.span)),
+        }
     }
 
     /// Return whether the current vocab body is contractually an expression list.

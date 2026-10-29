@@ -1,0 +1,145 @@
+"""Coordinate competing decorated-callable requests with bounded channel waits and shared initialization counts."""
+
+from rust::std::sync import Arc, Mutex
+from rust::std::sync::mpsc import Sender, Receiver, channel
+from rust::std::time import Duration
+from rust::std::sync::atomic import AtomicUsize, Ordering
+from rust::std::convert import AsRef
+from rust::incan_std_core::errors import raise_value_error
+
+const SIGNAL_TIMEOUT_SECONDS: u64 = 10
+
+
+pub model InitializationGate:
+    """Share startup/release channels and a synchronized attempt count without copying channel queues."""
+
+    pub started: Arc[Mutex[Receiver[bool]]]
+    pub started_sender: Sender[bool]
+    pub release: Arc[Mutex[Receiver[bool]]]
+    pub release_sender: Sender[bool]
+    pub attempts: Arc[AtomicUsize]
+
+    def snapshot(self) -> InitializationGate:
+        """Release a static guard with independent handles to the same channels and attempt count."""
+        return InitializationGate(
+            started=self.started,
+            started_sender=self.started_sender,
+            release=self.release,
+            release_sender=self.release_sender,
+            attempts=self.attempts,
+        )
+
+
+static SUCCESS: InitializationGate = make_gate()
+static RETRY: InitializationGate = make_gate()
+
+
+pub def await_success_started() -> None:
+    """Release the successful gate's static guard before waiting for its initializer."""
+    gate = SUCCESS.snapshot()
+    await_signal(gate.started, "successful initializer startup")
+
+
+pub def release_success() -> None:
+    """Release the active successful initializer through the original channel."""
+    gate = SUCCESS.snapshot()
+    send_signal(gate.release_sender, "successful initializer release")
+
+
+pub def initialize_success() -> None:
+    """Release the static guard before the successful initializer blocks on its release channel."""
+    gate = SUCCESS.snapshot()
+    initialize(gate, false)
+
+
+pub def success_count() -> int:
+    """Observe the successful initializer's shared attempt count without exporting its static."""
+    gate = SUCCESS.snapshot()
+    return count(gate)
+
+
+pub def await_retry_started() -> None:
+    """Release the retry gate's static guard before waiting for its first initializer."""
+    gate = RETRY.snapshot()
+    await_signal(gate.started, "failing initializer startup")
+
+
+pub def release_retry() -> None:
+    """Release the failing initializer through the original retry channel."""
+    gate = RETRY.snapshot()
+    send_signal(gate.release_sender, "failing initializer release")
+
+
+pub def initialize_retry() -> None:
+    """Release the static guard before holding or retrying the shared initializer."""
+    gate = RETRY.snapshot()
+    initialize(gate, true)
+
+
+pub def retry_count() -> int:
+    """Observe the retry initializer's shared attempt count without exporting its static."""
+    gate = RETRY.snapshot()
+    return count(gate)
+
+
+def initialize(gate: &InitializationGate, fail_first: bool) -> None:
+    """Count each attempt, hold the first until released, and optionally fail that first attempt."""
+    attempt = next_attempt(gate.attempts)
+    if attempt != 0:
+        return
+    send_signal(gate.started_sender, "initializer startup")
+    await_signal(gate.release, "initializer release")
+    if fail_first:
+        raise_value_error("first concurrent initialization failed")
+
+
+def count(gate: &InitializationGate) -> int:
+    """Observe the initializer count in the same atomic order as its increments."""
+    counter: &AtomicUsize = gate.attempts.as_ref()
+    return int(counter.load(Ordering.SeqCst))
+
+
+pub def signals() -> tuple[Sender[bool], Arc[Mutex[Receiver[bool]]]]:
+    """Create an announcement channel whose receiver remains shareable without copying its queue."""
+    pair: tuple[Sender[bool], Receiver[bool]] = channel()
+    sender, receiver = pair
+    return (sender, Arc.new(Mutex.new(receiver)))
+
+
+pub def send_signal(sender: &Sender[bool], context: str) -> None:
+    """Send a synchronization event or fail with its concrete channel cause."""
+    match sender.send(true):
+        Ok(_value) => return
+        Err(error) =>
+            assert false, f"{context}: {error}"
+
+
+pub def await_signal(receiver: &Arc[Mutex[Receiver[bool]]], context: str) -> None:
+    """Bound a synchronization wait; timeout is a failed test, never evidence of thread timing."""
+    guard = match receiver.lock():
+        Ok(value) => value
+        Err(error) => error.into_inner()
+
+    match guard.recv_timeout(Duration.from_secs(SIGNAL_TIMEOUT_SECONDS)):
+        Ok(_value) => return
+        Err(error) =>
+            assert false, f"{context}: {error}"
+
+
+def make_gate() -> InitializationGate:
+    """Give one declaration independent startup, release and attempt-count state."""
+    started_sender, started = signals()
+    release_sender, release = signals()
+    return InitializationGate(
+        started=started,
+        started_sender=started_sender,
+        release=release,
+        release_sender=release_sender,
+        attempts=Arc.new(AtomicUsize.new(0usize)),
+    )
+
+
+def next_attempt(attempts: &Arc[AtomicUsize]) -> int:
+    """Return the old count while atomically incrementing it; competing initializers cannot lose updates."""
+    counter: &AtomicUsize = attempts.as_ref()
+    return int(counter.fetch_add(1usize, Ordering.SeqCst))

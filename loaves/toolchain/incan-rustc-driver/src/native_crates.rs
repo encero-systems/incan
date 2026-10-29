@@ -4,26 +4,41 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use crate::plan::{CalleeKind, Constant, Operand, OperandKind, Plan, PlanType, RvalueKind, StatementKind};
+use incan_driver::unit::UnitLoaf;
+use incan_frontend::loaf_index::LoafArtifact;
+use rustc_ast::{
+    self as ast,
+    visit::{self, Visitor},
+};
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-use incan_driver::unit::UnitLoaf;
-use incan_frontend::loaf_index::LoafArtifact;
+/// Load the explicit crate aliases of retained native constants even when their value types name no native owner.
+/// Body IR materializes each constant read into a Use assignment before other operations consume that temporary.
+fn constant_crate_roots(plan: &Plan) -> impl Iterator<Item = &str> {
+    plan.functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.statements)
+        .filter_map(|statement| {
+            let StatementKind::Assign(_, value) = &statement.kind else {
+                return None;
+            };
+            let RvalueKind::Use(Operand {
+                kind: OperandKind::Literal(Constant::RustItem(path, _)),
+                ..
+            }) = &value.kind
+            else {
+                return None;
+            };
+            callee_root(path)
+        })
+}
 
-/// Select exact artifacts needed by a checked plan from direct inputs and its reached Loaves' native closures.
-/// A direct input binds its crate for the whole compilation, so a Loaf closure that recorded another build of the
-/// same crate (as every Loaf built against the bootstrap runtime does) neither overrides nor contradicts it; closures
-/// supply only the roots the unit leaves unbound. Private provider aliases enter only native compilation, after source
-/// checking; conflicting artifacts remain refused instead of choosing a crate from a search directory or exposing
-/// transitive imports to the checker.
-/// A plan whose roots are already bound by direct inputs does not need closure discovery; the checker has already
-/// admitted its Loaf manifests, and reopening them cannot contribute another binding.
-pub(crate) fn link_externs(
-    plan: &crate::plan::Plan,
-    direct: &[(String, PathBuf)],
-    loaves: &[UnitLoaf],
-) -> Result<Vec<(String, PathBuf)>, String> {
-    let roots = plan
+/// The checked native roots shared by AST loading and optional development-library preparation.
+pub(crate) fn native_roots(plan: &Plan) -> BTreeSet<&str> {
+    let mut roots: BTreeSet<_> = plan
         .externals
         .iter()
         .filter_map(|external| callee_root(&external.path))
@@ -32,34 +47,104 @@ pub(crate) fn link_externs(
                 .iter()
                 .map(|model| &model.library_item)
                 .chain(plan.enums.iter().map(|value| &value.library_item))
-                .chain(plan.models.iter().map(|model| &model.string_conversion_trait))
-                .filter_map(|item| item.split("::").next()),
+                .filter_map(|item| item.split("::").next())
+                .filter(|root| !root.is_empty()),
         )
+        .collect();
+    roots.extend(constant_crate_roots(plan));
+    if plan.functions.iter().any(|function| {
+        function.locals.iter().any(|local| {
+            matches!(
+                local.ty,
+                PlanType::Generator(..)
+                    | PlanType::GeneratorMutRef(..)
+                    | PlanType::GeneratorYield(..)
+                    | PlanType::GeneratorYieldRef(..)
+            )
+        })
+    }) {
+        roots.insert("incan_std_core");
+    }
+    for function in &plan.functions {
+        let Some(callee) = &function.future_callee else {
+            continue;
+        };
+        let path = match &callee.kind {
+            CalleeKind::External(path) | CalleeKind::Instantiated(path, _) | CalleeKind::FutureMethod(path, _) => path,
+            _ => continue,
+        };
+        if let Some(root) = callee_root(path) {
+            roots.insert(root);
+        }
+    }
+    roots
+}
+
+/// Native wrapper paths in declarations require explicit aliases even when no executable call names their crate.
+pub(crate) fn declaration_roots(krate: &ast::Crate) -> BTreeSet<&'static str> {
+    let mut visitor = DeclarationRoots { roots: BTreeSet::new() };
+    visitor.visit_crate(krate);
+    visitor.roots
+}
+
+/// Read the backend's actual wrapper paths, rather than reconstructing carrier usage from incidental calls.
+struct DeclarationRoots {
+    roots: BTreeSet<&'static str>,
+}
+
+impl<'ast> Visitor<'ast> for DeclarationRoots {
+    /// Keep wrapper crate bindings independent of call and constant requirements, including nested type arguments.
+    fn visit_path(&mut self, path: &'ast ast::Path) {
+        if path.segments.len() > 1
+            && let Some(segment) = path
+                .segments
+                .iter()
+                .find(|segment| segment.ident.name != rustc_span::kw::PathRoot)
+        {
+            match segment.ident.name.as_str() {
+                "incan_native_runtime" => {
+                    self.roots.insert("incan_native_runtime");
+                }
+                "incan_std_core" => {
+                    self.roots.insert("incan_std_core");
+                }
+                _ => {}
+            }
+        }
+        visit::walk_path(self, path);
+    }
+}
+
+/// Select exact artifacts needed by a checked plan from direct inputs and its reached Loaves' native closures.
+/// Every offered binding of a required root must name the same complete artifact. Compiled providers and checked
+/// source interfaces both contribute their exact native dependencies, including dependencies used by governed source
+/// templates. A direct input cannot replace a provider's native type identity: its exported fields and signatures
+/// still refer to the selected artifact. Private provider aliases enter only native compilation, after source
+/// checking; transitive imports remain private, and conflicting artifacts require rebuilding and publishing a
+/// coherent dependency closure.
+pub(crate) fn link_externs(
+    plan: &crate::plan::Plan,
+    direct: &[(String, PathBuf)],
+    loaves: &[UnitLoaf],
+) -> Result<Vec<(String, PathBuf)>, String> {
+    let roots = native_roots(plan)
+        .into_iter()
         .filter(|root| !matches!(*root, "" | "std" | "core" | "alloc" | "crate"))
         .collect::<BTreeSet<_>>();
-    let closures = if roots.iter().any(|root| !direct.iter().any(|(name, _)| name == root)) {
-        loaves
-            .iter()
-            .map(|loaf| {
-                LoafArtifact::read(&loaf.dir, &loaf.name)
-                    .and_then(|artifact| artifact.native_closure())
-                    .map_err(|error| error.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        Vec::new()
-    };
+    let closures = loaves
+        .iter()
+        .map(|loaf| {
+            LoafArtifact::read(&loaf.dir, &loaf.name)
+                .and_then(|artifact| artifact.native_closure())
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut selected = direct.to_vec();
     for root in roots {
-        let mut offered = direct.iter().filter(|(name, _)| name == root).collect::<Vec<_>>();
-        if offered.is_empty() {
-            offered = closures
-                .iter()
-                .flat_map(|closure| &closure.externs)
-                .filter(|(name, _)| name == root)
-                .collect();
-        }
-        let mut candidates = offered.into_iter();
+        let mut candidates = direct
+            .iter()
+            .chain(closures.iter().flat_map(|closure| &closure.externs))
+            .filter(|(name, _)| name == root);
         let Some((_, artifact)) = candidates.next() else {
             return Err(format!(
                 "unsupported Body IR native dependency `{root}` in the selected Loaf closure"
@@ -96,12 +181,16 @@ fn same_artifact(left: &Path, right: &Path) -> Result<bool, String> {
     Ok(read(left)? == read(right)?)
 }
 
-/// The crate a retained callee needs loaded. A slice or `str` method's internal owner is not a crate; its primitive
+/// The crate a retained callee needs loaded. A primitive method's internal owner is not a crate; its primitive
 /// impl bucket belongs to the always-linked standard closure. Full path and signature validation remain separate.
 pub(crate) fn callee_root(path: &str) -> Option<&str> {
-    path.split("::")
-        .next()
-        .map(|root| if matches!(root, "[]" | "str") { "core" } else { root })
+    path.split("::").next().map(|root| {
+        if crate::rust_facts::primitive_owner(root) {
+            "core"
+        } else {
+            root
+        }
+    })
 }
 
 /// Find an explicitly imported alias, including an anonymous metadata import, before a unique canonical crate name.

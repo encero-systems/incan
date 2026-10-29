@@ -79,14 +79,9 @@ pub const JSON_VALUE_TYPE_NAME: &str = "JsonValue";
 /// Runtime Rust path carried by `std.json.JsonValue`.
 pub const JSON_VALUE_RUST_PATH: &str = "incan_std_data::json::JsonValue";
 
-/// The standard library's Rust facets: the runtime crates generated code links.
-///
-/// Each facet is the `rust/` crate of one component in `sdk-components.toml`, named `incan_std_<component>` after the
-/// component's `stdlib-<component>` id. The mandatory `core` facet serves the language itself — reflection, frozen
-/// constants, numerics, strings, collection helpers, the version check — and every generated program links it; the
-/// others serve the namespaces their component owns, and a generated program links one only when it reaches such a
-/// namespace. Cargo features on a single runtime crate used to play this role; a facet is a crate, so the compiler
-/// records crates, not flags.
+/// The standard library's compiled native artifacts, named by the standard Loaves' published runtime contracts.
+/// The mandatory `core` artifact serves reflection, frozen constants, numerics, strings and collection helpers;
+/// other artifacts serve their owning namespaces. A unit's selected artifacts are explicit compiler inputs.
 pub mod facets {
     /// The mandatory facet every generated program links.
     pub const CORE: &str = "incan_std_core";
@@ -136,21 +131,6 @@ pub mod facets {
         ALL.iter()
             .copied()
             .find(|facet| facet.strip_prefix("incan_std_") == Some(name))
-    }
-
-    /// The facet that serves a runtime requirement named by a vocab manifest's `required_stdlib_features`.
-    ///
-    /// The vocab contract predates the facets and spells requirements as the runtime crate's old feature names;
-    /// those names stay the contract, and this is where they resolve. A facet name is accepted as its own
-    /// requirement so a manifest written after the split needs no translation.
-    pub fn for_requirement(requirement: &str) -> Option<&'static str> {
-        match requirement {
-            "json" | "ordinal" => Some(DATA),
-            "async" => Some(ASYNC),
-            "web" => Some(WEB),
-            "testing" => Some(TESTING),
-            facet => ALL.iter().copied().find(|known| *known == facet),
-        }
     }
 }
 
@@ -438,7 +418,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: STDLIB_WEB_MACROS_CRATE,
-                source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
+                source: StdlibExtraCrateSource::Path("loaves/stdlib/derive/incan_web_macros"),
             },
             StdlibExtraCrateDep {
                 crate_name: "inventory",
@@ -970,7 +950,10 @@ pub fn is_typechecker_only_stdlib(path: &[String]) -> bool {
     find_namespace(&path[1]).is_some_and(|ns| ns.typechecker_only)
 }
 
-/// Resolve the relative stub `.incn` file path for a stdlib module path.
+/// Resolve a stdlib module's historical monolithic stub-layout path.
+///
+/// These are logical compatibility paths, not current repository locations. Source packages now live under
+/// `loaves/stdlib/`; their manifests and namespace policy select the source files.
 ///
 /// Uses convention-based resolution:
 /// - `std.X` (leaf, no submodules) → `stdlib/X.incn`
@@ -1353,7 +1336,7 @@ mod tests {
         let macros = find_extra_crate_dep("incan_web_macros");
         assert_eq!(
             macros.map(|dep| dep.source),
-            Some(StdlibExtraCrateSource::Path("crates/incan_web_macros"))
+            Some(StdlibExtraCrateSource::Path("loaves/stdlib/derive/incan_web_macros"))
         );
         assert!(is_path_extra_crate_dep("incan_web_macros"));
         assert!(!is_path_extra_crate_dep("axum"));
@@ -1386,7 +1369,6 @@ mod tests {
         assert!(facets::namespace_is_facet_root("testing"));
         assert!(!facets::namespace_is_facet_root("json"));
         assert!(!facets::namespace_is_facet_root("collections"));
-        assert_eq!(facets::for_requirement("ordinal"), Some(facets::DATA));
         assert_eq!(facets::for_component("stdlib-web"), Some(facets::WEB));
         assert_eq!(facets::for_component("stdlib-system"), None);
         assert!(facets::path_names_a_facet("incan_std_core::strings::str_len"));

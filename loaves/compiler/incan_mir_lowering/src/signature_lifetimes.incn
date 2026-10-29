@@ -1,0 +1,116 @@
+"""Preserve generic reference binders before specialization erases their relationship in concrete frame types."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import Body
+from pub::incan_mir_plan import GenericLoan, PlanType
+
+
+pub def generic_loans(body: &Body, arguments: list[PlanType]) -> list[GenericLoan]:
+    """1. Retain parameter occurrences. 2. Retain result occurrences under the same source type identities."""
+    mut loans: list[GenericLoan] = []
+    # 1. A source type parameter keeps its identity at every structural occurrence in an input.
+    for slot in range(len(body.params)):
+        type_generic_loans(body.params[slot].ty, body.type_parameters, arguments, slot, [], loans)
+    # 2. Return occurrences carry exactly the same identity, including loans hidden inside native values.
+    type_generic_loans(body.return_type, body.type_parameters, arguments, len(body.params), [], loans)
+    return loans
+
+
+def type_generic_loans(
+    ty: &RustType,
+    names: list[str],
+    arguments: list[PlanType],
+    slot: int,
+    path: list[int],
+    mut loans: list[GenericLoan],
+) -> None:
+    """Record type-parameter provenance through references, tuples and declaration-ordered generic arguments."""
+    match ty:
+        RustType.TypeVar(name) =>
+            for index in range(len(names)):
+                if names[index] == str(name):
+                    loans.append(GenericLoan(slot=slot, path=path, parameter=index, ty=arguments[index]))
+                    return
+        RustType.Ref(inner) => type_generic_loans(inner, names, arguments, slot, path + [0], loans)
+        RustType.RefMut(inner) => type_generic_loans(inner, names, arguments, slot, path + [0], loans)
+        RustType.Tuple(elements) => element_generic_loans(elements, names, arguments, slot, path, loans)
+        RustType.Generic(base=_base, args=elements) =>
+            element_generic_loans(elements, names, arguments, slot, path, loans)
+        _ => pass
+
+
+def element_generic_loans(
+    elements: &list[RustType],
+    names: list[str],
+    arguments: list[PlanType],
+    slot: int,
+    path: list[int],
+    mut loans: list[GenericLoan],
+) -> None:
+    """Keep distinct source type parameters distinct even when their concrete native types happen to be equal."""
+    for index in range(len(elements)):
+        type_generic_loans(elements[index], names, arguments, slot, path + [index], loans)
+
+
+pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> list[list[str]]:
+    """
+    Retain generic loans: 1. Visit original parameters. 2. Visit the result. 3. Omit unneeded annotations.
+
+    Each reference introduced by one type argument has a distinct binder, reused at every occurrence of that
+    argument. Source-written references remain elided; they never acquire a substituted argument's binder.
+    """
+    mut signature: list[list[str]] = []
+    # 1. Visit original parameters while the source type parameters still exist.
+    for parameter in body.params:
+        signature.append(type_lifetimes(parameter.ty, body.type_parameters, arguments, ""))
+    # 2. Visit the original result under the same binder identities.
+    signature.append(type_lifetimes(body.return_type, body.type_parameters, arguments, ""))
+    # 3. Omit annotations when specialization introduces no generic loans, including transformed generators.
+    if has_generic_loans(signature):
+        return signature
+    return []
+
+
+def has_generic_loans(signature: list[list[str]]) -> bool:
+    """Decide whether specialization introduced any reference binder the concrete signature must preserve."""
+    for loans in signature:
+        for loan in loans:
+            if loan != "":
+                return true
+    return false
+
+
+def type_lifetimes(ty: &RustType, names: list[str], arguments: list[RustType], binder: str) -> list[str]:
+    """Collect references in structural preorder, naming only loans introduced by a retained generic argument."""
+    mut loans: list[str] = []
+    match ty:
+        RustType.TypeVar(name) =>
+            for index in range(len(names)):
+                if names[index] == str(name):
+                    return type_lifetimes(arguments[index], [], [], f"t{index}")
+        RustType.Ref(inner) =>
+            loans.append(binder)
+            loans.extend(type_lifetimes(inner, names, arguments, child_binder(binder, 0)))
+        RustType.RefMut(inner) =>
+            loans.append(binder)
+            loans.extend(type_lifetimes(inner, names, arguments, child_binder(binder, 0)))
+        RustType.Generic(base=_base, args=elements) =>
+            loans.extend(element_lifetimes(elements, names, arguments, binder))
+        RustType.Tuple(elements) => loans.extend(element_lifetimes(elements, names, arguments, binder))
+        _ => pass
+    return loans
+
+
+def element_lifetimes(elements: &list[RustType], names: list[str], arguments: list[RustType], binder: str) -> list[str]:
+    """Keep independent references within one generic argument distinct by their structural position."""
+    mut loans: list[str] = []
+    for index in range(len(elements)):
+        loans.extend(type_lifetimes(elements[index], names, arguments, child_binder(binder, index)))
+    return loans
+
+
+def child_binder(binder: str, index: int) -> str:
+    """Extend only a generic loan's identity; source references retain ordinary independent elision."""
+    if binder == "":
+        return ""
+    return f"{binder}_{index}"

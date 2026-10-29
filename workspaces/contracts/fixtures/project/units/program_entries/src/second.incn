@@ -1,0 +1,12 @@
+from rust::std::string import String as NativeString
+
+
+def borrowed_length(value: NativeString) -> int:
+    """Keep a borrowed native signature first in the collected dependency module."""
+    return value.len()
+
+
+pub def main() -> None:
+    """Select an independent second program entry."""
+    value = NativeString.from("second")
+    println(borrowed_length(value))

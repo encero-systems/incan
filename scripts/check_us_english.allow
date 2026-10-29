@@ -3,10 +3,6 @@
 
 # Frozen, vendored and release-pinned sources: their bytes are the contract, so their spelling stays as it is.
 loaves/compiler/incan_emit/src/emit/**	*	The frozen Rust-emission tree (#1561): scripts/check_emitter_freeze.py fingerprints whole files, so even comment prose cannot change without a recorded migration note.
-loaves/third_party/**	*	Vendored upstream source (rust-analyzer's proc-macro API); its spelling belongs to upstream.
-
-# Generated pages are regenerated from their sources, never edited.
-workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md	*	Rendered by `make test-inventory` from scripts/test_inventory/dispositions.json and the tree; fix the sources and regenerate.
 
 # Third-party names and quoted text.
 workspaces/docs-site/docs/RFCs/125_incan_pub_loaf_registry_and_baked_asset_distribution.md	`licence`	A literal accepted license-file prefix in the registry contract, not prose spelling.

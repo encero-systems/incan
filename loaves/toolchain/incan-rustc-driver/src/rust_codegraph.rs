@@ -52,11 +52,16 @@ struct Observer {
 }
 
 impl rustc_driver::Callbacks for Observer {
+    /// Give hand-written Rust invocations the same opt-in phase diagnostics as Incan's native boundary.
+    fn config(&mut self, config: &mut interface::Config) {
+        crate::native_timing::Timing::requested().configure(config);
+    }
+
     /// Extract only after name resolution and type checking succeeded; method targets come from typeck results.
     fn after_analysis(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         self.records.push(CodegraphRecord::Header(CodegraphHeaderRecord {
             schema_version: CODEGRAPH_SCHEMA_VERSION,
-            compiler_version: env!("CARGO_PKG_VERSION").to_owned(),
+            compiler_version: incan_lang::version::INCAN_VERSION.to_owned(),
             mode: CodegraphMode::Strict,
             root_path: self.root.clone(),
             languages: vec![CodegraphLanguage::Rust],

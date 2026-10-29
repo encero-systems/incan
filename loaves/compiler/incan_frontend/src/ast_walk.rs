@@ -24,7 +24,7 @@
 
 use crate::ast::{
     AssertKind, CallArg, ComprehensionClause, Condition, Declaration, DecoratorArg, DecoratorArgValue, DictEntry, Expr,
-    ImportKind, ListEntry, MatchBody, Program, Spanned, Statement,
+    ImportKind, ListEntry, MatchArm, MatchBody, Program, RaceForBody, Spanned, Statement, SurfaceExprPayload,
 };
 
 /// Returns `true` if any expression in `program` satisfies `pred`.
@@ -322,28 +322,7 @@ where
                 || slice.step.as_ref().is_some_and(|expr| expr_has(&expr.node, pred))
         }
         Expr::Match(scrutinee, arms) => {
-            if expr_has(&scrutinee.node, pred) {
-                return true;
-            }
-
-            for arm in arms {
-                if arm.node.guard.as_ref().is_some_and(|guard| expr_has(&guard.node, pred)) {
-                    return true;
-                }
-                match &arm.node.body {
-                    MatchBody::Expr(value) => {
-                        if expr_has(&value.node, pred) {
-                            return true;
-                        }
-                    }
-                    MatchBody::Block(body) => {
-                        if any_expr_in_body_impl(body, pred) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            false
+            expr_has(&scrutinee.node, pred) || arms.iter().any(|arm| match_arm_has_expr(&arm.node, pred))
         }
         Expr::If(if_expr) => {
             expr_has(&if_expr.condition.node, pred)
@@ -374,26 +353,7 @@ where
         }
         Expr::Closure(params, body) => params_have_expr(params, pred) || expr_has(&body.node, pred),
         Expr::Range { start, end, .. } => expr_has(&start.node, pred) || expr_has(&end.node, pred),
-        Expr::Surface(surface_expr) => match &surface_expr.payload {
-            crate::ast::SurfaceExprPayload::PrefixUnary(expr) => expr_has(&expr.node, pred),
-            crate::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().any(|arm| {
-                expr_has(&arm.awaitable.node, pred)
-                    || match &arm.body {
-                        crate::ast::RaceForBody::Expr(expr) => expr_has(&expr.node, pred),
-                        crate::ast::RaceForBody::Block(stmts) => any_expr_in_body_impl(stmts, pred),
-                    }
-            }),
-            crate::ast::SurfaceExprPayload::LeadingDotPath { .. } => false,
-            crate::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                expr_has(&left.node, pred) || expr_has(&right.node, pred)
-            }
-            crate::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => args.iter().any(|arg| match arg {
-                crate::ast::CallArg::Positional(expr)
-                | crate::ast::CallArg::Named(_, expr)
-                | crate::ast::CallArg::PositionalUnpack(expr)
-                | crate::ast::CallArg::KeywordUnpack(expr) => expr_has(&expr.node, pred),
-            }),
-        },
+        Expr::Surface(surface_expr) => surface_has_expr(&surface_expr.payload, pred),
 
         // ---- Context: collection / interpolation expressions ----
         Expr::Tuple(items) | Expr::Set(items) => items.iter().any(|item| expr_has(&item.node, pred)),
@@ -414,6 +374,42 @@ where
         }
         Expr::Embedded(fragment) => fragment.holes().iter().any(|hole| expr_has(&hole.node, pred)),
         Expr::Yield(None) | Expr::Partial(_) => false,
+    }
+}
+
+/// Visit a match arm's guard before its body, stopping as soon as the predicate matches.
+fn match_arm_has_expr<F>(arm: &MatchArm, pred: &mut F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    if arm.guard.as_ref().is_some_and(|guard| expr_has(&guard.node, pred)) {
+        return true;
+    }
+    match &arm.body {
+        MatchBody::Expr(value) => expr_has(&value.node, pred),
+        MatchBody::Block(body) => any_expr_in_body_impl(body, pred),
+    }
+}
+
+/// Visit surface expression operands without treating paths, patterns or types as expression children.
+fn surface_has_expr<F>(surface: &SurfaceExprPayload, pred: &mut F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    match surface {
+        SurfaceExprPayload::PrefixUnary(expr) => expr_has(&expr.node, pred),
+        SurfaceExprPayload::RaceFor(race) => race.arms.iter().any(|arm| {
+            expr_has(&arm.awaitable.node, pred)
+                || match &arm.body {
+                    RaceForBody::Expr(expr) => expr_has(&expr.node, pred),
+                    RaceForBody::Block(stmts) => any_expr_in_body_impl(stmts, pred),
+                }
+        }),
+        SurfaceExprPayload::LeadingDotPath { .. } => false,
+        SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+            expr_has(&left.node, pred) || expr_has(&right.node, pred)
+        }
+        SurfaceExprPayload::ScopedSymbolCall { args, .. } => args.iter().any(|arg| call_arg_has_expr(arg, pred)),
     }
 }
 

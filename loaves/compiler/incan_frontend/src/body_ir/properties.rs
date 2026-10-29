@@ -25,7 +25,7 @@ pub(super) fn lower_getter_body(
         .type_info
         .declarations
         .body_ir_property_bindings
-        .get(&(property.span.start, property.span.end));
+        .get(&property.span);
     let parameters = binding
         .map(|binding| binding.owner_parameters.as_slice())
         .unwrap_or(&[]);
@@ -63,8 +63,10 @@ pub(super) fn lower_getter_body(
     let named_type_identities =
         builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
     Some(bir::Body {
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id: CompilerNodeId::declaration(facts.module_identity, &format!("{owner}::{}", property.node.name)),
-        direct_call_id: CompilerNodeId::declaration_span(facts.module_identity, property.span.start, property.span.end),
+        direct_call_id: CompilerNodeId::declaration_at(facts.module_identity, property.span),
         canonical: binding.and_then(|binding| binding.callable.identity.clone()),
         name: property.node.name.clone(),
         span,
@@ -87,6 +89,7 @@ pub(super) fn lower_getter_body(
             span,
             default: bir::CallableParamDefault::Required,
             mutable: false,
+            native_owned: false,
         }],
         param_locals: vec![receiver],
         locals: builder.locals,
@@ -142,7 +145,7 @@ impl BodyBuilder<'_, '_> {
             Ok(returned) => returned,
             Err(description) => return Some(self.unsupported_operand(description, scope, source_span, out)),
         };
-        self.settled_types.insert((span.start, span.end), returned.clone());
+        self.settled_types.insert(span, returned.clone());
         let receiver = self.lower_expr_to_place(base, scope, out);
 
         // ---- Getter call ----
@@ -154,6 +157,7 @@ impl BodyBuilder<'_, '_> {
                 intrinsic_carrier: None,
                 reflection: None,
                 loaf_trait: None,
+                trait_arguments: None,
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(0),
             }),

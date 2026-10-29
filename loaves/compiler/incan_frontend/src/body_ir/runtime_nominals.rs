@@ -144,6 +144,7 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
         return_type: result,
         type_parameters: parameters,
         native_type_arguments: Vec::new(),
+        native_callable_parameters: Vec::new(),
         parameter_defaults: Vec::new(),
         declaration_frame: None,
     })
@@ -217,6 +218,29 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
 /// Copy checker-retained native storage and recursively preserve already structural source carriers.
 /// An unretained native display remains opaque and cannot trigger parsing or default specialization in Body IR.
 pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
+    if let IncanType::Named(name) = &ty
+        && let Some(storage) = super::checked_bridge::private_storage(name, facts)
+    {
+        return storage;
+    }
+    // Function cache entries describe storage before callable passing facts are retained. Project their components
+    // from the original native parameter provenance so an inline collection cannot erase its owned ABI.
+    let ty = match ty {
+        IncanType::Function { params, return_type } => {
+            return IncanType::Function {
+                params: params
+                    .into_iter()
+                    .map(|mut parameter| {
+                        parameter.native_owned |= native_collection_parameter(&parameter.ty, facts);
+                        parameter.ty = project_type(parameter.ty, facts);
+                        parameter
+                    })
+                    .collect(),
+                return_type: Box::new(project_type(*return_type, facts)),
+            };
+        }
+        other => other,
+    };
     if let Some(storage) = facts.rust.storage_types.get(&ty) {
         return storage.clone();
     }
@@ -242,18 +266,32 @@ pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
         },
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(project_type(*inner, facts))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(project_type(*inner, facts))),
-        IncanType::Function { params, return_type } => IncanType::Function {
-            params: params
-                .into_iter()
-                .map(|mut parameter| {
-                    parameter.ty = project_type(parameter.ty, facts);
-                    parameter
-                })
-                .collect(),
-            return_type: Box::new(project_type(*return_type, facts)),
-        },
         other => other,
     }
+}
+
+/// Retain a source native collection's owned outer ABI before its checked storage becomes a builtin collection.
+/// Only an inspected Rust path projected to List, Dict or Set grants this fact; ordinary source collections borrow.
+pub(super) fn native_collection_parameter(ty: &IncanType, facts: &TypeCheckInfo) -> bool {
+    if !matches!(ty, IncanType::RustInteropPath(_)) {
+        return false;
+    }
+    owned_collection_storage(&project_type(ty.clone(), facts))
+}
+
+/// Recognize an owned builtin collection carrier after the accepting checker has projected native storage.
+pub(super) fn owned_collection_storage(ty: &IncanType) -> bool {
+    let IncanType::Generic { base, .. } = ty else {
+        return false;
+    };
+    matches!(
+        incan_lang::lang::types::collections::from_str(base),
+        Some(
+            incan_lang::lang::types::collections::CollectionTypeId::List
+                | incan_lang::lang::types::collections::CollectionTypeId::Dict
+                | incan_lang::lang::types::collections::CollectionTypeId::Set
+        )
+    )
 }
 
 /// Collect the nominal names a type mentions, through generic arguments, tuples and references.

@@ -1,5 +1,6 @@
 """Class receiver frames and canonical source method admission."""
 
+from table_views import borrowed_at
 from rust::incan_semantics_core import (
     IncanType as RustType,
     CanonicalSymbolId,
@@ -14,39 +15,42 @@ from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,
     OwnershipFact,
     ArgumentElement as RustArgumentElement,
-    NamedCallableTarget,
     NominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
 )
 from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan, EnumDeclaration
 from models import model_place
+from native_type_identity import ConstructorIndex
 from ranges import range_value_local
-from unions import native_source_type
+from layout_types import native_source_type
 from symbols import symbol_component, type_component
+pub from type_parameters import static_type_arguments
+
+
+pub def parameter_local_index(body: &Body, index: int) -> int:
+    """Read a parameter's retained local identity after materializing its native Copy field (#2256 bootstrap)."""
+    parameter = body.params[index]
+    return int(parameter.local.index())
 
 
 pub def frame_type(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
+    constructors: &ConstructorIndex,
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
     local: &RustLocal,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """
-    Turn only checker-retained receiver origins into borrowed native frame slots, borrowing the caller's cached declaration tables.
+    Map checked receiver origins and retained types to native slots through borrowed declaration tables.
 
     A source enum's receiver is a shared reference; a `mut self` enum method would replace the value its caller holds,
     which no enum receiver frame retains, so it refuses.
-    Union storage is resolved from the already retained intrinsic declarations; a local never rediscovers program unions.
+    Resolve unions from retained intrinsic layouts; locals never rediscover the program's union inventory.
     """
     if range_value_local(local.ty, local.origin):
         return Ok(PlanType.RangeValue)
-    ty = native_source_type(
-        nominals,
-        enums,
-        [],
-        local.ty,
-        intrinsics,
-    )?
+    unions: list[RustType] = []
+    ty = native_source_type(constructors, nominals, enums, unions, local.ty, intrinsics)?
     match receiver_mode(local.origin):
         Some(mutable) =>
             match ty:
@@ -76,21 +80,29 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
             if identity.kind == SemanticSourceTargetKind.Function:
                 # Overloads share their source name, so each takes its own declaration span as well.
                 if has_overloaded_name(module, body, identity):
-                    return f"__incan_overload_{body.span.start}{symbol_component(str(body.name))}"
+                    return f"__incan_overload_{body_span_symbol(body)}{symbol_component(str(body.name))}"
                 return str(body.name)
         None => pass
     if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
             Some(_mutable) =>
-                mut symbol = f"__incan_body_{body.span.start}{type_component(body.locals[0].ty)}"
+                mut symbol = f"__incan_body_{body_span_symbol(body)}{type_component(body.locals[0].ty)}"
                 if len(body.type_parameters) != 0:
                     symbol += symbol_component(str(body.name))
                 return symbol
             None => pass
     # Instances of one associated method share its span; the instantiated name tells their frames apart.
     if len(body.type_parameters) != 0:
-        return f"__incan_body_{body.span.start}{symbol_component(str(body.name))}"
-    return f"__incan_body_{body.span.start}"
+        return f"__incan_body_{body_span_symbol(body)}{symbol_component(str(body.name))}"
+    return f"__incan_body_{body_span_symbol(body)}"
+
+
+def body_span_symbol(body: &Body) -> str:
+    """Retain authored symbols while distinguishing generated frames by their complete checked declaration identity."""
+    mut symbol = str(body.span.start)
+    if body.span.is_generated():
+        symbol += symbol_component(body.direct_call_id.path())
+    return symbol
 
 
 pub def is_program_entry(module: &BodyIrModule, body: &Body) -> bool:
@@ -111,8 +123,9 @@ pub def is_program_entry(module: &BodyIrModule, body: &Body) -> bool:
 def has_overloaded_name(module: &BodyIrModule, body: &Body, identity: &CanonicalSymbolId) -> bool:
     """Report whether another function of the same module declares this body's source name, as overloads do."""
     owner = canonical_module_identity(identity)
-    for other in module.bodies:
-        if other.name != body.name or other.span.start == body.span.start:
+    for body_position in range(len(module.bodies)):
+        other = borrowed_at(module.bodies, body_position)
+        if other.name != body.name or other.span == body.span:
             continue
         match other.canonical:
             Some(other_identity) =>
@@ -121,34 +134,6 @@ def has_overloaded_name(module: &BodyIrModule, body: &Body, identity: &Canonical
                     return true
             None => pass
     return false
-
-
-pub def static_type_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
-    """Close an associated call's owner parameters at its checked receiver's arguments, ahead of the call's own."""
-    mut arguments = static_owner_arguments(module, target)?
-    for argument in target.type_args:
-        arguments.append(argument.clone())
-    return Ok(arguments)
-
-
-def static_owner_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
-    """Read an applied receiver's arguments only when its retained canonical template confirms the owner and arity."""
-    match target.receiver_type:
-        Some(ty) =>
-            match ty:
-                RustType.Generic(base=base, args=owner_arguments) =>
-                    for declaration in module.nominal_declarations:
-                        if declaration.template_carrier_name() != str(base):
-                            continue
-                        if len(declaration.type_parameters) != len(owner_arguments):
-                            return Err(f"unsupported Body IR static owner type argument arity on {base}")
-                        mut arguments: list[RustType] = []
-                        for argument in owner_arguments:
-                            arguments.append(argument.clone())
-                        return Ok(arguments)
-                    return Err(f"unsupported Body IR static receiver {base}")
-                _ => return Ok([])
-        None => return Ok([])
 
 
 pub def body_module_identity(body: &Body) -> Result[str, str]:
@@ -170,6 +155,17 @@ pub def body_type_bindings(
     names = body.type_parameters.clone()
     if len(names) != len(arguments):
         return Err(f"unsupported Body IR active type argument arity on {body.name}")
+    if len(body.nominal_instantiation) != 0:
+        mut owner_names: list[str] = []
+        mut owner_arguments: list[RustType] = []
+        for binding in body.nominal_instantiation:
+            if str(binding.parameter) in names:
+                return Err(f"unsupported Body IR shadowed class and method type parameter {binding.parameter}")
+            owner_names.append(str(binding.parameter))
+            owner_arguments.append(binding.argument.clone())
+        for argument in arguments:
+            owner_arguments.append(argument.clone())
+        return Ok((owner_names + names, owner_arguments))
     if len(body.locals) == 0:
         return Ok((names, arguments))
     match receiver_mode(body.locals[0].origin):
@@ -177,8 +173,9 @@ pub def body_type_bindings(
         Some(_mutable) => pass
     match body.locals[0].ty:
         RustType.Generic(base=base, args=owner_arguments) =>
-            for declaration in module.nominal_declarations:
-                if declaration.canonical.declaration_name != str(base):
+            for nominal_position in range(len(module.nominal_declarations)):
+                declaration = borrowed_at(module.nominal_declarations, nominal_position)
+                if declaration.template_carrier_name() != str(base):
                     continue
                 if len(declaration.type_parameters) != len(owner_arguments):
                     return Err(f"unsupported Body IR active class type argument arity on {base}")
@@ -203,15 +200,15 @@ def module_function_symbol(owner: str, body: &Body) -> str:
     # A trait default can have the same canonical declaration and span in several concrete receiver frames.
     if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
-            Some(_mutable) =>
-                symbol += f"_receiver{symbol_component(str(body.locals[0].ty))}"
+            Some(_mutable) => symbol += "_receiver" + type_component(body.locals[0].ty)
             None => pass
     if len(body.type_parameters) != 0:
         symbol += symbol_component(str(body.name))
-    return f"{symbol}_{body.span.start}_{body.span.end}"
+    return f"{symbol}_{body_span_symbol(body)}_{body.span.end}"
 
 
 pub def method_receiver(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     locals: list[Local],
     local_offset: int,
@@ -223,11 +220,13 @@ pub def method_receiver(
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Require a single receiver argument before lowering its checked borrow in the active local frame."""
     match argument.as_one():
-        Some(value) => return receiver_borrow(module, locals, local_offset, index, value, span, unions, intrinsics)
+        Some(value) =>
+            return receiver_borrow(constructors, module, locals, local_offset, index, value, span, unions, intrinsics)
         None => return Err("unsupported Body IR Method spread receiver")
 
 
 def receiver_borrow(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     locals: list[Local],
     local_offset: int,
@@ -238,10 +237,14 @@ def receiver_borrow(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Lower the checked receiver to a shared borrow or mutable reborrow without moving its owner."""
-    body = module.bodies[index]
-    mut declarations = module.nominal_declarations
-    mut enums = module.enum_declarations
-    receiver_type = frame_type(declarations, enums, body.locals[0], intrinsics)?
+    body = borrowed_at(module.bodies, index)
+    receiver_type = frame_type(
+        constructors,
+        module.nominal_declarations,
+        module.enum_declarations,
+        body.locals[0],
+        intrinsics,
+    )?
     match value:
         RustOperand.Place(read) =>
             match read.fact:
@@ -251,11 +254,12 @@ def receiver_borrow(
             mut frame_locals = locals
             mut union_layouts = unions
             mut receiver = model_place(
-                declarations,
+                constructors,
+                module.nominal_declarations,
                 frame_locals,
                 read.place,
                 span,
-                enums,
+                module.enum_declarations,
                 union_layouts,
                 intrinsics,
             )?

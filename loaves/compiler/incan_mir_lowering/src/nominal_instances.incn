@@ -1,12 +1,23 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
-from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, SymbolOrigin
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    NominalDeclaration,
+    LocalOrigin,
+    TraitImplementation,
+    TraitDefaultInstantiation,
+    TraitTypeArgument,
+)
 from symbols import type_component
-from type_parameters import substitute
+from type_parameters import substitute, close_trait_environment
 from class_inheritance import specialize_classes
-from nominal_frames import nominal_frames, closed_arguments, declaration_storage
+from nominal_frames import nominal_frames, closed_arguments, declaration_storage, called_members, SelectedMember
 from decls import library_item
+from program_context import body_at, nominal_at
+from table_views import borrowed_at
+from native_type_identity import ConstructorIndex, native_owner, representation_arguments
 
 
 pub model NominalInstance:
@@ -22,7 +33,7 @@ pub def template_base(declaration: &NominalDeclaration) -> str:
     return declaration.template_carrier_name()
 
 
-pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:
+pub def nominal_symbol(base: str, arguments: &list[RustType]) -> str:
     """Encode a concrete nominal carrier independently of diagnostic aliases and field spellings."""
     mut name = base + "__incan_instance"
     for argument in arguments:
@@ -30,8 +41,8 @@ pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:
     return name
 
 
-pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclaration) -> Result[list[RustType], str]:
-    """Use a closed SDK layout's retained arguments before consulting checked source frames that scheduled specialization."""
+pub def instance_arguments(declaration: &NominalDeclaration) -> Result[list[RustType], str]:
+    """Read the closed layout's retained arguments; missing specialization facts never trigger another frame traversal."""
     if len(declaration.native_type_arguments) != 0:
         mut arguments: list[RustType] = []
         for argument in declaration.native_type_arguments:
@@ -39,125 +50,323 @@ pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclarati
         return Ok(arguments)
     if declaration.type_parameter_count == 0:
         return Ok([])
-    base = template_base(declaration)
-    name = str(declaration.name)
-    for body in nominal_frames(module)?:
-        match find_instance_arguments(body.return_type, base, name):
-            Some(arguments) => return Ok(arguments)
-            None => pass
-        for local in body.locals:
-            match find_instance_arguments(local.ty, base, name):
-                Some(arguments) => return Ok(arguments)
-                None => pass
-    for ty in declaration_storage(module):
-        match find_instance_arguments(ty, base, name):
-            Some(arguments) => return Ok(arguments)
-            None => pass
-    for owner in module.nominal_declarations:
-        for field in owner.field_types:
-            match find_instance_arguments(field, base, name):
-                Some(arguments) => return Ok(arguments)
-                None => pass
-    for owner in module.enum_declarations:
-        for variant in owner.variants:
-            for field in variant.fields:
-                match find_instance_arguments(field, base, name):
-                    Some(arguments) => return Ok(arguments)
-                    None => pass
-    return Err(f"unsupported Body IR unretained SDK type arguments on {name}")
+    return Err(f"standard library type {declaration.name} has no checked type arguments")
 
 
-def find_instance_arguments(ty: &RustType, base: str, name: str) -> Option[list[RustType]]:
-    """Match the exact closed specialization key and recurse through retained enclosing types."""
-    match ty:
-        RustType.Generic(base=owner, args=arguments) =>
-            if str(owner) == base and nominal_symbol(base, arguments.clone()) == name:
-                return Some(arguments.clone())
-            for argument in arguments:
-                match find_instance_arguments(argument, base, name):
-                    Some(found) => return Some(found)
-                    None => pass
-        RustType.Tuple(elements) =>
-            for element in elements:
-                match find_instance_arguments(element, base, name):
-                    Some(found) => return Some(found)
-                    None => pass
-        RustType.Ref(inner) => return find_instance_arguments(inner, base, name)
-        RustType.RefMut(inner) => return find_instance_arguments(inner, base, name)
-        _ => pass
-    return None
-
-
-pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
-    """Build a derived lowering context; validate the original module before calling this boundary."""
-    context, _instances = specialize_nominals_with_instances(module)?
-    return Ok(context)
-
-
-pub def specialize_nominals_with_instances(
-    module: &BodyIrModule,
-) -> Result[tuple[BodyIrModule, list[NominalInstance]], str]:
-    """Retain checked frame and external-signature instances beside concrete layouts for native planning."""
-    inherited = specialize_classes(module)?
+pub def retain_frame_nominals(
+    constructors: &ConstructorIndex,
+    context: &BodyIrModule,
+    templates: &BodyIrModule,
+    body: &Body,
+    mut retained_instances: list[NominalInstance],
+) -> Result[list[NominalDeclaration], str]:
+    """1. Collect closed frame carriers. 2. Append missing native layouts while preserving existing owner indices."""
+    # 1. Collect closed frame carriers.
     mut instances: list[NominalInstance] = []
-    for callable in module.loaf_callables:
-        if len(callable.type_parameters) != 0:
-            continue
-        for parameter in callable.parameters:
-            collect_nominal_type(module, parameter, instances, [])?
-        collect_nominal_type(module, callable.return_type, instances, [])?
-        for argument in callable.native_type_arguments:
-            collect_nominal_type(module, argument, instances, [])?
-    for ty in declaration_storage(module):
-        collect_nominal_type(module, ty, instances, [])?
-    for declaration in module.enum_declarations:
-        for variant in declaration.variants:
-            for field in variant.fields:
-                collect_nominal_type(module, field, instances, [])?
-    for declaration in module.static_declarations:
-        collect_nominal_type(module, declaration.ty, instances, [])?
-    for body in nominal_frames(module)?:
-        for local in body.locals:
-            _ = collect_nominal_type(module, local.ty, instances, [])?
-        _ = collect_nominal_type(module, body.return_type, instances, [])?
-    for declaration in module.enum_declarations:
-        for variant in declaration.variants:
-            for field in variant.fields:
-                _ = collect_nominal_type(module, field, instances, [])?
-    mut result = module.clone()
-    result.nominal_declarations.clear()
-    for declaration in module.nominal_declarations:
-        if len(declaration.type_parameters) == 0:
-            result.nominal_declarations.push(declaration.clone())
-            for field in declaration.field_types:
-                _ = collect_nominal_type(module, field, instances, [declaration.canonical.render_compact()])?
+    for local in body.locals:
+        collect_nominal_type(constructors, templates, local.ty, instances, [])?
+    collect_nominal_type(constructors, templates, body.return_type, instances, [])?
+    # 2. Append missing native layouts while preserving existing owner indices.
+    mut added: list[NominalDeclaration] = []
     mut cursor = 0
     while cursor < len(instances):
         instance = instances[cursor]
         cursor += 1
         declaration = close_layout(instance)?
+        if retains_declaration(context.nominal_declarations, declaration) or retains_declaration(added, declaration):
+            continue
+        if library_item(declaration) == "" and not package_template(declaration):
+            return Err(f"unsupported late source nominal instance {declaration.name}")
+        lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
+        for field in declaration.field_types:
+            collect_nominal_type(constructors, templates, field, instances, lineage)?
+        added.append(declaration.clone())
+        retained_instances.append(instance)
+    return Ok(added)
+
+
+def package_template(declaration: &NominalDeclaration) -> bool:
+    """An imported source template has consumer-owned closed storage rather than a nonexistent generic Rust item."""
+    origin: SymbolOrigin = declaration.canonical.origin
+    match origin:
+        SymbolOrigin.Package(library=_library, module_path=_module) => return declaration.type_parameter_count != 0
+        _ => return false
+
+
+def retains_declaration(declarations: &list[NominalDeclaration], declaration: &NominalDeclaration) -> bool:
+    """Reuse only an identical canonical declaration with the same closed specialization key."""
+    for retained in declarations:
+        if retained.name == declaration.name and retained.canonical == declaration.canonical:
+            return true
+    return false
+
+
+pub def specialize_nominals_with_instances(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+) -> Result[tuple[BodyIrModule, list[NominalInstance]], str]:
+    """
+    Retain checked instances beside concrete layouts and dispatch records for native planning.
+
+    1. Collect checked frame and external-signature instances.
+    2. Close their field and method dependencies.
+    3. Retain concrete layouts, trait dispatch records and method frames together.
+    """
+    # 1. Collect checked frame and external-signature instances.
+    inherited = specialize_classes(module)?
+    mut instances: list[NominalInstance] = []
+    mut selected: list[SelectedMember] = []
+    for callable_position in range(len(module.loaf_callables)):
+        callable = borrowed_at(module.loaf_callables, callable_position)
+        if len(callable.type_parameters) != 0:
+            continue
+        for parameter in callable.parameters:
+            collect_nominal_type(constructors, module, parameter, instances, [])?
+        collect_nominal_type(constructors, module, callable.return_type, instances, [])?
+        for argument in callable.native_type_arguments:
+            collect_nominal_type(constructors, module, argument, instances, [])?
+    for ty in declaration_storage(module):
+        collect_nominal_type(constructors, module, ty, instances, [])?
+    for enum_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, enum_position)
+        for variant in declaration.variants:
+            for field in variant.fields:
+                collect_nominal_type(constructors, module, field, instances, [])?
+    for declaration in module.static_declarations:
+        collect_nominal_type(constructors, module, declaration.ty, instances, [])?
+    for body in nominal_frames(module)?:
+        if owner_template(module, body) == None and closed_arguments([body.return_type.clone()]):
+            retain_selected_members(body, selected)
+        for local in body.locals:
+            _ = collect_nominal_type(constructors, module, local.ty, instances, [])?
+        _ = collect_nominal_type(constructors, module, body.return_type, instances, [])?
+    mut result = module.clone()
+    result.nominal_declarations.clear()
+    retained: list[TraitImplementation] = nongeneric_implementations(module)
+    result.trait_implementations = retained
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
+        if len(declaration.type_parameters) == 0:
+            result.nominal_declarations.push(declaration.clone())
+            for field in declaration.field_types:
+                _ = collect_nominal_type(
+                    constructors,
+                    module,
+                    field,
+                    instances,
+                    [declaration.canonical.render_compact()],
+                )?
+    # 2. Close field and method dependencies until their checked instance inventory is complete. An instance lays out
+    # its fields once; after a new member is selected, the worklist revisits only owner frames not yet closed.
+    templates = owner_templates(module)
+    mut pending: list[list[int]] = []
+    mut cursor = 0
+    while cursor < len(instances):
+        if cursor == len(pending):
+            pending.append(lay_out_instance(constructors, module, instances, cursor, templates)?)
+        if len(pending[cursor]) == 0:
+            cursor += 1
+            continue
+        mut instance = instances[cursor]
+        lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
+        previous = len(selected)
+        pending[cursor] = collect_owner_body_types(
+            constructors,
+            module,
+            instance,
+            pending[cursor],
+            instances,
+            lineage,
+            selected,
+        )?
+        cursor += 1
+        if len(selected) != previous:
+            cursor = 0
+    # 3. Retain concrete layouts, trait dispatch records and method frames together.
+    for instance in instances:
+        declaration = close_layout(instance)?
         for retained_index in range(len(result.nominal_declarations)):
             if result.nominal_declarations[retained_index].name == declaration.name:
                 return Err(f"unsupported Body IR nominal instance symbol collision {declaration.name}")
-        lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
-        for field in declaration.field_types:
-            _ = collect_nominal_type(module, field, instances, lineage)?
         result.nominal_declarations.push(declaration.clone())
+        append_closed_implementations(module, instance, result.trait_implementations)?
     result.bodies.clear()
     for body in inherited:
         result.bodies.push(body.clone())
-    for body in module.bodies:
-        match owner_template(module, body):
-            None => result.bodies.push(body.clone())
-            Some(owner) =>
-                for instance in instances:
-                    if instance.declaration.canonical == module.nominal_declarations[owner].canonical:
-                        closed: Body = close_owner_body(body, instance)?
-                        result.bodies.push(closed.clone())
+    for index in range(len(module.bodies)):
+        body = body_at(module.bodies, index)
+        owner = templates[index]
+        if owner < 0:
+            result.bodies.push(body.clone())
+            continue
+        canonical = nominal_at(module.nominal_declarations, owner).canonical.clone()
+        for instance in instances:
+            if instance.declaration.canonical == canonical:
+                closed: Body = close_owner_body(body, instance)?
+                result.bodies.push(closed.clone())
     return Ok((result, instances))
 
 
+def owner_templates(module: &BodyIrModule) -> list[int]:
+    """Each body's open receiver template as a declaration index, or -1 for a body without one, read once."""
+    mut templates: list[int] = []
+    for index in range(len(module.bodies)):
+        match owner_template(module, body_at(module.bodies, index)):
+            Some(owner) => templates.append(owner)
+            None => templates.append(-1)
+    return templates
+
+
+def lay_out_instance(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    mut instances: list[NominalInstance],
+    index: int,
+    templates: &list[int],
+) -> Result[list[int], str]:
+    """Collect one instance's field instances, then return the owner frames, in module order, it may close."""
+    mut instance = instances[index]
+    declaration = close_layout(instance)?
+    lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
+    for field in declaration.field_types:
+        _ = collect_nominal_type(constructors, module, field, instances, lineage)?
+    return Ok(owner_bodies(module, templates, instance))
+
+
+def owner_bodies(module: &BodyIrModule, templates: &list[int], instance: &NominalInstance) -> list[int]:
+    """The bodies whose open receiver template is declared as the instance's own declaration."""
+    mut declarations: list[int] = []
+    for position in range(len(module.nominal_declarations)):
+        if nominal_at(module.nominal_declarations, position).canonical == instance.declaration.canonical:
+            declarations.append(position)
+    mut bodies: list[int] = []
+    for body in range(len(templates)):
+        if templates[body] in declarations:
+            bodies.append(body)
+    return bodies
+
+
+def nongeneric_implementations(module: &BodyIrModule) -> list[TraitImplementation]:
+    """Keep records whose owners need no nominal substitution; generic owners are retained per checked instance."""
+    mut retained: list[TraitImplementation] = []
+    for implementation_position in range(len(module.trait_implementations)):
+        implementation = borrowed_at(module.trait_implementations, implementation_position)
+        if not has_generic_implementation_owner(module, implementation):
+            retained.append(implementation.clone())
+    return retained
+
+
+def has_generic_implementation_owner(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+    """Recognize a retained generic model owner by canonical identity, leaving enum records unchanged."""
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
+        if declaration.canonical == implementation.owner:
+            return len(declaration.type_parameters) != 0
+    return false
+
+
+def append_closed_implementations(
+    module: &BodyIrModule,
+    instance: NominalInstance,
+    mut retained: list[TraitImplementation],
+) -> Result[None, str]:
+    """Close a checked instance's trait-slot and default-body bindings with the same substitution as its fields."""
+    for implementation_position in range(len(module.trait_implementations)):
+        implementation = borrowed_at(module.trait_implementations, implementation_position)
+        if implementation.owner != instance.declaration.canonical:
+            continue
+        mut closed = implementation.clone()
+        closed.slot_arguments.clear()
+        for index in range(len(implementation.slot_arguments)):
+            original: RustType = implementation.slot_arguments[index].clone()
+            concrete: RustType = substitute(original, instance.declaration.type_parameters, instance.arguments)?
+            closed.slot_arguments.push(concrete)
+        for index in range(len(closed.type_arguments)):
+            original: RustType = implementation.type_arguments[index].argument.clone()
+            concrete: RustType = substitute(original, instance.declaration.type_parameters, instance.arguments)?
+            closed.type_arguments[index].argument = concrete
+        retained.append(closed)
+    return Ok(None)
+
+
+def collect_owner_body_types(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    mut instance: NominalInstance,
+    pending: list[int],
+    mut instances: list[NominalInstance],
+    ancestors: list[str],
+    mut selected: list[SelectedMember],
+) -> Result[list[int], str]:
+    """
+    Retain storage from the owner frames among `pending` that a selected member calls.
+
+    Returns the frames no selected member calls yet; a frame closed once is never closed again.
+    """
+    mut waiting: list[int] = []
+    for index in pending:
+        body = body_at(module.bodies, index)
+        if not selected_owner_body(module, instance, body, selected):
+            waiting.append(index)
+            continue
+        closed = close_owner_body(body, instance)?
+        retain_selected_members(closed, selected)
+        for local in closed.locals:
+            collect_nominal_type(constructors, module, local.ty, instances, ancestors)?
+        collect_nominal_type(constructors, module, closed.return_type, instances, ancestors)?
+    return Ok(waiting)
+
+
+def selected_owner_body(
+    module: &BodyIrModule,
+    instance: &NominalInstance,
+    body: &Body,
+    selected: &list[SelectedMember],
+) -> bool:
+    """Match direct and adopted method identities before comparing each selected receiver's closed owner."""
+    match body.canonical:
+        None => return false
+        Some(identity) =>
+            for member in selected:
+                if member.identity == identity and selected_instance_receiver(member.receiver, instance):
+                    return true
+            for implementation_position in range(len(module.trait_implementations)):
+                implementation = borrowed_at(module.trait_implementations, implementation_position)
+                if implementation.owner != instance.declaration.canonical:
+                    continue
+                if implementation.implementation != identity:
+                    continue
+                for member in selected:
+                    if implementation.method != member.identity:
+                        continue
+                    if selected_instance_receiver(member.receiver, instance):
+                        return true
+    return false
+
+
+def retain_selected_members(body: &Body, mut selected: list[SelectedMember]) -> None:
+    """Keep invocation pairs distinct when the same protocol default is called on several owners."""
+    for member in called_members(body):
+        mut present = false
+        for retained in selected:
+            if retained.identity == member.identity and retained.receiver == member.receiver:
+                present = true
+        if not present:
+            selected.append(member)
+
+
+def selected_instance_receiver(receiver: &RustType, instance: &NominalInstance) -> bool:
+    """Match the exact checked receiver against a borrowed owner, stripping only reference carriers."""
+    match receiver:
+        RustType.Ref(inner) => return selected_instance_receiver(inner, instance)
+        RustType.RefMut(inner) => return selected_instance_receiver(inner, instance)
+        RustType.Generic(base=base, args=arguments) =>
+            return str(base) == template_base(instance.declaration) and arguments.clone() == instance.arguments
+        _ => return false
+
+
 def collect_nominal_type(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     ty: &RustType,
     mut instances: list[NominalInstance],
@@ -167,21 +376,23 @@ def collect_nominal_type(
     match ty:
         RustType.Generic(base=base, args=arguments) =>
             # Legacy interop reads borrow the foreign variant vector; the collector retains an owned instance argument list.
-            return collect_generic_nominal_type(module, str(base), arguments.clone(), instances, ancestors)
+            owned_arguments = arguments.clone()
+            return collect_generic_nominal_type(constructors, module, str(base), owned_arguments, instances, ancestors)
         RustType.Tuple(elements) =>
             for element in elements:
-                _ = collect_nominal_type(module, element, instances, ancestors)?
+                _ = collect_nominal_type(constructors, module, element, instances, ancestors)?
         RustType.Function(params=parameters, return_type=result) =>
             for parameter in parameters:
-                collect_nominal_type(module, parameter.ty, instances, ancestors)?
-            collect_nominal_type(module, result, instances, ancestors)?
-        RustType.Ref(inner) => collect_nominal_type(module, inner, instances, ancestors)?
-        RustType.RefMut(inner) => collect_nominal_type(module, inner, instances, ancestors)?
+                collect_nominal_type(constructors, module, parameter.ty, instances, ancestors)?
+            collect_nominal_type(constructors, module, result, instances, ancestors)?
+        RustType.Ref(inner) => return collect_nominal_type(constructors, module, inner, instances, ancestors)
+        RustType.RefMut(inner) => return collect_nominal_type(constructors, module, inner, instances, ancestors)
         _ => pass
     return Ok(None)
 
 
 def collect_generic_nominal_type(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     base: str,
     arguments: list[RustType],
@@ -190,54 +401,57 @@ def collect_generic_nominal_type(
 ) -> Result[None, str]:
     """Resolve a closed carrier from its checked declaration; substitute every field template uniformly and leave native derive validation to rustc."""
     for argument in arguments:
-        _ = collect_nominal_type(module, argument, instances, ancestors)?
+        _ = collect_nominal_type(constructors, module, argument, instances, ancestors)?
     if not closed_arguments(arguments):
         return Ok(None)
-    for declaration in module.nominal_declarations:
+    for index in range(len(module.nominal_declarations)):
+        declaration = nominal_at(module.nominal_declarations, index)
         if not admitted_owner(declaration) or declaration.name != base:
             continue
         if len(declaration.type_parameters) != len(arguments):
             return Err(f"unsupported Body IR nominal type argument arity on {base}")
-        return retain_nominal_instance(declaration, arguments, instances, ancestors)
+        return retain_nominal_instance(
+            constructors,
+            module.nominal_declarations,
+            declaration,
+            arguments,
+            instances,
+            ancestors,
+        )
     return Ok(None)
 
 
 def retain_nominal_instance(
+    constructors: &ConstructorIndex,
+    declarations: &list[NominalDeclaration],
     declaration: &NominalDeclaration,
     arguments: list[RustType],
     mut instances: list[NominalInstance],
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Reuse exact checked instances before rejecting a new recursive field expansion of their canonical owner."""
+    """Reuse exact source or physical native instances before rejecting a recursive field expansion of their owner."""
+    mut retained_arguments = arguments
+    if native_owner(declaration):
+        retained_arguments = representation_arguments(declarations, constructors, retained_arguments)
     for retained in instances:
-        if retained.declaration.canonical == declaration.canonical and retained.arguments == arguments:
+        if retained.declaration.canonical == declaration.canonical and retained.arguments == retained_arguments:
             return Ok(None)
     if declaration.canonical.render_compact() in ancestors:
         return Err(f"unsupported Body IR recursive nominal field instantiation on {declaration.name}")
-    instances.append(NominalInstance(declaration=declaration.clone(), arguments=arguments, ancestors=ancestors))
+    instances.append(NominalInstance(declaration=declaration.clone(), arguments=retained_arguments, ancestors=ancestors))
     return Ok(None)
 
 
 def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
-    """Close checked fields and native argument templates once, preserving canonical owner and field identities."""
+    """Validate provider templates, close fields and retain source instance arguments without discarded argument inventories."""
     mut result = instance.declaration.clone()
     if result.native_item != "":
-        mut retained: list[RustType] = []
-        for index in range(len(instance.declaration.native_type_arguments)):
-            retained.append(instance.declaration.native_type_arguments[index].clone())
-        result.native_type_arguments.clear()
-        if len(retained) == 0:
-            for argument in instance.arguments:
-                result.native_type_arguments.push(argument.clone())
-        else:
-            for argument in retained:
-                closed: RustType = substitute(argument, instance.declaration.type_parameters, instance.arguments)?
-                result.native_type_arguments.push(closed.clone())
+        for argument in instance.declaration.native_type_arguments:
+            _ = substitute(argument, instance.declaration.type_parameters, instance.arguments)?
+    result.native_type_arguments.clear()
+    for argument in instance.arguments:
+        result.native_type_arguments.push(argument.clone())
     result.name = nominal_symbol(str(instance.declaration.name), instance.arguments)
-    if library_item(instance.declaration) != "":
-        result.native_type_arguments.clear()
-        for argument in instance.arguments:
-            result.native_type_arguments.push(argument.clone())
     result.field_types.clear()
     for ty in instance.declaration.field_types:
         concrete: RustType = substitute(ty, instance.declaration.type_parameters, instance.arguments)?
@@ -263,22 +477,21 @@ def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
 
 
 def retain_field_storage(mut declaration: NominalDeclaration, template: &NominalDeclaration) -> NominalDeclaration:
-    """Return the updated imported value explicitly and retain its borrowed template across stage zero's method boundary (#2256)."""
+    """Retain owned callable fields from the borrowed template and return the updated declaration."""
     declaration.retain_owned_callable_fields(template)
     return declaration
 
 
 def owner_template(module: &BodyIrModule, body: &Body) -> Option[int]:
-    """Locate an open nominal receiver already retained by the checker, without resolving a method spelling."""
+    """Locate an open receiver in the native table, borrowing each declaration instead of copying it."""
     if len(body.locals) == 0 or not is_receiver(body.locals[0].origin):
         return None
     match body.locals[0].ty:
         RustType.Generic(base=base, args=_arguments) =>
+            name = str(base)
             for index in range(len(module.nominal_declarations)):
-                declaration = module.nominal_declarations[index]
-                if admitted_owner(declaration) and len(declaration.type_parameters) != 0 and declaration.name == str(
-                    base,
-                ):
+                declaration = nominal_at(module.nominal_declarations, index)
+                if admitted_owner(declaration) and len(declaration.type_parameters) != 0 and declaration.name == name:
                     return Some(index)
         _ => pass
     return None
@@ -309,6 +522,21 @@ def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str
         placeholder: RustType = RustType.TypeVar(str(name))
         arguments.append(placeholder.clone())
     mut result = body.clone()
+    mut owner_bindings: list[TraitTypeArgument] = []
+    for index in range(len(instance.declaration.type_parameters)):
+        owner_bindings.append(
+            TraitTypeArgument(
+                parameter=str(instance.declaration.type_parameters[index]),
+                argument=instance.arguments[index].clone(),
+            ),
+        )
+    result.set_nominal_instantiation(owner_bindings)
+    environment: Option[TraitDefaultInstantiation] = close_trait_environment(
+        body.trait_default_instantiation,
+        names,
+        arguments,
+    )?
+    result.trait_default_instantiation = environment
     for index in range(len(result.locals)):
         concrete: RustType = substitute(result.locals[index].ty, names, arguments)?
         result.locals[index].ty = concrete.clone()

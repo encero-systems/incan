@@ -1,16 +1,41 @@
-# behavior: list.index finds the first position of a value, list.count(value) counts the items equal to it, list.remove drops the element at an index and list.swap exchanges two positions
+# behavior: list search and removal retain results; swap uses signed indices and checks both bounds before mutation
 # expect-stdout:
 #   1
 #   2
 #   3
 #   4 2 9
 #   9 2 4
+#   4 2 9
+#   4 2 9
 
-def render(items: list[int]) -> str:
+"""Observe list search and removal together with signed-index, bounds-preserving element swaps."""
+
+from std.testing import assert_raises
+
+static original_items: list[int] = [4, 2, 9]
+
+
+def render(items: &list[int]) -> str:
+    """Render every element of the three-item list."""
     return f"{items[0]} {items[1]} {items[2]}"
 
 
+def invalid_swap() -> None:
+    """Attempt an invalid swap on the actual original list through a named, zero-capture callback."""
+    original_items.swap(0, 3)
+
+
+def observe_invalid_swap() -> None:
+    """Require the second-index failure and verify that neither original element was changed."""
+    assert_raises[IndexError](invalid_swap)
+    assert original_items[0] == 4
+    assert original_items[1] == 2
+    assert original_items[2] == 9
+    println(render(original_items))
+
+
 def main() -> None:
+    """Observe search, removal and canonical signed-index swap behavior."""
     mut items: list[int] = [4, 9, 2, 9]
     println(items.index(9))
     println(items.count(9))
@@ -19,3 +44,6 @@ def main() -> None:
     println(render(items))
     items.swap(0, 2)
     println(render(items))
+    items.swap(-1, -3)
+    println(render(items))
+    observe_invalid_swap()

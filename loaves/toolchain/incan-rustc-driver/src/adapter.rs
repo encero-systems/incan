@@ -2,12 +2,12 @@
 
 use crate::error::PlanError;
 use crate::identity::DriverIdentity;
-use crate::plan::{
-    CalleeKind, Constant, Operand, OperandKind, Plan, PlanType, RvalueKind, StatementKind, TerminatorKind,
-};
+use crate::native_crates::native_roots;
+use crate::plan::{CalleeKind, Plan, PlanType, TerminatorKind};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
 use incan_driver::unit::UnitKind;
+use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
 use rustc_hir::def_id::LocalDefId;
@@ -16,11 +16,10 @@ use rustc_middle::mir::Body;
 use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_session::config::Input;
 use rustc_span::FileName;
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Compilation is serialized until stage 3d supplies a resident driver with request isolation.
+/// Compilation is serialized: `PLAN` and `FAILURE` are process-global slots, also in the resident worker.
 static COMPILATION: Mutex<()> = Mutex::new(());
 /// Query providers are function pointers, so the invocation's source-owned plan has an explicit scoped slot.
 static PLAN: Mutex<Option<Arc<Plan>>> = Mutex::new(None);
@@ -165,18 +164,48 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
     )
 }
 
+/// Retain source type-parameter loan relationships and independently bind other opaque native inputs before rustc
+/// computes implied outlives bounds. Only injected source functions and native callback bridges use this provider;
+/// external metadata stays with rustc's separate provider, and body-local native storage remains region-erased.
+fn native_function_signature<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def: LocalDefId,
+) -> rustc_middle::ty::EarlyBinder<'tcx, rustc_middle::ty::PolyFnSig<'tcx>> {
+    let plan = match active_plan() {
+        Ok(plan) => plan,
+        Err(error) => tcx.dcx().fatal(error.to_string()),
+    };
+    (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.fn_sig)(tcx, def).map_bound(|signature| {
+        let sites = planned_function(tcx, def, &plan).map_or(&[][..], |function| function.generic_loans.as_slice());
+        let retained = match crate::generic_loans::signature(tcx, signature, sites) {
+            Ok(signature) => signature,
+            Err(error) => refuse(tcx, error),
+        };
+        crate::native_loans::signature(tcx, retained)
+    })
+}
+
+/// Select only the plan's source-named root functions; synthesized closures retain their separate contracts.
+fn planned_function<'plan>(
+    tcx: TyCtxt<'_>,
+    def: LocalDefId,
+    plan: &'plan Plan,
+) -> Option<&'plan crate::plan::Function> {
+    let name = tcx.opt_item_name(def.to_def_id());
+    plan.functions.iter().find(|function| {
+        tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
+            && tcx.parent(def.to_def_id()).is_crate_root()
+            && name.is_some_and(|name| name.as_str() == function.name)
+    })
+}
+
 /// Override only source-named planned functions; all compiler-generated items retain rustc's provider.
 fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>> {
     let plan = match active_plan() {
         Ok(plan) => plan,
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
-    let name = tcx.opt_item_name(def.to_def_id());
-    let function = plan.functions.iter().find(|function| {
-        tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
-            && tcx.parent(def.to_def_id()).is_crate_root()
-            && name.is_some_and(|name| name.as_str() == function.name)
-    });
+    let function = planned_function(tcx, def, &plan);
     match function {
         // A closure constructor keeps rustc's own body, built from its injected boxing expression.
         Some(function)
@@ -243,81 +272,17 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
 struct Callbacks<'manifest> {
     plan: Arc<Plan>,
     manifest: Option<&'manifest incan_frontend::library_manifest::LibraryManifest>,
+    search: Vec<rustc_session::search_paths::SearchPath>,
+    shared: Vec<String>,
+    development: bool,
+    loaded: Vec<(PathBuf, String)>,
+    timing: crate::native_timing::Timing,
 }
 
-impl rustc_driver::Callbacks for Callbacks<'_> {
-    /// Install the source-free root and the MIR query override; cap lints that only see placeholder bodies.
-    fn config(&mut self, config: &mut interface::Config) {
-        config.input = Input::Str {
-            name: FileName::Custom(self.plan.span.file.clone()),
-            input: String::new(),
-        };
-        config.override_queries = Some(|_session, providers| {
-            providers.queries.mir_built = mir_built;
-            providers.queries.type_of = native_alias_type;
-        });
-    }
-
-    /// Add function signatures and load the declared external crates, without parsing generated source.
-    fn after_crate_root_parsing(
-        &mut self,
-        compiler: &interface::Compiler,
-        krate: &mut ast::Crate,
-    ) -> rustc_driver::Compilation {
-        let sources = Sources::new(compiler.sess.source_map());
-        let span = match sources.span(&self.plan.span) {
-            Ok(span) => span,
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        };
-        match crate::cloneable_closures::items(&self.plan, span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        for output in crate::futures::outputs(&self.plan) {
-            krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
-            krate
-                .items
-                .push(crate::futures::borrowed_alias(&output, krate.spans.inner_span));
-        }
-        for value in &self.plan.enums {
-            let span = match sources.span(&value.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate
-                .items
-                .extend(enum_items(value, &compiler.sess.psess.attr_id_generator, span));
-        }
-        for model in &self.plan.generic_models {
-            let span = match sources.span(&model.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate.items.extend(crate::generic_layouts::items(
-                model,
-                &compiler.sess.psess.attr_id_generator,
-                span,
-            ));
-        }
-        for model in &self.plan.models {
-            let span = match sources.span(&model.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate.items.extend(declarations::model_items(
-                model,
-                &compiler.sess.psess.attr_id_generator,
-                span,
-            ));
-            if !model.checked_deserialize.is_empty() {
-                krate.items.push(crate::checked_json::forwarding_impl(model, span));
-            }
-            if !model.string_conversion_root.is_empty() {
-                krate
-                    .items
-                    .push(crate::checked_json::source_forwarding_impl(model, span));
-            }
-        }
+impl Callbacks<'_> {
+    /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
+    /// errors.
+    fn declare_callables(&self, compiler: &interface::Compiler, krate: &mut ast::Crate, sources: &Sources<'_>) {
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
                 Ok(span) => span,
@@ -329,14 +294,17 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                     compiler.sess.dcx().fatal(message);
                 }
             };
-            let mut item = declarations::function(function, span);
+            let mut item = match declarations::function(function, span) {
+                Ok(item) => item,
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            };
             if !function.attributes.is_empty() {
                 item.attrs.extend(crate::native_attributes::attributes(
                     &compiler.sess.psess.attr_id_generator,
                     function,
                     span,
                 ));
-                item.tokens = Some(crate::native_attributes::function_tokens(function, span));
+                item.tokens = Some(crate::native_attributes::function_tokens(&self.plan, function, span));
             }
             if self.plan.tests.contains(&function.name) {
                 item.attrs.push(crate::test_unit::attribute(
@@ -347,30 +315,18 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             krate.items.push(item);
         }
         if !self.plan.programs.is_empty() {
-            krate
-                .items
-                .push(crate::program_entries::dispatcher(&self.plan, krate.spans.inner_span));
+            krate.items.push(
+                match crate::program_entries::dispatcher(&self.plan, krate.spans.inner_span) {
+                    Ok(item) => item,
+                    Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+                },
+            );
         }
-        krate
-            .items
-            .extend(crate::shared_callables::items(&self.plan, krate.spans.inner_span));
-        match crate::field_metadata::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::comparison_bridges::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::fallible_bridges::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::fallible_bridges::ordinary_items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        match crate::callable_bridges::items(&self.plan, krate.spans.inner_span) {
+    }
+
+    /// Declare compiler-owned bridges before publishing the library's public root names.
+    fn declare_bridges_and_exports(&self, compiler: &interface::Compiler, krate: &mut ast::Crate) {
+        match native_bridge_items(&self.plan, krate.spans.inner_span) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
@@ -379,71 +335,91 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
-        // Computed statics keep rustc's own MIR for their storage and accessors (see `statics`).
-        for cell in &self.plan.statics {
-            let span = match sources.span(&cell.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate.items.extend(crate::statics::items(cell, span));
-            match crate::statics::method_items(&self.plan, cell, span) {
-                Ok(items) => krate.items.extend(items),
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            }
+    }
+
+    /// Declare static storage before gathering the native roots required by every declaration already emitted.
+    fn declare_storage_and_externs(
+        &self,
+        compiler: &interface::Compiler,
+        krate: &mut ast::Crate,
+        sources: &Sources<'_>,
+    ) {
+        match native_static_items(&self.plan, sources) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
-        let mut roots: BTreeSet<_> = self
-            .plan
-            .externals
-            .iter()
-            .filter_map(|external| crate::native_crates::callee_root(&external.path))
-            .chain(
-                self.plan
-                    .models
-                    .iter()
-                    .map(|model| &model.library_item)
-                    .chain(self.plan.enums.iter().map(|value| &value.library_item))
-                    .filter_map(|item| item.split("::").next())
-                    .filter(|root| !root.is_empty()),
-            )
-            .collect();
-        roots.extend(constant_crate_roots(&self.plan));
-        if self.plan.functions.iter().any(|function| {
-            function.locals.iter().any(|local| {
-                matches!(
-                    local.ty,
-                    crate::plan::PlanType::Generator(..)
-                        | crate::plan::PlanType::GeneratorMutRef(..)
-                        | crate::plan::PlanType::GeneratorYield(..)
-                        | crate::plan::PlanType::GeneratorYieldRef(..)
-                )
-            })
-        }) {
-            roots.insert("incan_std_core");
-        }
-        for function in &self.plan.functions {
-            if let Some(callee) = &function.future_callee {
-                let path = match &callee.kind {
-                    crate::plan::CalleeKind::External(path)
-                    | crate::plan::CalleeKind::Instantiated(path, _)
-                    | crate::plan::CalleeKind::FutureMethod(path, _) => Some(path),
-                    _ => None,
-                };
-                if let Some(root) = path.and_then(|path| crate::native_crates::callee_root(path)) {
-                    roots.insert(root);
-                }
-            }
-        }
+        let mut roots = native_roots(&self.plan);
+        roots.extend(crate::native_crates::declaration_roots(krate));
         // `std` is already declared by the prelude injection; a second `extern crate std;` would collide with it.
-        for root in roots.into_iter().filter(|root| !matches!(*root, "std" | "crate")) {
+        for root in roots
+            .into_iter()
+            .chain(self.shared.iter().map(String::as_str))
+            .filter(|root| !matches!(*root, "std" | "crate"))
+        {
             krate
                 .items
                 .push(declarations::external_crate(root, krate.spans.inner_span));
         }
+    }
+}
+
+impl rustc_driver::Callbacks for Callbacks<'_> {
+    /// Install the source-free root and the MIR query override. `INCAN_NATIVE_TIMING` opts into rustc's phase timings
+    /// on stderr without enabling unstable command-line options or changing compilation policy.
+    /// The source map owns one filename copied from the plan's shared file handle.
+    fn config(&mut self, config: &mut interface::Config) {
+        self.timing.mark("rustc_options");
+        let mut search = std::mem::take(&mut self.search);
+        config
+            .opts
+            .search_paths
+            .retain(|path| !search.iter().any(|held| held.kind == path.kind && held.dir == path.dir));
+        search.append(&mut config.opts.search_paths);
+        config.opts.search_paths = search;
+        self.timing.configure(config);
+        config.input = Input::Str {
+            name: FileName::Custom(self.plan.span.file.as_str().to_owned()),
+            input: String::new(),
+        };
+        config.override_queries = Some(|_session, providers| {
+            providers.queries.mir_built = mir_built;
+            providers.queries.type_of = native_alias_type;
+            providers.queries.fn_sig = native_function_signature;
+        });
+    }
+
+    /// Add source-backed layouts, callable signatures, public bridges, and external crates in dependency order.
+    /// Structural slice owners use the implicit standard core crate rather than introducing another extern.
+    fn after_crate_root_parsing(
+        &mut self,
+        compiler: &interface::Compiler,
+        krate: &mut ast::Crate,
+    ) -> rustc_driver::Compilation {
+        self.timing.mark("rustc_session");
+        let sources = Sources::new(compiler.sess.source_map());
+
+        // ---- Source-backed native declarations ----
+        if let Err(error) =
+            add_source_backed_declarations(&self.plan, &sources, &compiler.sess.psess.attr_id_generator, krate)
+        {
+            compiler.sess.dcx().fatal(error.to_string());
+        }
+
+        // ---- Callable declarations and canonical entries ----
+        self.declare_callables(compiler, krate, &sources);
+
+        // ---- Compiler-owned bridges and public library names ----
+        self.declare_bridges_and_exports(compiler, krate);
+
+        // ---- Computed storage and exact native crate roots ----
+        self.declare_storage_and_externs(compiler, krate, &sources);
+        self.timing.mark("incan_declarations");
         rustc_driver::Compilation::Continue
     }
 
     /// Verify external signatures and synthesized clone bounds against native metadata before building planned MIR.
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
+        self.timing.mark("rustc_expansion");
         if let Err(error) = verify_library_argument_profiles(tcx, &self.plan) {
             refuse(tcx, error);
         }
@@ -533,8 +509,86 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                 );
             }
         }
+        self.timing.mark("incan_native_verification");
         rustc_driver::Compilation::Continue
     }
+
+    /// Snapshot dynamic library generations after analysis, before codegen and linking can publish an executable.
+    fn after_analysis(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
+        self.timing.mark("rustc_analysis");
+        if self.development {
+            self.loaded = match crate::native_shared::loaded(tcx) {
+                Ok(loaded) => loaded,
+                Err(error) => tcx.dcx().fatal(error.to_string()),
+            };
+        }
+        self.timing.mark("dynamic_library_snapshot");
+        rustc_driver::Compilation::Continue
+    }
+}
+
+/// Append source-backed carrier and nominal declarations in their established order. The shared source cache maps
+/// each declaration span before construction; typed failures return to the callback's existing fatal boundary.
+fn add_source_backed_declarations(
+    plan: &Plan,
+    sources: &Sources<'_>,
+    generator: &ast::attr::AttrIdGenerator,
+    krate: &mut ast::Crate,
+) -> Result<(), PlanError> {
+    let span = sources.span(&plan.span)?;
+    krate.items.extend(crate::cloneable_closures::items(plan, span)?);
+    krate.items.extend(crate::formatting::items(plan, span));
+    krate.items.extend(crate::zip_carriers::items(plan, span)?);
+    for output in crate::futures::outputs(plan) {
+        krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
+        krate
+            .items
+            .push(crate::futures::borrowed_alias(&output, krate.spans.inner_span));
+    }
+    for value in &plan.enums {
+        let span = sources.span(&value.span)?;
+        krate.items.extend(enum_items(value, generator, span));
+    }
+    for model in &plan.generic_models {
+        let span = sources.span(&model.span)?;
+        krate
+            .items
+            .extend(crate::generic_layouts::items(model, generator, span));
+    }
+    for model in &plan.models {
+        let span = sources.span(&model.span)?;
+        krate.items.extend(declarations::model_items(model, generator, span));
+        if !model.checked_deserialize.is_empty() {
+            krate.items.push(crate::checked_json::forwarding_impl(model, span));
+        }
+    }
+    krate
+        .items
+        .extend(crate::foreign::items(plan, generator, krate.spans.inner_span)?);
+    Ok(())
+}
+
+/// Keep the declaration order of compiler-owned adapters while propagating their typed preflight refusals.
+fn native_bridge_items(plan: &Plan, span: rustc_span::Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
+    let mut items = crate::shared_callables::items(plan, span);
+    items.extend(crate::panic_hooks::items(plan, span)?);
+    items.extend(crate::field_metadata::items(plan, span)?);
+    items.extend(crate::comparison_bridges::items(plan, span)?);
+    items.extend(crate::fallible_bridges::items(plan, span)?);
+    items.extend(crate::fallible_bridges::ordinary_items(plan, span)?);
+    items.extend(crate::callable_bridges::items(plan, span)?);
+    Ok(items)
+}
+
+/// Keep computed storage and its accessors in declaration order; rustc retains their ordinary MIR providers.
+fn native_static_items(plan: &Plan, sources: &Sources<'_>) -> Result<Vec<Box<ast::Item>>, PlanError> {
+    let mut items = Vec::new();
+    for cell in &plan.statics {
+        let span = sources.span(&cell.span)?;
+        items.extend(crate::statics::items(cell, span));
+        items.extend(crate::statics::method_items(plan, cell, span)?);
+    }
+    Ok(items)
 }
 
 /// Reject synthesized nominal clones without a native Clone implementation before rustc constructs their MIR.
@@ -549,28 +603,6 @@ fn verify_planned_clone_bounds(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanE
         }
     }
     Ok(())
-}
-
-/// Load the explicit crate aliases of retained native constants even when their value types name no native owner.
-/// Body IR materializes each constant read into a Use assignment before other operations consume that temporary.
-fn constant_crate_roots(plan: &Plan) -> impl Iterator<Item = &str> {
-    plan.functions
-        .iter()
-        .flat_map(|function| &function.blocks)
-        .flat_map(|block| &block.statements)
-        .filter_map(|statement| {
-            let StatementKind::Assign(_, value) = &statement.kind else {
-                return None;
-            };
-            let RvalueKind::Use(Operand {
-                kind: OperandKind::Literal(Constant::RustItem(path, _)),
-                ..
-            }) = &value.kind
-            else {
-                return None;
-            };
-            path.split("::").next()
-        })
 }
 
 /// Identify opaque return ABIs before normalization can reveal their implementation layout. Ordinary associated
@@ -653,7 +685,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
 /// native metadata. Variant indices select rustc's own constructors and discriminants, including explicit tags.
-/// Generic templates never authorize storage.
+/// Generic templates never authorize storage; retained Copy and Clone capabilities must hold for the concrete type.
 fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Invalid {
         function: value.library_item.clone(),
@@ -672,7 +704,21 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
     }
     let arguments = callees::arguments(tcx, def, &value.library_type_arguments)?;
     callees::verify_bounds(tcx, def, arguments)?;
-    if value.derives.iter().any(|derive| derive == "Clone") {
+    if value
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Copy))
+    {
+        let native = rustc_middle::ty::Ty::new_adt(tcx, owner, arguments);
+        if !tcx.type_is_copy_modulo_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), native) {
+            return Err(invalid("native enum Copy capability differs from metadata"));
+        }
+    }
+    if value
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+    {
         let owner = rustc_middle::ty::Ty::new_adt(tcx, tcx.adt_def(def), arguments);
         callees::verify_bounds(tcx, callees::clone_method(tcx)?, tcx.mk_args(&[owner.into()]))?;
     }
@@ -725,9 +771,8 @@ fn enum_items(
 /// Give each generic external declared without type arguments its inferred ones, and its calls the matching
 /// instantiated callee, so signature verification and MIR construction see one explicit instantiation.
 fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
-    let mut instantiated = plan.clone();
     let mut inferred = std::collections::BTreeMap::new();
-    for external in &mut instantiated.externals {
+    for external in &plan.externals {
         if !external.type_arguments.is_empty() {
             continue;
         }
@@ -735,11 +780,18 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
         if callees::arity_admits(tcx, def, 0) {
             continue;
         }
-        external.type_arguments = callees::inferred_arguments(tcx, def, external)?;
-        inferred.insert(external.path.clone(), external.type_arguments.clone());
+        inferred.insert(external.path.clone(), callees::inferred_arguments(tcx, def, external)?);
     }
     if inferred.is_empty() {
         return Ok(None);
+    }
+    let mut instantiated = plan.clone();
+    for external in &mut instantiated.externals {
+        if external.type_arguments.is_empty()
+            && let Some(arguments) = inferred.get(&external.path)
+        {
+            external.type_arguments.clone_from(arguments);
+        }
     }
     for block in instantiated
         .functions
@@ -766,8 +818,12 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 /// explicit rlib paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant
 /// is used.
 /// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
-/// validation. `INCAN_DIRECT_PLAN_REPORT` optionally records the complete plan for native ownership diagnostics.
-/// A library manifest lends its already checked public facade names for aliases of the canonical native items.
+/// validation. A library manifest lends its already checked public facade names for aliases of the canonical native
+/// items. Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
+/// A development store derives shared carriers from those same native identities and records loader witnesses;
+/// ordinary builds and release compilation do not select that policy.
+/// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
+/// rustc applies the same policy to the arithmetic it compiles from Rust crates, such as inlined standard library code.
 pub fn compile(
     plan: Plan,
     crate_name: &str,
@@ -776,14 +832,15 @@ pub fn compile(
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
     rustc_args: &[String],
+    shared_store: Option<&Path>,
     kind: UnitKind,
+    overflow_checks: bool,
     manifest: Option<&incan_frontend::library_manifest::LibraryManifest>,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
-    if let Some(path) = std::env::var_os("INCAN_DIRECT_PLAN_REPORT") {
-        std::fs::write(path, format!("{plan:#?}"))
-            .map_err(|error| DriverError::Invocation(format!("cannot write native plan report: {error}")))?;
-    }
+    let mut timing = crate::native_timing::Timing::requested();
+
+    // ---- Validated source plan ----
     if let Some(path) = std::env::var_os("INCAN_DIRECT_VALIDATION_REPORT") {
         let mut report = String::new();
         for refusal in validation::refusals(&plan, kind != UnitKind::Program) {
@@ -797,10 +854,83 @@ pub fn compile(
     if crate_name.is_empty() || !crate_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
     }
+    timing.mark("validated_plan");
+
+    // ---- Optional shared native dependencies ----
     let _compilation = COMPILATION.lock().map_err(|_| DriverError::State)?;
+    if shared_store.is_some() && kind == UnitKind::Library {
+        return Err(DriverError::Invocation(
+            "shared native linking requires a development executable".into(),
+        ));
+    }
+    let shared = match shared_store {
+        Some(store) => {
+            let mut roots = native_roots(&plan);
+            if kind == UnitKind::Test {
+                roots.insert("test");
+            }
+            crate::native_shared::libraries(roots, externs, dependency_search_paths, identity, store)?
+        }
+        None => Vec::new(),
+    };
+    timing.mark("shared_dependencies");
+
+    // ---- Fresh rustc session and planned MIR ----
     let plan = Arc::new(plan);
     *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&plan));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
+    let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks, &plan.span.file);
+    let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
+    for (name, path) in &all {
+        args.push("--extern".into());
+        args.push(format!("{name}={}", path.display()));
+    }
+    let search = crate::native_search::dependencies(&all, dependency_search_paths);
+    if shared_store.is_some() {
+        args.extend(["-Cprefer-dynamic".into(), "-Crpath".into()]);
+        // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
+        if identity.target.ends_with("-apple-darwin") {
+            args.push("-Clinker=/usr/bin/ld".into());
+        }
+    }
+    args.extend_from_slice(rustc_args);
+    timing.mark("native_arguments");
+    let mut callbacks = Callbacks {
+        plan,
+        manifest,
+        search,
+        shared: shared.iter().map(|(name, _)| name.clone()).collect(),
+        development: shared_store.is_some(),
+        loaded: Vec::new(),
+        timing,
+    };
+    let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
+    callbacks.timing.mark("rustc_codegen_link_teardown");
+    *PLAN.lock().map_err(|_| DriverError::State)? = None;
+    if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
+        return Err(DriverError::Plan(error));
+    }
+
+    // ---- Completed loader witnesses ----
+    result.map_err(|_| DriverError::Compilation)?;
+    if shared_store.is_some() {
+        crate::native_shared::write_witness(output, &callbacks.loaded)?;
+    }
+    callbacks.timing.mark("loader_witness");
+    Ok(())
+}
+
+/// Preserve the ordinary native argument sequence; optional development linkage is appended only by its caller.
+/// Overflow checks follow the unit profile: on in debug, off in release.
+fn compilation_arguments(
+    crate_name: &str,
+    output: &Path,
+    identity: &DriverIdentity,
+    kind: UnitKind,
+    overflow_checks: bool,
+    source: &str,
+) -> Vec<String> {
+    let overflow = if overflow_checks { "yes" } else { "no" };
     let mut args = vec![
         "incan-rustc-driver".into(),
         "--sysroot".into(),
@@ -812,45 +942,26 @@ pub fn compile(
         "--cap-lints".into(),
         "allow".into(),
         "-C".into(),
-        "overflow-checks=yes".into(),
+        format!("overflow-checks={overflow}"),
         "-C".into(),
         "opt-level=3".into(),
         "-C".into(),
         "debuginfo=2".into(),
         "-o".into(),
         output.to_string_lossy().into_owned(),
-        // rustc reads stdin to the end for `-`; a named input is never read, since `config` installs the source-free
-        // root.
-        plan.span.file.clone(),
+        // A named input is never read: the callback installs the source-free root without consuming stdin.
+        source.into(),
     ];
-    // A library unit is an rlib its dependents link; an executable keeps rustc's default binary crate type.
     if kind == UnitKind::Library {
-        args.push("--crate-type".into());
-        args.push("lib".into());
+        args.extend(["--crate-type".into(), "lib".into()]);
     }
     if kind == UnitKind::Test {
         args.push("--test".into());
     }
-    for (name, path) in externs {
-        args.push("--extern".into());
-        args.push(format!("{name}={}", path.display()));
-        if let Some(parent) = path.parent() {
-            args.push("-L".into());
-            args.push(format!("dependency={}", parent.display()));
-        }
+    if kind != UnitKind::Library {
+        args.push("-Csplit-debuginfo=unpacked".into());
     }
-    for path in dependency_search_paths {
-        args.push("-L".into());
-        args.push(format!("dependency={}", path.display()));
-    }
-    args.extend_from_slice(rustc_args);
-    let result =
-        rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut Callbacks { plan, manifest }));
-    *PLAN.lock().map_err(|_| DriverError::State)? = None;
-    if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
-        return Err(DriverError::Plan(error));
-    }
-    result.map_err(|_| DriverError::Compilation)
+    args
 }
 
 /// Check every foreign alias's arity and parameter kinds before any native type query can expand an alias.
@@ -865,13 +976,8 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         let generics = tcx.generics_of(def);
         let reason = if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
             Some("stdlib layout type argument count differs from metadata")
-        } else if generics.parent_count != 0
-            || generics
-                .own_params
-                .iter()
-                .any(|parameter| matches!(&parameter.kind, rustc_middle::ty::GenericParamDefKind::Const { .. }))
-        {
-            Some("native const arguments require a retained value contract")
+        } else if generics.parent_count != 0 {
+            Some("native layout retains generics from an enclosing declaration")
         } else {
             None
         };

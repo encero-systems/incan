@@ -336,7 +336,7 @@ Backends should treat type tokens as zero-sized compile-time evidence unless a r
 - **Typechecker / Symbol resolution**: must resolve type names in value position only under `Type[T]` expected context, dispatch overloads using type-token parameters, derive type-directed return mappings, and preserve alias/decorator callable surfaces.
 - **IR Lowering**: must lower type-token expressions and overloaded aliases without splitting same-module and import-boundary behavior.
 - **Emission**: must emit backend representations for type tokens and preserve source callable names in generated metadata.
-- **Stdlib / Runtime (`incan_stdlib`)**: must provide the minimal token carrier and primitive reflection hooks needed by compiler-emitted code.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: must provide the minimal token carrier and primitive reflection hooks needed by compiler-emitted code.
 - **Library manifests / checked API metadata**: must serialize `Type[T]`, overload sets, selected return mappings, aliases, decorators, defaults, package reexports, boundary-invariant relationships, and degraded-state markers without erasing identity.
 - **Formatter**: should preserve ordinary call syntax and type annotations; no special formatting beyond existing type syntax is expected.
 - **LSP / Tooling**: should show type-token overloads, selected overloads, mapping explanations, alias targets, facade/reexport invariants, and degraded-state warnings in completion, hover, signature help, generated API docs, semantic inspection, and diagnostics.

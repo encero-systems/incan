@@ -21,6 +21,7 @@ impl TypeChecker {
         for _ in 0..parameters.len() {
             let before = bindings.len();
             for predicate in &signature.bounds {
+                self.infer_rust_associated_bindings(predicate, parameters, bindings);
                 if let Some(inferred) = self.rust_predicate_arguments(predicate, parameters, bindings) {
                     for (name, value) in inferred {
                         bindings.entry(name).or_insert(value);
@@ -30,6 +31,28 @@ impl TypeChecker {
             if bindings.len() == before {
                 return;
             }
+        }
+    }
+
+    /// Close native output binders from an already bound subject's retained associated equalities. Source generic
+    /// subjects use their active checked bounds; a caller's binder may have the same name as the callee's binder.
+    /// Metadata supplies the associated value, and rustc still verifies the specialized native predicate.
+    fn infer_rust_associated_bindings(
+        &self,
+        predicate: &RustTraitBound,
+        parameters: &[String],
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
+        let Some(subject) = bindings.get(&predicate.self_type).cloned() else {
+            return;
+        };
+        for associated in &predicate.associated_type_bindings {
+            let Some(actual) = self.rust_associated_type(&subject, &predicate.path, &associated.name) else {
+                continue;
+            };
+            let expected =
+                self.rust_inference_type(&self.native_rust_signature_type(&associated.value_path, ""), parameters);
+            self.infer_type_param_bindings(&expected, &actual, bindings);
         }
     }
 
@@ -101,10 +124,9 @@ impl TypeChecker {
         selected
     }
 
-    /// Rebind a callable binder that an owned source text or bytes value closed to the borrowed native carrier
-    /// (`&str`, `&[u8]`), when its trait bound has a native implementation for the borrow and none for the owned
-    /// carrier (`P: Pattern` accepts `&str`, not `String`; `impl Buf` accepts `&[u8]`, not `Vec<u8>`). A binder whose
-    /// bound the owned carrier already satisfies keeps it.
+    /// Prefer a native borrowed carrier only when the retained bound admits that borrow and rejects the owner.
+    /// Text and bytes keep their native views; a nominal value supplied to `&T` can bind T to a shared reference,
+    /// retaining the resulting nested loan in the checked signature. Callback outputs never acquire input loans.
     pub(super) fn prefer_borrowed_bindings(
         &self,
         signature: &RustFunctionSig,
@@ -116,7 +138,31 @@ impl TypeChecker {
             if !parameters.iter().any(|parameter| parameter == name) {
                 continue;
             }
-            let Some((owned, borrowed)) = bindings.get(name).and_then(Self::borrowed_native_carrier) else {
+            // Borrow coercion belongs to a written value argument. A binder supplied only by a callback's output
+            // owns that output; an auto-trait blanket impl for a borrow cannot change the callback's result ABI.
+            let input = signature
+                .params
+                .iter()
+                .map(|parameter| {
+                    self.rust_inference_type(
+                        &self.native_rust_signature_type(&parameter.type_display, ""),
+                        parameters,
+                    )
+                })
+                .find(|ty| match ty {
+                    ResolvedType::TypeVar(parameter) => parameter == name,
+                    ResolvedType::Ref(inner) => {
+                        matches!(inner.as_ref(), ResolvedType::TypeVar(parameter) if parameter == name)
+                    }
+                    _ => false,
+                });
+            let Some(input) = input else {
+                continue;
+            };
+            let Some((owned, borrowed)) = bindings
+                .get(name)
+                .and_then(|binding| Self::borrowed_native_carrier(binding, matches!(input, ResolvedType::Ref(_))))
+            else {
                 continue;
             };
             let Some(metadata) = self.rust_item_metadata_for_path(&predicate.path) else {
@@ -125,21 +171,43 @@ impl TypeChecker {
             let RustItemKind::Trait(info) = &metadata.kind else {
                 continue;
             };
-            let accepts = |owner: &ResolvedType| {
-                info.implementations.iter().any(|implementation| {
-                    self.rust_impl_may_apply(implementation, owner)
-                        && self.rust_impl_self_bindings(implementation, owner).is_some()
-                })
-            };
+            let accepts =
+                |owner: &ResolvedType| self.rust_predicate_accepts_carrier(predicate, &info.implementations, owner);
             if !accepts(&owned) && accepts(&borrowed) {
                 bindings.insert(name.to_owned(), borrowed);
             }
         }
     }
 
-    /// The owned native carrier a source text or bytes binding stands for, with the borrowed carrier a bound may
-    /// instead require.
-    fn borrowed_native_carrier(binding: &ResolvedType) -> Option<(ResolvedType, ResolvedType)> {
+    /// Consult the native owner's retained implementations as well as the trait's explicit templates. Auto traits
+    /// such as Send can be proven on String without an explicit impl in the trait's list; losing that proof must
+    /// not turn an owned value into a borrowed generic argument. Rustc still verifies the complete selected bounds.
+    fn rust_predicate_accepts_carrier(
+        &self,
+        predicate: &RustTraitBound,
+        trait_implementations: &[RustImplementedTrait],
+        owner: &ResolvedType,
+    ) -> bool {
+        let metadata = self
+            .rust_canonical_path_for_receiver_type(owner)
+            .and_then(|path| self.rust_item_metadata_for_path(&path));
+        let owner_implementations = match metadata.as_deref().map(|metadata| &metadata.kind) {
+            Some(RustItemKind::Type(info)) => info.implemented_traits.as_slice(),
+            _ => &[],
+        };
+        let identity = self.rust_trait_identity(&predicate.path);
+        owner_implementations
+            .iter()
+            .chain(trait_implementations)
+            .any(|implementation| {
+                self.rust_trait_identity(&implementation.path) == identity
+                    && self.rust_impl_may_apply(implementation, owner)
+            })
+    }
+
+    /// Pair an owned input with its native view. Nominal inputs require an already borrowed parameter, so selecting
+    /// a reference-only implementation never turns an owned generic result into a reference.
+    fn borrowed_native_carrier(binding: &ResolvedType, borrowed_input: bool) -> Option<(ResolvedType, ResolvedType)> {
         let byte = ResolvedType::Numeric(NumericTypeId::U8);
         match binding {
             ResolvedType::Str => Some((
@@ -151,6 +219,9 @@ impl TypeChecker {
                     ResolvedType::RustPath("std::vec::Vec<u8>".into()),
                     ResolvedType::Ref(Box::new(ResolvedType::Generic("[]".into(), vec![byte]))),
                 ))
+            }
+            ResolvedType::RustPath(_) | ResolvedType::Generic(_, _) if borrowed_input => {
+                Some((binding.clone(), ResolvedType::Ref(Box::new(binding.clone()))))
             }
             _ => None,
         }

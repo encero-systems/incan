@@ -1,4 +1,4 @@
-# behavior: a failing test reports FAILED, later tests still run, and the command exits unsuccessfully
+# behavior: an Err test reports failure while later Result tests complete and the command fails (#1530, #2256)
 # expect-stdout-contains:
 #   test_failure.incn::test_fails FAILED
 #   test_failure.incn::test_later PASSED
@@ -9,11 +9,14 @@
 """A failure cannot hide a later collected test."""
 
 
-def test_fails() -> None:
-    """Fail this test alone."""
-    assert false, "deliberate failure"
+def test_fails() -> Result[None, str]:
+    """An error return fails this test alone, just as a failed assertion does."""
+    return Err("deliberate failure")
 
 
-def test_later() -> None:
+def test_later() -> Result[None, str]:
     """The runner must reach this test after the failure."""
     assert true
+    result: Result[None, str] = Ok(None)
+    result?
+    return Ok(None)

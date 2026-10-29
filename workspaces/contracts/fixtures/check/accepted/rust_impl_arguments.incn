@@ -1,12 +1,49 @@
-# behavior: a Rust associated function infers its owner's type parameters from its arguments
+# behavior: native constructors infer owners, iterator outputs normalize and FrozenList methods retain tuple arguments
 # expect-accepted:
 
-"""Rust associated functions infer their owner's type parameters."""
+"""Keep native owner arguments through construction, local inference and later method calls."""
 
 from rust::std::rc import Rc
+from rust::std::vec import Vec, IntoIter
+from rust::std::iter import IntoIterator
+from rust::incan_std_core::frozen import FrozenList as NativeFrozenList, FrozenDict as NativeFrozenDict
+from std.rust import Static
+
+const ENTRIES: FrozenDict[int, int] = {1: 7}
+
+
+def require_components[K, V](_key: &K, _value: &V) -> None:
+    """Require both tuple components without copying either generic value."""
+    pass
+
+
+pub def read_first[K with Static, V with Static](value: NativeFrozenDict[K, V]) -> None:
+    """Retain the constructor's owner arguments at a later inferred-local method call.
+
+    1. Construct a native list with the checked tuple owner arguments.
+    2. Require its get result to preserve both tuple components.
+    """
+    # 1. Let the local infer its owner from the explicit constructor arguments.
+    inferred = NativeFrozenList.new[tuple[K, V]](value.as_slice())
+    # 2. Check the selected method's result independently of constructor inference.
+    match inferred.get(0):
+        Some((key, item)) => require_components[K, V](key, item)
+        None => pass
+
+
+def iterator(values: Vec[int]) -> IntoIter[int]:
+    """Check the owned iterator's associated output before assigning its concrete return type."""
+    return values.into_iter()
 
 
 def main() -> None:
-    """Require the inferred allocation to match its concrete Rust type."""
+    """Require native owner inference to survive both assignment and a later method.
+
+    1. Retain an inferred allocation's concrete owner.
+    2. Retain a tuple owner inside a function with type parameters.
+    """
+    # 1. Require the inferred allocation to match its concrete Rust type.
     inferred = Rc.new(7)
     value: Rc[int] = inferred
+    # 2. Require the inferred frozen list to preserve its constructor's tuple arguments.
+    read_first[int, int](ENTRIES)

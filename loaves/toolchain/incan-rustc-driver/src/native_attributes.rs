@@ -5,9 +5,9 @@
 //! receives the declaration it decorates exactly as a derive receives its type. rustc expands the macro; nothing here
 //! predicts or parses its output, and the planned body still replaces the placeholder at `mir_built`.
 
-use crate::ast_build::ident;
+use crate::ast_build::{global_path, ident, path_ty};
 use crate::declarations::{keyword_token, name_token, ty, type_tokens};
-use crate::plan::{AttributeArgument, AttributeValue, Function, NativeAttribute};
+use crate::plan::{AttributeArgument, AttributeValue, Function, NativeAttribute, Plan, PlanType};
 use rustc_ast as ast;
 use rustc_ast::token::{Delimiter, Lit, LitKind, Token, TokenKind};
 use rustc_ast::tokenstream::{
@@ -30,7 +30,11 @@ pub(crate) fn attributes(
 }
 
 /// One `#[path(arguments)]` attribute, with the tokens a procedural macro invocation reads.
-fn attribute_item(generator: &ast::attr::AttrIdGenerator, attribute: &NativeAttribute, span: Span) -> ast::Attribute {
+pub(crate) fn attribute_item(
+    generator: &ast::attr::AttrIdGenerator,
+    attribute: &NativeAttribute,
+    span: Span,
+) -> ast::Attribute {
     let segments: Vec<&str> = attribute.path.split("::").collect();
     let mut inside = Vec::new();
     for (index, segment) in segments.iter().enumerate() {
@@ -128,9 +132,9 @@ fn signed_literal(negative: bool, kind: LitKind, digits: String, span: Span) -> 
 
 /// The tokens of the injected function declaration an attribute macro takes as its input.
 ///
-/// They mirror the AST item: its signature in admitted types and the diverging placeholder body that `mir_built`
-/// replaces, so the declaration the macro hands back is the one the plan's body belongs to.
-pub(crate) fn function_tokens(function: &Function, span: Span) -> LazyAttrTokenStream {
+/// Native nominal aliases expose their checked public item and type arguments so a procedural macro observes the
+/// actual foreign type. The ABI remains identical to the injected alias-based AST signature.
+pub(crate) fn function_tokens(plan: &Plan, function: &Function, span: Span) -> LazyAttrTokenStream {
     let mut tokens = vec![keyword_token("pub", span)];
     if function.is_async {
         tokens.push(keyword_token("async", span));
@@ -141,7 +145,7 @@ pub(crate) fn function_tokens(function: &Function, span: Span) -> LazyAttrTokenS
     for parameter in &function.parameters {
         parameters.push(name_token(&parameter.name, span));
         parameters.push(punctuation(TokenKind::Colon, span));
-        parameters.extend(type_tokens(&ty(&parameter.ty, span)));
+        parameters.extend(type_tokens(&macro_signature_type(plan, &parameter.ty, span)));
         parameters.push(punctuation(TokenKind::Comma, span));
     }
     tokens.push(group_tokens(
@@ -150,13 +154,50 @@ pub(crate) fn function_tokens(function: &Function, span: Span) -> LazyAttrTokenS
         span,
     ));
     tokens.push(punctuation(TokenKind::RArrow, span));
-    tokens.extend(type_tokens(&ty(&function.return_type, span)));
+    tokens.extend(type_tokens(&macro_signature_type(plan, &function.return_type, span)));
     let diverge = vec![
         keyword_token("loop", span),
         group_tokens(Delimiter::Brace, AttrTokenStream::new(Vec::new()), span),
     ];
     tokens.push(group_tokens(Delimiter::Brace, AttrTokenStream::new(diverge), span));
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
+}
+
+/// Reify a checked external nominal for macro syntax inspection, retaining local types and ordinary ABI aliases.
+/// This copies the selected item and arguments; no macro name or source spelling determines native storage.
+fn macro_signature_type(plan: &Plan, kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    let (item, arguments) = match kind {
+        PlanType::Model(index, _) => usize::try_from(*index)
+            .ok()
+            .and_then(|index| plan.models.get(index))
+            .map(|model| (model.library_item.as_str(), model.library_type_arguments.as_slice())),
+        PlanType::Enum(index, _) => usize::try_from(*index)
+            .ok()
+            .and_then(|index| plan.enums.get(index))
+            .map(|value| (value.library_item.as_str(), value.library_type_arguments.as_slice())),
+        _ => None,
+    }
+    .unwrap_or(("", &[]));
+    if item.is_empty() {
+        return ty(kind, span);
+    }
+    let segments = item
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let mut path = global_path(&segments, span);
+    if !arguments.is_empty()
+        && let Some(last) = path.segments.last_mut()
+    {
+        last.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+            span,
+            args: arguments
+                .iter()
+                .map(|argument| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(argument, span))))
+                .collect(),
+        })));
+    }
+    path_ty(path, span)
 }
 
 /// A delimited group of tokens.

@@ -1,0 +1,567 @@
+"""Lower checked C bridge operations without reopening source names, initialization state, or lifetimes."""
+
+from rust::incan_semantics_core::body_ir import (
+    CheckedBridgeCall,
+    CheckedBridgeOperation,
+    ArgumentElement,
+    Operand as RustOperand,
+    Place as BodyPlace,
+)
+from pub::incan_mir_plan import (
+    PlanType,
+    Place,
+    Projection,
+    Operand,
+    OperandKind,
+    RvalueKind,
+    SourceSpan,
+    Constant,
+    ListLeaf,
+    BinaryOp,
+    TerminatorKind,
+)
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, literal, read_place, external_call, place_type, drop_owned
+from layout_types import native_source_type
+from lowering import (
+    scalar_operand,
+    scalar_place,
+    text_argument,
+    borrow_slice_operand,
+    list_borrow,
+    append_list_value,
+    coerce_numeric_operand,
+    value_operand,
+)
+from lists import require_list_shape, list_element
+from text_plan import owned_literal
+from builtins import list_call
+from enums import enum_owner
+from options import assign_carrier
+
+
+pub def lower_checked_bridge(
+    mut builder: Builder,
+    target: &CheckedBridgeCall,
+    arguments: &list[ArgumentElement],
+    destination: &Option[BodyPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Preserve the checked bridge operation and exact native storage.
+
+    1. Select its retained result place.
+    2. Allocate or read only the slot authorized by the checker.
+    """
+    # 1. Every storage choice was retained by frontend projection.
+    ty = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        target.return_type,
+        builder.intrinsics,
+    )?
+    mut output = temporary(builder, ty, span)
+    match destination:
+        Some(place) => output = scalar_place(builder, place, span)?
+        None => pass
+    # 2. A private slot is a handle to one allocation, never a copied scalar masquerading as a handle.
+    match target.operation:
+        CheckedBridgeOperation.NewOutputSlot => return new_slot(builder, arguments, output, ty, false, span)
+        CheckedBridgeOperation.NewInOutSlot => return new_slot(builder, arguments, output, ty, true, span)
+        CheckedBridgeOperation.TakeOutputSlot => return take_slot(builder, arguments, output, ty, span)
+        CheckedBridgeOperation.MakeCString => return make_string(builder, arguments, output, ty, span)
+        CheckedBridgeOperation.CStringPointer => return string_pointer(builder, arguments, output, ty, span)
+        CheckedBridgeOperation.CopyUtf8 => return copy_utf8(builder, arguments, output, ty, span)
+        CheckedBridgeOperation.MakeSpan => return make_span(builder, arguments, output, span)
+        CheckedBridgeOperation.SpanConstPointer => return span_pointer(builder, arguments, output, ty, false, span)
+        CheckedBridgeOperation.SpanMutPointer => return span_pointer(builder, arguments, output, ty, true, span)
+        CheckedBridgeOperation.SpanCount => return span_count(builder, arguments, output, span)
+        CheckedBridgeOperation.FinishSpan => return finish_span(builder, arguments, output, ty, span)
+
+
+def argument(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    index: int,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Read one checked, already evaluated bridge operand without adding a passing conversion."""
+    if index >= len(arguments):
+        return Err("invalid checked C bridge argument count")
+    match arguments[index].as_one():
+        Some(value) => return scalar_operand(builder, value, span)
+        None => return Err("invalid checked C bridge spread")
+
+
+def new_slot(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    ty: PlanType,
+    initialized: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Allocate private scalar storage; physical zeroing grants no semantic Out initialization permission."""
+    value_type = slot_value_type(ty)?
+    storage = temporary(builder, value_type, span)
+    if initialized:
+        supplied = argument(builder, arguments, 0, span)?
+        initial = coerce_numeric_operand(builder, supplied, value_type, span)?
+        builder.emit(plan_assign(storage, RvalueKind.Use(initial), span))
+    else:
+        if len(arguments) != 0:
+            return Err("invalid checked C fresh output arguments")
+        zero = literal(Constant.Int(0), span)
+        builder.emit(plan_assign(storage, RvalueKind.NumericCast(zero, PlanType.Int, value_type), span))
+    builder.emit(plan_assign(output, RvalueKind.RawAddressOf(storage, true), span))
+    return Ok(None)
+
+
+def slot_value_type(ty: PlanType) -> Result[PlanType, str]:
+    """Read the exact scalar stored behind the checker's mutable output handle."""
+    match ty:
+        PlanType.RawPointer(true, elements) =>
+            if len(elements) == 1:
+                return Ok(elements[0])
+            return Err("invalid checked C slot pointee")
+        _ => return Err("invalid checked C slot handle")
+
+
+def take_slot(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Read a slot only after its initialized-state proof was retained as this exact operation."""
+    pointer = argument(builder, arguments, 0, span)?
+    source = pointer_place(pointer)?
+    if source.projection != Projection.Whole:
+        return Err("unsupported projected checked C slot handle")
+    value = Place(local=source.local, projection=Projection.Deref(ty), span=span)
+    builder.emit(plan_assign(output, RvalueKind.Use(read_place(value, false, span)), span))
+    return Ok(None)
+
+
+def pointer_place(value: Operand) -> Result[Place, str]:
+    """Read the physical place of a checked pointer or slice loan without a fallback allocation."""
+    match value.kind:
+        OperandKind.Copy(place) | OperandKind.Move(place) => return Ok(place)
+        _ => return Err("invalid checked C bridge pointer or slice loan")
+
+
+def make_string(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Validate and allocate owned terminated storage before a foreign pointer can be produced."""
+    text = text_argument(builder, arguments, 0, span)?
+    external_call(builder, "incan_native_runtime::checked_c_string", [PlanType.StringRef], ty, [text], output, span)
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
+def string_pointer(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Expose the checked invocation-long byte buffer loan without consuming or reallocating its owner."""
+    view = buffer_loan(builder, arguments, span)?
+    source = pointer_place(view)?
+    slice_type = PlanType.NativeSlice([PlanType.U8])
+    borrowed = Place(local=source.local, projection=Projection.Deref(slice_type), span=span)
+    pointer = temporary(builder, PlanType.RawPointer(false, [slice_type]), span)
+    builder.emit(plan_assign(pointer, RvalueKind.RawAddressOf(borrowed, false), span))
+    builder.emit(plan_assign(output, RvalueKind.PointerCast(read_place(pointer, false, span), ty), span))
+    return Ok(None)
+
+
+def buffer_loan(mut builder: Builder, arguments: &list[ArgumentElement], span: SourceSpan) -> Result[Operand, str]:
+    """Borrow the single checked C string buffer through its retained ownership fact."""
+    if len(arguments) != 1:
+        return Err("invalid checked C string pointer arguments")
+    match arguments[0].as_one():
+        Some(value) => return borrow_slice_operand(builder, value, [PlanType.U8], false, span)
+        None => return Err("invalid checked C string pointer spread")
+
+
+def copy_utf8(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Copy only bytes preceding a terminator within the caller's checked bound.
+
+    1. Preserve the raw view and explicit bound.
+    2. Scan one byte per bounded iteration into owned storage.
+    3. Validate UTF-8 or return the bounded-view error.
+    """
+    # 1. The checker retains the unsafe scope and scoped-view lifetime.
+    pointer = argument(builder, arguments, 0, span)?
+    bound = argument(builder, arguments, 1, span)?
+    pointer_type = PlanType.RawPointer(false, [PlanType.U8])
+    base = temporary(builder, pointer_type, span)
+    builder.emit(plan_assign(base, RvalueKind.PointerCast(pointer, pointer_type), span))
+    bytes_type = PlanType.List(ListLeaf.U8, 1)
+    copied = temporary(builder, bytes_type, span)
+    list_call(builder, "empty_list", PlanType.U8, [], bytes_type, [], copied, span)
+    index = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(index, RvalueKind.Use(literal(Constant.Int(0), span)), span))
+    header = builder.new_block(span)
+    inspect = builder.new_block(span)
+    append = builder.new_block(span)
+    found = builder.new_block(span)
+    missing = builder.new_block(span)
+    null_view = builder.new_block(span)
+    invalid_bound = builder.new_block(span)
+    after = builder.new_block(span)
+    begin_scan(builder, base, bound, header, null_view, invalid_bound, span)
+    # 2. The bound is checked before every read; a terminator stops reads immediately.
+    builder.current = header
+    within = temporary(builder, PlanType.Bool, span)
+    builder.emit(plan_assign(within, RvalueKind.Binary(BinaryOp.Less, read_place(index, false, span), bound), span))
+    builder.finish(TerminatorKind.SwitchBool(read_place(within, false, span), missing, inspect), span)
+    builder.current = inspect
+    byte = scan_byte(builder, base, index, span)?
+    terminated = temporary(builder, PlanType.Bool, span)
+    zero = temporary(builder, PlanType.U8, span)
+    builder.emit(
+        plan_assign(zero, RvalueKind.NumericCast(literal(Constant.Int(0), span), PlanType.Int, PlanType.U8), span),
+    )
+    builder.emit(
+        plan_assign(
+            terminated,
+            RvalueKind.Binary(BinaryOp.Equal, read_place(byte, false, span), read_place(zero, false, span)),
+            span,
+        ),
+    )
+    builder.finish(TerminatorKind.SwitchBool(read_place(terminated, false, span), append, found), span)
+    builder.current = append
+    append_list_value(builder, copied, read_place(byte, false, span), ListLeaf.U8, 1, span)?
+    increment_index(builder, index, span)
+    builder.finish(TerminatorKind.Goto(header), span)
+    # 3. Both outcomes initialize one ordinary owned Result and release the temporary buffer.
+    builder.current = found
+    reference = list_borrow(builder, copied, false, span)?
+    external_call(
+        builder,
+        "incan_native_runtime::checked_c_utf8",
+        [PlanType.ListRef(ListLeaf.U8, 1)],
+        ty,
+        [reference],
+        output,
+        span,
+    )
+    builder.finish(TerminatorKind.Goto(after), span)
+    builder.current = missing
+    refuse_result(builder, output, ty, "C string has no terminator within max_bytes", after, span)?
+    builder.current = null_view
+    refuse_result(builder, output, ty, "C string pointer is null", after, span)?
+    builder.current = invalid_bound
+    refuse_result(builder, output, ty, "max_bytes is not a valid bound", after, span)?
+    builder.current = after
+    drop_owned(builder, copied.local, span)
+    return Ok(None)
+
+
+def refuse_result(
+    mut builder: Builder,
+    output: Place,
+    ty: PlanType,
+    message: str,
+    after: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Initialize a checked bridge result's `Err` with one refusal message, then continue after the operation."""
+    error = owned_literal(builder, message, span)
+    assign_carrier(builder, output, enum_owner(ty)?, 1, [read_place(error, true, span)], span)
+    builder.finish(TerminatorKind.Goto(after), span)
+    return Ok(None)
+
+
+def begin_scan(
+    mut builder: Builder,
+    base: Place,
+    bound: Operand,
+    header: int,
+    null_view: int,
+    invalid_bound: int,
+    span: SourceSpan,
+) -> None:
+    """Refuse a null view, and a bound that is not positive or not a target pointer offset, before any read."""
+    address = temporary(builder, PlanType.USize, span)
+    builder.emit(plan_assign(address, RvalueKind.PointerAddress(read_place(base, false, span)), span))
+    zero = temporary(builder, PlanType.USize, span)
+    builder.emit(
+        plan_assign(zero, RvalueKind.NumericCast(literal(Constant.Int(0), span), PlanType.Int, PlanType.USize), span),
+    )
+    nonnull = temporary(builder, PlanType.Bool, span)
+    builder.emit(
+        plan_assign(
+            nonnull,
+            RvalueKind.Binary(BinaryOp.NotEqual, read_place(address, false, span), read_place(zero, false, span)),
+            span,
+        ),
+    )
+    check_bound = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(read_place(nonnull, false, span), null_view, check_bound), span)
+    builder.current = check_bound
+    positive = temporary(builder, PlanType.Bool, span)
+    no_bytes = literal(Constant.Int(0), span)
+    builder.emit(plan_assign(positive, RvalueKind.Binary(BinaryOp.Greater, bound, no_bytes), span))
+    check_offset = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(read_place(positive, false, span), invalid_bound, check_offset), span)
+    builder.current = check_offset
+    offset = temporary(builder, PlanType.ISize, span)
+    builder.emit(plan_assign(offset, RvalueKind.NumericCast(bound, PlanType.Int, PlanType.ISize), span))
+    restored = temporary(builder, PlanType.Int, span)
+    builder.emit(
+        plan_assign(
+            restored,
+            RvalueKind.NumericCast(read_place(offset, false, span), PlanType.ISize, PlanType.Int),
+            span,
+        ),
+    )
+    fits = temporary(builder, PlanType.Bool, span)
+    builder.emit(plan_assign(fits, RvalueKind.Binary(BinaryOp.Equal, read_place(restored, false, span), bound), span))
+    builder.finish(TerminatorKind.SwitchBool(read_place(fits, false, span), invalid_bound, header), span)
+
+
+def scan_byte(mut builder: Builder, base: Place, index: Place, span: SourceSpan) -> Result[Place, str]:
+    """Form one in-bound pointer and copy its byte without carrying a foreign reference beyond the read."""
+    offset = temporary(builder, PlanType.ISize, span)
+    builder.emit(
+        plan_assign(offset, RvalueKind.NumericCast(read_place(index, false, span), PlanType.Int, PlanType.ISize), span),
+    )
+    address = temporary(builder, place_type(builder.locals, base), span)
+    builder.emit(
+        plan_assign(
+            address,
+            RvalueKind.PointerOffset(read_place(base, false, span), read_place(offset, false, span)),
+            span,
+        ),
+    )
+    source = Place(local=address.local, projection=Projection.Deref(PlanType.U8), span=span)
+    byte = temporary(builder, PlanType.U8, span)
+    builder.emit(plan_assign(byte, RvalueKind.Use(read_place(source, false, span)), span))
+    return Ok(byte)
+
+
+def increment_index(mut builder: Builder, index: Place, span: SourceSpan) -> None:
+    """Advance after a successful read; the next loop edge rechecks the caller's bound."""
+    checked = temporary(builder, PlanType.CheckedInt, span)
+    builder.emit(
+        plan_assign(
+            checked,
+            RvalueKind.Binary(BinaryOp.Add, read_place(index, false, span), literal(Constant.Int(1), span)),
+            span,
+        ),
+    )
+    value = Place(local=checked.local, projection=Projection.Value, span=span)
+    builder.emit(plan_assign(index, RvalueKind.Use(read_place(value, false, span)), span))
+
+
+# =====================================================================================================================
+# Typed spans: a span is its owned element vector; pointers and counts are views of that vector
+# =====================================================================================================================
+
+
+def make_span(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move the constructor's owned buffer into the span, reading it once through its checked ownership fact."""
+    require_span_operands(arguments, 1, "constructor")?
+    match arguments[0].as_one():
+        Some(value) =>
+            buffer = value_operand(builder, value, span)?
+            builder.emit(plan_assign(output, RvalueKind.Use(buffer), span))
+            builder.owned.append(output.local)
+            return Ok(None)
+        None => return Err("invalid checked C span constructor spread")
+
+
+def span_pointer(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    ty: PlanType,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lend the span's elements as the raw pointer one bounded call receives, without moving or reallocating them."""
+    element = pointer_element(ty)?
+    require_span_operands(arguments, 1, "pointer")?
+    mut view = literal(Constant.Unit, span)
+    match arguments[0].as_one():
+        Some(value) => view = borrow_slice_operand(builder, value, [element], mutable, span)?
+        None => return Err("invalid checked C span pointer spread")
+    source = pointer_place(view)?
+    slice_type = PlanType.NativeSlice([element])
+    borrowed = Place(local=source.local, projection=Projection.Deref(slice_type), span=span)
+    pointer = temporary(builder, PlanType.RawPointer(mutable, [slice_type]), span)
+    builder.emit(plan_assign(pointer, RvalueKind.RawAddressOf(borrowed, mutable), span))
+    builder.emit(plan_assign(output, RvalueKind.PointerCast(read_place(pointer, false, span), ty), span))
+    return Ok(None)
+
+
+def span_count(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Read the span's element count, which is also a mutable span's capacity, as the `usize` a C count takes."""
+    require_span_operands(arguments, 1, "count")?
+    buffer = span_buffer(builder, arguments, span)?
+    count = read_place(buffer_length(builder, buffer, span)?, false, span)
+    builder.emit(plan_assign(output, RvalueKind.NumericCast(count, PlanType.Int, PlanType.USize), span))
+    return Ok(None)
+
+
+def finish_span(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Keep the first `written` elements of a mutable span, as `into_bytes` and `into_f32s` state.
+
+    1. Read the span's capacity and the written count.
+    2. Refuse a negative count or one above the capacity.
+    3. Copy the written prefix into the `Ok` result; the span's own buffer is released with the span.
+    """
+    # 1. The count is compared in `int`, which every checked integer count converts to, through one copied local.
+    require_span_operands(arguments, 2, "finish")?
+    buffer = span_buffer(builder, arguments, span)?
+    capacity = buffer_length(builder, buffer, span)?
+    supplied = coerce_numeric_operand(builder, argument(builder, arguments, 1, span)?, PlanType.Int, span)?
+    written = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(written, RvalueKind.Use(supplied), span))
+    owner = enum_owner(ty)?
+    keep = builder.new_block(span)
+    refuse = builder.new_block(span)
+    after = builder.new_block(span)
+    # 2. Both bounds are checked before any element is read.
+    within_capacity(builder, written, capacity, keep, refuse, span)
+    builder.current = refuse
+    refuse_result(builder, output, ty, "written count is outside the span capacity", after, span)?
+    # 3. The prefix is an owned copy, so the result never aliases the span's storage.
+    builder.current = keep
+    kept = written_prefix(builder, buffer, written, span)?
+    assign_carrier(builder, output, owner, 0, [read_place(kept, true, span)], span)
+    builder.finish(TerminatorKind.Goto(after), span)
+    builder.current = after
+    return Ok(None)
+
+
+def require_span_operands(arguments: &list[ArgumentElement], count: int, role: str) -> Result[None, str]:
+    """Refuse a span operation whose checked operand count is not the operation's own."""
+    if len(arguments) != count:
+        return Err(f"invalid checked C span {role} arguments")
+    return Ok(None)
+
+
+def pointer_element(ty: PlanType) -> Result[PlanType, str]:
+    """The element a checked span pointer addresses."""
+    match ty:
+        PlanType.RawPointer(_mutable, elements) =>
+            if len(elements) == 1:
+                return Ok(elements[0])
+        _ => pass
+    return Err("invalid checked C span pointer carrier")
+
+
+def span_buffer(mut builder: Builder, arguments: &list[ArgumentElement], span: SourceSpan) -> Result[Place, str]:
+    """The span local's own element vector, the operation's first operand; a span is only read through its local."""
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) => return scalar_place(builder, read.place, span)
+        _ => return Err("invalid checked C span receiver")
+
+
+def buffer_length(mut builder: Builder, buffer: Place, span: SourceSpan) -> Result[Place, str]:
+    """Read the span vector's length through the runtime without consuming the span."""
+    leaf, depth = require_list_shape(place_type(builder.locals, buffer), "invalid checked C span storage")?
+    reference = list_borrow(builder, buffer, false, span)?
+    count = temporary(builder, PlanType.Int, span)
+    parameters = [PlanType.ListRef(leaf, depth)]
+    list_call(builder, "length_list", list_element(leaf, depth), parameters, PlanType.Int, [reference], count, span)
+    return Ok(count)
+
+
+def within_capacity(
+    mut builder: Builder,
+    written: Place,
+    capacity: Place,
+    keep: int,
+    refuse: int,
+    span: SourceSpan,
+) -> None:
+    """Branch to `keep` only for `0 <= written <= capacity`, and to `refuse` otherwise."""
+    count = read_place(written, false, span)
+    nonnegative = temporary(builder, PlanType.Bool, span)
+    builder.emit(
+        plan_assign(nonnegative, RvalueKind.Binary(BinaryOp.GreaterEqual, count, literal(Constant.Int(0), span)), span),
+    )
+    check_capacity = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(read_place(nonnegative, false, span), refuse, check_capacity), span)
+    builder.current = check_capacity
+    fits = temporary(builder, PlanType.Bool, span)
+    builder.emit(
+        plan_assign(fits, RvalueKind.Binary(BinaryOp.LessEqual, count, read_place(capacity, false, span)), span),
+    )
+    builder.finish(TerminatorKind.SwitchBool(read_place(fits, false, span), refuse, keep), span)
+
+
+def written_prefix(mut builder: Builder, buffer: Place, written: Place, span: SourceSpan) -> Result[Place, str]:
+    """Copy the first `written` elements of the span vector into a new owned vector."""
+    leaf, depth = require_list_shape(place_type(builder.locals, buffer), "invalid checked C span storage")?
+    reference = list_borrow(builder, buffer, false, span)?
+    kept = temporary(builder, PlanType.List(leaf, depth), span)
+    mut operands = [reference]
+    operands.extend(
+        [
+            literal(Constant.Bool(true), span),
+            literal(Constant.Int(0), span),
+            literal(Constant.Bool(true), span),
+            read_place(written, false, span),
+            literal(Constant.Bool(false), span),
+            literal(Constant.Int(1), span),
+        ],
+    )
+    parameters = [
+        PlanType.ListRef(leaf, depth),
+        PlanType.Bool,
+        PlanType.Int,
+        PlanType.Bool,
+        PlanType.Int,
+        PlanType.Bool,
+        PlanType.Int,
+    ]
+    list_call(
+        builder,
+        "slice_list",
+        list_element(leaf, depth),
+        parameters,
+        PlanType.List(leaf, depth),
+        operands,
+        kept,
+        span,
+    )
+    return Ok(kept)

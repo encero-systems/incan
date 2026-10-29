@@ -1,4 +1,4 @@
-# behavior: a native Cursor keeps its borrowed vector, dereference receivers, mutable position, I/O error display, seek variants and field-guard reads: cloning a borrowed native byte vector returns owned bytes that outlive the cursor, Rc and RefCell guards preserve shared and mutable dereference receivers, Rust mutable receiver methods borrow the caller's value exclusively, an owned native I/O error formats like its own to_string method and remains usable, a native seek variant carries its checked integer payload into a cursor operation, and a trait-qualified reader behind a field guard lends its cursor to a bounded read and preserves the cursor for the next read
+# behavior: native cursor loans, guard reads and boxed enum pattern loans preserve their actual referents (#2256)
 # expect-stdout:
 #   2
 #   0
@@ -14,7 +14,10 @@
 """Observe one native cursor through every receiver, ownership and trait shape the area cases cover."""
 
 from rust::std::cell import RefCell
+from rust::std::boxed import Box
+from rust::std::cmp import Ordering
 from rust::std::io import Cursor, Read, Seek, SeekFrom
+from rust::std::ops import Bound
 from rust::std::rc import Rc
 
 
@@ -89,11 +92,44 @@ def show_guard_reads() -> None:
     println(len(buffer.read(2u64)))
 
 
+def inspect_boxed_enum(value: &Bound[Box[Ordering]]) -> bool:
+    """Pass a boxed native pattern loan to the enum referent's source parameter."""
+    match value:
+        Bound.Included(ordering) => return is_greater(ordering)
+        _ => return false
+
+
+def is_greater(value: &Ordering) -> bool:
+    """Inspect the enum selected through the native box's shared dereference."""
+    match value:
+        Ordering.Greater => return true
+        _ => return false
+
+
+def contains_bound(values: list[Bound[Box[Ordering]]], value: &Bound[Box[Ordering]]) -> bool:
+    """Compare a borrowed non-Copy native enum through the list's owned element boundary."""
+    return value in values
+
+
 def main() -> None:
-    """Run each cursor observation in the order of the cases it carries."""
+    """
+    Observe native loans.
+
+    1. Observe cursor methods, traits and guard reads.
+    2. Inspect a borrowed boxed enum without changing its owner.
+    """
+    # 1. Observe cursor methods, traits and guard reads.
     show_owned_clone()
     show_deref_receivers()
     show_mutable_receiver()
     show_io_error_display()
     show_seek_variants()
     show_guard_reads()
+
+    # 2. Inspect a borrowed boxed enum without changing its owner.
+    bound = Bound.Included(Box.new(Ordering.Greater))
+    assert inspect_boxed_enum(bound)
+    assert inspect_boxed_enum(bound)
+    bounds = [bound]
+    assert contains_bound(bounds, bound)
+    assert contains_bound(bounds, bound)

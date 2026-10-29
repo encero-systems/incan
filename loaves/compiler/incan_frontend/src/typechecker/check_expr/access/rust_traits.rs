@@ -4,6 +4,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::super::ops::contextual_integer_literal_fits;
 use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
 use crate::ast::{Expr, Spanned};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type};
@@ -13,6 +14,8 @@ use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{
     RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
 };
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::numerics;
 
 /// A closed trait reference and the signature it contributes to one method call.
 struct TraitCandidate {
@@ -26,6 +29,77 @@ struct TraitCandidate {
 }
 
 impl TypeChecker {
+    /// Select an owned per-element From conversion using the same metadata candidates as explicit native calls.
+    /// The typed placeholder supplies no executable expression or source identity; only the checked element type
+    /// participates in inference, and exact input/output carriers must match before a call is retained.
+    pub(in crate::typechecker::check_expr) fn native_element_conversion(
+        &self,
+        source: &ResolvedType,
+        target: &ResolvedType,
+    ) -> Option<crate::typechecker::RustCheckedCall> {
+        // ---- Native conversion context ----
+        let path = self.rust_canonical_path_for_receiver_type(target)?;
+        let metadata = self.rust_item_metadata_for_path(&path)?;
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return None;
+        };
+        let placeholder = Spanned::new(
+            Expr::Literal(crate::ast::Literal::String(String::new())),
+            crate::ast::Span::new(0, 0),
+        );
+        let arguments = [crate::ast::CallArg::Positional(placeholder.clone())];
+        let types = [source.clone()];
+        let call = RustPathMethodCall {
+            rust_path: &path,
+            method: "from",
+            receiver_metadata: Some(&metadata),
+            receiver_binding: None,
+            receiver_expr: &placeholder,
+            type_args: &[],
+            args: &arguments,
+            arg_types: &types,
+            receiver_span: placeholder.span,
+            expected_return_ty: Some(target),
+            span: placeholder.span,
+        };
+
+        // ---- Exact and unambiguous From implementation ----
+        let identity = self.rust_trait_identity("std::convert::From");
+        let mut selected: Option<crate::typechecker::RustCheckedCall> = None;
+        for implementation in &info.implemented_traits {
+            if self.rust_trait_identity(&implementation.path) != identity {
+                continue;
+            }
+            let Some(candidate) = self.retained_trait_candidate(implementation, &call, target, info) else {
+                continue;
+            };
+            if Self::rust_signature_has_receiver(&candidate.signature) || candidate.signature.params.len() != 1 {
+                continue;
+            }
+            let parameter = self.native_rust_signature_type(&candidate.signature.params[0].type_display, &path);
+            let result = self.native_rust_signature_type(&candidate.signature.return_type, &path);
+            if !self.rust_trait_carriers_match(&parameter, source) || !self.rust_trait_carriers_match(&result, target) {
+                continue;
+            }
+            let retained = crate::typechecker::RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
+                receiver_adjustments: Vec::new(),
+                path: candidate.path,
+                type_arguments: candidate.arguments,
+                parameters: vec![crate::symbols::CallableParam::positional(parameter)],
+                return_type: result,
+                result_item_path: Some(path.clone()),
+                has_receiver: false,
+            };
+            if selected.as_ref().is_some_and(|previous| previous != &retained) {
+                return None;
+            }
+            selected = Some(retained);
+        }
+        selected
+    }
+
     /// Infer a receiver-free trait function's Self from its destination and its declared method binders from inputs.
     /// Close associated projections before validation, retaining source declaration types structurally rather than
     /// replacing an inferred model with a parsed Rust display. Rustc verifies the selected native trait obligations.
@@ -113,7 +187,7 @@ impl TypeChecker {
             );
         }
         self.type_info.rust.checked_calls.insert(
-            (call.span.start, call.span.end),
+            call.span,
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
@@ -129,9 +203,9 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Select a declared native trait method for an admitted dynamic receiver or bounded source parameter. Neither
-    /// receiver needs a nominal impl template; the caller establishes its trait authority, and native compilation
-    /// verifies the exact instantiated signature and obligations before constructing MIR.
+    /// Select a declared native trait method for a dynamic receiver, canonical source owner or bounded parameter.
+    /// These receivers need no inspected nominal impl template; the caller establishes the declaration or bound,
+    /// and native compilation verifies the exact instantiated signature and obligations before constructing MIR.
     pub(super) fn resolve_rust_declared_trait_method(
         &mut self,
         call: RustPathMethodCall<'_>,
@@ -153,7 +227,7 @@ impl TypeChecker {
         };
         let owner = match self.active_type_param_name(&owner) {
             Some(name) => ResolvedType::TypeVar(name.to_owned()),
-            None => self.native_rust_signature_type(&render_resolved_type_as_rust_arg(&owner), ""),
+            None => owner,
         };
         let arguments = self.rust_owner_type_args(&owner, call.rust_path).unwrap_or_default();
         let associated_count = info
@@ -164,7 +238,15 @@ impl TypeChecker {
         if arguments.len() != info.type_params.len() + associated_count || !call.type_args.is_empty() {
             return None;
         }
-        let signature = self.specialize_rust_owner_signature(original, call.rust_path, &info.type_params, &arguments);
+        // Trait parameters belong to the declaration, but Self belongs to the selected receiver. Keep it open
+        // until that receiver is applied below; substituting the trait path here loses the actual result carrier.
+        let substitutions = info
+            .type_params
+            .iter()
+            .zip(&arguments)
+            .map(|(name, argument)| (name.as_str(), render_resolved_type_as_rust_arg(argument)))
+            .collect();
+        let signature = Self::specialize_rust_signature(original, &substitutions, "Self");
         let bindings = self.infer_rust_signature_bindings(
             &signature,
             call.rust_path,
@@ -217,10 +299,10 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Admit an explicit native trait call on a source parameter only from its innermost declared bound. Trait
-    /// identities come from native metadata, so a same-named source trait and an outer shadowed parameter grant no
-    /// callable authority. Generic trait arguments require their own retained substitution and remain refused here.
-    pub(super) fn retain_rust_parameter_trait_call(
+    /// Retain an explicit native trait call on a concrete source declaration or a parameter with an innermost native
+    /// bound. Concrete implementations are verified by rustc; a parameter still requires its declared authority.
+    /// Both use the existing declared-trait selector, preserving source identities in Self and its result.
+    pub(super) fn retain_rust_source_trait_call(
         &mut self,
         call: &RustTraitQualifiedCall<'_>,
         receiver: &Spanned<Expr>,
@@ -230,32 +312,31 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
             other => other,
         };
-        let name = self.active_type_param_name(owner)?;
-        let bounds = self
-            .current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(name))?;
-        let identity = self.rust_trait_definition_path(call.rust_path);
-        let admitted = bounds.iter().any(|bound| {
-            if !bound.type_args.is_empty() {
-                return false;
-            }
-            let path = if let Some(path) = bound.name.strip_prefix("::") {
-                path
-            } else {
-                let Some(symbol) = self.lookup_symbol(&bound.name) else {
+        let admitted = if let Some(name) = self.active_type_param_name(owner) {
+            let identity = self.rust_trait_identity(call.rust_path);
+            self.innermost_type_param_bounds(name)?.iter().any(|bound| {
+                if !bound.type_args.is_empty() {
                     return false;
+                }
+                let path = if let Some(path) = bound.name.strip_prefix("::") {
+                    path
+                } else {
+                    let Some(symbol) = self.lookup_symbol(&bound.name) else {
+                        return false;
+                    };
+                    let crate::symbols::SymbolKind::RustItem(item) = &symbol.kind else {
+                        return false;
+                    };
+                    &item.path
                 };
-                let crate::symbols::SymbolKind::RustItem(item) = &symbol.kind else {
-                    return false;
-                };
-                &item.path
-            };
-            self.rust_item_metadata_for_path(path).is_some_and(|metadata| {
-                matches!(metadata.kind, RustItemKind::Trait(_)) && self.rust_trait_definition_path(path) == identity
+                self.rust_item_metadata_for_path(path).is_some_and(|metadata| {
+                    matches!(metadata.kind, RustItemKind::Trait(_)) && self.rust_trait_identity(path) == identity
+                })
             })
-        });
+        } else {
+            matches!(owner, ResolvedType::Named(name) | ResolvedType::Generic(name, _)
+                if self.source_nominal_carrier_key(name).is_some())
+        };
         if !admitted {
             return None;
         }
@@ -291,7 +372,7 @@ impl TypeChecker {
         let next = self.rust_iteration_call(expression, &iter.return_type, "core::iter::Iterator", "next")?;
         let item = next.return_type.option_inner_type()?.clone();
         self.type_info.rust.iteration_hooks.insert(
-            (expression.span.start, expression.span.end),
+            expression.span,
             crate::typechecker::type_info::RustIterationHooks { iter, next },
         );
         Some(item)
@@ -315,11 +396,14 @@ impl TypeChecker {
             method.to_owned(),
             format!("{:?}", self.native_call_type_parameters()),
         );
-        if let Some(selected) = self.native_iteration_calls.borrow().get(&key) {
+        if let Some(selected) = self.native_queries.native_iteration_calls.borrow().get(&key) {
             return selected.clone();
         }
         let selected = self.select_rust_iteration_call(expression, owner, trait_path, method);
-        self.native_iteration_calls.borrow_mut().insert(key, selected.clone());
+        self.native_queries
+            .native_iteration_calls
+            .borrow_mut()
+            .insert(key, selected.clone());
         selected
     }
 
@@ -350,7 +434,7 @@ impl TypeChecker {
             span: expression.span,
         };
         let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, Some(trait_path), true);
-        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+        if crate::trace_flags::trace_rust_facts() {
             eprintln!(
                 "native iteration: {owner:?}, {trait_path}::{method}, candidates {:?}",
                 candidates
@@ -381,10 +465,7 @@ impl TypeChecker {
             receiver_adjustments: Vec::new(),
             path: selected.path,
             type_arguments: selected.arguments,
-            parameters: vec![Self::checked_rust_receiver_parameter(
-                &selected.signature,
-                &selected.self_type,
-            )?],
+            parameters: vec![self.checked_rust_receiver_parameter(&selected.signature, &selected.self_type)?],
             return_type: self.native_rust_signature_type(&selected.signature.return_type, &path),
             result_item_path: self.rust_result_item_path(&selected.signature.return_type, &path),
             has_receiver: true,
@@ -393,7 +474,7 @@ impl TypeChecker {
 
     /// Retain a qualified method on a source type parameter from its declared native trait bound. The bound fixes
     /// the trait arguments, while the active source instance later closes Self; no concrete impl is guessed here.
-    /// A shared argument identifies its referent as Self only when metadata proves a shared receiver.
+    /// An explicit loan selects its referent's bound only when the native receiver is the same kind of Self loan.
     pub(super) fn retain_bound_rust_trait_call(
         &mut self,
         call: &RustTraitQualifiedCall<'_>,
@@ -407,39 +488,34 @@ impl TypeChecker {
         if original.is_async || original.is_unsafe || !original.type_params.is_empty() || !call.type_args.is_empty() {
             return None;
         }
-        let owner = match source {
-            ResolvedType::Ref(inner)
-                if original.params.first().is_some_and(|parameter| {
-                    Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| !mutable)
-                }) =>
-            {
-                inner.as_ref()
-            }
-            other => other,
+        let borrowed_self = original.params.first().and_then(|parameter| {
+            let display = Self::rust_display_without_lifetimes(&parameter.type_display);
+            Self::rust_display_borrow_kind(&display)
+                .and_then(|(mutable, inner)| matches!(inner.trim(), "Self" | "self").then_some(mutable))
+        });
+        let referent = match (source, borrowed_self) {
+            (ResolvedType::Ref(inner), Some(false)) | (ResolvedType::RefMut(inner), Some(true)) => inner.as_ref(),
+            _ => source,
         };
-        let name = self.generic_placeholder_name(owner)?;
+        let name = self.generic_placeholder_name(referent)?;
         let source = ResolvedType::TypeVar(name.to_owned());
+        let identity = self.rust_trait_identity(call.rust_path);
         let mut selected = None;
-        for frame in self.current_type_param_bound_details.iter().rev() {
-            for bound in frame.get(name).into_iter().flatten() {
-                let path = if bound.name.contains("::") {
-                    Some(bound.name.trim_start_matches("::").to_owned())
-                } else {
-                    self.rust_canonical_path_for_receiver_type(&ResolvedType::Named(bound.name.clone()))
-                };
-                if path.as_deref().is_none_or(|path| {
-                    incan_lang::interop::ancestral_rust_path(path)
-                        != incan_lang::interop::ancestral_rust_path(call.rust_path)
-                }) {
-                    continue;
-                }
-                if bound.type_args.len() != call.trait_info.type_params.len()
-                    || selected.as_ref().is_some_and(|previous| previous != &bound.type_args)
-                {
-                    return None;
-                }
-                selected = Some(bound.type_args.clone());
+        for bound in self.innermost_type_param_bounds(name)? {
+            let path = if bound.name.contains("::") {
+                Some(bound.name.trim_start_matches("::").to_owned())
+            } else {
+                self.rust_canonical_path_for_receiver_type(&ResolvedType::Named(bound.name.clone()))
+            };
+            if path.is_none_or(|path| self.rust_trait_identity(&path) != identity) {
+                continue;
             }
+            if bound.type_args.len() != call.trait_info.type_params.len()
+                || selected.as_ref().is_some_and(|previous| previous != &bound.type_args)
+            {
+                return None;
+            }
+            selected = Some(bound.type_args.clone());
         }
         let arguments = selected?;
         let substitutions = call
@@ -489,15 +565,12 @@ impl TypeChecker {
                 returns_self: false,
             },
         )?;
-        self.type_info
-            .rust
-            .checked_calls
-            .get_mut(&(call.span.start, call.span.end))?
-            .has_receiver = false;
+        self.type_info.rust.checked_calls.get_mut(&call.span)?.has_receiver = false;
         Some(result)
     }
 
-    /// Keep a metadata-selected result item's identity before source scalar and collection projection.
+    /// Keep a metadata-selected result item's identity before source scalar and collection projection, normalizing
+    /// token-printer spacing before the exact metadata lookup.
     pub(in crate::typechecker::check_expr) fn rust_result_item_path(
         &self,
         display: &str,
@@ -505,6 +578,7 @@ impl TypeChecker {
     ) -> Option<String> {
         let display = self.rust_display_for_owner_path(display, owner);
         let display = Self::rust_display_without_lifetimes(&display);
+        let display = Self::compact_rust_display(&display);
         let referent = Self::rust_display_borrow_kind(&display).map_or(display.as_str(), |(_, inner)| inner);
         let base = Self::rust_generic_base_and_args(referent).map_or(referent, |(base, _)| base);
         let native = incan_lang::interop::ancestral_rust_path(base);
@@ -523,12 +597,7 @@ impl TypeChecker {
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<String> {
-        if let Some(field) = self
-            .type_info
-            .rust
-            .field_values
-            .get(&(expression.span.start, expression.span.end))
-        {
+        if let Some(field) = self.type_info.rust.field_values.get(&expression.span) {
             return field.item_path.clone();
         }
         if let Expr::Paren(inner) = &expression.node {
@@ -546,7 +615,7 @@ impl TypeChecker {
         self.type_info
             .rust
             .checked_calls
-            .get(&(expression.span.start, expression.span.end))?
+            .get(&expression.span)?
             .result_item_path
             .clone()
     }
@@ -569,6 +638,27 @@ impl TypeChecker {
         }
     }
 
+    /// Select a native method receiver before materializing a direct borrowed return as its owned source surface.
+    /// The same consumer marker used for native arguments prevents a later return pass from recreating that copy;
+    /// assigned source locals retain their already selected storage, and parentheses preserve the inner identity.
+    pub(super) fn rust_method_receiver_path(&mut self, expression: &Spanned<Expr>) -> Option<String> {
+        if let Expr::Paren(inner) = &expression.node {
+            return self.rust_method_receiver_path(inner);
+        }
+        let key = expression.span;
+        let native = self
+            .type_info
+            .rust
+            .checked_calls
+            .get(&key)
+            .map(|call| call.return_type.clone())
+            .or_else(|| self.rust_native_value_type(expression))?;
+        let path = self.rust_canonical_path_for_receiver_type(&native)?;
+        self.type_info.rust.native_return_consumers.insert(key);
+        self.type_info.rust.return_coercions.remove(&key);
+        Some(path)
+    }
+
     /// Recover the exact native carrier of a public Rust field, selected call, checked source view, or local alias for
     /// generic inference. A source view's flattened public type must not replace its already retained executable
     /// borrow.
@@ -576,20 +666,10 @@ impl TypeChecker {
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
-        if let Some(field) = self
-            .type_info
-            .rust
-            .field_values
-            .get(&(expression.span.start, expression.span.end))
-        {
+        if let Some(field) = self.type_info.rust.field_values.get(&expression.span) {
             return Some(field.native_type.clone());
         }
-        if let Some(conversion) = self
-            .type_info
-            .rust
-            .return_coercions
-            .get(&(expression.span.start, expression.span.end))
-        {
+        if let Some(conversion) = self.type_info.rust.return_coercions.get(&expression.span) {
             return Some(conversion.target_type.clone());
         }
         if let Expr::Paren(inner) = &expression.node {
@@ -604,13 +684,22 @@ impl TypeChecker {
                 .get(self.symbols.identity_of(symbol)?)
                 .cloned();
         }
-        let key = (expression.span.start, expression.span.end);
+        let key = expression.span;
         self.type_info
             .rust
             .checked_calls
             .get(&key)
             .map(|call| call.return_type.clone())
             .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&key).cloned())
+            .or_else(|| {
+                let retained = self.type_info.expressions.body_ir_expr_types.get(&key)?;
+                let ResolvedType::Generic(owner, _) = retained else {
+                    return None;
+                };
+                self.rust_item_metadata_for_path(owner)
+                    .is_some_and(|metadata| matches!(metadata.kind, RustItemKind::Type(_)))
+                    .then(|| retained.clone())
+            })
     }
 
     /// Compare canonical native carriers for trait selection. The source compatibility relation deliberately admits
@@ -625,12 +714,46 @@ impl TypeChecker {
     fn rust_trait_comparison_type(&self, ty: &ResolvedType) -> ResolvedType {
         let ty = self.rust_inference_type(ty, &[]);
         map_resolved_type_leaves(&ty, &|leaf| {
+            if self.active_type_param_name(leaf).is_some() {
+                return None;
+            }
+            if let ResolvedType::Generic(path, arguments) = leaf
+                && path.contains("::")
+                && arguments.is_empty()
+                && self.source_trait_carrier_key(path).is_none()
+            {
+                return Some(ResolvedType::RustPath(self.rust_native_type_identity_path(path)));
+            }
+            if let ResolvedType::Function(parameters, result) = leaf {
+                return Some(ResolvedType::Function(
+                    parameters
+                        .iter()
+                        .map(|parameter| {
+                            let mut parameter = parameter.clone();
+                            parameter.name = None;
+                            parameter.ty = self.rust_trait_comparison_type(&parameter.ty);
+                            parameter
+                        })
+                        .collect(),
+                    Box::new(self.rust_trait_comparison_type(result)),
+                ));
+            }
             if let ResolvedType::Generic(base, arguments) = leaf {
-                let base = if base.contains("::") {
-                    self.rust_native_type_identity_path(base)
-                } else {
-                    base.clone()
-                };
+                if collections::from_str(base) == Some(CollectionTypeId::Tuple) {
+                    return Some(ResolvedType::Tuple(
+                        arguments
+                            .iter()
+                            .map(|argument| self.rust_trait_comparison_type(argument))
+                            .collect(),
+                    ));
+                }
+                let base = self.source_trait_carrier_key(base).unwrap_or_else(|| {
+                    if base.contains("::") {
+                        self.rust_native_type_identity_path(base)
+                    } else {
+                        base.clone()
+                    }
+                });
                 return Some(ResolvedType::Generic(
                     base,
                     arguments
@@ -638,6 +761,11 @@ impl TypeChecker {
                         .map(|argument| self.rust_trait_comparison_type(argument))
                         .collect(),
                 ));
+            }
+            if let ResolvedType::Named(name) = leaf
+                && let Some(key) = self.source_trait_carrier_key(name)
+            {
+                return Some(ResolvedType::Named(key));
             }
             let path = match leaf {
                 ResolvedType::RustPath(path) => path,
@@ -664,6 +792,24 @@ impl TypeChecker {
         })
     }
 
+    /// Normalize source nominals owned by this compilation through their checked identity, including library
+    /// declarations whose origin already names the publishing package. Foreign package aliases keep their native
+    /// defining-path comparison and selected artifact identity.
+    fn source_trait_carrier_key(&self, name: &str) -> Option<String> {
+        let identity = self.symbols.module_type_identity(name)?;
+        let owned = match &identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(_) => true,
+            incan_semantics_core::SymbolOrigin::Package { library, .. } => {
+                self.symbols.package_identity() == Some(library.as_str())
+            }
+            _ => false,
+        };
+        if !owned {
+            return None;
+        }
+        self.source_nominal_carrier_key(name)
+    }
+
     /// Compare public type reexports through their retained defining path within the same bound crate. Distinct
     /// extern aliases remain separate domains; standard reexports retain the existing ancestry normalization.
     pub(in crate::typechecker) fn rust_native_type_identity_path(&self, path: &str) -> String {
@@ -678,8 +824,9 @@ impl TypeChecker {
         incan_lang::interop::ancestral_rust_path(definition.unwrap_or(path))
     }
 
-    /// Bind one impl's declared Self template to a concrete native owner before inspecting its members or projections.
-    pub(in crate::typechecker::check_expr) fn rust_impl_self_bindings(
+    /// Bind one impl's declared Self template to a concrete native owner before member, projection, or ownership
+    /// admission. A matching Self template is a candidate only; native predicate obligations remain unproven here.
+    pub(in crate::typechecker) fn rust_impl_self_bindings(
         &self,
         implementation: &RustImplementedTrait,
         owner: &ResolvedType,
@@ -693,7 +840,41 @@ impl TypeChecker {
         self.infer_type_param_bindings(&template, &actual, &mut bindings);
         self.insert_rust_impl_default_bindings(implementation, &mut bindings);
         let closed = substitute_resolved_type(&template, &bindings);
-        self.rust_trait_carriers_match(&closed, &actual).then_some(bindings)
+        if !self.rust_trait_carriers_match(&closed, &actual) {
+            return None;
+        }
+        self.rust_callable_impl_bindings(implementation, &mut bindings);
+        Some(bindings)
+    }
+
+    /// Close an impl binder constrained by a retained native callable Output equality. Iterator adapters commonly
+    /// bind their Item through `F: FnMut(...) -> B`, so matching Self alone cannot discover B. The actual checked
+    /// function signature supplies that result; rustc still verifies every native trait predicate before execution.
+    fn rust_callable_impl_bindings(
+        &self,
+        implementation: &RustImplementedTrait,
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
+        for _ in 0..implementation.type_params.len() {
+            for bound in &implementation.bounds {
+                if incan_lang::interop::rust_callable_trait(&bound.path).is_none() {
+                    continue;
+                }
+                let owner = self.native_rust_signature_type(&bound.self_type, "");
+                let owner = self.rust_inference_type(&owner, &implementation.type_params);
+                let ResolvedType::Function(_, result) = substitute_resolved_type(&owner, bindings) else {
+                    continue;
+                };
+                for equality in &bound.associated_type_bindings {
+                    if equality.name != "Output" {
+                        continue;
+                    }
+                    let output = self.native_rust_signature_type(&equality.value_path, "");
+                    let output = self.rust_inference_type(&output, &implementation.type_params);
+                    self.infer_type_param_bindings(&output, &result, bindings);
+                }
+            }
+        }
     }
 
     /// Bind the impl binders that stand at a defaulted position of its Self template (`A` in `Vec<T, A>`) to the
@@ -712,6 +893,7 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return;
         };
+        let mut earlier = Vec::new();
         for (index, argument) in arguments
             .iter()
             .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
@@ -719,10 +901,15 @@ impl TypeChecker {
         {
             if implementation.type_params.iter().any(|name| name == argument)
                 && !bindings.contains_key(*argument)
-                && let Some(default) = info.type_param_defaults.get(index).and_then(Option::as_deref)
+                && let Some(default) = self.owner_default(info, index, &earlier, base)
             {
-                bindings.insert((*argument).to_owned(), self.native_rust_signature_type(default, base));
+                bindings.insert((*argument).to_owned(), default);
             }
+            let closed = bindings
+                .get(*argument)
+                .cloned()
+                .unwrap_or_else(|| self.native_rust_signature_type(argument, base));
+            earlier.push(closed);
         }
     }
 
@@ -736,6 +923,7 @@ impl TypeChecker {
     }
 
     /// Close omitted native owner defaults once, before matching either impl members or associated type templates.
+    /// Native slices retain the signature parser's structural owner instead of acquiring nominal generic syntax.
     pub(super) fn rust_closed_owner(&self, ty: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
         if matches!(ty, ResolvedType::Generic(base, _) if base == "[]") {
             return ty.clone();
@@ -744,6 +932,9 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => *inner.clone(),
             other => other.clone(),
         };
+        if path == "[]" {
+            return self.native_rust_signature_type(&render_resolved_type_as_rust_arg(&owner), "");
+        }
         if let Some(mut arguments) = self.rust_owner_type_args(&owner, path)
             && self.complete_rust_owner_arguments(info, &mut arguments)
         {
@@ -755,7 +946,10 @@ impl TypeChecker {
                 .map(render_resolved_type_as_rust_arg)
                 .collect::<Vec<_>>()
                 .join(", ");
-            owner = self.resolved_type_from_rust_display(&format!("{path}<{arguments}>"));
+            let display = format!("{path}<{arguments}>");
+            // Keep existing source Option/Result and collection projections while restoring frozen native owners,
+            // whose inferred method calls still need their exact impl identity and tuple arguments.
+            owner = self.native_frozen_owner(&display, path, self.resolved_type_from_rust_display(&display));
         }
         owner
     }
@@ -808,16 +1002,10 @@ impl TypeChecker {
         path: &str,
     ) -> Vec<ResolvedType> {
         while let Some(index) = arguments.len().checked_sub(1) {
-            let Some(default) = info.type_param_defaults.get(index).and_then(Option::as_deref) else {
+            let Some(default) = self.owner_default(info, index, &arguments[..index], path) else {
                 break;
             };
-            let displays = arguments[..index]
-                .iter()
-                .map(render_resolved_type_as_rust_arg)
-                .collect::<Vec<_>>();
-            let displays = displays.iter().map(String::as_str).collect::<Vec<_>>();
-            let default = Self::substitute_rust_display_params(default, &info.type_params[..index], &displays);
-            if !self.rust_trait_carriers_match(&arguments[index], &self.native_rust_signature_type(&default, path)) {
+            if !self.rust_trait_carriers_match(&arguments[index], &default) {
                 break;
             }
             arguments.pop();
@@ -904,11 +1092,7 @@ impl TypeChecker {
             self.rust_impl_self_bindings(implementation, owner)?
         };
         if !call.type_args.is_empty() {
-            let explicit = self
-                .type_info
-                .calls
-                .call_site_monomorph_type_args
-                .get(&(call.span.start, call.span.end))?;
+            let explicit = self.type_info.calls.call_site_monomorph_type_args.get(&call.span)?;
             if explicit.len() != original.type_params.len() {
                 return None;
             }
@@ -1032,9 +1216,9 @@ impl TypeChecker {
         }
     }
 
-    /// Match a closed native input signature using exact carriers and the already admitted borrowed views. The cost
-    /// ranks receiver-compatible candidates; it grants no new conversion or trait implementation. An already borrowed
-    /// argument matches its complete target before considering an automatic borrow of an owned value.
+    /// Match a closed native input signature using exact carriers and admitted input adjustments. Exact carriers
+    /// rank before automatic borrows or fitting integer contexts for unsuffixed literals. Final validation records
+    /// each selected argument's contextual type; this ranking grants no new conversion or trait implementation.
     fn rust_trait_input_borrow_cost(
         &self,
         signature: &RustFunctionSig,
@@ -1053,7 +1237,12 @@ impl TypeChecker {
             let native = self.rust_argument_native_type(Self::call_arg_expr(expression));
             let argument = native.as_ref().unwrap_or(argument);
             let target = self.native_rust_signature_type(&parameter.type_display, call.rust_path);
+            let expression = Self::call_arg_expr(expression);
             if self.rust_trait_carriers_match(&target, argument) {
+                continue;
+            }
+            if contextual_integer_literal_fits(expression, &target) {
+                cost += 1;
                 continue;
             }
             let target = match &target {
@@ -1112,10 +1301,10 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .call_site_monomorph_type_args
-                .insert((call.span.start, call.span.end), explicit);
+                .insert(call.span, explicit);
         }
         let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, trait_path, false);
-        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+        if crate::trace_flags::trace_rust_facts() {
             eprintln!(
                 "rust trait call: {}.{} owner {owner:?}, {} impls, candidates {:?}",
                 call.rust_path,
@@ -1195,7 +1384,7 @@ impl TypeChecker {
         filter_callable_bounds: bool,
     ) -> Vec<TraitCandidate> {
         let mut candidates = Vec::new();
-        let selected = trait_path.map(|path| self.rust_trait_definition_path(path));
+        let selected = trait_path.map(|path| self.rust_trait_identity(path));
         let imported = self.rust_imported_trait_templates(info, trait_path);
         let mut current = source;
         loop {
@@ -1208,7 +1397,7 @@ impl TypeChecker {
             {
                 if selected
                     .as_ref()
-                    .is_some_and(|path| *path != incan_lang::interop::ancestral_rust_path(&implementation.path))
+                    .is_some_and(|path| *path != self.rust_trait_identity(&implementation.path))
                 {
                     continue;
                 }
@@ -1220,7 +1409,7 @@ impl TypeChecker {
                 };
                 if Self::rust_signature_has_receiver(&candidate.signature) {
                     let Some(receiver) =
-                        Self::checked_rust_receiver_parameter(&candidate.signature, &candidate.self_type)
+                        self.checked_rust_receiver_parameter(&candidate.signature, &candidate.self_type)
                     else {
                         continue;
                     };
@@ -1238,9 +1427,10 @@ impl TypeChecker {
         candidates
     }
 
-    /// Resolve an explicitly selected trait's retained definition identity before comparing impl references. Public
-    /// re-exports may differ between crates, but the extractor records one definition path for their shared trait.
-    fn rust_trait_definition_path(&self, path: &str) -> String {
+    /// Return the one identity two Rust trait paths are compared by: the definition path the extractor retained, else
+    /// the canonical path, else `path` itself, normalized through `ancestral_rust_path`. A facade re-export and the
+    /// trait's definition therefore agree. Every trait comparison applies this to both of its sides.
+    pub(in crate::typechecker) fn rust_trait_identity(&self, path: &str) -> String {
         let metadata = self.rust_item_metadata_for_path(path);
         let definition = metadata
             .as_deref()
@@ -1253,16 +1443,14 @@ impl TypeChecker {
     /// Existing owner facts retain priority; importing a trait never rewrites the cached native type's answer.
     fn rust_imported_trait_templates(&self, info: &RustTypeInfo, selected: Option<&str>) -> Vec<RustImplementedTrait> {
         let mut templates = Vec::new();
-        let selected = selected.map(|path| self.rust_trait_definition_path(path));
+        let selected = selected.map(|path| self.rust_trait_identity(path));
         for import in self.type_info.rust.trait_imports.values() {
-            let identity = incan_lang::interop::ancestral_rust_path(
-                import.definition_path.as_deref().unwrap_or(&import.trait_path),
-            );
+            let identity = self.rust_trait_identity(import.definition_path.as_deref().unwrap_or(&import.trait_path));
             if selected.as_ref().is_some_and(|selected| *selected != identity)
                 || info
                     .implemented_traits
                     .iter()
-                    .any(|implementation| incan_lang::interop::ancestral_rust_path(&implementation.path) == identity)
+                    .any(|implementation| self.rust_trait_identity(&implementation.path) == identity)
             {
                 continue;
             }
@@ -1305,27 +1493,28 @@ impl TypeChecker {
             {
                 continue;
             }
-            let actual = self.instantiate_rust_signature_type(
+            let mut actual = self.instantiate_rust_signature_type(
                 &self.native_rust_signature_type(&bound.self_type, ""),
                 &implementation.type_params,
                 &bindings,
             );
+            if bound.self_type == implementation.self_type {
+                actual = self.rust_native_self_binding(owner, actual);
+            }
             if self.active_type_param_name(&actual).is_some() {
                 if !self.type_satisfies_explicit_bound(&actual, &bound.path) {
                     return false;
                 }
                 continue;
             }
-            let Some(path) = self.rust_canonical_path_for_receiver_type(&actual) else {
+            let Some(path) = self.rust_bound_owner_item_path(&actual) else {
                 return false;
             };
             let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
                 return false;
             };
             if matches!(metadata.kind, RustItemKind::Trait(_)) {
-                if incan_lang::interop::ancestral_rust_path(&metadata.canonical_path)
-                    != incan_lang::interop::ancestral_rust_path(&required_path)
-                {
+                if self.rust_trait_identity(&metadata.canonical_path) != self.rust_trait_identity(&required_path) {
                     return false;
                 }
                 continue;
@@ -1334,13 +1523,13 @@ impl TypeChecker {
                 return false;
             };
             let actual = self.rust_closed_owner(&actual, &info, &path);
-            let identity = incan_lang::interop::ancestral_rust_path(&bound.path);
+            let identity = self.rust_trait_identity(&bound.path);
             if !info
                 .implemented_traits
                 .iter()
                 .chain(required.implementations.iter())
                 .any(|candidate| {
-                    incan_lang::interop::ancestral_rust_path(&candidate.path) == identity
+                    self.rust_trait_identity(&candidate.path) == identity
                         && self.rust_impl_self_bindings(candidate, &actual).is_some()
                 })
             {
@@ -1348,6 +1537,31 @@ impl TypeChecker {
             }
         }
         true
+    }
+
+    /// Recover an inspected native Self only when source inference lost its metadata owner. Existing native
+    /// identities keep their inference representation, preserving ordinary receiver and associated-output selection.
+    pub(in crate::typechecker::check_expr) fn rust_native_self_binding(
+        &self,
+        owner: &ResolvedType,
+        inferred: ResolvedType,
+    ) -> ResolvedType {
+        if self.rust_bound_owner_item_path(&inferred).is_none() && self.rust_bound_owner_item_path(owner).is_some() {
+            owner.clone()
+        } else {
+            inferred
+        }
+    }
+
+    /// Locate primitive and nominal metadata for a closed trait obligation without changing ordinary method priority.
+    pub(super) fn rust_bound_owner_item_path(&self, ty: &ResolvedType) -> Option<String> {
+        match ty {
+            ResolvedType::Int => Some("i64".to_owned()),
+            ResolvedType::Float => Some("f64".to_owned()),
+            ResolvedType::Bool => Some("bool".to_owned()),
+            ResolvedType::Numeric(id) => Some(numerics::as_str(*id).to_owned()),
+            _ => self.rust_canonical_path_for_receiver_type(ty),
+        }
     }
 
     /// Fill metadata defaults inside a native reference without erasing that reference's identity as trait Self.
@@ -1382,11 +1596,11 @@ impl TypeChecker {
         if has_receiver {
             parameters.insert(
                 0,
-                Self::checked_rust_receiver_parameter(&selected.signature, &selected.self_type)?,
+                self.checked_rust_receiver_parameter(&selected.signature, &selected.self_type)?,
             );
         }
         self.type_info.rust.checked_calls.insert(
-            (call.span.start, call.span.end),
+            call.span,
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),

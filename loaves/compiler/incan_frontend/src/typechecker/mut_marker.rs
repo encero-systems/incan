@@ -65,7 +65,7 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .mut_param_markers
-                .insert((span.start, span.end, param.name.clone()), marked);
+                .insert((span, param.name.clone()), marked);
         }
     }
 
@@ -82,10 +82,7 @@ impl TypeChecker {
                         let resolved =
                             self.expand_type_aliases(crate::symbols::resolve_type(&inner.node, &self.symbols));
                         if is_copied_scalar(&resolved)
-                            && self
-                                .receiver_plan_inputs
-                                .reported_marked_scalars
-                                .insert((param.span.start, param.span.end))
+                            && self.receiver_plan_inputs.reported_marked_scalars.insert(param.span)
                         {
                             self.errors
                                 .push(errors::mut_marker_on_copied_scalar(&inner.node.to_string(), param.span));

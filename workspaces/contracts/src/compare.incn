@@ -22,7 +22,7 @@ pub def compare(family: str, header: Header, outcome: Outcome) -> list[str]:
 def refused(header: Header, outcome: Outcome) -> list[str]:
     """A check that fails with every declared code in its report."""
     if outcome.code == Some(0):
-        return [f"expected the check to refuse the program with {', '.join(header.diagnostics)}; it passed"]
+        return [f"expected the check to refuse the program with {", ".join(header.diagnostics)}; it passed"]
     match report_codes(outcome):
         Err(reason) => return [reason]
         Ok(codes) =>
@@ -65,10 +65,10 @@ def ran(header: Header, outcome: Outcome) -> list[str]:
     if header.declares("expect-stdout"):
         expected = header.items("expect-stdout")
         if actual != expected:
-            failures.append(f"stdout differs\n{block('expected', expected)}\n{block('actual', actual)}")
+            failures.append(f"stdout differs\n{block("expected", expected)}\n{block("actual", actual)}")
     for line in header.items("expect-stdout-contains"):
         if line not in actual:
-            failures.append(f"stdout has no line `{line}`\n{block('actual', actual)}")
+            failures.append(f"stdout has no line `{line}`\n{block("actual", actual)}")
     for failure in stderr_and_exit(header, outcome):
         failures.append(failure)
     return failures
@@ -99,12 +99,14 @@ def described(header: Header, outcome: Outcome) -> list[str]:
                 name = json_str(loaf, "name")
                 if json_bool(loaf, "standard"):
                     standard.append(name)
-                else:
-                    dependencies.append(f"{json_str(loaf, 'key')} {name}")
+                elif not json_bool(loaf, "toolchain_provided"):
+                    dependencies.append(f"{json_str(loaf, "key")} {name}")
             if header.declares("expect-dependencies"):
                 expected = sorted(header.items("expect-dependencies"))
                 if sorted(dependencies) != expected:
-                    failures.append(f"dependencies differ\n{block('expected', expected)}\n{block('actual', sorted(dependencies))}")
+                    failures.append(
+                        f"dependencies differ\n{block("expected", expected)}\n{block("actual", sorted(dependencies))}",
+                    )
             for package in header.items("expect-std-packages"):
                 if package not in standard:
                     failures.append(f"standard package `{package}` is missing; the unit has {listing(sorted(standard))}")
@@ -112,7 +114,9 @@ def described(header: Header, outcome: Outcome) -> list[str]:
                 expected = sorted(header.items("expect-active-features"))
                 features = sorted([json_text(item) for item in json_list(unit, "active_features")])
                 if features != expected:
-                    failures.append(f"active features differ\n{block('expected', expected)}\n{block('actual', features)}")
+                    failures.append(
+                        f"active features differ\n{block("expected", expected)}\n{block("actual", features)}",
+                    )
     return failures
 
 

@@ -1,72 +1,23 @@
 # 1. Architecture tour
 
-This chapter builds a mental model for how Incan turns `.incn` into an executable, and where that logic lives in the repo.
+Follow a source program from its project description to native output.
 
-## The pipeline (conceptual)
+## Read the pipeline
 
 ```mermaid
 --8<-- "_snippets/diagrams/compiler_pipeline.mmd"
 ```
 
-Keep this picture in your head while reading the code. Most contributing work is “add a feature” **and** ensure each stage continues to compose.
+Oven reads the project and describes a unit. The frontend checks it and records Body IR. Incan lowering constructs a native plan, and the Rust adapter passes it to the pinned Rust compiler.
 
-## The big pieces
+## Find each owner
 
-At a high level, the compiler/toolchain splits into:
+Start in `workspaces/oven/src/main.incn` for command dispatch. Read `unit.incn` for the unit description. Then inspect `loaves/compiler/incan_frontend`, `loaves/compiler/incan_driver`, `loaves/compiler/incan_mir_lowering` and `loaves/toolchain/incan-rustc-driver`.
 
-- **Syntax frontend**: lexer + parser + AST + syntax diagnostics
-- **Compiler frontend**: module resolution + typechecking
-- **Backend**: lowering + Rust emission
-- **Project generation**: writes a Cargo project, builds/runs it
-- **Tooling**: formatter, LSP, test runner, and other developer-facing workflows
+Use `incan inspect codegraph PATH --query defs NAME` to locate declarations and `--query callers NAME` for checked call relationships. An unchecked-unit warning means an empty relationship query does not prove no callers exist.
 
-Workspace crates split across stable contracts, compiler/toolchain implementation, and runtime-only implementation. Keep that split in mind before adding a dependency: generated programs may use runtime crates, but compiler code should normally consume stable contract crates and toolchain crates only.
+## Follow a runtime boundary
 
-## Where to look in the repository
+Standard packages under `loaves/stdlib` are ordinary Loaves. Their public contracts and compiled implementations are consumed together. Native runtime behavior belongs in `incan_native_runtime`, rather than in build orchestration.
 
-You can orient yourself with these anchors:
-
-- `loaves/kernel/incan_syntax/`:
-    - shared lexer/parser/AST/diagnostics
-    - used by compiler, formatter, and LSP to avoid drift
-- `loaves/kernel/incan_lang/`:
-    - pure language policy and registries shared across compiler/runtime boundaries
-- `loaves/kernel/incan_semantics_core/` and `loaves/compiler/incan_semantics_stdlib/`:
-    - descriptor contracts plus current stdlib semantics-pack implementation
-- `loaves/kernel/incan_vocab/`:
-    - stable library manifest/desugarer contract for import-activated library DSLs
-- `loaves/compiler/rust_inspect/`:
-    - staged Rust metadata preparation/cache subsystem for Rust interop
-- `loaves/stdlib/<component>/rust/` (the `incan_std_<component>` facets), `loaves/stdlib/derive/incan_derive/`, and `loaves/stdlib/derive/incan_web_macros/`:
-    - runtime-only support used by generated Rust programs
-- `loaves/compiler/incan_frontend/src/`:
-    - module resolution (`module.rs`)
-    - typechecker (`typechecker/`)
-    - symbol table + scope rules (`symbols.rs`)
-- `loaves/compiler/incan_ir/src/`:
-    - IR definitions and lowering (`lower/`)
-- `loaves/compiler/incan_emit/src/`:
-    - emission (`emit/`) producing Rust code
-- `loaves/compiler/incan_driver/src/backend/project/`:
-    - generated-project planning and generation
-- `loaves/toolchain/incan-cli/src/`:
-    - CLI entrypoints and commands (`build`, `run`, `fmt`, `test`)
-- `loaves/toolchain/incan-lsp/src/`:
-    - language server implementation that reuses frontend stages
-
-If you want the deep version (module layout, key types, entry points), read:
-
-- [Architecture](../../explanation/architecture.md)
-- [Layering rules](../../explanation/layering.md)
-
-## Contributor workflow: “touch points”
-
-Most changes you’ll make land in one of these patterns:
-
-- **Builtin or special lowering**: change typechecking + lowering/emission
-- **New syntax**: change lexer/parser/AST + formatter + typechecker + lowering/emission
-- **Tooling**: reuse the same syntax/frontend layers (formatter and LSP should not drift from the compiler)
-
-## Next
-
-Next chapter: [02. Layering and boundaries](02_layering_and_boundaries.md).
+Read [Architecture](../../explanation/architecture.md) and [Layer boundaries](../../explanation/layering.md) before editing a stage. The next chapter explains how those boundaries constrain a change.

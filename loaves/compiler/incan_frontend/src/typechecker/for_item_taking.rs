@@ -64,8 +64,8 @@ pub(super) struct ForItemTaking {
     captures: Vec<(SymbolId, Span)>,
     /// Every assignment to an existing list binding checked so far, with where it starts and the blocks around it.
     reassignments: Vec<Reassignment>,
-    /// Every `break` and `continue` checked so far: where it is, and the start of the loop it leaves.
-    loop_exits: Vec<(usize, usize)>,
+    /// Every checked exit and its exact target loop; generated loops may share original-source coordinates.
+    loop_exits: Vec<(Span, Span)>,
     /// Comprehension sources waiting for every later binding read to be known (#1983).
     copying_comprehensions: Vec<CopyingComprehension>,
 }
@@ -109,11 +109,12 @@ struct CopyingComprehension {
 }
 
 impl TypeChecker {
-    /// Record a collection comprehension whose source-consumption decision must be shared with lowering (#1983).
+    /// Record a collection comprehension whose source-consumption decision Body IR lowers from (#1983).
     ///
     /// The body read ledger already used by item-taking loops is the authority for whether a direct immutable list
-    /// binding has a later read. Nested blocks, loops, closures, mutable bindings, sets, and dicts conservatively keep
-    /// their source because the legacy emitter cannot consume them through its direct-list path.
+    /// binding has a later read; a comprehension that is that last read consumes its source, in any block. Inside a
+    /// loop or a closure the comprehension can run again, and a mutable binding can be read again after reassignment,
+    /// so those keep their source, as sets and dicts do.
     pub(super) fn plan_comprehension_collection_source(&mut self, iter_expr: &Spanned<Expr>, iter_ty: &ResolvedType) {
         let Some(type_param) = comprehension_copied_element_type(iter_ty)
             .and_then(|element| self.active_type_param_name(element))
@@ -131,11 +132,8 @@ impl TypeChecker {
             .symbols
             .get(symbol)
             .is_some_and(|definition| matches!(&definition.kind, SymbolKind::Variable(info) if !info.is_mutable));
-        let can_consume_if_last = is_immutable
-            && is_list_type(iter_ty)
-            && self.for_item_taking.block_path.len() == 1
-            && self.loop_stack.is_empty()
-            && self.closure_depth == 0;
+        let can_consume_if_last =
+            is_immutable && is_list_type(iter_ty) && self.loop_stack.is_empty() && self.closure_depth == 0;
         let has_clone_bound = self.active_type_param_satisfies_builtin_bound(&type_param, TraitId::Clone);
         self.for_item_taking.copying_comprehensions.push(CopyingComprehension {
             symbol,
@@ -225,7 +223,7 @@ impl TypeChecker {
             .loop_stack
             .iter()
             .filter(|enclosing| definition.scope < enclosing.scope)
-            .map(|enclosing| (enclosing.start, enclosing.block_depth))
+            .map(|enclosing| (enclosing.span.start, enclosing.block_depth))
             .collect();
         if let (Some(&(outermost_start, _)), Some(&(_, innermost_depth))) = (repeating.first(), repeating.last()) {
             match self.refill_in_each_pass(symbol, innermost_depth) {
@@ -296,8 +294,7 @@ impl TypeChecker {
     /// Record a `break` or `continue` at `span`, which leaves the innermost enclosing loop.
     pub(super) fn note_loop_exit(&mut self, span: Span) {
         if let Some(enclosing) = self.loop_stack.last() {
-            let target = enclosing.start;
-            self.for_item_taking.loop_exits.push((span.start, target));
+            self.for_item_taking.loop_exits.push((span, enclosing.span));
         }
     }
 
@@ -307,7 +304,7 @@ impl TypeChecker {
         self.for_item_taking
             .loop_exits
             .iter()
-            .any(|(at, target)| *at > after && self.loop_stack.iter().any(|enclosing| enclosing.start == *target))
+            .any(|(at, target)| at.start > after && self.loop_stack.iter().any(|enclosing| enclosing.span == *target))
     }
 
     /// Return where the latest assignment of a new list to `symbol` starts, when it runs in each pass of the innermost

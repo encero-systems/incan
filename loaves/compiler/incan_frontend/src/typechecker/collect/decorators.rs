@@ -64,6 +64,37 @@ struct CBindingMembers {
     structs: Vec<CBindingStruct>,
 }
 
+/// Why a written decorator argument cannot become the literal value an attribute macro receives.
+enum NativeAttributeRefusal {
+    /// An expression form an attribute macro does not receive.
+    Expression,
+    /// A name bound to a value without a scalar constant form, such as a list constant.
+    NonScalarBinding(String),
+}
+
+impl NativeAttributeRefusal {
+    /// The diagnostic for this refusal at one attribute macro's decorator.
+    fn error(&self, macro_path: &str, span: Span) -> CompileError {
+        match self {
+            Self::Expression => errors::native_attribute_argument_unsupported(macro_path, span),
+            Self::NonScalarBinding(name) => errors::native_attribute_argument_not_scalar(macro_path, name, span),
+        }
+    }
+}
+
+/// Whether a value of this type has a scalar literal form an attribute macro can receive.
+fn is_scalar_attribute_type(ty: &ResolvedType) -> bool {
+    matches!(
+        ty,
+        ResolvedType::Str
+            | ResolvedType::FrozenStr
+            | ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Bool
+            | ResolvedType::Numeric(_)
+    )
+}
+
 /// Resolve a decorator path to a module path.
 pub(in crate::typechecker) fn resolve_decorator_path(dec: &Decorator, symbols: &SymbolTable) -> Vec<String> {
     decorator_resolution::resolve_decorator_path(dec, symbols)
@@ -168,10 +199,9 @@ impl TypeChecker {
             let mut arguments = Vec::new();
             for argument in &decorator.node.args {
                 match self.native_attribute_argument(argument) {
-                    Some(argument) => arguments.push(argument),
-                    None => {
-                        self.errors
-                            .push(errors::native_attribute_argument_unsupported(&path, decorator.span));
+                    Ok(argument) => arguments.push(argument),
+                    Err(refusal) => {
+                        self.errors.push(refusal.error(&path, decorator.span));
                         return;
                     }
                 }
@@ -182,49 +212,69 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .native_attribute_applications
-                .insert((declaration.start, declaration.end), applications);
+                .insert(declaration, applications);
         }
     }
 
-    /// One written decorator argument as the literal value an attribute macro receives, or `None` for an expression.
-    fn native_attribute_argument(&self, argument: &DecoratorArg) -> Option<NativeAttributeArgument> {
+    /// One written decorator argument as the literal value an attribute macro receives.
+    fn native_attribute_argument(
+        &self,
+        argument: &DecoratorArg,
+    ) -> Result<NativeAttributeArgument, NativeAttributeRefusal> {
         let (name, value) = match argument {
             DecoratorArg::Positional(value) => (None, value),
             DecoratorArg::Named(name, DecoratorArgValue::Expr(value)) => (Some(name.clone()), value),
-            DecoratorArg::Named(_, DecoratorArgValue::Type(_)) => return None,
+            DecoratorArg::Named(_, DecoratorArgValue::Type(_)) => return Err(NativeAttributeRefusal::Expression),
         };
-        Some(NativeAttributeArgument {
+        Ok(NativeAttributeArgument {
             name,
             value: self.native_attribute_value(&value.node)?,
         })
     }
 
-    /// A literal, a constant with a literal value, or a list of them.
-    ///
-    /// An identifier that is not a constant with a known value stands for its own name, the spelling a hand-written
-    /// attribute uses for a method set such as `methods=[GET]`.
-    fn native_attribute_value(&self, expression: &Expr) -> Option<NativeAttributeValue> {
+    /// A literal, a scalar constant's value, a name (see [`Self::native_attribute_name`]), or a list of them.
+    fn native_attribute_value(&self, expression: &Expr) -> Result<NativeAttributeValue, NativeAttributeRefusal> {
         match expression {
-            Expr::Literal(Literal::String(text)) => Some(NativeAttributeValue::Text(text.clone())),
-            Expr::Literal(Literal::Int(value)) => Some(NativeAttributeValue::Int(value.value)),
-            Expr::Literal(Literal::Float(value)) => Some(NativeAttributeValue::Float(value.value)),
-            Expr::Literal(Literal::Bool(value)) => Some(NativeAttributeValue::Bool(*value)),
-            Expr::Ident(name) => Some(match self.type_info.const_value(name) {
-                Some(ConstValue::FrozenStr(text)) => NativeAttributeValue::Text(text.clone()),
-                Some(ConstValue::Int(value)) => NativeAttributeValue::Int(*value),
-                Some(ConstValue::Float(value)) => NativeAttributeValue::Float(*value),
-                Some(ConstValue::Bool(value)) => NativeAttributeValue::Bool(*value),
-                _ => NativeAttributeValue::Text(name.clone()),
-            }),
+            Expr::Literal(Literal::String(text)) => Ok(NativeAttributeValue::Text(text.clone())),
+            Expr::Literal(Literal::Int(value)) => Ok(NativeAttributeValue::Int(value.value)),
+            Expr::Literal(Literal::Float(value)) => Ok(NativeAttributeValue::Float(value.value)),
+            Expr::Literal(Literal::Bool(value)) => Ok(NativeAttributeValue::Bool(*value)),
+            Expr::Ident(name) => self.native_attribute_name(name),
             Expr::List(entries) => entries
                 .iter()
                 .map(|entry| match entry {
                     ListEntry::Element(value) => self.native_attribute_value(&value.node),
-                    _ => None,
+                    _ => Err(NativeAttributeRefusal::Expression),
                 })
-                .collect::<Option<Vec<_>>>()
+                .collect::<Result<Vec<_>, _>>()
                 .map(NativeAttributeValue::List),
+            _ => Err(NativeAttributeRefusal::Expression),
+        }
+    }
+
+    /// One written name as an attribute macro value.
+    ///
+    /// A constant with a scalar value gives that value. A name no value binds stands for its own spelling, the one a
+    /// hand-written attribute uses for a method set such as `methods=[GET]`; so does a scalar-typed value whose
+    /// constant value this module does not hold, such as an imported `GET`. A name bound to any other value, such as
+    /// a list constant, has no literal form and is refused rather than passed on as its own name.
+    fn native_attribute_name(&self, name: &str) -> Result<NativeAttributeValue, NativeAttributeRefusal> {
+        match self.type_info.const_value(name) {
+            Some(ConstValue::FrozenStr(text)) => return Ok(NativeAttributeValue::Text(text.clone())),
+            Some(ConstValue::Int(value)) => return Ok(NativeAttributeValue::Int(*value)),
+            Some(ConstValue::Float(value)) => return Ok(NativeAttributeValue::Float(*value)),
+            Some(ConstValue::Bool(value)) => return Ok(NativeAttributeValue::Bool(*value)),
+            Some(ConstValue::FrozenBytes(_)) => return Err(NativeAttributeRefusal::NonScalarBinding(name.to_owned())),
+            None => {}
+        }
+        let bound_type = self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Variable(info) => Some(&info.ty),
+            SymbolKind::Static(info) => Some(&info.ty),
             _ => None,
+        });
+        match bound_type {
+            Some(ty) if !is_scalar_attribute_type(ty) => Err(NativeAttributeRefusal::NonScalarBinding(name.to_owned())),
+            _ => Ok(NativeAttributeValue::Text(name.to_owned())),
         }
     }
 
@@ -692,20 +742,9 @@ impl TypeChecker {
         let mut enums = Vec::new();
         let mut raw_symbols = Vec::<RawCBindingSymbol>::new();
 
-        // Structures are collected first because the supported scalar call signatures may name a declared plain
-        // structure. The validation pass remains order-independent even when a symbol precedes its structure body.
-        let struct_names = class
-            .declarative_members
-            .iter()
-            .filter(|member| c_abi::binding_member_from_str(&member.keyword) == Some(BindingMemberId::Struct))
-            .filter_map(|member| member.head.name.clone())
-            .collect::<HashSet<_>>();
-        let resource_names = class
-            .declarative_members
-            .iter()
-            .filter(|member| c_abi::binding_member_from_str(&member.keyword) == Some(BindingMemberId::Resource))
-            .filter_map(|member| member.head.name.clone())
-            .collect::<HashSet<_>>();
+        // Collect declared type names first so a signature can name a structure or resource declared later.
+        let struct_names = Self::c_binding_declared_names(class, BindingMemberId::Struct);
+        let resource_names = Self::c_binding_declared_names(class, BindingMemberId::Resource);
 
         for member in &class.declarative_members {
             let span = Self::c_member_span(member, fallback_span);
@@ -760,71 +799,12 @@ impl TypeChecker {
                     });
                 }
                 BindingMemberId::Symbol => {
-                    let Some(return_type) = member.head.return_type.as_ref() else {
-                        self.errors.push(CompileError::type_error(
-                            "C symbols require an explicit return type".to_string(),
-                            span,
-                        ));
-                        valid = false;
-                        continue;
-                    };
-                    let Some(return_type) =
-                        Self::c_binding_type(&return_type.source, &resource_names, &struct_names, false)
-                    else {
-                        self.errors.push(CompileError::type_error(
-                            format!("C symbol `{name}` uses an unsupported return type"),
-                            span,
-                        ));
-                        valid = false;
-                        continue;
-                    };
-                    let mut parameters = Vec::new();
-                    for parameter in &member.head.parameters {
-                        let Some(parameter_type) = parameter.param_type.as_ref() else {
-                            self.errors.push(CompileError::type_error(
-                                format!("C symbol `{name}` parameters require explicit types"),
-                                span,
-                            ));
-                            valid = false;
-                            continue;
-                        };
-                        let Some(parameter_type) =
-                            Self::c_binding_type(&parameter_type.source, &resource_names, &struct_names, true)
-                        else {
-                            self.errors.push(CompileError::type_error(
-                                format!("C symbol `{name}` uses an unsupported parameter type"),
-                                span,
-                            ));
-                            valid = false;
-                            continue;
-                        };
-                        if parameter.default_value.is_some() || parameter.name.is_empty() {
-                            self.errors.push(CompileError::type_error(
-                                format!("C symbol `{name}` does not accept default or unnamed parameters"),
-                                span,
-                            ));
-                            valid = false;
-                            continue;
-                        }
-                        parameters.push(CBindingParameter {
-                            name: parameter.name.clone(),
-                            ty: parameter_type,
-                        });
+                    let (symbol, symbol_valid) =
+                        self.validate_raw_c_binding_symbol(member, name, span, &resource_names, &struct_names);
+                    valid &= symbol_valid;
+                    if let Some(symbol) = symbol {
+                        raw_symbols.push(symbol);
                     }
-                    let Some((native, bounds, raw_outcomes)) = Self::c_symbol_data(member, span, &mut self.errors)
-                    else {
-                        valid = false;
-                        continue;
-                    };
-                    raw_symbols.push(RawCBindingSymbol {
-                        span,
-                        name: name.clone(),
-                        native,
-                        parameters,
-                        return_type,
-                        bounds,
-                        outcomes: raw_outcomes,
-                    });
                 }
                 BindingMemberId::Enum => {
                     if !member.head.parameters.is_empty() || member.head.return_type.is_some() {
@@ -861,6 +841,108 @@ impl TypeChecker {
             }
         }
 
+        if !self.c_binding_member_names_unique(&raw_symbols, &enums, &resources, &structs, fallback_span) {
+            valid = false;
+        }
+        self.finish_c_binding_members(raw_symbols, resources, enums, structs, valid)
+    }
+
+    /// Collect one member kind's declared names without validating or reordering its declarations. Forward C
+    /// signature references use this inventory while the member pass retains ownership of diagnostics.
+    fn c_binding_declared_names(class: &ClassDecl, kind: BindingMemberId) -> HashSet<String> {
+        class
+            .declarative_members
+            .iter()
+            .filter(|member| c_abi::binding_member_from_str(&member.keyword) == Some(kind))
+            .filter_map(|member| member.head.name.clone())
+            .collect()
+    }
+
+    /// Check one raw C symbol without suppressing independent parameter errors or its later data validation. The
+    /// validity flag is separate from the retained symbol because invalid parameters still leave outcome/buffer
+    /// checks to the descriptor's final pass, preserving error accumulation.
+    fn validate_raw_c_binding_symbol(
+        &mut self,
+        member: &incan_vocab::VocabDeclaration,
+        name: &str,
+        span: Span,
+        resource_names: &HashSet<String>,
+        struct_names: &HashSet<String>,
+    ) -> (Option<RawCBindingSymbol>, bool) {
+        let Some(return_type) = member.head.return_type.as_ref() else {
+            self.errors.push(CompileError::type_error(
+                "C symbols require an explicit return type".to_string(),
+                span,
+            ));
+            return (None, false);
+        };
+        let Some(return_type) = Self::c_binding_type(&return_type.source, resource_names, struct_names, false) else {
+            self.errors.push(CompileError::type_error(
+                format!("C symbol `{name}` uses an unsupported return type"),
+                span,
+            ));
+            return (None, false);
+        };
+        let mut valid = true;
+        let mut parameters = Vec::new();
+        for parameter in &member.head.parameters {
+            let Some(parameter_type) = parameter.param_type.as_ref() else {
+                self.errors.push(CompileError::type_error(
+                    format!("C symbol `{name}` parameters require explicit types"),
+                    span,
+                ));
+                valid = false;
+                continue;
+            };
+            let Some(parameter_type) = Self::c_binding_type(&parameter_type.source, resource_names, struct_names, true)
+            else {
+                self.errors.push(CompileError::type_error(
+                    format!("C symbol `{name}` uses an unsupported parameter type"),
+                    span,
+                ));
+                valid = false;
+                continue;
+            };
+            if parameter.default_value.is_some() || parameter.name.is_empty() {
+                self.errors.push(CompileError::type_error(
+                    format!("C symbol `{name}` does not accept default or unnamed parameters"),
+                    span,
+                ));
+                valid = false;
+                continue;
+            }
+            parameters.push(CBindingParameter {
+                name: parameter.name.clone(),
+                ty: parameter_type,
+            });
+        }
+        let Some((native, bounds, outcomes)) = Self::c_symbol_data(member, span, &mut self.errors) else {
+            return (None, false);
+        };
+        (
+            Some(RawCBindingSymbol {
+                span,
+                name: name.to_string(),
+                native,
+                parameters,
+                return_type,
+                bounds,
+                outcomes,
+            }),
+            valid,
+        )
+    }
+
+    /// Require unique names within each C member kind after every raw declaration has been checked. Preserve the
+    /// existing kind order and single aggregate diagnostic rather than suppressing later signature validation.
+    fn c_binding_member_names_unique(
+        &mut self,
+        raw_symbols: &[RawCBindingSymbol],
+        enums: &[CBindingEnum],
+        resources: &[CBindingResource],
+        structs: &[CBindingStruct],
+        span: Span,
+    ) -> bool {
         if raw_symbols
             .iter()
             .map(|symbol| &symbol.name)
@@ -888,11 +970,24 @@ impl TypeChecker {
         {
             self.errors.push(CompileError::type_error(
                 "C binding members must have unique names within their declaration kind".to_string(),
-                fallback_span,
+                span,
             ));
-            valid = false;
+            return false;
         }
+        true
+    }
 
+    /// Validate raw symbol outcomes and buffers before resource release signatures, then publish the complete
+    /// descriptor only when every collection and cross-member check succeeded. Invalid raw declarations still
+    /// contribute their existing later diagnostics rather than short-circuiting the whole binding.
+    fn finish_c_binding_members(
+        &mut self,
+        raw_symbols: Vec<RawCBindingSymbol>,
+        resources: Vec<CBindingResource>,
+        enums: Vec<CBindingEnum>,
+        structs: Vec<CBindingStruct>,
+        mut valid: bool,
+    ) -> Option<CBindingMembers> {
         let mut symbols = Vec::with_capacity(raw_symbols.len());
         for raw_symbol in raw_symbols {
             let Some(outcomes) = Self::c_symbol_outcomes(
@@ -963,7 +1058,7 @@ impl TypeChecker {
     /// Prefer a vocabulary member's source span, retaining the binding span for synthesized members.
     fn c_member_span(member: &incan_vocab::VocabDeclaration, fallback: Span) -> Span {
         if member.span.end > member.span.start {
-            Span::new(member.span.start, member.span.end)
+            Span::new(member.span.start, member.span.end).with_expansion(fallback.expansion)
         } else {
             fallback
         }
@@ -1335,47 +1430,7 @@ impl TypeChecker {
         let mut valid = true;
 
         for raw in raw_outcomes {
-            let Some((enum_name, variant_name)) = raw.result.split_once('.') else {
-                errors.push(CompileError::type_error(
-                    format!(
-                        "C symbol `{symbol_name}` outcome `{}` must name an enum variant",
-                        raw.result
-                    ),
-                    span,
-                ));
-                valid = false;
-                continue;
-            };
-            let Some(enumeration) = enums.iter().find(|enumeration| enumeration.name == enum_name) else {
-                errors.push(CompileError::type_error(
-                    format!(
-                        "C symbol `{symbol_name}` outcome `{}` names an unknown enum",
-                        raw.result
-                    ),
-                    span,
-                ));
-                valid = false;
-                continue;
-            };
-            let Some(_variant) = enumeration.variants.iter().find(|variant| variant.name == variant_name) else {
-                errors.push(CompileError::type_error(
-                    format!(
-                        "C symbol `{symbol_name}` outcome `{}` names an unknown enum variant",
-                        raw.result
-                    ),
-                    span,
-                ));
-                valid = false;
-                continue;
-            };
-            if !matches!(return_type, CBindingType::Scalar(carrier) if carrier == &enumeration.carrier) {
-                errors.push(CompileError::type_error(
-                    format!(
-                        "C symbol `{symbol_name}` outcome `{}` has a carrier incompatible with its return type",
-                        raw.result
-                    ),
-                    span,
-                ));
+            if !Self::c_outcome_carrier_valid(&raw, symbol_name, return_type, enums, span, errors) {
                 valid = false;
                 continue;
             }
@@ -1471,6 +1526,59 @@ impl TypeChecker {
         }
 
         valid.then_some(outcomes)
+    }
+
+    /// Require an outcome to name a declared enum variant with the symbol's scalar result carrier before any
+    /// duplicate-result or output-slot validation. The first failing carrier check retains its original diagnostic.
+    fn c_outcome_carrier_valid(
+        raw: &RawCBindingOutcome,
+        symbol_name: &str,
+        return_type: &CBindingType,
+        enums: &[CBindingEnum],
+        span: Span,
+        errors: &mut Vec<CompileError>,
+    ) -> bool {
+        let Some((enum_name, variant_name)) = raw.result.split_once('.') else {
+            errors.push(CompileError::type_error(
+                format!(
+                    "C symbol `{symbol_name}` outcome `{}` must name an enum variant",
+                    raw.result
+                ),
+                span,
+            ));
+            return false;
+        };
+        let Some(enumeration) = enums.iter().find(|enumeration| enumeration.name == enum_name) else {
+            errors.push(CompileError::type_error(
+                format!(
+                    "C symbol `{symbol_name}` outcome `{}` names an unknown enum",
+                    raw.result
+                ),
+                span,
+            ));
+            return false;
+        };
+        let Some(_variant) = enumeration.variants.iter().find(|variant| variant.name == variant_name) else {
+            errors.push(CompileError::type_error(
+                format!(
+                    "C symbol `{symbol_name}` outcome `{}` names an unknown enum variant",
+                    raw.result
+                ),
+                span,
+            ));
+            return false;
+        };
+        if !matches!(return_type, CBindingType::Scalar(carrier) if carrier == &enumeration.carrier) {
+            errors.push(CompileError::type_error(
+                format!(
+                    "C symbol `{symbol_name}` outcome `{}` has a carrier incompatible with its return type",
+                    raw.result
+                ),
+                span,
+            ));
+            return false;
+        }
+        true
     }
 
     /// Collect one C enum and enforce its shared scalar carrier.

@@ -1,6 +1,14 @@
 """Identifier-safe encoding of checked module names and concrete native type arguments."""
 
-from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    IncanCallableParam,
+    IncanCallableParamKind,
+    NumericTypeId,
+    RuntimeBuiltinType,
+)
+from rust::incan_lang::lang::types::numerics import as_str as numeric_name
 
 
 pub def model_symbol(name: str) -> str:
@@ -20,16 +28,97 @@ pub def symbol_component(value: str) -> str:
 
 
 pub def type_component(ty: &RustType) -> str:
-    """Encode an admitted type structurally with length-delimited components to avoid symbol collisions."""
+    """Encode every semantic type variant and field; diagnostic Display never establishes instance identity."""
     match ty:
+        RustType.Never => return symbol_component("!")
+        RustType.Primitive(primitive) => return primitive_component(primitive)
+        RustType.Named(name) => return "_named" + symbol_component(str(name))
         RustType.Generic(base=base, args=arguments) =>
-            mut encoded = symbol_component(str(base)) + f"_args_{len(arguments)}"
-            for argument in arguments:
-                encoded += type_component(argument)
-            return encoded
-        RustType.Tuple(elements) =>
-            mut encoded = f"_tuple_{len(elements)}"
-            for element in elements:
-                encoded += type_component(element)
-            return encoded
-        _ => return symbol_component(str(ty))
+            return type_sequence(symbol_component(str(base)) + f"_args_{len(arguments)}", arguments)
+        RustType.Decimal(precision=precision, scale=scale) => return f"_decimal_{precision}_{scale}"
+        RustType.Function(params=parameters, return_type=result) => return function_component(parameters, result)
+        RustType.TypeToken(inner) => return "_type_token" + type_component(inner)
+        RustType.Tuple(elements) => return type_sequence(f"_tuple_{len(elements)}", elements)
+        RustType.TypeVar(name) => return "_parameter" + symbol_component(str(name))
+        RustType.SelfType => return symbol_component("Self")
+        RustType.Ref(inner) => return "_shared_ref" + type_component(inner)
+        RustType.RefMut(inner) => return "_mutable_ref" + type_component(inner)
+        RustType.RustInteropPath(path) => return "_rust_path" + symbol_component(str(path))
+        RustType.NativeBuiltin(builtin) => return builtin_component(builtin)
+        RustType.Unsupported(reason) => return "_unsupported" + symbol_component(str(reason))
+        RustType.Infer => return symbol_component("_")
+        RustType.Unknown => return symbol_component("?")
+        RustType.NativeArray(element=element, length=length) =>
+            return f"_native_array_{length}" + type_component(element)
+        RustType.NativeTraitObject(path=path, send=send, sync=sync) =>
+            return "_trait_object" + symbol_component(str(path)) + flag_component(send) + flag_component(sync)
+        RustType.NativePointer(mutable=mutable, pointee=pointee) =>
+            return "_native_pointer" + flag_component(mutable) + type_component(pointee)
+        RustType.NativeCChar => return symbol_component("c.c_char")
+
+
+def type_sequence(prefix: str, types: &list[RustType]) -> str:
+    """Append a known count of recursively self-delimiting type components in declaration order."""
+    mut encoded = prefix
+    for ty in types:
+        encoded += type_component(ty)
+    return encoded
+
+
+def primitive_component(primitive: &Primitive) -> str:
+    """Keep established scalar names while distinguishing numeric Bool from the ordinary Bool variant."""
+    match primitive:
+        Primitive.Int => return symbol_component("int")
+        Primitive.Float => return symbol_component("float")
+        Primitive.Numeric(numeric) =>
+            if numeric == NumericTypeId.Bool:
+                return "_numeric_bool"
+            return symbol_component(str(numeric_name(numeric.clone())))
+        Primitive.Bool => return symbol_component("bool")
+        Primitive.Str => return symbol_component("str")
+        Primitive.Bytes => return symbol_component("bytes")
+        Primitive.FrozenStr => return symbol_component("FrozenStr")
+        Primitive.FrozenBytes => return symbol_component("FrozenBytes")
+        Primitive.Unit => return symbol_component("Unit")
+
+
+def builtin_component(builtin: &RuntimeBuiltinType) -> str:
+    """Encode the closed builtin runtime identity independently of its diagnostic renderer."""
+    match builtin:
+        RuntimeBuiltinType.ValidationError => return symbol_component("runtime::ValidationError")
+
+
+def function_component(parameters: &list[IncanCallableParam], result: &RustType) -> str:
+    """Retain callable arity, parameter metadata and output; unequal checked signatures cannot share a symbol."""
+    mut encoded = f"_function_{len(parameters)}"
+    for parameter in parameters:
+        encoded += parameter_component(parameter)
+    return encoded + "_returns" + type_component(result)
+
+
+def parameter_component(parameter: &IncanCallableParam) -> str:
+    """Encode all equality-bearing parameter fields, including the collection ownership and partial-preset facts."""
+    mut encoded = "_param" + type_component(parameter.ty) + parameter_kind_component(parameter.kind)
+    match parameter.name:
+        None => encoded += "_unnamed"
+        Some(name) => encoded += "_named" + symbol_component(str(name))
+    return (
+        encoded + flag_component(parameter.has_default) + flag_component(parameter.is_partial_preset) + flag_component(
+            parameter.is_mut,
+        ) + flag_component(parameter.native_owned)
+    )
+
+
+def parameter_kind_component(kind: &IncanCallableParamKind) -> str:
+    """Keep normal, positional-rest and keyword-rest inputs distinct even when their element types agree."""
+    match kind:
+        IncanCallableParamKind.Normal => return "_normal"
+        IncanCallableParamKind.RestPositional => return "_rest_positional"
+        IncanCallableParamKind.RestKeyword => return "_rest_keyword"
+
+
+def flag_component(value: bool) -> str:
+    """Encode one fixed-position checked flag with a single unambiguous binary digit."""
+    if value:
+        return "_1"
+    return "_0"

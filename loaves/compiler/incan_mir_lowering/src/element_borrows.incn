@@ -1,9 +1,8 @@
 """
-Borrow a list or dictionary element in place, as legacy's checked `list_get_mut` and `dict_get_mut` reborrows do.
+Borrow checked list or dictionary element storage through the runtime's bounds-checked accessors.
 
-A read of an element copies it; a `mut self` method or a write through a field must change the stored element
-instead. Each index here reborrows the element through the runtime's checked accessor, and the fields after it
-project through the resulting reference, so the change lands in the container.
+Owned reads materialize elements. A checked shared list loan preserves the stored value without requiring Clone;
+a `mut self` method or a field write changes the stored element. Field projections follow the resulting loan.
 """
 
 from rust::incan_semantics_core::body_ir import (
@@ -29,10 +28,81 @@ from collections import (
 )
 from builtins import list_call
 from model_lists import structural_prefix, prefix_place
-from element_places import is_element_place, element_place_type
+from element_places import is_element_place, element_place_type, element_prefix_type
+from layout_types import shared_receiver_type
 from classes import frame_type
 from tuples import is_tuple_type
-from lowering import list_borrow, scalar_operand, value_operand, materialized_receiver
+from lowering import (
+    list_borrow,
+    list_slice_view,
+    scalar_operand,
+    value_operand,
+    materialized_receiver,
+    instantiated_external_call,
+)
+
+
+pub def shared_element_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+    """
+    Reach a checked shared list element loan without copying its owner or requiring Clone.
+
+    1. Admit a list indexing path before evaluating any index.
+    2. Borrow each indexed element and project any structural fields through that loan.
+    """
+    # 1. Other container reads retain their existing materialization path.
+    if not is_shared_list_path(builder, source)?:
+        return Ok(None)
+    start = element_start(builder, source)?
+    mut place = local_root(builder, source, span)?
+    if start > 0:
+        place = prefix_place(builder, source, start, span)?
+    # 2. Each index is evaluated once; the runtime owns negative-index and bounds checks.
+    for position in range(start, len(source.projection)):
+        match source.projection[position]:
+            PlaceElem.Index(index) =>
+                if is_tuple_type(place_type(builder.locals, place)):
+                    place = projected_field(builder, place, source.projection[position], span)?
+                else:
+                    argument = scalar_operand(builder, index, span)?
+                    place = shared_list_element(builder, place, argument, span)?
+            _ => place = projected_field(builder, place, source.projection[position], span)?
+    return Ok(Some(place))
+
+
+def is_shared_list_path(mut builder: Builder, source: &RustPlace) -> Result[bool, str]:
+    """Admit only list indices and structural fields, without evaluating a partial path that might be retried."""
+    mut indexed = false
+    for position in range(len(source.projection)):
+        match source.projection[position]:
+            PlaceElem.Index(_index) =>
+                ty = element_prefix_type(builder, source, position)?
+                if not is_list(ty) and not is_tuple_type(ty):
+                    return Ok(false)
+                indexed = indexed or is_list(ty)
+            PlaceElem.Slice(start=_start, end=_end, step=_step) => return Ok(false)
+            _ => pass
+    return Ok(indexed)
+
+
+def shared_list_element(mut builder: Builder, container: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Call the checked runtime accessor returning a shared element reference, with no owned element read."""
+    leaf, depth = require_list_shape(place_type(builder.locals, container), "invalid shared list loan")?
+    element = list_element(leaf, depth)
+    reference = shared_receiver_type(element)?
+    output = temporary(builder, reference, span)
+    loan = list_borrow(builder, container, false, span)?
+    borrowed = list_slice_view(builder, loan, [element], false, span)?
+    instantiated_external_call(
+        builder,
+        "incan_std_core::collections::list_get",
+        [element],
+        [PlanType.SliceRef([element]), PlanType.Int],
+        reference,
+        [borrowed, index],
+        output,
+        span,
+    )?
+    return Ok(Place(local=output.local, projection=Projection.Deref(element), span=span))
 
 
 pub def element_method_owner(mut builder: Builder, argument: &RustArgumentElement) -> Result[Option[PlanType], str]:
@@ -59,7 +129,13 @@ pub def element_method_receiver(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Borrow a list or dictionary element as the selected method's receiver: in place when `mut self` changes it."""
-    receiver_type = frame_type(builder.nominals, builder.enums, module.bodies[index].locals[0], builder.intrinsics)?
+    receiver_type = frame_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        module.bodies[index].locals[0],
+        builder.intrinsics,
+    )?
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
             # Body IR borrows every source receiver; the selected body's `mut self` decides the borrow's exclusivity.
@@ -121,20 +197,20 @@ pub def mutable_element_prefix(
         match source.projection[position]:
             PlaceElem.Index(index) =>
                 if is_tuple_type(place_type(builder.locals, place)):
-                    place = mutable_field(builder, place, source.projection[position], span)?
+                    place = projected_field(builder, place, source.projection[position], span)?
                 else:
                     place = borrow_element(builder, place, index, span)?
             PlaceElem.Slice(start=_start, end=_end, step=_step) =>
                 return Err("unsupported Body IR mutable borrow through a list slice")
-            _ =>
-                place = mutable_field(builder, place, source.projection[position], span)?
+            _ => place = projected_field(builder, place, source.projection[position], span)?
     return Ok(place)
 
 
-def mutable_field(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
-    """Project a checked model or constant tuple field through its retained exclusive reference."""
+def projected_field(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
+    """Project a checked model or constant tuple field through its retained element reference."""
     owner = dereferenced(builder, place)
     field = field_projection(
+        builder.constructors,
         builder.nominals,
         place_type(builder.locals, owner),
         projection,
@@ -154,7 +230,10 @@ pub def borrow_element_mut(
     """Reborrow one nested list or nominal list element through the legacy negative-index and bounds checks."""
     ty = place_type(builder.locals, receiver)
     site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
-    leaf, depth = require_list_shape(ty, f"unsupported Body IR indexing non-list at {site}; type {ty:?}; exclusive element borrow")?
+    leaf, depth = require_list_shape(
+        ty,
+        f"unsupported Body IR indexing non-list at {site}; type {ty:?}; exclusive element borrow",
+    )?
     element = list_element(leaf, depth)
     result = mutable_reference_type(element)?
     reference = list_borrow(builder, receiver, true, span)?
@@ -223,8 +302,8 @@ def borrow_dictionary_value(
         return Err("unsupported Body IR set indexing")
     # Legacy dictionary indexing requires Display for its missing-key diagnostic; tuples and unit lack that bound.
     match types[0]:
-        PlanType.Tuple(_elements) => return Err("unsupported Body IR tuple dictionary key lookup: legacy Display bound")
-        PlanType.Unit => return Err("unsupported Body IR unit dictionary key lookup: legacy Display bound")
+        PlanType.Tuple(_elements) => return Err("tuple dictionary keys cannot satisfy the lookup's Display requirement")
+        PlanType.Unit => return Err("unit dictionary keys cannot satisfy the lookup's Display requirement")
         _ => pass
     result = mutable_reference_type(types[1])?
     key = value_operand(builder, index, span)?

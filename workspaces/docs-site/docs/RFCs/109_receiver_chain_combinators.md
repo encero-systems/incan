@@ -299,7 +299,7 @@ This RFC is additive. Existing values and methods are unaffected unless a user-d
 - **Ownership planning / duckborrowing:** read-only taps must preserve receiver ownership through borrowed callable adaptation instead of clone requirements.
 - **IR Lowering:** `tap` must preserve receiver ownership while allowing observer borrowing and explicit mutable callback access.
 - **Emission:** generated code must evaluate the receiver and callback once and preserve the specified control-flow behavior.
-- **Stdlib / Runtime (`incan_stdlib`):** the standard library should provide the user-facing combinator declarations, traits, or fallback functions chosen by the final design.
+- **Stdlib / Runtime (`loaves/stdlib/`):** the standard library should provide the user-facing combinator declarations, traits, or fallback functions chosen by the final design.
 - **Formatter:** chained `tap` and `then` calls should format like ordinary method chains.
 - **LSP / Tooling:** completion and hover should explain the difference between `tap`, `then`, `Result.inspect`, `Result.and_then`, and iterator `.inspect()`.
 

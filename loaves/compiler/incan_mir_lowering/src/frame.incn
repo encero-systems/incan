@@ -26,13 +26,14 @@ from pub::incan_mir_plan import assign as plan_assign, block as plan_block, plac
 from pub::incan_mir_plan import tuple_element_type
 from type_parameters import Instance
 from program_context import ProgramContext
+from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
     ValueEnumDeclaration as RustValueEnumDeclaration,
     DecoratedBinding as RustDecoratedBinding,
-    Body as RustBody,
+    TraitDefaultInstantiation,
 )
 
 
@@ -56,7 +57,9 @@ pub model Builder:
     `iteration_locals` lists the frame slots Body IR polls with a builtin `IterNext`, so an iterator's materialization is recognized by its slot rather than by its read.
     `step_bindings` lists the Body IR locals a generator-expression step binds from its arguments, and `step_clauses` each later `for` clause of that step: its iterator local, its source local, and the locals bound before it.
     `partial_callables` pairs each local holding a closure whose parameters carry defaults with one flag per declared parameter, marking those whose input is preceded by a supplied flag.
-    Helpers borrow this frame with `mut builder: Builder`, including read-only helpers: the bootstrap does not coerce an owned model to an explicitly shared reference. Passing a frame by value would copy its declaration tables and all accumulated blocks on every operand read.
+    Helpers borrow this frame with `mut builder: Builder`, keeping blocks and ownership state together.
+    Declaration properties borrow immutable module tables from the shared program context.
+    Lifted frames retain those same owners.
     """
 
     pub locals: list[Local]
@@ -81,23 +84,22 @@ pub model Builder:
     pub scalar_closures: list[int]
     # One unproven assignment closes a slot at every control-flow join, even if another assignment was scalar-only.
     pub unproven_closures: list[int]
-    pub nominals: list[RustNominalDeclaration]
     # Source frames share dispatch mappings and body positions; external-only synthetic frames have no source dispatch.
     pub program: ProgramContext
-    pub enums: list[RustEnumDeclaration]
     pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
     pub local_offset: int
-    # Semantic primary async storage supplies only omitted free SDK call binders; nested frames never inherit it.
-    pub async_source_body: Option[RustBody] = None
     # Only a closure with a retained consuming contract may transfer its zip into a capture-free generator step.
     pub consuming_closure_frame: bool
     pub intrinsics: list[EnumDeclaration]
     pub generator_handle: int
-    pub value_enums: list[RustValueEnumDeclaration]
     pub instances: list[Instance]
     pub type_parameters: list[str]
     pub type_arguments: list[RustType]
+    # The callable's own checked arguments exclude the enclosing class and declaring-trait environments.
+    pub callable_type_arguments: list[RustType] = []
+    # Specialized defaults retain their trait scope independently of method and nominal binders.
+    pub trait_environment: Option[TraitDefaultInstantiation] = None
     pub function_pointer_locals: list[int]
     pub name: str
     pub synthesized: list[Function]
@@ -122,13 +124,38 @@ pub model Builder:
     # Destructuring a consumed tuple transfers fields separately; cleanup drops only its remaining fields.
     pub moved_tuple_fields: list[tuple[int, int]]
     # Generic decorated wrappers read only their authenticated own binding; hidden initializer frames retain its identity.
-    pub decorated_bindings: list[RustDecoratedBinding] = []
     pub body_identity: Option[RustCanonicalSymbolId] = None
+    # Closed instances share canonical declaration identities; result selection reads this exact frame's checked slots.
+    pub checked_local_types: list[RustType] = []
     pub initializing_decorator: Option[RustCanonicalSymbolId] = None
     pub cached_decorator: int = -1
     pub callable_name_dynamic_profile: bool = false
     # Slots whose checked value is itself a reference, rather than an owned source value stored behind a receiver borrow.
     pub reference_values: list[int] = []
+
+    property nominals -> &list[RustNominalDeclaration]:
+        """Borrow the module's specialized nominal table without retaining a frame-local copy."""
+        return self.program.nominals.as_ref()
+
+    property enums -> &list[RustEnumDeclaration]:
+        """Borrow the same ordered enum declarations used to assign this module's layout identities."""
+        return self.program.enums.as_ref()
+
+    property constructors -> &ConstructorIndex:
+        """
+        Borrow first-match constructor positions from the nominal table's program owner.
+
+        Calls mutating another Builder field borrow program.constructors directly to preserve field disjointness.
+        """
+        return self.program.constructors.as_ref()
+
+    property value_enums -> &list[RustValueEnumDeclaration]:
+        """Borrow checked value-enum metadata shared by ordinary and lifted frames."""
+        return self.program.value_enums.as_ref()
+
+    property decorated_bindings -> &list[RustDecoratedBinding]:
+        """Borrow authenticated callable bindings from their immutable module owner."""
+        return self.program.decorated_bindings.as_ref()
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
@@ -306,7 +333,7 @@ pub def value_type(mut builder: Builder, operand: Operand) -> Result[PlanType, s
                 Constant.Text(_value) => return Ok(PlanType.StrRef)
 
 
-pub def place_type(locals: list[Local], value: Place) -> PlanType:
+pub def place_type(locals: &list[Local], value: Place) -> PlanType:
     """Read retained scalar and owner projections, including supported collection reborrows."""
     match value.projection:
         Projection.VariantField(_variant, _slot, ty) => return ty
@@ -329,10 +356,8 @@ pub def appended_field(source: Place, field: FieldProjection, span: SourceSpan) 
         Projection.Whole => pass
         Projection.Field(slot, ty) => fields.append(FieldProjection(slot=slot, ty=ty))
         Projection.VariantField(variant, slot, ty) => fields.append(FieldProjection(slot=slot, ty=ty, variant=variant))
-        Projection.Fields(path) =>
-            fields = path
-        Projection.Deref(_ty) =>
-            dereference = true
+        Projection.Fields(path) => fields = path
+        Projection.Deref(_ty) => dereference = true
         Projection.DerefField(slot, ty) =>
             dereference = true
             fields.append(FieldProjection(slot=slot, ty=ty))
@@ -344,6 +369,11 @@ pub def appended_field(source: Place, field: FieldProjection, span: SourceSpan) 
     if dereference:
         return Ok(Place(local=source.local, projection=Projection.DerefFields(fields), span=span))
     return Ok(Place(local=source.local, projection=Projection.Fields(fields), span=span))
+
+
+pub def dereferenced_place(source: Place, referent: PlanType, span: SourceSpan) -> Result[Place, str]:
+    """Append a typed dereference while preserving the complete path to the stored reference."""
+    return appended_field(source, FieldProjection(slot=-1, ty=referent, dereferences=1), span)
 
 
 pub def external_call(

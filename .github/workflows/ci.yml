@@ -1,7 +1,7 @@
 name: CI
 
-# dev.8 builds and tests the compiler through the Oven with a stage-zero compiler and never runs Cargo. Until a
-# stage-zero compiler artifact is published for CI, this workflow runs the checks that read only the checkout.
+# Steps that run `incan` install the pinned dev.8 release bundle (BUILD_TOOLCHAIN) with Rust 1.98.0 and rustc-dev
+# through .github/actions/install-build-toolchain (DD-0010); the job fails while no bundle is pinned for its host.
 
 on:
   push:
@@ -21,6 +21,9 @@ jobs:
   hygiene:
     name: Checkout hygiene
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -31,6 +34,11 @@ jobs:
           components: rustfmt
       - name: Check Rust formatting
         run: make fmt-check
+      - name: Install dev.8
+        uses: ./.github/actions/install-build-toolchain
+        with:
+          reference: ${{ fromJSON(vars.BUILD_TOOLCHAIN || '{}')['x86_64-unknown-linux-gnu'] }}
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Check changed Rust docs
         shell: bash
         run: |
@@ -43,7 +51,7 @@ jobs:
           else
             base_ref="HEAD^"
           fi
-          python3 scripts/check_changed_rustdocs.py --base "$base_ref"
+          incan run scripts/check_changed_rustdocs.incn -- --base "$base_ref"
       - name: Check US English
         run: make us-english-check
       - name: Check the AGENTS.md skill table

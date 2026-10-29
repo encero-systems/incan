@@ -10,7 +10,7 @@ If you’re new, start with:
 ## How-to guides (do)
 
 - [Extending the Language](how-to/extending_language.md) — when to add builtins vs new syntax; end-to-end checklists
-- [Author Library DSLs with `incan_vocab`](how-to/authoring_vocab_crates.md) — how to publish import-activated DSL blocks, scoped surfaces, and desugarers
+- [Author a vocabulary in Incan](how-to/authoring_vocabularies.md) — publish import-activated blocks, scoped surfaces and native desugarers through `std.vocab`
 
 ## Tutorials (learn)
 
@@ -25,7 +25,6 @@ If you’re new, start with:
 
 - [Contributors](contributors.md) — community acknowledgments for external contributions
 - [Layering rules](explanation/layering.md) — dependency boundaries and guardrails
-- [Hees.ai v0.5 dependency inventory](reference/hees_ai_v05_dependency_inventory.md) — proof-lane dependency map and scope guardrails
 
 ## Design (RFCs and roadmap)
 

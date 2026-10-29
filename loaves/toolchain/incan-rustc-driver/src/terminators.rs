@@ -98,7 +98,7 @@ pub fn terminator<'tcx>(
     })
 }
 
-/// Instantiate admitted runtime operations and clone calls; ordinary planned callees remain monomorphic.
+/// Instantiate admitted runtime operations, clone calls and the retained lifetime binders of planned callees.
 fn call_operand<'tcx>(
     tcx: TyCtxt<'tcx>,
     sources: &Sources<'_>,
@@ -169,7 +169,13 @@ pub(crate) fn call_instance<'tcx>(
     if let crate::plan::CalleeKind::Instantiated(_, types) = &callee.kind {
         arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, types)?.iter());
     }
-    if let crate::plan::CalleeKind::External(_) = &callee.kind {
+    if let crate::plan::CalleeKind::FormatValue(ty, _) = &callee.kind {
+        let definition = callees::resolve(tcx, callee)?;
+        let closed = callees::arguments(tcx, definition, std::slice::from_ref(ty))?;
+        callees::verify_bounds(tcx, definition, closed)?;
+        arguments.extend(closed.iter());
+    }
+    if let crate::plan::CalleeKind::External(_) | crate::plan::CalleeKind::Planned(_) = &callee.kind {
         arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[])?.iter());
     }
     Ok((callees::resolve(tcx, callee)?, tcx.mk_args(&arguments)))

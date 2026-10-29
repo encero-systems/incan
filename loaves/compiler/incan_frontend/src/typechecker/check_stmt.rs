@@ -7,6 +7,7 @@ use crate::diagnostics::errors::{self, SelfMutation};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use crate::symbols::*;
 use incan_lang::NumericTy;
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::errors as runtime_errors;
 use incan_lang::lang::keywords;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
@@ -15,6 +16,7 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::SurfaceStmtTypeCheck;
 use incan_semantics_core::rust_tuple_arity;
 
+use super::derive_requirements::DeriveSupport;
 use super::{CAbiSpanLocal, CBindingType, COutputMode, LoopContextKind, TypeChecker};
 
 mod chained;
@@ -96,12 +98,19 @@ pub(in crate::typechecker) enum TupleShape {
 /// a tuple shape. This does not affect `tuple[K, V]`, whose *elements* are type variables but whose shape is
 /// known; that takes the [`TupleShape::Tuple`] arm above.
 /// A shared tuple reference binds a shared reference to each component, preserving the native iterator's borrow.
+/// A mutable tuple reference binds mutable component references under that same iterator borrow.
 pub(in crate::typechecker) fn classify_tuple_shape(ty: &ResolvedType) -> TupleShape {
     match ty {
         ResolvedType::Tuple(types) => TupleShape::Tuple(types.clone()),
         ResolvedType::Ref(inner) => match classify_tuple_shape(inner) {
             TupleShape::Tuple(types) => {
                 TupleShape::Tuple(types.into_iter().map(|ty| ResolvedType::Ref(Box::new(ty))).collect())
+            }
+            _ => TupleShape::NotTuple,
+        },
+        ResolvedType::RefMut(inner) => match classify_tuple_shape(inner) {
+            TupleShape::Tuple(types) => {
+                TupleShape::Tuple(types.into_iter().map(|ty| ResolvedType::RefMut(Box::new(ty))).collect())
             }
             _ => TupleShape::NotTuple,
         },
@@ -376,88 +385,8 @@ impl TypeChecker {
                     self.errors.push(errors::unknown_symbol(&compound.name, stmt.span));
                 }
             }
-            Statement::TupleUnpack(unpack) => {
-                // Check the value expression and get its type
-                let value_ty = self.check_expr(&unpack.value);
-                self.refuse_mut_param_held_by(&unpack.value);
-
-                let element_types = self.destructured_element_types(&value_ty, unpack.names.len(), stmt.span);
-
-                // A tuple-unpack source assignment follows the same lexical rule as `x = value`: a plain spelling
-                // reassigns the nearest active binding, while `let`/`mut` introduce names in this scope.
-                for (i, name) in unpack.names.iter().enumerate() {
-                    let ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
-                    let target_span = unpack.name_spans.get(i).copied().unwrap_or(stmt.span);
-                    self.check_unannotated_assignment_target(name, unpack.binding, ty, target_span, unpack.value.span);
-                }
-            }
-            Statement::TupleAssign(assign) => {
-                // Check the value expression (should be a tuple)
-                let value_ty = self.check_expr(&assign.value);
-                self.refuse_mut_param_held_by(&assign.value);
-
-                let element_types = self.destructured_element_types(&value_ty, assign.targets.len(), stmt.span);
-
-                // Check each target expression - must be a valid lvalue
-                for (i, target) in assign.targets.iter().enumerate() {
-                    let expected_ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
-
-                    // A name target follows the rule `name = value` follows, as in a tuple unpacking: a bound name is
-                    // reassigned (it must be `mut`, and a caller-visible `mut` parameter is changed in place, never
-                    // rebound, #1773), and a name with no binding is declared with its element's type.
-                    if let Expr::Ident(name) = &target.node {
-                        self.check_unannotated_assignment_target(
-                            name,
-                            BindingKind::Inferred,
-                            expected_ty,
-                            target.span,
-                            assign.value.span,
-                        );
-                        continue;
-                    }
-                    let target_ty = self.check_expr(target);
-
-                    // Check that target is a valid lvalue
-                    match &target.node {
-                        Expr::Index(object, _) | Expr::Field(object, _) => {
-                            // Index and field expressions are valid lvalues; type compatibility is checked below.
-                            // An element target is refused where `x[i] = value` is: a tuple's or a string's element,
-                            // for one. A place rooted at the receiver is a write through `self` like any other
-                            // (#1723), and a place rooted at a read-only binding is refused like a single field or
-                            // element write.
-                            if matches!(target.node, Expr::Index(_, _))
-                                && let Some(object_ty) = self.type_info.expr_type(object.span).cloned()
-                            {
-                                self.refuse_unassignable_element_receiver(&object_ty, target.span);
-                            }
-                            if let Some(place) = Self::self_rooted_place(target) {
-                                self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
-                            }
-                            let writes_builtin_slot = matches!(target.node, Expr::Field(_, _))
-                                || self
-                                    .type_info
-                                    .expr_type(object.span)
-                                    .is_some_and(|ty| Self::index_assignment_slot_types(ty).is_some());
-                            if writes_builtin_slot {
-                                self.refuse_write_through_read_only_binding(object, target.span);
-                            }
-                            self.note_mut_param_write(target);
-                        }
-                        _ => {
-                            self.errors.push(errors::invalid_tuple_assignment_target(target.span));
-                        }
-                    }
-
-                    // Check type compatibility
-                    if !self.types_compatible(&expected_ty, &target_ty) {
-                        self.errors.push(errors::type_mismatch(
-                            &target_ty.to_string(),
-                            &expected_ty.to_string(),
-                            target.span,
-                        ));
-                    }
-                }
-            }
+            Statement::TupleUnpack(unpack) => self.check_tuple_unpack_statement(unpack, stmt.span),
+            Statement::TupleAssign(assign) => self.check_tuple_assignment_statement(assign, stmt.span),
             Statement::ChainedAssignment(ca) => {
                 // The value is refused before the chain's targets are bound, so a target cannot shadow the parameter.
                 self.refuse_mut_param_held_by(&ca.value);
@@ -470,6 +399,75 @@ impl TypeChecker {
         // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its
         // context (an argument's declared type, a typed return); only the two shapes above are refused (#1720).
         self.open_rust_generic_calls.clear();
+    }
+
+    /// Check a tuple unpack before introducing its names. Plain names reassign the nearest active binding while
+    /// `let` and `mut` introduce lexical bindings; open Rust tuple elements retain their individual target facts.
+    fn check_tuple_unpack_statement(&mut self, unpack: &TupleUnpackStmt, span: Span) {
+        let value_ty = self.check_expr(&unpack.value);
+        self.refuse_mut_param_held_by(&unpack.value);
+        let element_types = self.destructured_element_types(&value_ty, unpack.names.len(), span);
+        for (i, name) in unpack.names.iter().enumerate() {
+            let ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
+            let target_span = unpack.name_spans.get(i).copied().unwrap_or(span);
+            self.check_unannotated_assignment_target(name, unpack.binding, ty, target_span, unpack.value.span);
+            self.bind_open_tuple_element(unpack.value.span, i, target_span, name);
+        }
+    }
+
+    /// Check tuple assignment targets in source order after checking the source value. Name targets use ordinary
+    /// binding/reassignment rules; projections retain receiver mutability, read-only and caller-write checks.
+    fn check_tuple_assignment_statement(&mut self, assign: &TupleAssignStmt, span: Span) {
+        let value_ty = self.check_expr(&assign.value);
+        self.refuse_mut_param_held_by(&assign.value);
+        let element_types = self.destructured_element_types(&value_ty, assign.targets.len(), span);
+        for (i, target) in assign.targets.iter().enumerate() {
+            let expected_ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
+            // A bound name is reassigned; an unbound name is declared with the element's type. Caller-visible
+            // mutable parameters still change in place rather than rebinding (#1773).
+            if let Expr::Ident(name) = &target.node {
+                self.check_unannotated_assignment_target(
+                    name,
+                    BindingKind::Inferred,
+                    expected_ty,
+                    target.span,
+                    assign.value.span,
+                );
+                self.bind_open_tuple_element(assign.value.span, i, target.span, name);
+                continue;
+            }
+            let target_ty = self.check_expr(target);
+            match &target.node {
+                Expr::Index(object, _) | Expr::Field(object, _) => {
+                    // Projection writes follow the same ownership checks as single field/element assignments.
+                    if matches!(target.node, Expr::Index(_, _))
+                        && let Some(object_ty) = self.type_info.expr_type(object.span).cloned()
+                    {
+                        self.refuse_unassignable_element_receiver(&object_ty, target.span);
+                    }
+                    if let Some(place) = Self::self_rooted_place(target) {
+                        self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
+                    }
+                    let writes_builtin_slot = matches!(target.node, Expr::Field(_, _))
+                        || self
+                            .type_info
+                            .expr_type(object.span)
+                            .is_some_and(|ty| Self::index_assignment_slot_types(ty).is_some());
+                    if writes_builtin_slot {
+                        self.refuse_write_through_read_only_binding(object, target.span);
+                    }
+                    self.note_mut_param_write(target);
+                }
+                _ => self.errors.push(errors::invalid_tuple_assignment_target(target.span)),
+            }
+            if !self.types_compatible(&expected_ty, &target_ty) {
+                self.errors.push(errors::type_mismatch(
+                    &target_ty.to_string(),
+                    &expected_ty.to_string(),
+                    target.span,
+                ));
+            }
+        }
     }
 
     /// Spell a place expression rooted at the method receiver the way the source reads it (`self.width`,
@@ -492,8 +490,7 @@ impl TypeChecker {
     /// go through (see [`Self::refuse_write_through_read_only_binding`]).
     pub(in crate::typechecker) fn record_read_only_binding(&mut self, is_mutable: bool, declaration_span: Span) {
         if !is_mutable {
-            self.read_only_binding_spans
-                .insert((declaration_span.start, declaration_span.end));
+            self.read_only_binding_spans.insert(declaration_span);
         }
     }
 
@@ -571,11 +568,7 @@ impl TypeChecker {
         let Some(symbol) = self.symbols.get(symbol_id) else {
             return;
         };
-        if !matches!(symbol.kind, SymbolKind::Variable(_))
-            || !self
-                .read_only_binding_spans
-                .contains(&(symbol.span.start, symbol.span.end))
-        {
+        if !matches!(symbol.kind, SymbolKind::Variable(_)) || !self.read_only_binding_spans.contains(&symbol.span) {
             return;
         }
         self.errors.push(errors::mutation_without_mut(root, span));
@@ -601,10 +594,15 @@ impl TypeChecker {
         self.errors.push(error);
     }
 
-    /// Validate assignment to an object field, including generic-owner field substitution.
+    /// Validate assignment to an object field, including generic-owner field substitution. Mutable references expose
+    /// their referent's fields; encountering a shared reference still refuses the write.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
+        let mut obj_ty = &obj_ty;
+        while let ResolvedType::RefMut(inner) = obj_ty {
+            obj_ty = inner;
+        }
         self.refuse_write_through_read_only_binding(&field_assign.object, field_assign.target_span);
         self.note_mut_param_write(&field_assign.object);
         self.refuse_mut_param_held_by(&field_assign.value);
@@ -852,6 +850,7 @@ impl TypeChecker {
     /// refused (see `capturing_callables.rs`).
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
         self.check_assignment_binding(assign, span);
+        self.refuse_owned_native_tuple_field(assign);
         self.note_static_alias_binding(assign);
         let declares = self
             .lookup_symbol(&assign.name)
@@ -958,7 +957,19 @@ impl TypeChecker {
             self.mutable_bindings.insert(assign.name.clone());
         }
 
-        let ty = if let Some(ty_ann) = &assign.ty {
+        let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
+        self.declare_assignment_binding(assign, ty, is_mutable, introduces_binding, span);
+    }
+
+    /// Settle a new local's declared or inferred carrier after its value has checked. Unsupported trait annotations
+    /// still report their source error while retaining the value type; inferred constructor sides keep their facts.
+    fn new_assignment_binding_type(
+        &mut self,
+        assign: &AssignmentStmt,
+        annotated_ty: Option<ResolvedType>,
+        value_ty: ResolvedType,
+    ) -> ResolvedType {
+        if let Some(ty_ann) = &assign.ty {
             let ann_ty = annotated_ty.unwrap_or_else(|| self.resolve_type_checked(ty_ann));
             let trait_typed_local = self.is_trait_typed_local_annotation(&ann_ty);
             if trait_typed_local {
@@ -987,10 +998,21 @@ impl TypeChecker {
                 self.record_settled_branch_values(&assign.value, &settled);
             }
             settled
-        };
+        }
+    }
 
+    /// Publish a newly checked local binding before retaining foreign and callable carrier facts. Annotation-free
+    /// bindings keep their open Rust generic watch; explicit shadows preserve the declaration's source identity.
+    fn declare_assignment_binding(
+        &mut self,
+        assign: &AssignmentStmt,
+        ty: ResolvedType,
+        is_mutable: bool,
+        introduces_binding: bool,
+        span: Span,
+    ) {
+        let target_span = assign.name_span;
         self.record_assignment_binding_type(span, ty.clone());
-
         self.validate_protected_builtin_binding(&assign.name, span);
         let symbol = Symbol {
             name: assign.name.clone(),
@@ -1022,6 +1044,56 @@ impl TypeChecker {
         }
         self.consumed_iterator_bindings.remove(&assign.name);
         self.transferred_c_resource_bindings.remove(&assign.name);
+    }
+
+    /// Require retained ownership evidence for a foreign tuple field bound by value. Explicit references keep
+    /// the existing loan representation; unsupported owned bindings refuse before Body IR requests Clone.
+    fn refuse_owned_native_tuple_field(&mut self, assign: &AssignmentStmt) {
+        if !self.is_tuple_field_read(&assign.value) {
+            return;
+        }
+        let Some(target) = self.lookup_variable_info_in_scope_chain(&assign.name) else {
+            return;
+        };
+        if matches!(target.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) {
+            return;
+        }
+        let Some(value) = self.type_info.expr_type(assign.value.span) else {
+            return;
+        };
+        if self.native_field_clone_candidate(value) == Some(false)
+            && !matches!(self.derive_support(value, DeriveId::Clone), DeriveSupport::Supported)
+        {
+            self.errors.push(errors::native_tuple_field_copy_not_retained(
+                &assign.name,
+                &value.to_string(),
+                assign.value.span,
+            ));
+        }
+    }
+
+    /// Recognize checked tuple projections through either field spelling or literal indexing and transparent
+    /// parentheses. The base's checked storage distinguishes a tuple read from a computed property or user indexer.
+    fn is_tuple_field_read(&self, value: &Spanned<Expr>) -> bool {
+        match &value.node {
+            Expr::Paren(inner) => self.is_tuple_field_read(inner),
+            Expr::Field(base, _) | Expr::Index(base, _) => self
+                .type_info
+                .expr_type(base.span)
+                .is_some_and(|ty| self.has_tuple_storage(ty)),
+            _ => false,
+        }
+    }
+
+    /// Normalize the checker's tuple annotation and reference forms through the same collection registry as ordinary
+    /// tuple access. Alias expansion remains in the accepting checker, never in a downstream ownership consumer.
+    fn has_tuple_storage(&self, ty: &ResolvedType) -> bool {
+        match self.expand_type_aliases(ty.clone()) {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.has_tuple_storage(&inner),
+            ResolvedType::Tuple(_) => true,
+            ResolvedType::Generic(name, _) => collection_type_id(&name) == Some(CollectionTypeId::Tuple),
+            _ => false,
+        }
     }
 
     /// Whether this spelling deliberately declares a new source binding instead of resolving an active one.
@@ -1148,10 +1220,7 @@ impl TypeChecker {
 
     /// Give a compiler-managed C output constructor the ordinary local name supplied by its enclosing assignment.
     fn bind_c_abi_output_slot_assignment(&mut self, name: &str, value_span: Span) {
-        let Some(slot) = self
-            .unbound_c_abi_output_slot_constructors
-            .remove(&(value_span.start, value_span.end))
-        else {
+        let Some(slot) = self.unbound_c_abi_output_slot_constructors.remove(&value_span) else {
             return;
         };
         self.pending_c_abi_output_slots.insert(name.to_string(), slot);
@@ -1159,10 +1228,7 @@ impl TypeChecker {
 
     /// Bind an opaque checked typed span only when its constructor is the exact value of one ordinary local.
     fn bind_c_abi_span_assignment(&mut self, name: &str, value_span: Span) {
-        let Some(kind) = self
-            .unbound_c_abi_span_constructors
-            .remove(&(value_span.start, value_span.end))
-        else {
+        let Some(kind) = self.unbound_c_abi_span_constructors.remove(&value_span) else {
             return;
         };
         let Some(binding_span) = self
@@ -1181,11 +1247,11 @@ impl TypeChecker {
     /// receiving the compiler-tracked local owner required by the checked bridge.
     fn reject_unbound_c_abi_span_constructors(&mut self) {
         let constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
-        for ((start, end), _kind) in constructors {
+        for (span, _kind) in constructors {
             self.errors.push(crate::diagnostics::CompileError::type_error(
                 "a checked byte carrier must be assigned directly to one local before its closed bridge methods are used"
                     .to_string(),
-                Span::new(start, end),
+                span,
             ));
         }
     }
@@ -1194,12 +1260,9 @@ impl TypeChecker {
     ///
     /// The local may then be read as the receiver of `copy_utf8` only; see `check_ident`.
     fn bind_scoped_c_string_view_assignment(&mut self, binding_span: Span, value_span: Span) {
-        if self
-            .unbound_scoped_c_string_views
-            .remove(&(value_span.start, value_span.end))
-        {
+        if self.unbound_scoped_c_string_views.remove(&value_span) {
             self.scoped_c_string_view_bindings
-                .insert((binding_span.start, binding_span.end), self.closure_depth);
+                .insert(binding_span, self.closure_depth);
         }
     }
 
@@ -1209,25 +1272,20 @@ impl TypeChecker {
     /// expression statement that only discards the view is not an escape.
     fn reject_unbound_scoped_c_string_views(&mut self, statement: &Statement) {
         if let Statement::Expr(expr) = statement {
-            self.unbound_scoped_c_string_views
-                .remove(&(expr.span.start, expr.span.end));
+            self.unbound_scoped_c_string_views.remove(&expr.span);
         }
         let mut escaped = std::mem::take(&mut self.unbound_scoped_c_string_views)
             .into_iter()
             .collect::<Vec<_>>();
         escaped.sort_unstable();
-        for (start, end) in escaped {
-            self.errors
-                .push(errors::scoped_c_string_view_escapes(Span::new(start, end)));
+        for span in escaped {
+            self.errors.push(errors::scoped_c_string_view_escapes(span));
         }
     }
 
     /// Give a checked C raw call result the ordinary local name supplied by its enclosing assignment.
     fn bind_c_abi_raw_result_assignment(&mut self, name: &str, value_span: Span) {
-        let Some(mut result) = self
-            .unbound_c_abi_raw_call_results
-            .remove(&(value_span.start, value_span.end))
-        else {
+        let Some(mut result) = self.unbound_c_abi_raw_call_results.remove(&value_span) else {
             return;
         };
         result.local_symbol_span = self
@@ -1246,7 +1304,7 @@ impl TypeChecker {
     /// a later reader can still fix the owner's type arguments, so the binding is watched until its block ends
     /// instead of being refused here. `_` is never read, so nothing can fix them and the call is refused at once.
     fn bind_open_rust_generic_assignment(&mut self, name: &str, value_span: Span) {
-        let Some(call) = self.open_rust_generic_calls.remove(&(value_span.start, value_span.end)) else {
+        let Some(call) = self.open_rust_generic_calls.remove(&value_span) else {
             return;
         };
         if name == "_" {
@@ -1261,7 +1319,7 @@ impl TypeChecker {
         }
         self.open_rust_generic_bindings.push(super::OpenRustGenericBinding {
             name: name.to_string(),
-            block: self.current_statement_block,
+            block: self.statement_blocks.current,
             span: value_span,
             call,
         });
@@ -1272,7 +1330,7 @@ impl TypeChecker {
     /// `HashMap.new()` on its own line binds nothing, so no later statement can supply the type arguments Rust
     /// would need; the call is refused where it stands.
     fn reject_discarded_open_rust_generic_call(&mut self, expr_span: Span) {
-        let Some(call) = self.open_rust_generic_calls.remove(&(expr_span.start, expr_span.end)) else {
+        let Some(call) = self.open_rust_generic_calls.remove(&expr_span) else {
             return;
         };
         self.errors.push(errors::rust_owner_type_args_not_inferred(
@@ -1337,13 +1395,13 @@ impl TypeChecker {
             .type_info
             .rust
             .checked_calls
-            .get(&(expr.span.start, expr.span.end))
+            .get(&expr.span)
             .is_some_and(|call| &call.return_type == actual);
         if accepted {
             self.type_info
                 .expressions
                 .numeric_conversion_destinations
-                .insert((boundary_span.start, boundary_span.end), expected.clone());
+                .insert(boundary_span, expected.clone());
         }
         accepted
     }
@@ -1394,7 +1452,7 @@ impl TypeChecker {
                 target.module_path,
                 target.name,
                 kind,
-                incan_semantics_core::HirSourceSpan::new(symbol.span.start, symbol.span.end),
+                symbol.span,
             ))
         });
         imported.or(local)
@@ -1777,7 +1835,7 @@ impl TypeChecker {
                 self.validate_truthiness_condition(&cond_ty, expr.span);
 
                 self.symbols.enter_scope(ScopeKind::Block);
-                self.push_loop_context(LoopContextKind::Statement, None, span.start);
+                self.push_loop_context(LoopContextKind::Statement, None, span);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.symbols.exit_scope();
@@ -1789,7 +1847,7 @@ impl TypeChecker {
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
                 let views = self.enter_pattern_views(&pattern.node, view_param);
-                self.push_loop_context(LoopContextKind::Statement, None, span.start);
+                self.push_loop_context(LoopContextKind::Statement, None, span);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.exit_pattern_views(views);
@@ -1805,7 +1863,7 @@ impl TypeChecker {
     /// because no surrounding expression consumes a result.
     fn check_loop_stmt(&mut self, loop_stmt: &LoopStmt, span: Span) {
         self.symbols.enter_scope(ScopeKind::Block);
-        self.push_loop_context(LoopContextKind::Statement, None, span.start);
+        self.push_loop_context(LoopContextKind::Statement, None, span);
         self.check_statement_block(&loop_stmt.body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
@@ -1829,6 +1887,7 @@ impl TypeChecker {
                         // iterable before ordinary `Option`-based iteration; it is not the fallible-poll protocol.
                         let unwrapped_iter_ty = self.validate_try_result_type(&iter_ty, for_stmt.iter.span);
                         self.record_expr_type(for_stmt.iter.span, unwrapped_iter_ty.clone());
+                        self.retain_body_ir_result_value(&for_stmt.iter, &unwrapped_iter_ty);
                         self.infer_iterator_element_type_from_expr(&for_stmt.iter, &unwrapped_iter_ty)
                     }
                 } else {
@@ -1857,8 +1916,9 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
+        self.retain_body_ir_iteration_binding(&for_stmt.pattern, &for_stmt.iter);
         self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
-        self.push_loop_context(LoopContextKind::Statement, None, span.start);
+        self.push_loop_context(LoopContextKind::Statement, None, span);
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
 
         self.check_statement_block(&for_stmt.body);
@@ -2257,12 +2317,12 @@ impl TypeChecker {
     /// yielding `int` values, and a type parameter bounded by `Iterable[T]` yielding `T`, before the backend chooses
     /// the Rust iterator adapter that implements them.
     pub fn infer_iterator_element_type(&self, iter_ty: &ResolvedType) -> ResolvedType {
-        if let Some(type_param) = self.active_type_param_name(iter_ty) {
-            for frame in self.current_type_param_bound_details.iter().rev() {
-                let Some(bounds) = frame.get(type_param) else {
-                    continue;
-                };
-                if let Some(item) = bounds.iter().find_map(|bound| {
+        if let Some(type_param) = self.active_type_param_name(iter_ty)
+            && let Some(item) = self
+                .innermost_type_param_bounds(type_param)
+                .into_iter()
+                .flatten()
+                .find_map(|bound| {
                     let trait_id = builtin_traits::from_qualified_str(&bound.name)
                         .or_else(|| builtin_traits::from_str(Self::type_bound_source_name(bound)))?;
                     if matches!(trait_id, TraitId::Iterable | TraitId::Iterator | TraitId::IntoIterator) {
@@ -2270,11 +2330,9 @@ impl TypeChecker {
                     } else {
                         None
                     }
-                }) {
-                    return item;
-                }
-                break;
-            }
+                })
+        {
+            return item;
         }
         match iter_ty {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.infer_iterator_element_type(inner),
@@ -2316,8 +2374,9 @@ impl TypeChecker {
     ///
     /// Every `for` statement and comprehension clause iterates through here, so this is also where iterating a
     /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter. Builtin
-    /// iterator values retain builtin polling. Native iterator items come from the retained `Iterator::Item`
-    /// projection; structural hooks are selected only by the custom protocol resolver.
+    /// iterator values retain builtin polling. Native items come from the selected `Iterator::Item` or
+    /// `IntoIterator::Item` projection; a collection's owned iteration need not implement Iterator itself. Structural
+    /// hooks are selected only by the custom protocol resolver.
     pub fn infer_iterator_element_type_from_expr(
         &mut self,
         iter_expr: &Spanned<Expr>,
@@ -2330,6 +2389,21 @@ impl TypeChecker {
             self.consumed_iterator_bindings.insert(name.clone(), iter_expr.span);
         }
         let elem_ty = self.infer_iterator_element_type(iter_ty);
+        // A source protocol default can return its opaque Iterator contract while retaining a concrete source
+        // adopter. Keep its checked hooks rather than routing that value through builtin collection polling.
+        if iter_ty.iterator_item_type().is_some()
+            && self.type_info.resolved_method_call(iter_expr.span).is_some_and(|call| {
+                let super::ResolvedMethodDispatch::Trait { trait_name, .. } = &call.dispatch;
+                matches!(iter_ty, ResolvedType::Generic(name, _) if name == trait_name
+                || builtin_traits::from_qualified_str(name).is_some_and(|id| {
+                    builtin_traits::from_qualified_str(trait_name) == Some(id)
+                }))
+            })
+        {
+            return self
+                .retain_owned_source_iterator_protocol(iter_ty, iter_expr.span)
+                .unwrap_or(ResolvedType::Unknown);
+        }
         if !matches!(elem_ty, ResolvedType::Unknown) || matches!(iter_ty, ResolvedType::Unknown) {
             return elem_ty;
         }
@@ -2340,6 +2414,9 @@ impl TypeChecker {
             return item;
         }
         if let Some(item) = self.rust_associated_type(iter_ty, "std::iter::Iterator", "Item") {
+            return item;
+        }
+        if let Some(item) = self.rust_associated_type(iter_ty, "std::iter::IntoIterator", "Item") {
             return item;
         }
         if self.is_user_operator_receiver(iter_ty) {

@@ -1,0 +1,9 @@
+# behavior: a vocabulary registration with an unsupported schema names both versions
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary schema version 999
+#   supported version 1
+
+def main() -> None:
+    """Registration validation precedes execution."""
+    pass

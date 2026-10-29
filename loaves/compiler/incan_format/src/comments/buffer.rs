@@ -64,8 +64,8 @@ impl NormalizedLineBuffer {
         }
     }
 
-    /// Replace generated declaration spacing with the source gap around a root-level suite comment.
-    pub fn set_root_blank_lines(&mut self, count: usize) {
+    /// Replace generated spacing with a comment block's source gap; the next code line also enforces its scope's cap.
+    pub fn set_blank_lines(&mut self, count: usize) {
         self.pending_blank_lines = count.min(2);
     }
 

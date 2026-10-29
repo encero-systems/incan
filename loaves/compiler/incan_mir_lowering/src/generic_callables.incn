@@ -58,13 +58,14 @@ def owned_slots_for_bindings(
                     if original.params[slot].mutable:
                         return Err("unsupported Body IR mutable generic callable storage")
                     expected = native_source_type(
+                        builder.constructors,
                         builder.nominals,
                         builder.enums,
                         builder.unions,
                         closed.params[slot].ty,
                         builder.intrinsics,
                     )?
-                    if expected != PlanType.FunctionPointer(signature):
+                    if expected != PlanType.FunctionPointer(signature) and expected != PlanType.Closure(signature):
                         return Err("unsupported Body IR generic callable signature mismatch")
                     owned.append(slot)
                 Some(PlanType.ClosureRef(_signature)) =>
@@ -74,7 +75,7 @@ def owned_slots_for_bindings(
     return Ok(owned)
 
 
-def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+pub def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
     """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>

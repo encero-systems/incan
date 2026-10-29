@@ -3,11 +3,19 @@
 from rust::std::sync import Arc
 from pub::incan_mir_plan import CalleeKind
 from body_index import BodyIndex, empty_body_index
-from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, Body as RustBody
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    StaticDeclaration,
+    Body as RustBody,
+    NominalDeclaration,
+    EnumDeclaration,
+    ValueEnumDeclaration,
+    DecoratedBinding,
+)
 from rust::incan_semantics_core import IncanType as RustType
 from rust::std::collections import BTreeSet
-from rust::std::ops import Index
-from rust::std::primitive import usize
+from table_views import borrowed_at
+from native_type_identity import ConstructorIndex, constructor_index
 
 
 pub model DisplayFunction:
@@ -18,7 +26,7 @@ pub model DisplayFunction:
 
 
 pub model ProgramContext:
-    """Share ordered program tables and checked body positions without copying their contents into each frame."""
+    """Share checked declaration tables, body positions and the unit's arithmetic policy across ordinary and lifted frames."""
 
     pub body_indices: BodyIndex
     # This immutable copy keeps the specialized module's order, so the checked index selects the same executable facts.
@@ -27,14 +35,24 @@ pub model ProgramContext:
     pub statics: Arc[list[StaticDeclaration]]
     pub comparison_functions: Arc[list[list[str]]]
     pub union_types: Arc[BTreeSet[RustType]]
+    # Layouts are immutable after specialization; frames retain shared owners rather than copying checked tables.
+    pub nominals: Arc[list[NominalDeclaration]]
+    # Positions borrow exactly the nominal inventory published beside them.
+    pub constructors: Arc[ConstructorIndex]
+    pub enums: Arc[list[EnumDeclaration]]
+    pub value_enums: Arc[list[ValueEnumDeclaration]]
+    pub decorated_bindings: Arc[list[DecoratedBinding]]
+    # Lifted functions share their unit's ordinary integer policy along with its checked declaration tables.
+    pub overflow_checks: bool = true
 
 
-pub def synthetic_program_context(module: &BodyIrModule) -> ProgramContext:
+pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[ConstructorIndex]) -> ProgramContext:
     """Keep module storage but no dispatch mappings for external-only synthetic frames."""
     functions: list[DisplayFunction] = []
     bodies: list[RustBody] = []
     comparisons: list[list[str]] = []
     unions: BTreeSet[RustType] = BTreeSet.new()
+    bindings: list[DecoratedBinding] = []
     return ProgramContext(
         body_indices=empty_body_index(),
         bodies=Arc.new(bodies),
@@ -42,10 +60,28 @@ pub def synthetic_program_context(module: &BodyIrModule) -> ProgramContext:
         statics=Arc.new(list(module.static_declarations)),
         comparison_functions=Arc.new(comparisons),
         union_types=Arc.new(unions),
+        nominals=Arc.new(list(module.nominal_declarations)),
+        constructors=constructors,
+        enums=Arc.new(list(module.enum_declarations)),
+        value_enums=Arc.new(list(module.value_enum_declarations)),
+        decorated_bindings=Arc.new(bindings),
     )
 
 
 pub def body_at(bodies: &list[RustBody], index: int) -> &RustBody:
-    """Borrow one body without copying its statements; the index must come from this table's matching checked body index."""
-    slot: usize = index.wrapping_resize()
-    return Index.index(bodies, slot)
+    """Close Arc.as_ref's element type at the checked body-index boundary, then borrow its selected entry."""
+    return borrowed_at(bodies, index)
+
+
+pub def nominal_at(declarations: &list[NominalDeclaration], index: int) -> &NominalDeclaration:
+    """Borrow one nominal declaration without copying its fields, methods or default frames; `index` is in range."""
+    return borrowed_at(declarations, index)
+
+
+pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule) -> None:
+    """Publish each appended nominal-table generation once before its closed frames borrow the new layouts."""
+    retained: &list[NominalDeclaration] = program.nominals.as_ref()
+    if len(retained) != len(module.nominal_declarations):
+        constructors = constructor_index(module.nominal_declarations)
+        program.nominals = Arc.new(list(module.nominal_declarations))
+        program.constructors = Arc.new(constructors)

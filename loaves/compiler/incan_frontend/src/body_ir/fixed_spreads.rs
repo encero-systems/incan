@@ -71,7 +71,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Vec<(bir::Operand, IncanType)> {
-        let mut tuple_places: HashMap<(usize, usize), bir::Place> = HashMap::new();
+        let mut tuple_places: HashMap<ast::Span, bir::Place> = HashMap::new();
         let mut values = Vec::with_capacity(shaped.len());
         for (entry, destination) in shaped.iter().zip(destinations) {
             let expr = match &entry.argument {
@@ -91,7 +91,7 @@ impl BodyBuilder<'_, '_> {
                 values.push((operand, self.resolve_ty(expr.span)));
                 continue;
             };
-            let key = (expr.span.start, expr.span.end);
+            let key = expr.span;
             let mut place = match tuple_places.entry(key) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
                 std::collections::hash_map::Entry::Vacant(entry) => {

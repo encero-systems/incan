@@ -1,6 +1,6 @@
 """Validated frame roles, cache signatures and callable-name admission for closed generic decorators."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType, SemanticSourceTargetKind
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, DecoratedBinding, DecoratedInitialization
 from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Callee, CalleeKind, RvalueKind
 from pub::incan_mir_plan import assign as plan_assign
@@ -48,19 +48,10 @@ pub def string_type(ty: &RustType) -> bool:
 
 
 pub def callable_name_profile(module: &BodyIrModule, owner: str) -> Result[bool, str]:
-    """Bound dynamic name lookup to one registration module with no unretained static function candidates."""
-    for body in module.bodies:
-        if len(body.type_parameters) != 0 or len(body.params) != 0 or not string_type(body.return_type):
-            continue
-        match body.canonical:
-            Some(identity) =>
-                if identity.kind == SemanticSourceTargetKind.Function:
-                    return Ok(false)
-            None => pass
+    """Bound dynamic name lookup to its registration module independently of signature and cache lifetime policy."""
     for binding in module.decorated_bindings:
         match binding.initializer:
             Some(_initializer) =>
-                validate_text_binding(binding)?
                 if body_module_identity(binding.original_body)? != owner:
                     return Ok(false)
             None => pass

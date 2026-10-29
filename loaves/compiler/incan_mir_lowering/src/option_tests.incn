@@ -47,22 +47,6 @@ pub def option_isinstance(
     return Ok(test_union_tag(builder, tag, [1], span))
 
 
-pub def option_union_payload(mut builder: Builder, target: PlanType) -> Option[PlanType]:
-    """The union an Option carrier holds, when `target` is such an Option; `None` for any other type."""
-    match target:
-        PlanType.Enum(owner, _name) =>
-            if not is_option_carrier(builder, owner):
-                return None
-            payload = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
-            match payload:
-                PlanType.Enum(inner, _inner_name) =>
-                    if is_union_carrier(builder, inner):
-                        return Some(payload)
-                _ => pass
-        _ => pass
-    return None
-
-
 pub def enum_tag(mut builder: Builder, source: Place, span: SourceSpan) -> Place:
     """Read an enum's variant index as an int without moving or copying its payload."""
     raw_tag = temporary(builder, PlanType.EnumTag, span)

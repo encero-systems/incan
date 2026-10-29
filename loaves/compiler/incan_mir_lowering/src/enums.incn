@@ -1,5 +1,7 @@
 """Canonical normal-enum layouts and identity-checked native construction and pattern admission."""
 
+from table_views import borrowed_at, borrowed_table
+from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     EnumDeclaration as RustEnumDeclaration,
@@ -13,7 +15,8 @@ from rust::incan_semantics_core::body_ir import (
     Constant as RustConstant,
     ValueEnumBacking,
 )
-from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
+from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan, semantic_type_matches
+from pub::incan_mir_plan import source_span as plan_span
 from models import model_type as plain_model_type
 from layout_types import native_source_type as retained_source_type
 from decls import library_enum_item, serde_propagation, with_serde_derives
@@ -21,21 +24,23 @@ from nominal_instances import nominal_symbol
 from symbols import model_symbol
 
 
-pub def enum_type(mut declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
+pub def enum_type(declarations: &list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
     """Recognize a retained source enum before the model/scalar resolver runs."""
     match ty:
         RustType.Named(name) =>
             retained_name = str(name)
             mut index = 0
-            for declaration in declarations:
-                if declaration.name == retained_name:
+            for declaration_position in range(len(declarations)):
+                declaration = borrowed_at(declarations, declaration_position)
+                if declaration.carrier_name() == retained_name:
                     return Some(PlanType.Enum(index, model_symbol(retained_name)))
                 index += 1
         RustType.Generic(base=base, args=arguments) =>
             name = nominal_symbol(str(base), arguments.clone())
             mut index = 0
-            for declaration in declarations:
-                if declaration.name == name:
+            for declaration_position in range(len(declarations)):
+                declaration = borrowed_at(declarations, declaration_position)
+                if declaration.carrier_name() == name:
                     return Some(PlanType.Enum(index, model_symbol(name)))
                 index += 1
         _ => pass
@@ -43,7 +48,7 @@ pub def enum_type(mut declarations: list[RustEnumDeclaration], ty: &RustType) ->
 
 
 pub def variant_index(
-    mut declarations: list[RustEnumDeclaration],
+    declarations: &list[RustEnumDeclaration],
     target: &EnumVariantTarget,
     expected: PlanType,
 ) -> Result[tuple[int, int], str]:
@@ -67,20 +72,25 @@ pub def variant_index(
 
 
 pub def unit_variant(
-    mut declarations: list[RustEnumDeclaration],
+    declarations: &list[RustEnumDeclaration],
     target: &FieldlessEnumVariantTarget,
 ) -> Result[tuple[int, int], str]:
     """Resolve the older fieldless constructor vocabulary against the same canonical layout."""
     for owner in range(len(declarations)):
         declaration = declarations[owner]
-        if declaration.canonical != target.enum_canonical or declaration.direct_declaration_id != target.enum_declaration_id:
+        if (
+            declaration.canonical != target.enum_canonical
+            or declaration.direct_declaration_id != target.enum_declaration_id
+        ):
             continue
         for slot in range(len(declaration.variants)):
             variant = declaration.variants[slot]
-            if variant.canonical == target.variant_canonical and variant.direct_declaration_id == target.variant_declaration_id and len(
-                variant.fields,
-            ) == 0:
-                if declaration.name != target.enum_name or variant.name != target.variant_name:
+            if (
+                variant.canonical == target.variant_canonical
+                and variant.direct_declaration_id == target.variant_declaration_id
+                and len(variant.fields) == 0
+            ):
+                if declaration.canonical.declaration_name != target.enum_name or variant.name != target.variant_name:
                     return Err("invalid Body IR fieldless enum spelling")
                 return Ok((owner, slot))
     return Err("unsupported Body IR unretained fieldless enum variant")
@@ -102,13 +112,18 @@ pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern
                     validate_payload_patterns(fields)?
                     return Ok(slot)
         RustPattern.FieldlessEnumVariant(target) =>
-            if target.enum_canonical != declaration.canonical or target.enum_declaration_id != declaration.direct_declaration_id:
+            if (
+                target.enum_canonical != declaration.canonical
+                or target.enum_declaration_id != declaration.direct_declaration_id
+            ):
                 return Err("invalid Body IR fieldless enum pattern owner")
             for slot in range(len(declaration.variants)):
                 variant = declaration.variants[slot]
-                if target.variant_canonical == variant.canonical and target.variant_declaration_id == variant.direct_declaration_id and len(
-                    variant.fields,
-                ) == 0:
+                if (
+                    target.variant_canonical == variant.canonical
+                    and target.variant_declaration_id == variant.direct_declaration_id
+                    and len(variant.fields) == 0
+                ):
                     return Ok(slot)
         _ => pass
     return Err("unsupported Body IR enum pattern")
@@ -167,24 +182,25 @@ pub def validate_binding(binding: &ArgumentBinding, count: int) -> Result[None, 
 
 
 pub def native_source_type(
-    mut nominals: list[RustNominalDeclaration],
-    mut declarations: list[RustEnumDeclaration],
+    constructors: &ConstructorIndex,
+    nominals: &list[RustNominalDeclaration],
+    declarations: &list[RustEnumDeclaration],
     ty: &RustType,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Resolve retained standard carriers and source enums before delegating the existing scalar/model boundary."""
-    source_type = str(ty)
     mut index = 0
     for declaration in intrinsics:
-        if declaration.source_type == source_type:
+        if semantic_type_matches(declaration, ty):
             return Ok(PlanType.Enum(len(declarations) + index, declaration.name))
         index += 1
     match enum_type(declarations, ty):
         Some(result) => return Ok(result)
-        None => return plain_model_type(nominals, ty)
+        None => return plain_model_type(constructors, nominals, ty)
 
 
 pub def lower_enum_declarations(
+    constructors: &ConstructorIndex,
     module: &RustBodyIrModule,
     file: str,
     mut intrinsics: list[EnumDeclaration] = [],
@@ -194,18 +210,20 @@ pub def lower_enum_declarations(
 
     A source enum also takes the serde derives a serde-deriving declaration's fields require of it. Value enums retain
     the same checked raw values for explicit and propagated serde selections. Source Display uses its checked Debug
-    path rather than a native Rust derive.
+    path rather than a native Rust derive. Native enums retain only the checked Copy fact verified on their SDK type.
     """
     reached = serde_propagation(module)?
+    unions: list[RustType] = []
+    nominals: &list[RustNominalDeclaration] = borrowed_table(module.nominal_declarations)
+    layouts: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
     mut declarations: list[EnumDeclaration] = []
-    for declaration in module.enum_declarations:
+    for enum_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, enum_position)
         mut variants: list[EnumVariant] = []
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(
-                    retained_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], ty, intrinsics)?,
-                )
+                fields.append(retained_source_type(constructors, nominals, layouts, unions, ty, intrinsics)?)
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
         item = library_enum_item(declaration)
@@ -213,7 +231,7 @@ pub def lower_enum_declarations(
         if item != "":
             for argument in declaration.native_type_arguments:
                 native_arguments.append(
-                    retained_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], argument, intrinsics)?,
+                    retained_source_type(constructors, nominals, layouts, unions, argument, intrinsics)?,
                 )
         selected = with_serde_derives(declaration.derives, str(declaration.name), reached)
         mut derives: list[str] = []
@@ -221,14 +239,16 @@ pub def lower_enum_declarations(
             for derive in selected:
                 if derive != "Display":
                     derives.append(str(derive))
+        elif "Copy" in declaration.derives:
+            derives.append("Copy")
         raw_kind, raw_values = value_enum_raw_values(module, declaration)?
         declarations.append(
             EnumDeclaration(
-                name=model_symbol(str(declaration.name)),
+                name=model_symbol(declaration.carrier_name()),
                 public=declaration.public or item != "",
                 variants=variants,
                 derives=derives,
-                span=SourceSpan(file=file, line=1, column=1),
+                span=plan_span(file=file, line=1, column=1),
                 library_item=item,
                 library_type_arguments=native_arguments,
                 raw_kind=raw_kind,
@@ -246,7 +266,8 @@ def value_enum_raw_values(
     """A source value enum's backing and raw values in variant order; an SDK enum keeps its serialization in its crate."""
     if library_enum_item(declaration) != "":
         return Ok(("", []))
-    for value_enum in module.value_enum_declarations:
+    for enum_position in range(len(module.value_enum_declarations)):
+        value_enum = borrowed_at(module.value_enum_declarations, enum_position)
         if value_enum.canonical != declaration.canonical:
             continue
         mut raw_values: list[str] = []
@@ -269,7 +290,7 @@ pub def enum_owner(ty: PlanType) -> Result[int, str]:
 
 
 pub def validate_unit_comparison(
-    mut declarations: list[RustEnumDeclaration],
+    declarations: &list[RustEnumDeclaration],
     left: PlanType,
     right: PlanType,
 ) -> Result[None, str]:
@@ -278,8 +299,7 @@ pub def validate_unit_comparison(
         return Err("unsupported Body IR mixed enum comparison")
     mut owner = -1
     match left:
-        PlanType.Enum(index, _name) =>
-            owner = index
+        PlanType.Enum(index, _name) => owner = index
         _ => return Err("unsupported Body IR nonenum comparison")
     if owner < 0 or owner >= len(declarations):
         return Err("unsupported Body IR non-source enum comparison")
@@ -292,7 +312,7 @@ pub def validate_unit_comparison(
     return Ok(None)
 
 
-pub def validate_unit_ordering(mut declarations: list[RustEnumDeclaration], ty: PlanType) -> Result[None, str]:
+pub def validate_unit_ordering(declarations: &list[RustEnumDeclaration], ty: PlanType) -> Result[None, str]:
     """
     Authorize tag ordering only for a fieldless owner whose checked derives select a derived order.
 

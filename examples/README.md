@@ -46,15 +46,19 @@ Web application examples using the Incan web framework surface.
 ## Running examples
 
 ```bash
-# Run all examples as a smoke test (requires release build)
+# Run all examples with an installed dev.8 toolchain
 make examples
 
 # Run a single example
-./target/release/incan run examples/simple/hello.incn
+incan run examples/simple/hello.incn
 
 # Build without running
-./target/release/incan build examples/advanced/async_await.incn
+incan build examples/advanced/async_await.incn
 ```
+
+Oven prepares dependencies automatically. There is no bake or prewarm step. The runner reads `check-only.txt`: the markform, scriptkit and styleforge consumers check their descriptor syntax without a runtime lowering hook, and the declaration-only rusttype example checks without an entry point. Other entry points run, including async functions. Supporting modules and producer libraries are compiled through their entry points' dependency graphs.
+
+`INCAN_BIN` selects an installed command. `INCAN_EXAMPLES_ONLY` selects colon-separated repository-relative entry paths. `INCAN_EXAMPLES_OUT` selects the log directory (default `target/examples`), containing `examples.tsv` and one log per command. GNU `timeout` from coreutils bounds each command to `INCAN_EXAMPLES_TIMEOUT` seconds (default 120); timeouts and compiler errors fail the gate. Project examples run from their nearest manifest directory so bundled data files resolve.
 
 ## Adding examples
 
@@ -63,5 +67,5 @@ When adding a new example:
 1. Place it in the appropriate difficulty folder.
 2. Include a `def main():` entrypoint if the example should be runnable.
 3. Run `make examples` to verify it compiles and runs within the timeout.
-4. Examples without a `main()` function are still typechecked but not executed.
-5. If an example contains a library project (`loaf.toml` + `src/lib.incn`), the examples runner pre-builds it with `incan build --lib` before checking consumer files.
+4. Add an intentionally frontend-only entry to `check-only.txt` with its reason. Supporting modules need no separate entry.
+5. Declare project dependencies in `loaf.toml`; Oven prepares producer libraries when their consumers run or check.

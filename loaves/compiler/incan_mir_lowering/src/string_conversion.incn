@@ -19,11 +19,15 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from pub::incan_mir_plan import source_span as plan_span
 from frame import Builder, temporary, read_place, terminate_call, forget_owned, drop_all_owned, track_rvalue_moves
 from string_input import owned_string_frame
 from string_conversion_contracts import conversion_name, conversion_trait
 from options import retain_carrier, propagate_result, result_layout
-from unions import native_source_type, collect_unions
+from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
+from rust::std::sync import Arc
+from unions import collect_unions
 from type_parameters import substitute
 
 
@@ -54,7 +58,14 @@ pub def string_conversion_callee(
         Some(receiver) =>
             closed: RustType = substitute(receiver, builder.type_parameters, builder.type_arguments)?
             output = generic("Result", [closed, RustType.Primitive(Primitive.Str)])
-            result = native_source_type(builder.nominals, builder.enums, builder.unions, output, builder.intrinsics)?
+            result = native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                output,
+                builder.intrinsics,
+            )?
             match closed:
                 RustType.Primitive(Primitive.Int) =>
                     path = "incan_native_runtime::parse_newtype_int"
@@ -79,11 +90,13 @@ pub def string_conversion_callee(
 
 
 pub def lower_string_conversions(
+    constructor_owner: Arc[ConstructorIndex],
     module: &BodyIrModule,
     file: str,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[list[Function], list[ExternalFunction]], str]:
     """Plan every selected raw chain root before headers or dependent generic SDK calls are admitted."""
+    constructors = constructor_owner.as_ref()
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     if conversion_trait(module)? == "":
@@ -94,10 +107,11 @@ pub def lower_string_conversions(
         if name == "":
             continue
         output = generic("Result", [RustType.Named(str(declaration.name)), RustType.Primitive(Primitive.Str)])
-        retain_carrier(module, intrinsics, output, file)?
+        retain_carrier(constructors, module, intrinsics, output, file)?
         input_result = generic("Result", [declaration.field_types[0].clone(), RustType.Primitive(Primitive.Str)])
-        retain_carrier(module, intrinsics, input_result, file)?
+        retain_carrier(constructors, module, intrinsics, input_result, file)?
         result = native_source_type(
+            constructors,
             list(module.nominal_declarations),
             list(module.enum_declarations),
             collect_unions(module),
@@ -105,20 +119,31 @@ pub def lower_string_conversions(
             intrinsics,
         )?
         underlying_result = native_source_type(
+            constructors,
             list(module.nominal_declarations),
             list(module.enum_declarations),
             collect_unions(module),
             input_result,
             intrinsics,
         )?
-        span = SourceSpan(file=file, line=1, column=1)
-        function, runtime = conversion_function(module, index, name, result, underlying_result, intrinsics, span)?
+        span = plan_span(file=file, line=1, column=1)
+        function, runtime = conversion_function(
+            constructor_owner,
+            module,
+            index,
+            name,
+            result,
+            underlying_result,
+            intrinsics,
+            span,
+        )?
         functions.append(function)
         externals.extend(runtime)
     return Ok((functions, externals))
 
 
 def conversion_function(
+    constructor_owner: Arc[ConstructorIndex],
     module: &BodyIrModule,
     index: int,
     name: str,
@@ -129,8 +154,10 @@ def conversion_function(
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
     """Convert the owned string once, propagate Err unchanged, and wrap only the successful underlying value."""
     declaration = module.nominal_declarations[index]
-    mut builder = owned_string_frame(module, name, result, intrinsics, span)
+    mut builder = owned_string_frame(constructor_owner, module, name, result, intrinsics, span)
+    constructors = constructor_owner.as_ref()
     underlying = native_source_type(
+        constructors,
         list(module.nominal_declarations),
         list(module.enum_declarations),
         collect_unions(module),

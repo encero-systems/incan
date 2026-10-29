@@ -2,7 +2,7 @@
 
 Runnable pro-level example for query-shaped vocab surfaces.
 
-This example is meant to be read from the Incan consumer surface first. The Rust companion crate exists to describe that surface to the compiler, but the feature is about letting a library author publish a small DSL that consumers can use after importing the library.
+Read the Incan consumer first. `producer/src/vocab.incn` registers the surface and defines its native desugarer through `std.vocab`.
 
 The consumer writes:
 
@@ -28,7 +28,7 @@ The important parts are:
 - `orders |> paid_orders` uses a query-owned pipeline glyph. It does not mean every `orders` value globally supports a `|>` operator.
 - `filter(.status == "paid")` and `select(.region)` prove scoped surfaces also work inside registered method-call argument positions, not only directly in a DSL block body.
 
-At build time, the compiler does not ask the desugarer to re-read the source string. It passes typed scoped-surface artifacts through `incan_vocab`:
+At build time, the compiler passes structured, independently spanned expressions through `std.vocab`:
 
 ```text
 .amount
@@ -47,14 +47,13 @@ orders |> paid_orders
   owner: query method argument
 ```
 
-The example desugarer walks those typed artifacts and lowers the block to a visible `print(...)` statement. Running the consumer proves that the producer library, vocab companion, manifest metadata, parser, desugarer handoff, and runtime execution all line up.
+The Incan desugarer walks those artifacts and returns an ordinary `print(...)` statement summarizing fields and pipes. It does not execute database queries. Shared syntax traversal lives in the ordinary Incan `vocab_tools` example library.
 
 Files worth reading in order:
 
 - `consumer/src/main.incn` - the user-facing DSL surface.
-- `producer/loaf.toml` - points the producer library at its vocab companion crate.
-- `producer/vocab_companion/src/lib.rs` - registers the `query:` block and scoped surfaces.
-- `producer/vocab_companion/src/desugar.rs` - consumes typed scoped-surface artifacts and emits ordinary Incan AST.
+- `producer/loaf.toml` - declares `[vocab] entry`.
+- `producer/src/vocab.incn` - registers scoped surfaces and returns structured Incan output.
 
 This example covers:
 
@@ -62,11 +61,10 @@ This example covers:
 - Leading-dot field paths inside a registered `query:` block.
 - Leading-dot field paths inside registered query method arguments, such as `filter(...)` and `select(...)`.
 - A query-owned pipeline glyph assembled from punctuation and operator tokens: `orders |> paid_orders`.
-- A Rust desugarer receiving scoped-surface artifacts through `incan_vocab` instead of reparsing source text.
+- An Incan desugarer receiving scoped-surface artifacts through `std.vocab`.
 
 Run it from the repository root:
 
 ```bash
-./target/debug/incan build --lib examples/pro/vocab_querykit/producer/src/lib.incn
-./target/debug/incan run examples/pro/vocab_querykit/consumer/src/main.incn
+incan run examples/pro/vocab_querykit/consumer/src/main.incn
 ```

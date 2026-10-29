@@ -32,8 +32,7 @@ pub def enum_pattern_place(mut builder: Builder, source: Place, span: SourceSpan
     """Inspect a stored shared enum reference without moving its owner or losing a preceding payload projection."""
     mut ty = PlanType.Unit
     match place_type(builder.locals, source):
-        PlanType.EnumRef(owner, name) =>
-            ty = PlanType.Enum(owner, name)
+        PlanType.EnumRef(owner, name) => ty = PlanType.Enum(owner, name)
         PlanType.EnumMutRef(owner, name) =>
             if source.projection == Projection.Whole:
                 return Place(local=source.local, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span)
@@ -111,7 +110,15 @@ pub def carrier_pattern_slot(mut builder: Builder, owner: int, pattern: &RustPat
         return pattern_variant(builder.enums[owner], pattern)
     declaration = builder.intrinsics[owner - len(builder.enums)]
     if declaration.carrier == "":
-        return union_pattern_slot(builder.nominals, builder.enums, builder.unions, owner, pattern, builder.intrinsics)
+        return union_pattern_slot(
+            builder.constructors,
+            builder.nominals,
+            builder.enums,
+            builder.unions,
+            owner,
+            pattern,
+            builder.intrinsics,
+        )
     return intrinsic_pattern(declaration, pattern)
 
 
@@ -120,7 +127,16 @@ pub def carrier_payload_types(mut builder: Builder, owner: int, slot: int) -> Re
     if owner < len(builder.enums):
         mut types: list[PlanType] = []
         for ty in builder.enums[owner].variants[slot].fields:
-            types.append(retained_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?)
+            types.append(
+                retained_type(
+                    builder.constructors,
+                    builder.nominals,
+                    builder.enums,
+                    builder.unions,
+                    ty,
+                    builder.intrinsics,
+                )?,
+            )
         return Ok(types)
     return Ok(builder.intrinsics[owner - len(builder.enums)].variants[slot].fields)
 
@@ -158,8 +174,7 @@ def carrier_tests(
     carrier = enum_pattern_place(builder, source, span)
     mut owner = -1
     match place_type(builder.locals, carrier):
-        PlanType.Enum(index, _name) =>
-            owner = index
+        PlanType.Enum(index, _name) => owner = index
         _ => return Err(f"invalid Body IR carrier pattern scrutinee {place_type(builder.locals, carrier):?}")
     slot = carrier_pattern_slot(builder, owner, pattern)?
     if slot < 0:
@@ -253,11 +268,15 @@ pub def nominal_field(
     match place_type(builder.locals, source):
         PlanType.Model(owner, _name) =>
             declaration = builder.nominals[owner]
-            if target.direct_declaration_id != declaration.direct_declaration_id or target.canonical != declaration.canonical:
+            if (
+                target.direct_declaration_id != declaration.direct_declaration_id
+                or target.canonical != declaration.canonical
+            ):
                 return Err("invalid Body IR nominal pattern target")
             for slot in range(len(declaration.fields)):
                 if declaration.fields[slot] == name:
                     ty = retained_type(
+                        builder.constructors,
                         builder.nominals,
                         builder.enums,
                         builder.unions,
@@ -293,8 +312,7 @@ def literal_test(mut builder: Builder, source: Place, value: &RustConstant, span
         RustConstant.TypedNumeric(number) =>
             constant = numeric_constant(number)?
             match constant:
-                Constant.Numeric(_spelling, carrier) =>
-                    expected = carrier
+                Constant.Numeric(_spelling, carrier) => expected = carrier
                 _ => return Err("unsupported Body IR nonprimitive numeric literal pattern")
         RustConstant.Unit => pass
         _ => return Err("unsupported Body IR nonprimitive literal pattern")

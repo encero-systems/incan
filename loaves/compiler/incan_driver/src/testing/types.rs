@@ -16,7 +16,7 @@ pub struct TestInfo {
     pub parameter_names: Vec<String>,
     /// Effective `@timeout` marker value for this collected test case, before CLI defaults are applied.
     pub timeout: Option<Duration>,
-    /// For parametrized test variants: the display ID and generated Rust argument expressions for the file harness.
+    /// For parametrized test variants: the display ID and ordered parameter names and values.
     pub parametrize_call: Option<ParametrizeCall>,
 }
 
@@ -27,17 +27,8 @@ pub struct ParametrizeCall {
     pub display_id: String,
     /// Ordered parameter names from the `@parametrize` argnames string.
     pub argument_names: Vec<String>,
-    /// Rust expressions emitted into the generated harness call for this variant.
-    pub rust_arguments: Vec<String>,
     /// Per-argument display values for machine-readable reports.
     pub parameters: Vec<String>,
-}
-
-impl ParametrizeCall {
-    /// Render the stored Rust argument expressions for call-site generation.
-    pub fn rust_args(&self) -> String {
-        self.rust_arguments.join(", ")
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -54,7 +45,7 @@ pub enum TestMarker {
     /// `@parametrize("x, y", [(1, 2), (3, 4)])`.
     ///
     /// Carries the argnames string plus one [`ParametrizeCase`] per value-tuple, holding both a display ID for test
-    /// output and a Rust argument list for code generation.
+    /// output and its ordered parameter values.
     Parametrize(String, Vec<ParametrizeCase>),
 }
 
@@ -63,8 +54,6 @@ pub enum TestMarker {
 pub struct ParametrizeCase {
     /// Dash-separated display ID used in test names (e.g. `"1-2-3"`).
     pub display_id: String,
-    /// Rust expressions emitted when this case is expanded into a concrete test call.
-    pub rust_arguments: Vec<String>,
     /// Per-argument display values included in machine-readable reports.
     pub parameters: Vec<String>,
     /// Per-case marks from `param_case(...)`.

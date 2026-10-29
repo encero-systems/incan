@@ -1,0 +1,154 @@
+"""Write and compile one prepared unit through the installed compiler, without resolving dependencies."""
+
+from rust::std::process import Command, Stdio
+from std.fs import Path
+from driver_command import driver_command
+from codegen import driver_arguments
+from compiler_refusals import compile_or_replay
+from compiler_worker import compile_resident, served_resident
+from files import open_stream, read
+from observation import trace_boundary
+from publication import publish
+from shared_link import shared_arguments
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_freshness import Key, artifact_identity, unit_key
+
+
+pub def compile_prepared_unit(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    known_key: Option[Key] = None,
+    reason: str = "no stored build",
+    development: bool = false,
+) -> Result[i32, str]:
+    """
+    Compile one prepared unit without dependency selection or recursive preparation.
+
+    1. Publish the description under its reconciled identity and prepare the output directory.
+    2. Select profile flags and any requested shared development linkage.
+    3. Compile or replay a certified refusal under the complete source identity.
+    """
+    # 1. The compiler reads the selected inputs and a generation-witnessed description.
+    mut key = Key(digest="", parts=[])
+    match known_key:
+        Some(value) => key = value
+        None => key = unit_key(unit, toolchain)?
+    compiled = crate_name(unit)
+    trace_boundary("unit_write_begin")
+    path = write_unit(unit, compiled, None, described_by(key))?
+    trace_boundary("unit_written")
+    output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
+    # 2. Native flags match the profile and the caller's explicit linkage request.
+    native = driver_arguments(unit.profile) + shared_arguments(unit, development)?
+    invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
+    # 3. Refusal replay preserves the owner's request-local console routing.
+    trace_boundary("compiler_request")
+    return compile_or_replay(unit, toolchain, invocation, native, Path(f"{output.0}.oven-refusal"), key, reason)
+
+
+pub def crate_name(unit: UnitDescription) -> str:
+    """Name the compiled crate from its package, or its source stem for a projectless unit."""
+    if unit.package != "":
+        return unit.package.replace("-", "_")
+    return Path(unit.source).stem().replace("-", "_")
+
+
+pub def write_unit(
+    unit: UnitDescription,
+    compiled: str,
+    owner: Option[Path] = None,
+    described: str = "",
+) -> Result[Path, str]:
+    """
+    Publish a description, retaining its generation only while the exact description witness remains valid.
+
+    1. Select a description-specific path under the project or explicit owner.
+    2. Reuse only a complete unchanged generation of that description.
+    3. Otherwise publish the complete JSON and its new witness atomically.
+    """
+    # 1. An explicit owner controls only where the description is stored.
+    mut root = Path(unit.project_root)
+    if let Some(selected) = owner:
+        root = selected
+    directory = root.joinpath("target").joinpath("incan").joinpath("units")
+    directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
+    mut name = compiled
+    if described != "":
+        name = described
+    path = directory.joinpath(f"{name}.unit.json")
+    witness = Path(f"{path.0}.oven-description")
+    # 2. This witness grants descriptor reuse, never source acceptance or artifact reuse.
+    if described != "" and description_current(path, witness, described):
+        return Ok(path)
+    # 3. Missing, changed and unwitnessed descriptions are published again.
+    text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
+    publish(path, text)?
+    if described != "":
+        publish(witness, description_witness(described, artifact_identity(path)?))?
+    return Ok(path)
+
+
+pub def described_by(key: Key) -> str:
+    """Read the already reconciled description identity; an absent part disables descriptor reuse."""
+    for part in key.parts:
+        if part.startswith("description "):
+            return part[len("description "):]
+    return ""
+
+
+def description_current(path: Path, witness: Path, described: str) -> bool:
+    """Treat failed witness reads or file observations as reasons to publish the descriptor again."""
+    match verified_description(path, witness, described):
+        Ok(current) => return current
+        Err(_) => return false
+
+
+def verified_description(path: Path, witness: Path, described: str) -> Result[bool, str]:
+    """Bracket the exact witness read with complete file observations before retaining the existing generation."""
+    stamp = artifact_identity(path)?
+    text = read(witness)?
+    if text != description_witness(described, stamp):
+        return Ok(false)
+    return Ok(artifact_identity(path)? == stamp)
+
+
+def description_witness(described: str, stamp: str) -> str:
+    """Bind a published descriptor's exact generation to its caller's complete description identity."""
+    return f"incan.oven.description/1\n{described}\n{stamp}\n"
+
+
+pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:
+    """
+    Run the installed compiler without an inherited bootstrap override, preserving its stream destinations.
+
+    1. Use the resident worker for unit compilation, checking and formatting when it is available.
+    2. Otherwise bind the original driver, SDK configuration and request-local streams.
+    3. Preserve the process status without retrying a submitted worker request.
+    """
+    # 1. A submitted worker request is never replayed through another compiler process.
+    if served_resident(arguments):
+        match compile_resident(toolchain, arguments)?:
+            Some(code) => return Ok(code)
+            None => pass
+    # 2. The cold process retains SDK selection and the owner's explicit console sinks.
+    mut command = driver_command(toolchain)?
+    for argument in arguments:
+        command.arg(argument)
+    # Project owners retain the original bytes in their request-local stream files.
+    if toolchain.console != "":
+        command.stdout(Stdio.from(open_stream(f"{toolchain.console}.out")?))
+        command.stderr(Stdio.from(open_stream(f"{toolchain.console}.err")?))
+    # 3. Signal termination remains a failure, like any other compiler exit.
+    return status_of(command, toolchain.driver)
+
+
+def status_of(mut command: &mut Command, program: str) -> Result[i32, str]:
+    """Run with the caller's streams, mapping a signal termination to exit code one."""
+    match command.status():
+        Err(error) => return Err(f"cannot run {program}: {error}")
+        Ok(status) =>
+            match status.code():
+                Some(code) => return Ok(code)
+                None => return Ok(1)

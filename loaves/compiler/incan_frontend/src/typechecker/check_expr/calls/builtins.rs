@@ -40,7 +40,6 @@ impl TypeChecker {
             self.call_argument_depth += 1;
             let arg_ty = self.check_expr(arg_expr);
             self.call_argument_depth -= 1;
-            self.record_error_message_display(arg_expr.span, &arg_ty);
             self.check_display_operand(errors::DisplayPosition::Print { builtin }, arg_expr, &arg_ty);
         }
     }
@@ -227,482 +226,20 @@ impl TypeChecker {
             .then(|| self.active_surface_type_import(name))
             .flatten();
 
-        // Constructors (variant-like)
         if let Some(cid) = surface_constructors::from_str(name) {
             if has_call_root_binding {
                 return None;
             }
-            return match cid {
-                ConstructorId::Ok | ConstructorId::Err => {
-                    // The payload is checked against the payload type of the `Result` the destination expects, so an
-                    // integer literal in `Ok(1)` at a `Result[float, str]` destination takes the float type (#1859).
-                    let expected_sides =
-                        Self::matching_collection_constructor_args(expected_return_ty, CollectionTypeId::Result, 2);
-                    let expected_payload = expected_sides
-                        .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Err)))
-                        .cloned();
-                    let expected_open_side = expected_sides
-                        .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Ok)))
-                        .cloned();
-                    let arg_types = match (expected_payload, args) {
-                        (Some(expected_payload), [CallArg::Positional(expr)]) => {
-                            self.call_argument_depth += 1;
-                            let ty = self.check_expr_with_expected(expr, Some(&expected_payload));
-                            self.call_argument_depth -= 1;
-                            vec![ty]
-                        }
-                        _ => self.check_call_arg_types(args),
-                    };
-                    let current_result = self.symbols.current_return_type().and_then(|ty| match ty {
-                        ResolvedType::Generic(name, args)
-                            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
-                                && args.len() >= 2 =>
-                        {
-                            Some((args[0].clone(), args[1].clone()))
-                        }
-                        _ => None,
-                    });
-                    let current_ok = current_result
-                        .as_ref()
-                        .map(|(ok_ty, _)| ok_ty.clone())
-                        .unwrap_or(ResolvedType::Unknown);
-                    let current_err = current_result
-                        .as_ref()
-                        .map(|(_, err_ty)| err_ty.clone())
-                        .or_else(|| self.current_return_error_type.clone())
-                        .unwrap_or(ResolvedType::Unknown);
-                    let inferred_arg = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
-
-                    // The side the constructor leaves open is the side its destination gives (#1561). A side the
-                    // call still infers, the callee's own type parameter, stays open here, so the call's type
-                    // arguments come from all of its arguments before that side is settled (`pick(Err(2), 5)` for
-                    // `def pick[T](r: Result[T, int], d: T)` builds its `Err` with the `int` that `d` fixes). With no
-                    // destination side, the side is the enclosing function's.
-                    let (current_ok, current_err) = match expected_open_side {
-                        Some(ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer) if cid == ConstructorId::Ok => {
-                            (current_ok, ResolvedType::Unknown)
-                        }
-                        Some(ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer) => {
-                            (ResolvedType::Unknown, current_err)
-                        }
-                        Some(side) if !matches!(side, ResolvedType::Unknown) && cid == ConstructorId::Ok => {
-                            (current_ok, side)
-                        }
-                        Some(side) if !matches!(side, ResolvedType::Unknown) => (side, current_err),
-                        _ => (current_ok, current_err),
-                    };
-                    let (ok_ty, err_ty) = if cid == ConstructorId::Ok {
-                        // `Ok(...)` must reflect the payload type so return checking can catch mismatches against the
-                        // declared `Result[T, E]`.
-                        let ok_ty = if current_ok == ResolvedType::Unit
-                            && matches!(
-                                inferred_arg,
-                                ResolvedType::Generic(ref name, ref args)
-                                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option)
-                                        && args.len() == 1
-                                        && matches!(args[0], ResolvedType::Unknown)
-                            ) {
-                            ResolvedType::Unit
-                        } else {
-                            inferred_arg
-                        };
-                        (ok_ty, current_err)
-                    } else {
-                        // `Err(...)` mirrors the actual error payload while preserving any known enclosing `Ok` type.
-                        (current_ok, inferred_arg)
-                    };
-                    Some(result_ty(ok_ty, err_ty))
-                }
-                ConstructorId::Some => {
-                    // `Some(x)` checked against a known `Option[T]` must check `x` against `T`. Without that
-                    // expectation a Rust call inside it — `Some(Box.new(v))` against a field typed
-                    // `Option<Box<T>>` — types as its bare `Self` owner and never reconciles with `Box<T>`.
-                    let expected_inner = expected_return_ty.and_then(|expected| match expected {
-                        ResolvedType::Generic(name, inner)
-                            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option)
-                                && inner.len() == 1 =>
-                        {
-                            Some(&inner[0])
-                        }
-                        _ => None,
-                    });
-                    let inner = match (expected_inner, args) {
-                        (Some(expected_inner), [CallArg::Positional(expr)]) => {
-                            self.call_argument_depth += 1;
-                            let ty = self.check_expr_with_expected(expr, Some(expected_inner));
-                            self.call_argument_depth -= 1;
-                            // The constructor is instantiated at the destination's union, or at the destination's
-                            // own string type for a `FrozenStr` payload: record that parameter as the call's
-                            // callable fact so lowering carries it and the payload is injected into the wrapper or
-                            // converted at the argument, as it is for any callable taking that type (#1724, #1794).
-                            // The call's type is the instantiation, not `Option[payload]`.
-                            if let Some(destination) = self
-                                .some_payload_union_wrapper(&ty, expected_inner)
-                                .or_else(|| self.some_payload_string_destination(&ty, expected_inner))
-                            {
-                                self.type_info.record_call_site_callable_params_exact(
-                                    call_span,
-                                    &[CallableParam::positional(destination.clone())],
-                                );
-                                return Some(option_ty(destination));
-                            }
-                            ty
-                        }
-                        _ => {
-                            let arg_types = self.check_call_arg_types(args);
-                            arg_types.first().cloned().unwrap_or(ResolvedType::Unknown)
-                        }
-                    };
-                    Some(option_ty(inner))
-                }
-                ConstructorId::None => Some(option_ty(ResolvedType::Unknown)),
-            };
+            return Some(self.check_builtin_variant_call(cid, args, call_span, expected_return_ty));
         }
-
-        // Core builtin functions (registry-driven)
         if let Some(bid) = core_builtins::from_str(name) {
             if has_call_root_binding {
                 return None;
             }
             self.type_info.record_resolved_builtin_call(call_span, bid);
-            return match bid {
-                BuiltinFnId::IsInstance => {
-                    if args.len() != 2 {
-                        self.errors.push(errors::builtin_arity(name, 2, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Bool);
-                    }
-
-                    let value_expr = Self::call_arg_expr(&args[0]);
-                    self.check_expr(value_expr);
-
-                    let target_expr = Self::call_arg_expr(&args[1]);
-                    match &target_expr.node {
-                        Expr::Ident(_) | Expr::Paren(_) => {
-                            if let Some(target) = self.resolve_isinstance_target(target_expr) {
-                                self.type_info.record_isinstance_target(call_span, target);
-                            }
-                        }
-                        _ => {
-                            self.check_expr(target_expr);
-                            self.errors
-                                .push(errors::type_mismatch("type", "value", target_expr.span));
-                        }
-                    }
-
-                    Some(ResolvedType::Bool)
-                }
-                BuiltinFnId::Print => {
-                    self.check_print_call_args(name, args);
-                    Some(ResolvedType::Unit)
-                }
-                BuiltinFnId::Len => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Int);
-                    }
-                    let arg_expr = Self::call_arg_expr(&args[0]);
-                    let arg_ty = self.check_expr(arg_expr);
-                    if self.is_user_operator_receiver(&arg_ty) {
-                        let _ = self.resolve_len_dunder(&arg_ty, call_span);
-                    } else if matches!(
-                        arg_ty,
-                        ResolvedType::Int
-                            | ResolvedType::Float
-                            | ResolvedType::Numeric(_)
-                            | ResolvedType::Bool
-                            | ResolvedType::Unit
-                    ) {
-                        self.errors.push(errors::type_mismatch(
-                            "value with a length",
-                            &arg_ty.to_string(),
-                            arg_expr.span,
-                        ));
-                    }
-                    Some(ResolvedType::Int)
-                }
-                BuiltinFnId::Sum => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Int)
-                }
-                BuiltinFnId::Min | BuiltinFnId::Max => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Unknown);
-                    }
-                    let arg_expr = Self::call_arg_expr(&args[0]);
-                    let arg_ty = self.check_expr(arg_expr);
-
-                    // Only support list-like collections for now.
-                    let inner = if let ResolvedType::Generic(n, type_args) = &arg_ty {
-                        if matches!(
-                            collection_type_id(n.as_str()),
-                            Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                        ) {
-                            type_args.first().cloned().unwrap_or(ResolvedType::Unknown)
-                        } else {
-                            ResolvedType::Unknown
-                        }
-                    } else if let ResolvedType::FrozenList(t) = &arg_ty {
-                        (**t).clone()
-                    } else {
-                        ResolvedType::Unknown
-                    };
-
-                    if matches!(inner, ResolvedType::Unknown) {
-                        self.errors
-                            .push(errors::builtin_expects_list(name, &arg_ty.to_string(), call_span));
-                        return Some(ResolvedType::Unknown);
-                    }
-
-                    // Require comparable scalar element types (keep narrow for now).
-                    match inner {
-                        ResolvedType::Int
-                        | ResolvedType::Float
-                        | ResolvedType::Bool
-                        | ResolvedType::Str
-                        | ResolvedType::FrozenStr => Some(inner),
-                        other => {
-                            self.errors.push(errors::builtin_list_element_type_not_supported(
-                                name,
-                                &other.to_string(),
-                                call_span,
-                            ));
-                            Some(ResolvedType::Unknown)
-                        }
-                    }
-                }
-                BuiltinFnId::Str => {
-                    // `str(value)` displays its argument under the rule `print` and an f-string share (#1748); an
-                    // `Error` adopter with no `__str__` renders its `message()` (#1778).
-                    let arg_types = self.check_call_arg_types(args);
-                    if let ([arg], [arg_ty]) = (args, arg_types.as_slice()) {
-                        self.record_error_message_display(Self::call_arg_expr(arg).span, arg_ty);
-                        self.check_display_operand(errors::DisplayPosition::Str, Self::call_arg_expr(arg), arg_ty);
-                    }
-                    Some(ResolvedType::Str)
-                }
-                BuiltinFnId::Int => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Int)
-                }
-                BuiltinFnId::Float => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Float)
-                }
-                BuiltinFnId::Bool => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Bool);
-                    }
-                    let arg_expr = Self::call_arg_expr(&args[0]);
-                    let arg_ty = self.check_expr(arg_expr);
-
-                    let ok = matches!(
-                        arg_ty,
-                        ResolvedType::Bool
-                            | ResolvedType::Int
-                            | ResolvedType::Float
-                            | ResolvedType::Str
-                            | ResolvedType::FrozenStr
-                            | ResolvedType::Bytes
-                            | ResolvedType::FrozenBytes
-                            | ResolvedType::Unknown
-                    ) || matches!(
-                        &arg_ty,
-                        ResolvedType::Generic(n, _)
-                            if matches!(
-                                collection_type_id(n.as_str()),
-                                Some(
-                                    CollectionTypeId::List
-                                        | CollectionTypeId::FrozenList
-                                        | CollectionTypeId::Dict
-                                        | CollectionTypeId::FrozenDict
-                                        | CollectionTypeId::Set
-                                        | CollectionTypeId::FrozenSet
-                                        | CollectionTypeId::Tuple
-                                )
-                            )
-                    ) || matches!(
-                        arg_ty,
-                        ResolvedType::FrozenList(_) | ResolvedType::FrozenDict(_, _) | ResolvedType::FrozenSet(_)
-                    );
-
-                    if !ok {
-                        self.errors
-                            .push(errors::builtin_bool_type_not_supported(&arg_ty.to_string(), call_span));
-                    }
-                    Some(ResolvedType::Bool)
-                }
-                BuiltinFnId::Abs => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Int)
-                }
-                BuiltinFnId::Range => {
-                    self.check_call_args(args);
-                    Some(list_ty(ResolvedType::Int))
-                }
-                BuiltinFnId::Enumerate => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                    }
-                    // enumerate(xs) -> list[(int, T)]
-                    let mut inner_ty = ResolvedType::Unknown;
-                    if let Some(arg) = args.first() {
-                        let iter_ty = self.check_expr(Self::call_arg_expr(arg));
-                        match &iter_ty {
-                            ResolvedType::Generic(name, type_args)
-                                if (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                    || matches!(
-                                        collection_type_id(name.as_str()),
-                                        Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                                    ))
-                                    && !type_args.is_empty() =>
-                            {
-                                inner_ty = type_args[0].clone();
-                            }
-                            ResolvedType::Str | ResolvedType::FrozenStr => {
-                                inner_ty = ResolvedType::Str;
-                            }
-                            ResolvedType::Bytes | ResolvedType::FrozenBytes => {
-                                inner_ty = ResolvedType::Int;
-                            }
-                            _ => {
-                                // Native iterables expose their item through the same checked protocol as a loop;
-                                // leaving it unknown hides the actual enumerable carrier from Body IR admission.
-                                inner_ty =
-                                    self.infer_iterator_element_type_from_expr(Self::call_arg_expr(arg), &iter_ty);
-                            }
-                        }
-                    }
-                    for argument in args.iter().skip(1) {
-                        self.check_expr(Self::call_arg_expr(argument));
-                    }
-                    Some(list_ty(ResolvedType::Tuple(vec![ResolvedType::Int, inner_ty])))
-                }
-                BuiltinFnId::Zip => {
-                    let arg_types = self.check_call_arg_types(args);
-                    if args.len() != 2 {
-                        self.errors.push(errors::builtin_arity(name, 2, args.len(), call_span));
-                    }
-                    let mut item_types = Vec::with_capacity(2);
-                    for (index, arg_type) in arg_types.iter().take(2).enumerate() {
-                        if let Some(item_type) = arg_type.builtin_zip_item_type() {
-                            item_types.push(item_type.clone());
-                        } else {
-                            self.errors.push(errors::builtin_zip_argument_not_supported(
-                                index + 1,
-                                &arg_type.to_string(),
-                                Self::call_arg_expr(&args[index]).span,
-                            ));
-                            item_types.push(ResolvedType::Unknown);
-                        }
-                    }
-                    item_types.resize(2, ResolvedType::Unknown);
-                    let pair_ty = ResolvedType::Tuple(item_types);
-                    Some(ResolvedType::Generic(
-                        core_traits::as_str(TraitId::Iterator).to_string(),
-                        vec![pair_ty],
-                    ))
-                }
-                BuiltinFnId::Sorted => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Unknown);
-                    }
-                    let arg_expr = Self::call_arg_expr(&args[0]);
-                    let arg_ty = self.check_expr(arg_expr);
-
-                    let inner = if let ResolvedType::Generic(n, type_args) = &arg_ty {
-                        if matches!(
-                            collection_type_id(n.as_str()),
-                            Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                        ) {
-                            type_args.first().cloned().unwrap_or(ResolvedType::Unknown)
-                        } else {
-                            ResolvedType::Unknown
-                        }
-                    } else if let ResolvedType::FrozenList(t) = &arg_ty {
-                        (**t).clone()
-                    } else {
-                        ResolvedType::Unknown
-                    };
-
-                    if matches!(inner, ResolvedType::Unknown) {
-                        self.errors
-                            .push(errors::builtin_expects_list(name, &arg_ty.to_string(), call_span));
-                        return Some(ResolvedType::Unknown);
-                    }
-
-                    // A `float` list sorts by its partial order; any other element type sorts by its total order
-                    // (#1881): a derived or adopted `Ord`, or a tuple, list or `Option` of ordered values. An element
-                    // type the derive relation cannot decide is refused, as it cannot be sorted without one, and so
-                    // is a type parameter, whose `Ord` bound does not give the generated program a total order.
-                    if matches!(inner, ResolvedType::Float)
-                        || self.derive_support(&inner, DeriveId::Ord) == DeriveSupport::Supported
-                    {
-                        return Some(list_ty(inner));
-                    }
-                    if let Some(placeholder) = self.generic_placeholder_name(&inner)
-                        && self.active_type_param_satisfies_builtin_bound(placeholder, TraitId::Ord)
-                    {
-                        return Some(list_ty(inner));
-                    }
-                    if self.generic_placeholder_name(&inner).is_some() {
-                        self.errors.push(errors::builtin_list_element_type_not_supported(
-                            name,
-                            &inner.to_string(),
-                            call_span,
-                        ));
-                        return Some(ResolvedType::Unknown);
-                    }
-                    let holder = match self.derive_support(&inner, DeriveId::Ord) {
-                        DeriveSupport::Missing(holder) => holder,
-                        DeriveSupport::Supported | DeriveSupport::Unknown => inner.clone(),
-                    };
-                    let holder_is_declared = self.is_user_operator_receiver(&holder);
-                    self.errors.push(errors::sorted_element_not_ordered(
-                        &inner.to_string(),
-                        &holder.to_string(),
-                        holder_is_declared,
-                        call_span,
-                    ));
-                    Some(ResolvedType::Unknown)
-                }
-                BuiltinFnId::ReadFile => {
-                    self.check_call_args(args);
-                    Some(result_ty(ResolvedType::Str, ResolvedType::Str))
-                }
-                BuiltinFnId::WriteFile => {
-                    self.check_call_args(args);
-                    Some(result_ty(ResolvedType::Unit, ResolvedType::Str))
-                }
-                BuiltinFnId::JsonStringify => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Str);
-                    }
-                    // The value is written as JSON, so its type needs a `Serialize` form.
-                    let arg_expr = Self::call_arg_expr(&args[0]);
-                    let arg_ty = self.check_expr(arg_expr);
-                    if let Some(holder) = self.value_type_without_serialize_form(&arg_ty) {
-                        self.errors.push(errors::json_stringify_value_lacks_serialize(
-                            &arg_ty.to_string(),
-                            &holder,
-                            arg_expr.span,
-                        ));
-                    }
-                    Some(ResolvedType::Str)
-                }
-            };
+            return Some(self.check_builtin_core_call(bid, name, args, call_span));
         }
 
-        // Surface types that behave like constructors and whose result type depends on args.
         let surface_type = surface_type_binding.or_else(|| {
             if has_call_root_binding {
                 None
@@ -714,188 +251,693 @@ impl TypeChecker {
             if has_call_root_binding {
                 debug_assert_eq!(surface_type_binding, Some(tid));
             }
-            return match tid {
-                SurfaceTypeId::Json | SurfaceTypeId::Query => {
-                    Some(self.check_json_query_constructor_call(tid, args, call_span))
-                }
-                SurfaceTypeId::Mutex => {
-                    let inner = if let Some(arg) = args.first() {
-                        self.check_expr(Self::call_arg_expr(arg))
-                    } else {
-                        ResolvedType::Unknown
-                    };
-                    Some(ResolvedType::Generic(
-                        surface_types::as_str(SurfaceTypeId::Mutex).to_string(),
-                        vec![inner],
-                    ))
-                }
-                SurfaceTypeId::RwLock => {
-                    let inner = if let Some(arg) = args.first() {
-                        self.check_expr(Self::call_arg_expr(arg))
-                    } else {
-                        ResolvedType::Unknown
-                    };
-                    Some(ResolvedType::Generic(
-                        surface_types::as_str(SurfaceTypeId::RwLock).to_string(),
-                        vec![inner],
-                    ))
-                }
-                SurfaceTypeId::Semaphore => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Named(
-                        surface_types::as_str(SurfaceTypeId::Semaphore).to_string(),
-                    ))
-                }
-                SurfaceTypeId::Barrier => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Named(
-                        surface_types::as_str(SurfaceTypeId::Barrier).to_string(),
-                    ))
-                }
-                _ => None,
-            };
+            return self.check_builtin_surface_constructor(tid, args, call_span);
         }
 
-        // Python-like type conversion helpers (surface). These are not part of `lang::builtins`.
-        if let Some(cid) = collection_type_id(name) {
-            if has_call_root_binding {
-                return None;
+        let cid = collection_type_id(name)?;
+        if has_call_root_binding {
+            return None;
+        }
+        self.check_builtin_collection_constructor(cid, name, args, call_span, expected_return_ty)
+    }
+
+    /// Check a selected Result or Option constructor without changing contextual payload inference.
+    fn check_builtin_variant_call(
+        &mut self,
+        cid: ConstructorId,
+        args: &[CallArg],
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        match cid {
+            ConstructorId::Ok | ConstructorId::Err => self.check_builtin_result_variant(cid, args, expected_return_ty),
+            ConstructorId::Some => self.check_builtin_some_variant(args, call_span, expected_return_ty),
+            ConstructorId::None => option_ty(ResolvedType::Unknown),
+        }
+    }
+
+    /// Check an Ok or Err payload before settling its open side from the destination or enclosing function.
+    fn check_builtin_result_variant(
+        &mut self,
+        cid: ConstructorId,
+        args: &[CallArg],
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        // The payload is checked against the payload type of the `Result` the destination expects, so an
+        // integer literal in `Ok(1)` at a `Result[float, str]` destination takes the float type (#1859).
+        let expected_sides =
+            Self::matching_collection_constructor_args(expected_return_ty, CollectionTypeId::Result, 2);
+        let expected_payload = expected_sides
+            .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Err)))
+            .cloned();
+        let expected_open_side = expected_sides
+            .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Ok)))
+            .cloned();
+        let arg_types = match (expected_payload, args) {
+            (Some(expected_payload), [CallArg::Positional(expr)]) => {
+                self.call_argument_depth += 1;
+                let ty = self.check_expr_with_expected(expr, Some(&expected_payload));
+                self.call_argument_depth -= 1;
+                vec![ty]
             }
-            if matches!(
-                cid,
-                CollectionTypeId::Set | CollectionTypeId::List | CollectionTypeId::Dict
-            ) && args.len() > 1
+            _ => self.check_call_arg_types(args),
+        };
+        let current_result = self.symbols.current_return_type().and_then(|ty| match ty {
+            ResolvedType::Generic(name, args)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() >= 2 =>
             {
-                self.check_call_args(args);
-                self.errors
-                    .push(errors::builtin_max_arity(name, 1, args.len(), call_span));
-                return Some(ResolvedType::Unknown);
+                Some((args[0].clone(), args[1].clone()))
             }
-            if matches!(
-                cid,
-                CollectionTypeId::FrozenList | CollectionTypeId::FrozenDict | CollectionTypeId::FrozenSet
-            ) {
-                // A frozen collection is a `const` value; the language defines no constructor call for one, so the
-                // call is refused here rather than typed `Unknown` and left for the build to reject (#1719).
-                self.check_call_args(args);
-                let (type_params, literal) = if cid == CollectionTypeId::FrozenDict {
-                    ("[K, V]", "{...}")
-                } else {
-                    ("[T]", "[...]")
-                };
-                let canonical = format!("{}{type_params}", collections::as_str(cid));
-                self.errors.push(errors::frozen_collection_has_no_constructor(
-                    name, &canonical, literal, call_span,
-                ));
-                return Some(ResolvedType::Unknown);
+            _ => None,
+        });
+        let current_ok = current_result
+            .as_ref()
+            .map(|(ok_ty, _)| ok_ty.clone())
+            .unwrap_or(ResolvedType::Unknown);
+        let current_err = current_result
+            .as_ref()
+            .map(|(_, err_ty)| err_ty.clone())
+            .or_else(|| self.current_return_error_type.clone())
+            .unwrap_or(ResolvedType::Unknown);
+        let inferred_arg = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
+
+        // The side the constructor leaves open is the side its destination gives (#1561). A side the
+        // call still infers, the callee's own type parameter, stays open here, so the call's type
+        // arguments come from all of its arguments before that side is settled (`pick(Err(2), 5)` for
+        // `def pick[T](r: Result[T, int], d: T)` builds its `Err` with the `int` that `d` fixes). With no
+        // destination side, the side is the enclosing function's.
+        let (current_ok, current_err) = match expected_open_side {
+            Some(ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer) if cid == ConstructorId::Ok => {
+                (current_ok, ResolvedType::Unknown)
             }
-            return match cid {
-                CollectionTypeId::Dict => {
-                    // `dict(source)` copies a dict, so its source is a dict; the constructor identity is recorded for
-                    // lowering so the call never reaches emission as an ordinary function named `dict` (#1852).
-                    let (key_ty, val_ty) = if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        match &arg_ty {
-                            ResolvedType::Generic(name, type_args)
-                                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict)
-                                    && type_args.len() >= 2 =>
-                            {
-                                (type_args[0].clone(), type_args[1].clone())
-                            }
-                            ResolvedType::Unknown => (ResolvedType::Unknown, ResolvedType::Unknown),
-                            other => {
-                                self.errors.push(errors::type_mismatch(
-                                    &format!("{}[K, V]", collections::as_str(cid)),
-                                    &other.to_string(),
-                                    arg_expr.span,
-                                ));
-                                return Some(ResolvedType::Unknown);
-                            }
-                        }
-                    } else if let Some(type_args) =
-                        Self::matching_collection_constructor_args(expected_return_ty, cid, 2)
-                    {
-                        (type_args[0].clone(), type_args[1].clone())
-                    } else {
-                        (ResolvedType::Unknown, ResolvedType::Unknown)
-                    };
-                    self.type_info.record_resolved_collection_constructor(call_span, cid);
-                    Some(dict_ty(key_ty, val_ty))
-                }
-                CollectionTypeId::List => {
-                    // `list(source)` collects exactly the items `for item in source` yields, so the element type
-                    // comes from the same iteration rule a loop header uses. The constructor identity is recorded
-                    // for lowering so the call never reaches emission as an ordinary function named `list` (#1464).
-                    let elem_ty = if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        // A Rust value iterates through its retained `IntoIterator` hooks, as in a loop header.
-                        let item_ty = match &arg_ty {
-                            ResolvedType::RustPath(_) => {
-                                Some(self.infer_iterator_element_type_from_expr(arg_expr, &arg_ty))
-                            }
-                            _ => self.list_constructor_item_type(&arg_ty),
-                        };
-                        let Some(elem_ty) = item_ty else {
-                            self.errors
-                                .push(errors::builtin_expects_iterable(name, &arg_ty.to_string(), call_span));
-                            return Some(ResolvedType::Unknown);
-                        };
-                        elem_ty
-                    } else if let Some(type_args) =
-                        Self::matching_collection_constructor_args(expected_return_ty, cid, 1)
-                    {
-                        type_args[0].clone()
-                    } else {
-                        ResolvedType::Unknown
-                    };
-                    self.type_info.record_resolved_collection_constructor(call_span, cid);
-                    Some(list_ty(elem_ty))
-                }
-                CollectionTypeId::Set => {
-                    let elem_ty = if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        let source_elem_ty = match &arg_ty {
-                            ResolvedType::Generic(name, type_args)
-                                if (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                    || matches!(
-                                        collection_type_id(name.as_str()),
-                                        Some(
-                                            CollectionTypeId::List
-                                                | CollectionTypeId::Set
-                                                | CollectionTypeId::FrozenList
-                                                | CollectionTypeId::FrozenSet
-                                        )
-                                    ))
-                                    && !type_args.is_empty() =>
-                            {
-                                type_args[0].clone()
-                            }
-                            _ => ResolvedType::Unknown,
-                        };
-                        // `set(source)` hashes every item of its source (#1758).
-                        self.refuse_unhashable_collection_member(
-                            HashedCollectionRole::SetElement,
-                            &source_elem_ty,
-                            arg_expr.span,
-                        );
-                        source_elem_ty
-                    } else if let Some(type_args) =
-                        Self::matching_collection_constructor_args(expected_return_ty, cid, 1)
-                    {
-                        type_args[0].clone()
-                    } else {
-                        ResolvedType::Unknown
-                    };
-                    self.type_info.record_resolved_collection_constructor(call_span, cid);
-                    Some(set_ty(elem_ty))
-                }
-                _ => None,
+            Some(ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer) => (ResolvedType::Unknown, current_err),
+            Some(side) if !matches!(side, ResolvedType::Unknown) && cid == ConstructorId::Ok => (current_ok, side),
+            Some(side) if !matches!(side, ResolvedType::Unknown) => (side, current_err),
+            _ => (current_ok, current_err),
+        };
+        let (ok_ty, err_ty) = if cid == ConstructorId::Ok {
+            // `Ok(...)` must reflect the payload type so return checking can catch mismatches against the
+            // declared `Result[T, E]`.
+            let ok_ty = if current_ok == ResolvedType::Unit
+                && matches!(
+                    inferred_arg,
+                    ResolvedType::Generic(ref name, ref args)
+                        if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option)
+                            && args.len() == 1
+                            && matches!(args[0], ResolvedType::Unknown)
+                ) {
+                ResolvedType::Unit
+            } else {
+                inferred_arg
             };
+            (ok_ty, current_err)
+        } else {
+            // `Err(...)` mirrors the actual error payload while preserving any known enclosing `Ok` type.
+            (current_ok, inferred_arg)
+        };
+        result_ty(ok_ty, err_ty)
+    }
+
+    /// Retain a Some destination's union or frozen-string conversion before ordinary payload retention.
+    fn check_builtin_some_variant(
+        &mut self,
+        args: &[CallArg],
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        // `Some(x)` checked against a known `Option[T]` must check `x` against `T`. Without that
+        // expectation a Rust call inside it — `Some(Box.new(v))` against a field typed
+        // `Option<Box<T>>` — types as its bare `Self` owner and never reconciles with `Box<T>`.
+        let expected_inner = expected_return_ty.and_then(|expected| match expected {
+            ResolvedType::Generic(name, inner)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option) && inner.len() == 1 =>
+            {
+                Some(&inner[0])
+            }
+            _ => None,
+        });
+        let inner = match (expected_inner, args) {
+            (Some(expected_inner), [CallArg::Positional(expr)]) => {
+                self.call_argument_depth += 1;
+                let ty = self.check_expr_with_expected(expr, Some(expected_inner));
+                self.call_argument_depth -= 1;
+                // The constructor is instantiated at the destination's union, or at the destination's
+                // own string type for a `FrozenStr` payload: record that parameter as the call's
+                // callable fact so lowering carries it and the payload is injected into the wrapper or
+                // converted at the argument, as it is for any callable taking that type (#1724, #1794).
+                // The call's type is the instantiation, not `Option[payload]`.
+                if let Some(destination) = self
+                    .some_payload_union_wrapper(&ty, expected_inner)
+                    .or_else(|| self.some_payload_string_destination(&ty, expected_inner))
+                {
+                    self.type_info.record_call_site_callable_params_exact(
+                        call_span,
+                        &[CallableParam::positional(destination.clone())],
+                    );
+                    return option_ty(destination);
+                }
+                ty
+            }
+            _ => {
+                let arg_types = self.check_call_arg_types(args);
+                arg_types.first().cloned().unwrap_or(ResolvedType::Unknown)
+            }
+        };
+        self.retain_body_ir_some_payload(call_span, args, &inner);
+        option_ty(inner)
+    }
+
+    /// Check the registry-selected core builtin after its call identity has already been retained.
+    fn check_builtin_core_call(
+        &mut self,
+        bid: BuiltinFnId,
+        name: &str,
+        args: &[CallArg],
+        call_span: Span,
+    ) -> ResolvedType {
+        match bid {
+            BuiltinFnId::IsInstance => self.check_builtin_isinstance(name, args, call_span),
+            BuiltinFnId::Print => {
+                self.check_print_call_args(name, args);
+                ResolvedType::Unit
+            }
+            BuiltinFnId::Len => self.check_builtin_len(name, args, call_span),
+            BuiltinFnId::Sum | BuiltinFnId::Int | BuiltinFnId::Abs => {
+                self.check_call_args(args);
+                ResolvedType::Int
+            }
+            BuiltinFnId::Min | BuiltinFnId::Max => self.check_builtin_min_max(name, args, call_span),
+            BuiltinFnId::Str => {
+                let arg_types = self.check_call_arg_types(args);
+                if let ([arg], [arg_ty]) = (args, arg_types.as_slice()) {
+                    self.check_display_operand(errors::DisplayPosition::Str, Self::call_arg_expr(arg), arg_ty);
+                }
+                ResolvedType::Str
+            }
+            BuiltinFnId::Float => {
+                self.check_call_args(args);
+                ResolvedType::Float
+            }
+            BuiltinFnId::Bool => self.check_builtin_bool(name, args, call_span),
+            BuiltinFnId::Range => {
+                self.check_call_args(args);
+                list_ty(ResolvedType::Int)
+            }
+            BuiltinFnId::Enumerate => self.check_builtin_enumerate(name, args, call_span),
+            BuiltinFnId::Zip => self.check_builtin_zip(name, args, call_span),
+            BuiltinFnId::Sorted => self.check_builtin_sorted(name, args, call_span),
+            BuiltinFnId::ReadFile => {
+                self.check_call_args(args);
+                result_ty(ResolvedType::Str, ResolvedType::Str)
+            }
+            BuiltinFnId::WriteFile => {
+                self.check_call_args(args);
+                result_ty(ResolvedType::Unit, ResolvedType::Str)
+            }
+            BuiltinFnId::JsonStringify => self.check_builtin_json_stringify(name, args, call_span),
+        }
+    }
+
+    /// Record the existing unary builtin arity diagnostic, checking all arguments only on a refusal.
+    fn builtin_single_argument<'a>(
+        &mut self,
+        name: &str,
+        args: &'a [CallArg],
+        span: Span,
+    ) -> Option<&'a Spanned<Expr>> {
+        if args.len() != 1 {
+            self.errors.push(errors::builtin_arity(name, 1, args.len(), span));
+            self.check_call_args(args);
+            return None;
+        }
+        args.first().map(Self::call_arg_expr)
+    }
+
+    /// Check isinstance's value before resolving its syntactically restricted type target.
+    fn check_builtin_isinstance(&mut self, name: &str, args: &[CallArg], call_span: Span) -> ResolvedType {
+        if args.len() != 2 {
+            self.errors.push(errors::builtin_arity(name, 2, args.len(), call_span));
+            self.check_call_args(args);
+            return ResolvedType::Bool;
         }
 
-        None
+        let value_expr = Self::call_arg_expr(&args[0]);
+        self.check_expr(value_expr);
+
+        let target_expr = Self::call_arg_expr(&args[1]);
+        match &target_expr.node {
+            Expr::Ident(_) | Expr::Paren(_) => {
+                if let Some(target) = self.resolve_isinstance_target(target_expr) {
+                    self.type_info.record_isinstance_target(call_span, target);
+                }
+            }
+            _ => {
+                self.check_expr(target_expr);
+                self.errors
+                    .push(errors::type_mismatch("type", "value", target_expr.span));
+            }
+        }
+
+        ResolvedType::Bool
+    }
+
+    /// Select source or native length facts before refusing scalar operands without a length.
+    fn check_builtin_len(&mut self, name: &str, args: &[CallArg], call_span: Span) -> ResolvedType {
+        let Some(arg_expr) = self.builtin_single_argument(name, args, call_span) else {
+            return ResolvedType::Int;
+        };
+        let arg_ty = self.check_expr(arg_expr);
+        if self.is_user_operator_receiver(&arg_ty) {
+            let _ = self.resolve_len_dunder(&arg_ty, call_span);
+        } else if self.retain_native_length_call(arg_expr, &arg_ty, call_span) {
+            return ResolvedType::Int;
+        } else if matches!(
+            arg_ty,
+            ResolvedType::Int
+                | ResolvedType::Float
+                | ResolvedType::Numeric(_)
+                | ResolvedType::Bool
+                | ResolvedType::Unit
+        ) {
+            self.errors.push(errors::type_mismatch(
+                "value with a length",
+                &arg_ty.to_string(),
+                arg_expr.span,
+            ));
+        }
+        ResolvedType::Int
+    }
+
+    /// Restrict min and max to the existing comparable scalar list elements.
+    fn check_builtin_min_max(&mut self, name: &str, args: &[CallArg], call_span: Span) -> ResolvedType {
+        let Some(arg_expr) = self.builtin_single_argument(name, args, call_span) else {
+            return ResolvedType::Unknown;
+        };
+        let arg_ty = self.check_expr(arg_expr);
+
+        let inner = Self::builtin_ordering_list_element(&arg_ty);
+
+        if matches!(inner, ResolvedType::Unknown) {
+            self.errors
+                .push(errors::builtin_expects_list(name, &arg_ty.to_string(), call_span));
+            return ResolvedType::Unknown;
+        }
+
+        // Require comparable scalar element types (keep narrow for now).
+        match inner {
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::FrozenStr => inner,
+            other => {
+                self.errors.push(errors::builtin_list_element_type_not_supported(
+                    name,
+                    &other.to_string(),
+                    call_span,
+                ));
+                ResolvedType::Unknown
+            }
+        }
+    }
+
+    /// Read the list element admitted by builtin ordering operations; other iterable shapes remain unknown.
+    fn builtin_ordering_list_element(source: &ResolvedType) -> ResolvedType {
+        match source {
+            ResolvedType::Generic(name, args)
+                if matches!(
+                    collection_type_id(name),
+                    Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
+                ) =>
+            {
+                args.first().cloned().unwrap_or(ResolvedType::Unknown)
+            }
+            ResolvedType::FrozenList(element) => element.as_ref().clone(),
+            _ => ResolvedType::Unknown,
+        }
+    }
+
+    /// Check the builtin truth conversion's admitted scalar and collection operand families.
+    fn check_builtin_bool(&mut self, name: &str, args: &[CallArg], call_span: Span) -> ResolvedType {
+        let Some(arg_expr) = self.builtin_single_argument(name, args, call_span) else {
+            return ResolvedType::Bool;
+        };
+        let arg_ty = self.check_expr(arg_expr);
+
+        let ok = matches!(
+            arg_ty,
+            ResolvedType::Bool
+                | ResolvedType::Int
+                | ResolvedType::Float
+                | ResolvedType::Str
+                | ResolvedType::FrozenStr
+                | ResolvedType::Bytes
+                | ResolvedType::FrozenBytes
+                | ResolvedType::Unknown
+        ) || matches!(
+            &arg_ty,
+            ResolvedType::Generic(n, _)
+                if matches!(
+                    collection_type_id(n.as_str()),
+                    Some(
+                        CollectionTypeId::List
+                            | CollectionTypeId::FrozenList
+                            | CollectionTypeId::Dict
+                            | CollectionTypeId::FrozenDict
+                            | CollectionTypeId::Set
+                            | CollectionTypeId::FrozenSet
+                            | CollectionTypeId::Tuple
+                    )
+                )
+        ) || matches!(
+            arg_ty,
+            ResolvedType::FrozenList(_) | ResolvedType::FrozenDict(_, _) | ResolvedType::FrozenSet(_)
+        );
+
+        if !ok {
+            self.errors
+                .push(errors::builtin_bool_type_not_supported(&arg_ty.to_string(), call_span));
+        }
+        ResolvedType::Bool
+    }
+
+    /// Infer enumerate's first iterable item and still check extra arguments after an arity diagnostic.
+    fn check_builtin_enumerate(&mut self, name: &str, args: &[CallArg], call_span: Span) -> ResolvedType {
+        if args.len() != 1 {
+            self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
+        }
+        // enumerate(xs) -> list[(int, T)]
+        let mut inner_ty = ResolvedType::Unknown;
+        if let Some(arg) = args.first() {
+            let iter_ty = self.check_expr(Self::call_arg_expr(arg));
+            match &iter_ty {
+                ResolvedType::Generic(name, type_args)
+                    if (name == surface_types::as_str(SurfaceTypeId::Vec)
+                        || matches!(
+                            collection_type_id(name.as_str()),
+                            Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
+                        ))
+                        && !type_args.is_empty() =>
+                {
+                    inner_ty = type_args[0].clone();
+                }
+                ResolvedType::Str | ResolvedType::FrozenStr => {
+                    inner_ty = ResolvedType::Str;
+                }
+                ResolvedType::Bytes | ResolvedType::FrozenBytes => {
+                    inner_ty = ResolvedType::Int;
+                }
+                _ => {
+                    // Native iterables expose their item through the same checked protocol as a loop;
+                    // leaving it unknown hides the actual enumerable carrier from Body IR admission.
+                    inner_ty = self.infer_iterator_element_type_from_expr(Self::call_arg_expr(arg), &iter_ty);
+                }
+            }
+        }
+        for argument in args.iter().skip(1) {
+            self.check_expr(Self::call_arg_expr(argument));
+        }
+        list_ty(ResolvedType::Tuple(vec![ResolvedType::Int, inner_ty]))
+    }
+
+    /// Retain zip's two checked item types, preserving diagnostics and unknown slots for refused inputs.
+    fn check_builtin_zip(&mut self, name: &str, args: &[CallArg], call_span: Span) -> ResolvedType {
+        let arg_types = self.check_call_arg_types(args);
+        if args.len() != 2 {
+            self.errors.push(errors::builtin_arity(name, 2, args.len(), call_span));
+        }
+        let mut item_types = Vec::with_capacity(2);
+        for (index, arg_type) in arg_types.iter().take(2).enumerate() {
+            if let Some(item_type) = arg_type.builtin_zip_item_type() {
+                item_types.push(item_type.clone());
+            } else {
+                self.errors.push(errors::builtin_zip_argument_not_supported(
+                    index + 1,
+                    &arg_type.to_string(),
+                    Self::call_arg_expr(&args[index]).span,
+                ));
+                item_types.push(ResolvedType::Unknown);
+            }
+        }
+        item_types.resize(2, ResolvedType::Unknown);
+        let pair_ty = ResolvedType::Tuple(item_types);
+        ResolvedType::Generic(core_traits::as_str(TraitId::Iterator).to_string(), vec![pair_ty])
+    }
+
+    /// Require the selected list ordering contract, including a direct type parameter's active Ord bound.
+    fn check_builtin_sorted(&mut self, name: &str, args: &[CallArg], call_span: Span) -> ResolvedType {
+        let Some(arg_expr) = self.builtin_single_argument(name, args, call_span) else {
+            return ResolvedType::Unknown;
+        };
+        let arg_ty = self.check_expr(arg_expr);
+
+        let inner = Self::builtin_ordering_list_element(&arg_ty);
+
+        if matches!(inner, ResolvedType::Unknown) {
+            self.errors
+                .push(errors::builtin_expects_list(name, &arg_ty.to_string(), call_span));
+            return ResolvedType::Unknown;
+        }
+
+        // Float lists use their partial order. Other elements need a supported Ord relation or, for a direct
+        // type parameter, its active Ord bound; an unresolved ordering relation is refused (#1881).
+        if matches!(inner, ResolvedType::Float)
+            || self.derive_support(&inner, DeriveId::Ord) == DeriveSupport::Supported
+        {
+            return list_ty(inner);
+        }
+        if let Some(placeholder) = self.generic_placeholder_name(&inner)
+            && self.active_type_param_satisfies_builtin_bound(placeholder, TraitId::Ord)
+        {
+            return list_ty(inner);
+        }
+        if self.generic_placeholder_name(&inner).is_some() {
+            self.errors.push(errors::builtin_list_element_type_not_supported(
+                name,
+                &inner.to_string(),
+                call_span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        let holder = match self.derive_support(&inner, DeriveId::Ord) {
+            DeriveSupport::Missing(holder) => holder,
+            DeriveSupport::Supported | DeriveSupport::Unknown => inner.clone(),
+        };
+        let holder_is_declared = self.is_user_operator_receiver(&holder);
+        self.errors.push(errors::sorted_element_not_ordered(
+            &inner.to_string(),
+            &holder.to_string(),
+            holder_is_declared,
+            call_span,
+        ));
+        ResolvedType::Unknown
+    }
+
+    /// Require a serialization form for the single value supplied to JSON stringify.
+    fn check_builtin_json_stringify(&mut self, name: &str, args: &[CallArg], call_span: Span) -> ResolvedType {
+        let Some(arg_expr) = self.builtin_single_argument(name, args, call_span) else {
+            return ResolvedType::Str;
+        };
+        // The value is written as JSON, so its type needs a `Serialize` form.
+        let arg_ty = self.check_expr(arg_expr);
+        if let Some(holder) = self.value_type_without_serialize_form(&arg_ty) {
+            self.errors.push(errors::json_stringify_value_lacks_serialize(
+                &arg_ty.to_string(),
+                &holder,
+                arg_expr.span,
+            ));
+        }
+        ResolvedType::Str
+    }
+
+    /// Check the selected surface constructor, declining surface types without a constructor policy here.
+    fn check_builtin_surface_constructor(
+        &mut self,
+        tid: SurfaceTypeId,
+        args: &[CallArg],
+        call_span: Span,
+    ) -> Option<ResolvedType> {
+        match tid {
+            SurfaceTypeId::Json | SurfaceTypeId::Query => {
+                Some(self.check_json_query_constructor_call(tid, args, call_span))
+            }
+            SurfaceTypeId::Mutex | SurfaceTypeId::RwLock => {
+                let inner = if let Some(arg) = args.first() {
+                    self.check_expr(Self::call_arg_expr(arg))
+                } else {
+                    ResolvedType::Unknown
+                };
+                Some(ResolvedType::Generic(
+                    surface_types::as_str(tid).to_string(),
+                    vec![inner],
+                ))
+            }
+            SurfaceTypeId::Semaphore | SurfaceTypeId::Barrier => {
+                self.check_call_args(args);
+                Some(ResolvedType::Named(surface_types::as_str(tid).to_string()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Validate collection constructor forms before retaining their selected construction identity.
+    fn check_builtin_collection_constructor(
+        &mut self,
+        cid: CollectionTypeId,
+        name: &str,
+        args: &[CallArg],
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        if matches!(
+            cid,
+            CollectionTypeId::Set | CollectionTypeId::List | CollectionTypeId::Dict
+        ) && args.len() > 1
+        {
+            self.check_call_args(args);
+            self.errors
+                .push(errors::builtin_max_arity(name, 1, args.len(), call_span));
+            return Some(ResolvedType::Unknown);
+        }
+        if matches!(
+            cid,
+            CollectionTypeId::FrozenList | CollectionTypeId::FrozenDict | CollectionTypeId::FrozenSet
+        ) {
+            // A frozen collection is a `const` value; the language defines no constructor call for one, so the
+            // call is refused here rather than typed `Unknown` and left for the build to reject (#1719).
+            self.check_call_args(args);
+            let (type_params, literal) = if cid == CollectionTypeId::FrozenDict {
+                ("[K, V]", "{...}")
+            } else {
+                ("[T]", "[...]")
+            };
+            let canonical = format!("{}{type_params}", collections::as_str(cid));
+            self.errors.push(errors::frozen_collection_has_no_constructor(
+                name, &canonical, literal, call_span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        match cid {
+            CollectionTypeId::Dict => Some(self.check_builtin_dict_constructor(args, call_span, expected_return_ty)),
+            CollectionTypeId::List => {
+                Some(self.check_builtin_list_constructor(name, args, call_span, expected_return_ty))
+            }
+            CollectionTypeId::Set => Some(self.check_builtin_set_constructor(args, call_span, expected_return_ty)),
+            _ => None,
+        }
+    }
+
+    /// Retain dictionary construction only after a valid dictionary source or contextual empty constructor.
+    fn check_builtin_dict_constructor(
+        &mut self,
+        args: &[CallArg],
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let cid = CollectionTypeId::Dict;
+        // `dict(source)` copies a dict, so its source is a dict; the constructor identity is recorded for
+        // lowering so the call never reaches emission as an ordinary function named `dict` (#1852).
+        let (key_ty, val_ty) = if let Some(arg) = args.first() {
+            let arg_expr = Self::call_arg_expr(arg);
+            let arg_ty = self.check_expr(arg_expr);
+            match &arg_ty {
+                ResolvedType::Generic(name, type_args)
+                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && type_args.len() >= 2 =>
+                {
+                    (type_args[0].clone(), type_args[1].clone())
+                }
+                ResolvedType::Unknown => (ResolvedType::Unknown, ResolvedType::Unknown),
+                other => {
+                    self.errors.push(errors::type_mismatch(
+                        &format!("{}[K, V]", collections::as_str(cid)),
+                        &other.to_string(),
+                        arg_expr.span,
+                    ));
+                    return ResolvedType::Unknown;
+                }
+            }
+        } else if let Some(type_args) = Self::matching_collection_constructor_args(expected_return_ty, cid, 2) {
+            (type_args[0].clone(), type_args[1].clone())
+        } else {
+            (ResolvedType::Unknown, ResolvedType::Unknown)
+        };
+        self.type_info.record_resolved_collection_constructor(call_span, cid);
+        dict_ty(key_ty, val_ty)
+    }
+
+    /// Collect list items through the same checked iteration facts as a loop, retaining the constructor identity.
+    fn check_builtin_list_constructor(
+        &mut self,
+        name: &str,
+        args: &[CallArg],
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let cid = CollectionTypeId::List;
+        // `list(source)` collects exactly the items `for item in source` yields, so the element type
+        // comes from the same iteration rule a loop header uses. The constructor identity is recorded
+        // for lowering so the call never reaches emission as an ordinary function named `list` (#1464).
+        let elem_ty = if let Some(arg) = args.first() {
+            let arg_expr = Self::call_arg_expr(arg);
+            let arg_ty = self.check_expr(arg_expr);
+            // A Rust value iterates through its retained `IntoIterator` hooks, as in a loop header.
+            let item_ty = match &arg_ty {
+                ResolvedType::RustPath(_) => Some(self.infer_iterator_element_type_from_expr(arg_expr, &arg_ty)),
+                _ => self.list_constructor_item_type(&arg_ty),
+            };
+            let Some(elem_ty) = item_ty else {
+                self.errors
+                    .push(errors::builtin_expects_iterable(name, &arg_ty.to_string(), call_span));
+                return ResolvedType::Unknown;
+            };
+            elem_ty
+        } else if let Some(type_args) = Self::matching_collection_constructor_args(expected_return_ty, cid, 1) {
+            type_args[0].clone()
+        } else {
+            ResolvedType::Unknown
+        };
+        self.type_info.record_resolved_collection_constructor(call_span, cid);
+        list_ty(elem_ty)
+    }
+
+    /// Check the existing set-source shapes and hashed-element requirement before retaining construction.
+    fn check_builtin_set_constructor(
+        &mut self,
+        args: &[CallArg],
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let cid = CollectionTypeId::Set;
+        let elem_ty = if let Some(arg) = args.first() {
+            let arg_expr = Self::call_arg_expr(arg);
+            let arg_ty = self.check_expr(arg_expr);
+            let source_elem_ty = match &arg_ty {
+                ResolvedType::Generic(name, type_args)
+                    if (name == surface_types::as_str(SurfaceTypeId::Vec)
+                        || matches!(
+                            collection_type_id(name.as_str()),
+                            Some(
+                                CollectionTypeId::List
+                                    | CollectionTypeId::Set
+                                    | CollectionTypeId::FrozenList
+                                    | CollectionTypeId::FrozenSet
+                            )
+                        ))
+                        && !type_args.is_empty() =>
+                {
+                    type_args[0].clone()
+                }
+                _ => ResolvedType::Unknown,
+            };
+            // `set(source)` hashes every item of its source (#1758).
+            self.refuse_unhashable_collection_member(HashedCollectionRole::SetElement, &source_elem_ty, arg_expr.span);
+            source_elem_ty
+        } else if let Some(type_args) = Self::matching_collection_constructor_args(expected_return_ty, cid, 1) {
+            type_args[0].clone()
+        } else {
+            ResolvedType::Unknown
+        };
+        self.type_info.record_resolved_collection_constructor(call_span, cid);
+        set_ty(elem_ty)
     }
 }

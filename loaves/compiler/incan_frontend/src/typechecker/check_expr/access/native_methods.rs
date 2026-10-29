@@ -10,6 +10,7 @@ use crate::typechecker::{IdentKind, OpenRustGenericCall, RustArgCoercionKind};
 use incan_lang::interop::{
     RustCollectionFamily, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustTypeInfo,
 };
+use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 /// The signature and owner context selected before validating an inherent method's written arguments.
 struct InherentSpecialization {
@@ -24,14 +25,86 @@ struct InherentSpecialization {
 }
 
 impl TypeChecker {
+    /// Retain an imported native value's inherent length method through ordinary metadata dispatch. Builtin source
+    /// collections and text keep their own length contract; native lengths return int or usize. No native identity
+    /// or missing method is invented.
+    pub(in crate::typechecker::check_expr) fn retain_native_length_call(
+        &mut self,
+        receiver: &crate::ast::Spanned<crate::ast::Expr>,
+        ty: &ResolvedType,
+        span: crate::ast::Span,
+    ) -> bool {
+        if matches!(ty, ResolvedType::Generic(name, _) if crate::typechecker::helpers::collection_type_id(name).is_some())
+            || matches!(ty, ResolvedType::RustPath(path) if self.rust_array_parts(path).is_some())
+        {
+            return false;
+        }
+        let Some((path, _, _, _)) = self.rust_identity_for_type(ty) else {
+            return false;
+        };
+        let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
+            return false;
+        };
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return false;
+        };
+        if !info.methods.iter().any(|method| {
+            method.name == "len"
+                && Self::rust_signature_has_receiver(&method.signature)
+                && method.signature.params.len() == 1
+        }) {
+            return false;
+        }
+        let previous_errors = self.errors.len();
+        let result = self.resolve_rust_path_method_call(RustPathMethodCall {
+            rust_path: &path,
+            method: "len",
+            receiver_metadata: Some(&metadata),
+            receiver_binding: None,
+            receiver_expr: receiver,
+            type_args: &[],
+            args: &[],
+            arg_types: &[],
+            receiver_span: receiver.span,
+            expected_return_ty: None,
+            span,
+        });
+        if self.errors.len() != previous_errors {
+            return true;
+        }
+        let Some(call) = self.type_info.rust.checked_calls.get_mut(&span) else {
+            return true;
+        };
+        let shared = matches!(
+            call.parameters.first().map(|parameter| &parameter.ty),
+            Some(ResolvedType::Ref(_))
+        );
+        let sized_length = matches!(
+            result,
+            Some(ResolvedType::Int | ResolvedType::Numeric(NumericTypeId::USize))
+        );
+        if !shared || !sized_length {
+            self.errors.push(errors::rust_item_shape_not_supported(
+                &path,
+                "length requires a shared `len(&self)` method returning int or usize",
+                span,
+            ));
+            return true;
+        }
+        call.has_receiver = false;
+        if matches!(result, Some(ResolvedType::Numeric(NumericTypeId::USize))) {
+            self.type_info
+                .expressions
+                .numeric_conversion_destinations
+                .insert(span, ResolvedType::Int);
+        }
+        true
+    }
+
     /// Dispatch one native method request without reconstructing receiver or declaration facts.
     pub(super) fn resolve_rust_path_method_call(&mut self, call: RustPathMethodCall<'_>) -> Option<ResolvedType> {
         let preserves_shape = RustCollectionFamily::for_canonical_path(call.rust_path)
             .is_some_and(|family| family.preserves_lookup_arg_shape(call.method));
-        if preserves_shape {
-            self.type_info
-                .record_regular_method_arg_shape(call.receiver_span, call.method);
-        }
         let Some(metadata) =
             self.rust_metadata_for_receiver_method(call.rust_path, call.method, call.receiver_metadata)
         else {
@@ -56,7 +129,6 @@ impl TypeChecker {
                     type_args: call.type_args,
                     args: call.args,
                     arg_types: call.arg_types,
-                    preserves_lookup_arg_shape: preserves_shape,
                     expected_return_ty: call.expected_return_ty,
                     span: call.span,
                 }))
@@ -67,6 +139,21 @@ impl TypeChecker {
                     description,
                     call.span,
                 ));
+                Some(ResolvedType::Unknown)
+            }
+            // A function or constant item is no method receiver surface: refuse it rather than leave the call untyped.
+            RustItemKind::Function(_) | RustItemKind::Constant { .. } => {
+                let description = if matches!(metadata.kind, RustItemKind::Function(_)) {
+                    "function"
+                } else {
+                    "constant"
+                };
+                self.errors.push(errors::rust_item_shape_not_supported(
+                    call.rust_path,
+                    description,
+                    call.span,
+                ));
+                self.preserve_unresolved_rust_call_argument_returns(call.args);
                 Some(ResolvedType::Unknown)
             }
             _ => {
@@ -150,8 +237,8 @@ impl TypeChecker {
         preserves_shape: bool,
     ) -> ResolvedType {
         let claimed = metadata
-            .and_then(|metadata| self.record_rust_extension_trait_import_for_call(metadata, call.method, call.span))
-            .or_else(|| self.record_unique_rust_trait_import_for_method_call(call.method, call.span));
+            .and_then(|metadata| self.rust_extension_trait_import_for_call(metadata, call.method))
+            .or_else(|| self.unique_rust_trait_import_for_method_call(call.method));
         if let Some(signature) = claimed.as_ref().and_then(|import| import.signature.as_ref()) {
             return self.validate_rust_trait_method_call(RustTraitMethodCall {
                 rust_path: call.rust_path,
@@ -161,7 +248,6 @@ impl TypeChecker {
                 args: call.args,
                 arg_types: call.arg_types,
                 preserves_lookup_arg_shape: preserves_shape,
-                self_type: None,
                 span: call.span,
             });
         }
@@ -173,9 +259,6 @@ impl TypeChecker {
             ));
             self.preserve_unresolved_rust_call_argument_returns(call.args);
             return ResolvedType::Unknown;
-        }
-        if claimed.is_none() {
-            self.record_rust_method_trait_import_candidates(call.rust_path, call.receiver_binding, call.span);
         }
         self.preserve_unresolved_rust_call_argument_returns(call.args);
         self.refuse_missing_rust_method_signature(call.rust_path, call.method, call.span)
@@ -241,14 +324,6 @@ impl TypeChecker {
         };
 
         // ---- Written arguments and contextual Self ----
-        if Self::rust_signature_has_receiver(signature)
-            && signature.params[1..].iter().any(|parameter| {
-                Self::rust_display_type_var_name(&Self::compact_rust_display(&parameter.type_display)).is_some()
-            })
-        {
-            self.type_info
-                .record_regular_method_arg_shape(call.receiver_span, call.method);
-        }
         let display = format!("rust::{}.{}", call.rust_path, call.method);
         let result = self.validate_rust_method_call(
             &display,
@@ -270,6 +345,18 @@ impl TypeChecker {
             Some(receiver) => Self::substitute_rust_self_type_with_resolved(result, receiver),
             None => Self::substitute_rust_self_type(result, call.rust_path),
         };
+        // An associated call through a public alias keeps that source owner when it returns the alias target.
+        // Native storage still freezes the same structural target, while subsequent calls retain the public path
+        // that selected its specialized impl rather than the target's unspecialized method inventory.
+        let alias = ResolvedType::RustPath(call.rust_path.to_owned());
+        let result = if matches!(&result, ResolvedType::RustPath(_) | ResolvedType::Generic(_, _))
+            && owner.alias_target.is_some()
+            && self.rust_trait_carriers_match(&result, &alias)
+        {
+            alias
+        } else {
+            result
+        };
         // ---- Retained native callee ----
         let receiver = (!receiver_is_type && Self::rust_signature_has_receiver(signature))
             .then(|| {
@@ -278,9 +365,15 @@ impl TypeChecker {
             })
             .flatten()
             .map(|receiver| self.rusttype_native_target(&receiver).unwrap_or(receiver))
-            .map(|receiver| self.rust_closed_owner(&receiver, owner, call.rust_path));
+            .map(|receiver| self.rust_closed_owner(&receiver, owner, call.rust_path))
+            .map(|receiver| self.primitive_receiver(receiver, owner));
         self.retain_checked_rust_method(
             selected,
+            if specialized.specializes_owner {
+                &[]
+            } else {
+                &signature.type_params
+            },
             owner,
             call.rust_path,
             call.args,
@@ -293,7 +386,7 @@ impl TypeChecker {
             .type_info
             .rust
             .checked_calls
-            .get(&(call.span.start, call.span.end))
+            .get(&call.span)
             .map(|checked| self.rust_source_result_type(&checked.return_type, &result))
             .unwrap_or(result);
         if receiver_is_type
@@ -303,6 +396,16 @@ impl TypeChecker {
             return Some(rusttype);
         }
         Some(result)
+    }
+
+    /// Normalize transparent scalar reexports without flattening instantiated native owners to source collections.
+    fn primitive_receiver(&self, receiver: ResolvedType, owner: &RustTypeInfo) -> ResolvedType {
+        if let ResolvedType::RustPath(path) = &receiver
+            && owner.alias_target.as_deref().and_then(numerics::from_str).is_some()
+        {
+            return self.resolved_type_from_rust_display(path);
+        }
+        receiver
     }
 
     /// Apply one owner/method instantiation to the signature before its arguments and native record are checked.
@@ -345,7 +448,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .call_site_monomorph_type_args
-                .insert((call.span.start, call.span.end), arguments.clone());
+                .insert(call.span, arguments.clone());
         }
         Some(InherentSpecialization {
             signature: effective,
@@ -391,7 +494,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .call_site_monomorph_type_args
-                .insert((call.span.start, call.span.end), arguments.clone());
+                .insert(call.span, arguments.clone());
         }
         // ---- Expected owner ----
         // An expectation that still names the enclosing callee's open binder fixes no owner argument.
@@ -430,17 +533,15 @@ impl TypeChecker {
                 call.arg_types,
                 call.expected_return_ty,
             );
-            if let Some(inferred) = owner
-                .type_params
-                .iter()
-                .enumerate()
-                .map(|(index, parameter)| {
-                    inferred
-                        .get(parameter)
-                        .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
-                        .cloned()
-                        .or_else(|| self.native_owner_default(owner, index))
-                })
+            let closed = |parameter: &str| {
+                inferred
+                    .get(parameter)
+                    .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                    .cloned()
+            };
+            if let Some(inferred) = self
+                .owner_arguments_with_defaults(owner, closed, call.rust_path)
+                .into_iter()
                 .collect::<Option<Vec<_>>>()
             {
                 arguments = inferred;
@@ -465,7 +566,7 @@ impl TypeChecker {
             .map(str::to_owned)
             .unwrap_or_else(|| call.rust_path.rsplit("::").next().unwrap_or(call.rust_path).to_owned());
         self.open_rust_generic_calls.insert(
-            (call.span.start, call.span.end),
+            call.span,
             OpenRustGenericCall {
                 owner,
                 method: call.method.to_owned(),
@@ -474,13 +575,28 @@ impl TypeChecker {
         );
     }
 
-    /// Read an owner's metadata default through the same conversion for inferred and retained native arguments.
-    pub(super) fn native_owner_default(&self, owner: &RustTypeInfo, index: usize) -> Option<ResolvedType> {
-        Some(self.resolved_type_from_rust_display(owner.type_param_defaults.get(index)?.as_deref()?))
+    /// Return the owner's type arguments in declaration order: each one `closed` gives, else its declared default
+    /// (`owner_default`), which sees the arguments before it. An argument neither gives stays `None`, and a later
+    /// default then sees only the arguments before that gap.
+    pub(super) fn owner_arguments_with_defaults(
+        &self,
+        owner: &RustTypeInfo,
+        closed: impl Fn(&str) -> Option<ResolvedType>,
+        anchor: &str,
+    ) -> Vec<Option<ResolvedType>> {
+        let mut arguments: Vec<Option<ResolvedType>> = Vec::with_capacity(owner.type_params.len());
+        for (index, parameter) in owner.type_params.iter().enumerate() {
+            let argument = closed(parameter).or_else(|| {
+                let earlier = arguments.iter().map_while(Option::clone).collect::<Vec<_>>();
+                self.owner_default(owner, index, &earlier, anchor)
+            });
+            arguments.push(argument);
+        }
+        arguments
     }
 
-    /// Retain the selected native result, normalizing associated projections and preserving a proven bytes carrier.
-    /// The source bytes carrier and Vec<u8> have the same ABI; retaining bytes avoids changing its indexing contract.
+    /// Retain the selected native result and normalize associated projections. Source projection stays separate:
+    /// borrowed byte slices keep their native reference even when the source-facing result is bytes.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn native_method_result(
         &self,
@@ -509,8 +625,11 @@ impl TypeChecker {
                 native = projected;
             }
         }
-        if *result == ResolvedType::Bytes && self.rust_trait_carriers_match(&native, result) {
-            return ResolvedType::Bytes;
+        if crate::trace_flags::trace_rust_facts() {
+            eprintln!(
+                "rust result: {path}.{} {} => {native:?}, source {result:?}",
+                method.name, method.signature.return_type
+            );
         }
         native
     }

@@ -1,0 +1,14 @@
+# behavior: an unchanged check replays its report and status byte for byte without checking again, and editing the entry or a path dependency checks the unit again with the same report (#2256)
+# expect-accepted:
+# check-edits:
+#   src/main.incn
+#   deps/values/src/lib.incn
+
+"""Check a program against a function its path dependency publishes."""
+
+from pub::values import value
+
+
+def main() -> None:
+    """Print the dependency's value."""
+    println(value())

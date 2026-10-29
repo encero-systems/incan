@@ -1,11 +1,12 @@
 [dependencies]
+postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_format = { loaf = "incan_format", path = "../incan_format" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_semantics_stdlib = { loaf = "incan_semantics_stdlib", optional = true, path = "../incan_semantics_stdlib" }
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
-incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.6.0-dev.8" }
 quote = { loaf = "crates-io/quote", version = "1.0" }
 semver = { loaf = "crates-io/semver", version = "1.0.27" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
@@ -16,15 +17,13 @@ tempfile = { loaf = "crates-io/tempfile", optional = true, version = "3" }
 thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
 toml = { loaf = "crates-io/toml", version = "0.9" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
-wasmtime = { default-features = false, features = ["cranelift", "runtime", "std"], loaf = "crates-io/wasmtime", version = "36.0.17" }
-wasmtime-wasi = { default-features = false, features = ["preview1"], loaf = "crates-io/wasmtime-wasi", version = "36.0.17" }
 
 [project]
 description = "The Incan compiler frontend: parsed modules, symbols, the typechecker, Body IR and the provider contract"
 license = "Apache-2.0"
 name = "incan_frontend"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.8"
 
 [project.features]
 default = [
@@ -55,5 +54,4 @@ type = "lib"
 
 # Test-only dependencies and helper features; production defaults are unchanged.
 [envs.test.dependencies]
-incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
 tempfile = { optional = false }

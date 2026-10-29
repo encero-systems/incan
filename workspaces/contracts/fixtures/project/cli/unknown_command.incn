@@ -1,0 +1,15 @@
+# behavior: Unknown top-level and nested commands report an error and point to help with exit status two.
+# cli-commands:
+#   nonexistent
+#   inspect nonexistent
+#   owner nonexistent
+#   toolchain nonexistent
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown command
+#   Run `incan --help` for usage.
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that unknown command invocations never compile."""
+    pass

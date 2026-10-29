@@ -79,12 +79,12 @@ pub def emit_power_operator(
     ty = value_type(builder, operands[0])?
     if value_type(builder, operands[1])? != ty:
         return Err("unsupported Body IR mixed Pow operands")
-    mut name = "power_i64"
+    mut path = "incan_native_runtime::power_i64"
     if ty == PlanType.Float or ty == PlanType.F64:
-        name = "power_f64"
+        path = "f64::powf"
     elif ty == PlanType.F32:
-        name = "power_f32"
+        path = "f32::powf"
     elif ty != PlanType.Int:
         return Err("unsupported Body IR Pow carrier")
-    external_call(builder, f"incan_native_runtime::{name}", [ty, ty], ty, operands, destination, span)
+    external_call(builder, path, [ty, ty], ty, operands, destination, span)
     return Ok(None)

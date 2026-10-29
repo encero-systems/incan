@@ -1,19 +1,26 @@
-# behavior: dict.get(key, default) is the value, or the default when no entry holds the key, on a module static and on a local dict
+# behavior: dictionary get returns present values, None or the eager default without consuming stored values
 # expect-stdout:
 #   2
 #   1
 #   0
 #   ex
 #   none
+#   ex
+#   missing
+#   ex
+
+"""Observe optional and default dictionary lookups while retaining the original stored values."""
 
 static counts: dict[str, int] = {}
 
 
 def record(name: str) -> None:
+    """Increment a shared dictionary entry through the default lookup boundary."""
     counts[name] = counts.get(name, 0) + 1
 
 
 def main() -> None:
+    """Observe present and absent lookup forms without consuming the stored value."""
     record("a")
     record("a")
     record("b")
@@ -23,3 +30,10 @@ def main() -> None:
     labels = {"x": "ex"}
     println(labels.get("x", "none"))
     println(labels.get("y", "none"))
+    match labels.get("x"):
+        Some(value) => println(value)
+        None => println("missing")
+    match labels.get("y"):
+        Some(value) => println(value)
+        None => println("missing")
+    println(labels["x"])

@@ -7,3 +7,6 @@ main = "src/main.incn"
 
 [dependencies]
 cost = { path = "deps/pricing" }
+
+[rust-dependencies]
+native_cost = { package = "pricing", path = "deps/pricing" }

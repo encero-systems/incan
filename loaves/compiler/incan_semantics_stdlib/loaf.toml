@@ -7,7 +7,7 @@ description = "Stdlib surface-semantics pack for the Incan compiler"
 license = "Apache-2.0"
 name = "incan_semantics_stdlib"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.8"
 
 [project.features]
 default = []

@@ -1,9 +1,23 @@
-# behavior: a race whose second arm is a block takes the first ready arm in source order (parity corpus case 11)
+# behavior: race selects the first ready arm; an arm-local owner transfers after a field read (#2256; parity 11)
 # expect-stdout:
 #   1
 
 """A race whose second arm is a block takes the first ready arm in source order (parity corpus case 11)."""
+
 import std.async
+
+
+model RaceOwner:
+    """Own a collection created within the winning race body."""
+
+    marker: int
+    payload: list[int]
+
+
+def consume(owner: RaceOwner) -> int:
+    """Observe the complete owner supplied by the winning arm."""
+    return owner.marker + len(owner.payload)
+
 
 async def fast() -> int:
     """Return `1` for this fixture."""
@@ -20,6 +34,10 @@ async def main() -> None:
     winner = race for value:
         await fast() => value
         await slow() =>
+            owner = RaceOwner(marker=7, payload=[1, 2, 3])
+            assert owner.marker == 7
+            assert consume(owner) == 10
             doubled = value * 2
             doubled
+
     println(winner)

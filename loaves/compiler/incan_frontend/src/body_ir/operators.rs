@@ -64,7 +64,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.type_info
                 .expressions
                 .expression_type_identities
-                .get(&(expression.span.start, expression.span.end))?
+                .get(&expression.span)?
                 .get(&Vec::new())
         }) else {
             return value;
@@ -198,8 +198,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Materialize one comparison place and retain its shared read without marking source storage as moved.
     ///
-    /// A bare binding's comparison still counts as a read, so a subsequent final value use can move instead of
-    /// acquiring an extra clone. Projected reads retain the existing conservative partial-move policy.
+    /// Both bare and projected comparisons count as source reads, so a subsequent final owner use can move.
+    /// The comparison itself stays shared and cannot move a field out of its owner.
     fn lower_collection_equality_operand(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -207,12 +207,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let place = self.lower_expr_to_place(expr, scope, out);
-        if place.projection.is_empty()
-            && let Some(local) = place.local_id()
-            && let Some(remaining) = self.remaining_reads.get_mut(&local)
-        {
-            *remaining = remaining.saturating_sub(1);
-        }
+        let _ = self.consume_place_read(&place);
         bir::Operand::place(place, bir::OwnershipFact::Borrow, false)
     }
 
@@ -220,6 +215,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// Both successors initialize one boolean temporary. Calls, panics, and mutations in the right operand stay
     /// inside the selected branch; downstream consumers need no source-expression reconstruction.
+    /// Enclosing owners stay live when the right operand is skipped.
     fn lower_boolean_short_circuit(
         &mut self,
         lhs: &ast::Spanned<ast::Expr>,
@@ -235,7 +231,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let enclosing_bindings = self.bindings.clone();
         let range_layouts_before = self.materialized_range_locals.clone();
         let mut evaluated = Vec::new();
+        self.conditional_scopes.push(branch_scope);
         let value = self.lower_expr_to_operand(rhs, branch_scope, &mut evaluated);
+        self.conditional_scopes.pop();
         evaluated.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: bir::Place::from_local(local),
@@ -347,6 +345,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             intrinsic_carrier: None,
             reflection: None,
             loaf_trait: None,
+            trait_arguments: self
+                .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),
             canonical: self
                 .type_info
                 .resolved_identity(span)
@@ -432,7 +432,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .type_info
                     .protocols
                     .body_ir_truthiness_receivers
-                    .contains_key(&(expr.span.start, expr.span.end)) =>
+                    .contains_key(&expr.span) =>
             {
                 let bool_ty = IncanType::Primitive(IncanPrimitiveType::Bool);
                 Some(self.lower_operator_dispatch(&method, expr, &[], bool_ty, expr.span, scope, out))

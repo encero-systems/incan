@@ -1,335 +1,601 @@
 use crate::ast;
 use crate::diagnostics::CompileError;
 use crate::loaf_index::LoafIndex;
-use crate::vocab_ast_bridge::{
-    internal_vocab_block_to_public, public_declarations_to_internal_with_anchor, public_expr_to_internal_with_anchor,
-    public_statements_to_internal_with_anchor,
-};
+use crate::vocab_ast_bridge::{internal_vocab_block_to_public, public_declarations_to_internal_with_anchor};
 
-use super::helper_bindings::{
-    HelperImportAccumulator, inject_helper_imports, resolve_helper_bindings_in_expr,
-    resolve_helper_bindings_in_statements,
-};
-use super::{VocabDesugarPassError, WasmDesugarerRuntime};
+use super::surface::Output;
+use super::{NativeDesugarerRuntime, VocabDesugarPassError};
 
-/// Rewrite all raw vocab blocks in a parsed program before typechecking/lowering.
+/// Rewrite all raw vocab blocks in a parsed program before typechecking, so downstream phases operate only on
+/// ordinary compiler declarations, statements, and expressions.
 ///
-/// This pass is the hard boundary ensuring downstream phases operate only on ordinary compiler declarations,
-/// statements, and expressions, never raw vocabulary blocks.
+/// The module is rewritten in place, in at most two passes of the same traversal, so declaration, expression and
+/// statement ownership cannot drift:
+/// 1. rewrite every node that needs no provider reply, keeping each provider node and collecting its request;
+/// 2. invoke each provider once for the collected requests;
+/// 3. when a node was kept, rewrite the kept nodes from the validated replies;
+/// 4. write the module's evidence once.
 ///
 /// # Errors
 ///
-/// Returns compiler diagnostics when:
-/// - AST bridge mapping fails,
-/// - desugarer artifact resolution/loading fails,
-/// - WASM runtime execution fails, or
-/// - desugarer output cannot be decoded/mapped back into internal AST.
-pub fn desugar_program_vocab_blocks(
-    program: &mut ast::Program,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-) -> Result<(), Vec<CompileError>> {
-    desugar_program_vocab_blocks_with_runtime(program, module_path, loaves, &mut None)
-}
-
-/// Rewrite fresh source using the caller's retained runtime; every vocabulary invocation still uses a fresh guest.
-/// Only compiled artifact modules are retained. Diagnostics, source AST and helper imports remain request-local.
+/// Returns compiler diagnostics when AST bridge mapping fails, desugarer artifact resolution fails, native worker
+/// execution fails, or desugarer output cannot be decoded and mapped back into internal AST.
 pub fn desugar_program_vocab_blocks_with_runtime(
     program: &mut ast::Program,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    retained: &mut Option<WasmDesugarerRuntime>,
+    runtime: &mut NativeDesugarerRuntime,
 ) -> Result<(), Vec<CompileError>> {
-    let runtime = match retained {
-        Some(runtime) => runtime,
-        None => match WasmDesugarerRuntime::new() {
-            Ok(runtime) => retained.insert(runtime),
-            Err(err) => {
-                return Err(vec![CompileError::new(
-                    format!("failed to initialize vocab wasm runtime: {err}"),
-                    ast::Span::default(),
-                )]);
-            }
-        },
-    };
-    let mut errors = Vec::new();
-    let mut helper_imports = HelperImportAccumulator::default();
-
-    rewrite_declaration_list(
-        &mut program.declarations,
+    // 1. Rewrite what needs no provider, keeping provider nodes and collecting their requests.
+    runtime.begin_module();
+    let mut rewrite = Rewrite {
         module_path,
         loaves,
         runtime,
-        &mut helper_imports,
-        &mut errors,
-    );
-
-    if errors.is_empty() {
-        inject_helper_imports(program, &helper_imports);
+        errors: Vec::new(),
+    };
+    rewrite.declaration_list(&mut program.declarations);
+    // 2. and 3. Invoke the providers, then rewrite the kept nodes; a module without provider nodes is done.
+    if rewrite.runtime.finish_module(module_path.unwrap_or("")) {
+        rewrite.declaration_list(&mut program.declarations);
+    }
+    // 4. Write the module's evidence.
+    rewrite.runtime.flush_evidence();
+    if rewrite.errors.is_empty() {
         Ok(())
     } else {
-        Err(errors)
+        Err(rewrite.errors)
     }
 }
 
-/// Rewrite one declaration list, replacing top-level vocabulary declarations with ordinary lowered declarations.
-fn rewrite_declaration_list(
-    declarations: &mut Vec<ast::Spanned<ast::Declaration>>,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    let mut rewritten = Vec::new();
-    for declaration in std::mem::take(declarations) {
-        let span = declaration.span;
-        let leading_blank_lines = declaration.leading_blank_lines;
-        let required_features = declaration.required_features.clone();
-        match declaration.node {
-            ast::Declaration::VocabBlock(block) => {
-                let mut lowered = match desugar_vocab_declaration(&block, span, module_path, loaves, runtime) {
-                    Ok(declarations) => declarations,
-                    Err(error) => {
-                        errors.push(error);
-                        continue;
+/// One module's rewrite: the provider runtime and the node-local diagnostics of both passes.
+struct Rewrite<'a> {
+    /// The requesting module's path, carried in provider requests and evidence.
+    module_path: Option<&'a str>,
+    /// The compiled Loaves whose vocabulary the parser activated.
+    loaves: &'a LoafIndex,
+    /// Collects provider requests in the first pass and answers them in the second.
+    runtime: &'a mut NativeDesugarerRuntime,
+    /// Node-local diagnostics; the rest of the module is still rewritten.
+    errors: Vec<CompileError>,
+}
+
+impl Rewrite<'_> {
+    /// Rewrite one declaration list, replacing top-level vocabulary declarations with ordinary lowered declarations.
+    fn declaration_list(&mut self, declarations: &mut Vec<ast::Spanned<ast::Declaration>>) {
+        let mut rewritten = Vec::new();
+        for declaration in std::mem::take(declarations) {
+            let span = declaration.span;
+            let leading_blank_lines = declaration.leading_blank_lines;
+            let required_features = declaration.required_features.clone();
+            match declaration.node {
+                ast::Declaration::VocabBlock(block) => {
+                    let mut lowered = match self.vocab_declaration(&block, span) {
+                        Ok(Some(declarations)) => declarations,
+                        Ok(None) => {
+                            rewritten.push(ast::Spanned {
+                                node: ast::Declaration::VocabBlock(block),
+                                span,
+                                leading_blank_lines,
+                                required_features,
+                            });
+                            continue;
+                        }
+                        Err(error) => {
+                            self.errors.push(error);
+                            continue;
+                        }
+                    };
+                    for (index, declaration) in lowered.iter_mut().enumerate() {
+                        declaration.leading_blank_lines = if index == 0 { leading_blank_lines } else { 0 };
+                        declaration.required_features.clone_from(&required_features);
+                        self.declaration(&mut declaration.node);
                     }
-                };
-                for (index, declaration) in lowered.iter_mut().enumerate() {
-                    declaration.span = span;
-                    declaration.leading_blank_lines = if index == 0 { leading_blank_lines } else { 0 };
-                    declaration.required_features.clone_from(&required_features);
-                    rewrite_declaration(
-                        &mut declaration.node,
-                        module_path,
-                        loaves,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewritten.extend(lowered);
                 }
-                rewritten.extend(lowered);
+                mut declaration => {
+                    self.declaration(&mut declaration);
+                    rewritten.push(ast::Spanned {
+                        node: declaration,
+                        span,
+                        leading_blank_lines,
+                        required_features,
+                    });
+                }
             }
-            mut declaration => {
-                rewrite_declaration(&mut declaration, module_path, loaves, runtime, helper_imports, errors);
-                rewritten.push(ast::Spanned {
-                    node: declaration,
+        }
+        *declarations = rewritten;
+    }
+
+    /// Desugar one top-level vocabulary declaration into ordinary compiler declarations.
+    ///
+    /// Returns `Ok(None)` while the runtime collects: the caller keeps the declaration for the second pass.
+    fn vocab_declaration(
+        &mut self,
+        block: &ast::VocabBlockStmt,
+        span: ast::Span,
+    ) -> Result<Option<Vec<ast::Spanned<ast::Declaration>>>, CompileError> {
+        let bridged = internal_vocab_block_to_public(block, span).map_err(|source| {
+            error_from_pass_error(
+                VocabDesugarPassError::Bridge {
+                    keyword: block.keyword.clone(),
+                    source,
+                },
+                span,
+            )
+        })?;
+        if is_standard_c_binding(&bridged, self.loaves) {
+            let declarations =
+                super::checked_c::binding(&bridged).map_err(|message| CompileError::syntax(message, span))?;
+            return public_declarations_to_internal_with_anchor(&declarations, span)
+                .map(Some)
+                .map_err(|error| CompileError::syntax(format!("invalid checked C binding: {error}"), span));
+        }
+        match self.desugar(block, span)? {
+            None => Ok(None),
+            Some(Output::Declarations(declarations)) => Ok(Some(declarations)),
+            Some(_) => Err(unsupported_output(block, span)),
+        }
+    }
+
+    /// Ask the runtime for one node's validated output, or `None` while it collects requests.
+    fn desugar(&mut self, block: &ast::VocabBlockStmt, span: ast::Span) -> Result<Option<Output>, CompileError> {
+        self.runtime
+            .desugar_node(self.loaves, block, span, self.module_path)
+            .map_err(|error| error_from_pass_error(error, span))
+    }
+
+    /// Rewrite vocab blocks inside every expression-bearing surface of one declaration.
+    fn declaration(&mut self, declaration: &mut ast::Declaration) {
+        match declaration {
+            ast::Declaration::Const(konst) => self.expr(&mut konst.value),
+            ast::Declaration::Static(static_decl) => self.expr(&mut static_decl.value),
+            ast::Declaration::Partial(partial) => self.partial_args(&mut partial.args),
+            ast::Declaration::Function(function) => self.statement_list(&mut function.body),
+            ast::Declaration::Model(model) => {
+                self.field_defaults(&mut model.fields);
+                self.method_partials(&mut model.method_partials);
+                for property in &mut model.properties {
+                    self.optional_body(property.node.body.as_mut());
+                }
+                for method in &mut model.methods {
+                    self.optional_body(method.node.body.as_mut());
+                }
+            }
+            ast::Declaration::Class(class) => {
+                self.field_defaults(&mut class.fields);
+                self.method_partials(&mut class.method_partials);
+                for property in &mut class.properties {
+                    self.optional_body(property.node.body.as_mut());
+                }
+                for method in &mut class.methods {
+                    self.optional_body(method.node.body.as_mut());
+                }
+            }
+            ast::Declaration::Trait(trait_decl) => {
+                self.method_partials(&mut trait_decl.method_partials);
+                for property in &mut trait_decl.properties {
+                    self.optional_body(property.node.body.as_mut());
+                }
+                for method in &mut trait_decl.methods {
+                    self.optional_body(method.node.body.as_mut());
+                }
+            }
+            ast::Declaration::Newtype(newtype_decl) => {
+                self.method_partials(&mut newtype_decl.method_partials);
+                for method in &mut newtype_decl.methods {
+                    self.optional_body(method.node.body.as_mut());
+                }
+            }
+            ast::Declaration::TestModule(test_module) => self.declaration_list(&mut test_module.body),
+            _ => {}
+        }
+    }
+
+    /// Rewrite a method or property body when the declaration has one.
+    fn optional_body(&mut self, body: Option<&mut Vec<ast::Spanned<ast::Statement>>>) {
+        if let Some(body) = body {
+            self.statement_list(body);
+        }
+    }
+
+    /// Rewrite vocab expressions in model or class field default values.
+    fn field_defaults(&mut self, fields: &mut [ast::Spanned<ast::FieldDecl>]) {
+        for field in fields {
+            if let Some(default) = field.node.default.as_mut() {
+                self.expr(default);
+            }
+        }
+    }
+
+    /// Rewrite vocab expressions inside method-level partial preset arguments.
+    fn method_partials(&mut self, partials: &mut [ast::Spanned<ast::MethodPartialDecl>]) {
+        for partial in partials {
+            self.partial_args(&mut partial.node.args);
+        }
+    }
+
+    /// Rewrite vocab expressions inside one partial preset argument list.
+    fn partial_args(&mut self, args: &mut [ast::PartialArg]) {
+        for arg in args {
+            self.expr(&mut arg.value);
+        }
+    }
+
+    /// Recursively rewrite a statement list so no raw vocab block statement or expression nodes survive this pass.
+    ///
+    /// The recursion matters because desugarers may emit statements that themselves still contain nested control-flow
+    /// bodies, and those bodies may contain additional vocab blocks introduced earlier by parsing.
+    fn statement_list(&mut self, statements: &mut Vec<ast::Spanned<ast::Statement>>) {
+        let mut rewritten = Vec::new();
+        for statement in statements.drain(..) {
+            let span = statement.span;
+            match statement.node {
+                // Without a lowering hook, preserve RFC 081's existing owned-fragment path, including ordinary checking
+                // of expression holes and the explicit emission refusal. A registered hook receives the structured
+                // artifact through the native worker instead.
+                ast::Statement::VocabBlock(block)
+                    if vocab_block_body_is_embedded_fragment(&block) && !fragment_has_hook(&block, self.loaves) =>
+                {
+                    let mut body = block.body;
+                    self.statement_list(&mut body);
+                    rewritten.extend(body);
+                }
+                ast::Statement::VocabBlock(block) => rewritten.extend(self.vocab_statement(block, span)),
+                mut statement => {
+                    self.statement(&mut statement);
+                    rewritten.push(ast::Spanned::new(statement, span));
+                }
+            }
+        }
+        *statements = rewritten;
+    }
+
+    /// Rewrite one statement-position vocabulary block into its statements; a collected block is kept as it is.
+    fn vocab_statement(&mut self, block: ast::VocabBlockStmt, span: ast::Span) -> Vec<ast::Spanned<ast::Statement>> {
+        let desugared = match self.desugar(&block, span) {
+            Ok(Some(output)) => output,
+            Ok(None) => return vec![ast::Spanned::new(ast::Statement::VocabBlock(block), span)],
+            Err(error) => {
+                self.errors.push(error);
+                return Vec::new();
+            }
+        };
+        let mut lowered = match desugared {
+            Output::Statements(statements) => statements,
+            Output::Expression(expression) => vec![ast::Spanned::new(ast::Statement::Expr(expression), span)],
+            Output::Declarations(_) => {
+                self.errors.push(CompileError::syntax(
+                    "declaration output requires compilation-unit scope".into(),
                     span,
-                    leading_blank_lines,
-                    required_features,
-                });
+                ));
+                return Vec::new();
+            }
+        };
+        self.statement_list(&mut lowered);
+        lowered
+    }
+
+    /// Rewrite the expressions and nested bodies of one ordinary statement.
+    fn statement(&mut self, statement: &mut ast::Statement) {
+        match statement {
+            ast::Statement::Assignment(assignment) => self.expr(&mut assignment.value),
+            ast::Statement::FieldAssignment(assignment) => {
+                self.expr(&mut assignment.object);
+                self.expr(&mut assignment.value);
+            }
+            ast::Statement::IndexAssignment(assignment) => {
+                self.expr(&mut assignment.object);
+                self.expr(&mut assignment.index);
+                self.expr(&mut assignment.value);
+            }
+            ast::Statement::Return(Some(expr)) | ast::Statement::Break(Some(expr)) => self.expr(expr),
+            ast::Statement::If(if_stmt) => {
+                self.condition(&mut if_stmt.condition);
+                self.statement_list(&mut if_stmt.then_body);
+                for (elif_condition, elif_body) in &mut if_stmt.elif_branches {
+                    self.expr(elif_condition);
+                    self.statement_list(elif_body);
+                }
+                if let Some(else_body) = if_stmt.else_body.as_mut() {
+                    self.statement_list(else_body);
+                }
+            }
+            ast::Statement::While(while_stmt) => {
+                self.condition(&mut while_stmt.condition);
+                self.statement_list(&mut while_stmt.body);
+            }
+            ast::Statement::Loop(loop_stmt) => self.statement_list(&mut loop_stmt.body),
+            ast::Statement::For(for_stmt) => {
+                self.expr(&mut for_stmt.iter);
+                self.statement_list(&mut for_stmt.body);
+            }
+            ast::Statement::Expr(expr) => self.expr(expr),
+            ast::Statement::VocabExpressionItem(item) => {
+                self.expr(&mut item.expr);
+                for modifier in &mut item.modifiers {
+                    self.expr(&mut modifier.value);
+                }
+            }
+            ast::Statement::Assert(assert_stmt) => self.assert(assert_stmt),
+            ast::Statement::CompoundAssignment(assignment) => self.expr(&mut assignment.value),
+            ast::Statement::TupleUnpack(assignment) => self.expr(&mut assignment.value),
+            ast::Statement::TupleAssign(assignment) => {
+                for target in &mut assignment.targets {
+                    self.expr(target);
+                }
+                self.expr(&mut assignment.value);
+            }
+            ast::Statement::ChainedAssignment(assignment) => self.expr(&mut assignment.value),
+            _ => {}
+        }
+    }
+
+    /// Rewrite vocab expressions inside conditional expression wrappers.
+    fn condition(&mut self, condition: &mut ast::Condition) {
+        match condition {
+            ast::Condition::Expr(expr) | ast::Condition::Let { value: expr, .. } => self.expr(expr),
+        }
+    }
+
+    /// Rewrite vocab expressions inside all assert statement payloads.
+    fn assert(&mut self, assert_stmt: &mut ast::AssertStmt) {
+        match &mut assert_stmt.kind {
+            ast::AssertKind::Condition(expr) => self.expr(expr),
+            ast::AssertKind::IsPattern { value, .. } => self.expr(value),
+            ast::AssertKind::Raises { call, .. } => self.expr(call),
+        }
+        if let Some(message) = assert_stmt.message.as_mut() {
+            self.expr(message);
+        }
+    }
+
+    /// Recursively rewrite raw vocab expression declarations nested inside ordinary expressions.
+    fn expr(&mut self, expr: &mut ast::Spanned<ast::Expr>) {
+        if matches!(expr.node, ast::Expr::VocabBlock(_)) && !self.vocab_expr(expr) {
+            return;
+        }
+        match &mut expr.node {
+            ast::Expr::Binary(left, _, right) => {
+                self.expr(left);
+                self.expr(right);
+            }
+            ast::Expr::Unary(_, inner)
+            | ast::Expr::Try(inner)
+            | ast::Expr::Paren(inner)
+            | ast::Expr::Yield(Some(inner)) => self.expr(inner),
+            ast::Expr::Call(callee, _, args) => {
+                self.expr(callee);
+                self.call_args(args);
+            }
+            ast::Expr::Index(base, index) => {
+                self.expr(base);
+                self.expr(index);
+            }
+            ast::Expr::Slice(base, slice) => {
+                self.expr(base);
+                for bound in [&mut slice.start, &mut slice.end, &mut slice.step]
+                    .into_iter()
+                    .flatten()
+                {
+                    self.expr(bound);
+                }
+            }
+            ast::Expr::Field(base, _) => self.expr(base),
+            ast::Expr::MethodCall(receiver, _, _, args) => {
+                self.expr(receiver);
+                self.call_args(args);
+            }
+            ast::Expr::Partial(partial) => {
+                self.expr(&mut partial.target);
+                for arg in &mut partial.args {
+                    self.expr(&mut arg.value);
+                }
+            }
+            ast::Expr::Match(scrutinee, arms) => {
+                self.expr(scrutinee);
+                self.match_arms(arms);
+            }
+            ast::Expr::If(if_expr) => {
+                self.expr(&mut if_expr.condition);
+                self.statement_list(&mut if_expr.then_body);
+                if let Some(else_body) = if_expr.else_body.as_mut() {
+                    self.statement_list(else_body);
+                }
+            }
+            ast::Expr::Loop(loop_expr) => self.statement_list(&mut loop_expr.body),
+            ast::Expr::ListComp(comp) => {
+                self.expr(&mut comp.expr);
+                self.expr(&mut comp.iter);
+                if let Some(filter) = comp.filter.as_mut() {
+                    self.expr(filter);
+                }
+                self.comprehension_clauses(&mut comp.clauses);
+            }
+            ast::Expr::DictComp(comp) => {
+                self.expr(&mut comp.key);
+                self.expr(&mut comp.value);
+                self.expr(&mut comp.iter);
+                if let Some(filter) = comp.filter.as_mut() {
+                    self.expr(filter);
+                }
+                self.comprehension_clauses(&mut comp.clauses);
+            }
+            ast::Expr::Generator(generator) => {
+                self.expr(&mut generator.expr);
+                self.comprehension_clauses(&mut generator.clauses);
+            }
+            ast::Expr::Closure(_, body) => self.expr(body),
+            ast::Expr::Tuple(items) | ast::Expr::Set(items) => {
+                for item in items {
+                    self.expr(item);
+                }
+            }
+            ast::Expr::List(items) => {
+                for item in items {
+                    match item {
+                        ast::ListEntry::Element(expr) | ast::ListEntry::Spread(expr) => self.expr(expr),
+                    }
+                }
+            }
+            ast::Expr::Dict(entries) => self.dict_entries(entries),
+            ast::Expr::Constructor(_, args) => self.call_args(args),
+            ast::Expr::FString(parts) => {
+                for part in parts {
+                    if let ast::FStringPart::Expr { expr, .. } = part {
+                        self.expr(expr);
+                    }
+                }
+            }
+            ast::Expr::Range { start, end, .. } => {
+                self.expr(start);
+                self.expr(end);
+            }
+            ast::Expr::Surface(surface) => self.surface_expr(surface),
+            // RFC 081 (#1023): unlike `VocabBlock`/`Surface` above, the embedded-fragment container itself is *not*
+            // erased or replaced by this pass -- it must survive into typecheck/lowering as itself so its holes get
+            // real Incan typing (see `EmbeddedFragmentExpr`'s rustdoc). Its expression holes are still recursed into
+            // here, exactly like `Surface`'s operands above, so a hole that itself uses some other DSL's vocab block
+            // or scoped surface still gets desugared correctly.
+            ast::Expr::Embedded(fragment) => {
+                for hole in fragment.holes_mut() {
+                    self.expr(hole);
+                }
+            }
+            ast::Expr::Ident(_)
+            | ast::Expr::Literal(_)
+            | ast::Expr::SelfExpr
+            | ast::Expr::Yield(None)
+            | ast::Expr::VocabBlock(_) => {}
+        }
+    }
+
+    /// Rewrite each guard before its body, retaining the arm's pattern and source metadata.
+    fn match_arms(&mut self, arms: &mut [ast::Spanned<ast::MatchArm>]) {
+        for arm in arms {
+            if let Some(guard) = arm.node.guard.as_mut() {
+                self.expr(guard);
+            }
+            match &mut arm.node.body {
+                ast::MatchBody::Expr(body) => self.expr(body),
+                ast::MatchBody::Block(body) => self.statement_list(body),
             }
         }
     }
-    *declarations = rewritten;
+
+    /// Rewrite dictionary keys before values and spreads in their written order.
+    fn dict_entries(&mut self, entries: &mut [ast::DictEntry]) {
+        for entry in entries {
+            match entry {
+                ast::DictEntry::Pair(key, value) => {
+                    self.expr(key);
+                    self.expr(value);
+                }
+                ast::DictEntry::Spread(value) => self.expr(value),
+            }
+        }
+    }
+
+    /// Replace one expression-position vocabulary block by its expansion.
+    ///
+    /// Returns whether the expression should be rewritten further: false for a block kept for the second pass and
+    /// for a refused block, which leaves a `None` placeholder beside its diagnostic.
+    fn vocab_expr(&mut self, expr: &mut ast::Spanned<ast::Expr>) -> bool {
+        let placeholder = ast::Expr::Literal(ast::Literal::None);
+        let block = match std::mem::replace(&mut expr.node, placeholder) {
+            ast::Expr::VocabBlock(block) => block,
+            other => {
+                expr.node = other;
+                return true;
+            }
+        };
+        match self.vocab_expression(&block, expr.span) {
+            Ok(Some(node)) => {
+                *expr = node;
+                true
+            }
+            Ok(None) => {
+                expr.node = ast::Expr::VocabBlock(block);
+                false
+            }
+            Err(error) => {
+                self.errors.push(error);
+                false
+            }
+        }
+    }
+
+    /// Desugar one expression-position vocab block and convert the expression result back to compiler AST.
+    ///
+    /// Returns `Ok(None)` while the runtime collects: the caller keeps the block for the second pass.
+    fn vocab_expression(
+        &mut self,
+        block: &ast::VocabBlockStmt,
+        span: ast::Span,
+    ) -> Result<Option<ast::Spanned<ast::Expr>>, CompileError> {
+        match self.desugar(block, span)? {
+            None => Ok(None),
+            Some(Output::Expression(expression)) => Ok(Some(expression)),
+            Some(_) => Err(unsupported_output(block, span)),
+        }
+    }
+
+    /// Rewrite vocab expressions inside positional, named, and unpacked call arguments.
+    fn call_args(&mut self, args: &mut [ast::CallArg]) {
+        for arg in args {
+            match arg {
+                ast::CallArg::Positional(expr)
+                | ast::CallArg::Named(_, expr)
+                | ast::CallArg::PositionalUnpack(expr)
+                | ast::CallArg::KeywordUnpack(expr) => self.expr(expr),
+            }
+        }
+    }
+
+    /// Rewrite vocab expressions inside comprehension iterator and filter clauses.
+    fn comprehension_clauses(&mut self, clauses: &mut [ast::ComprehensionClause]) {
+        for clause in clauses {
+            match clause {
+                ast::ComprehensionClause::For { iter, .. } | ast::ComprehensionClause::If(iter) => self.expr(iter),
+            }
+        }
+    }
+
+    /// Rewrite nested expressions held by non-core surface-expression payloads.
+    fn surface_expr(&mut self, surface: &mut ast::SurfaceExpr) {
+        match &mut surface.payload {
+            ast::SurfaceExprPayload::PrefixUnary(inner) => self.expr(inner),
+            ast::SurfaceExprPayload::RaceFor(race) => {
+                for arm in &mut race.arms {
+                    self.expr(&mut arm.awaitable);
+                    match &mut arm.body {
+                        ast::RaceForBody::Expr(expr) => self.expr(expr),
+                        ast::RaceForBody::Block(body) => self.statement_list(body),
+                    }
+                }
+            }
+            ast::SurfaceExprPayload::LeadingDotPath { .. } => {}
+            ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                self.expr(left);
+                self.expr(right);
+            }
+            ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => self.call_args(args),
+        }
+    }
 }
 
-/// Desugar one top-level vocabulary declaration into ordinary compiler declarations.
-fn desugar_vocab_declaration(
-    block: &ast::VocabBlockStmt,
-    span: ast::Span,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-) -> Result<Vec<ast::Spanned<ast::Declaration>>, CompileError> {
-    let bridged = internal_vocab_block_to_public(block, span).map_err(|source| {
-        error_from_pass_error(
-            VocabDesugarPassError::Bridge {
-                keyword: block.keyword.clone(),
-                source,
-            },
-            span,
-        )
-    })?;
-    let keyword = bridged.keyword.clone();
-    let desugared = runtime
-        .desugar_node(loaves, &incan_vocab::VocabSyntaxNode::Declaration(bridged), module_path)
-        .map_err(|error| error_from_pass_error(error, span))?;
-    let incan_vocab::DesugarOutput::Declarations(declarations) = desugared.output else {
-        return Err(error_from_pass_error(
-            VocabDesugarPassError::UnsupportedOutput { keyword },
-            span,
-        ));
+/// Select compiler-owned C binding semantics only for the pinned standard namespace issuer.
+fn is_standard_c_binding(declaration: &incan_vocab::VocabDeclaration, loaves: &LoafIndex) -> bool {
+    if declaration.keyword != "binding" {
+        return false;
+    }
+    let Some(metadata) = &declaration.keyword_metadata else {
+        return false;
     };
-
-    public_declarations_to_internal_with_anchor(&declarations, span).map_err(|source| {
-        error_from_pass_error(
-            VocabDesugarPassError::Bridge {
-                keyword: block.keyword.clone(),
-                source,
-            },
-            span,
-        )
+    loaves.entry(&metadata.dependency_key).is_some_and(|entry| {
+        matches!(&entry.namespace, crate::loaf_index::LoafNamespace::Standard { policy }
+            if policy.namespace_roots.contains(&incan_lang::lang::stdlib::STDLIB_INTEROP))
     })
-}
-
-/// Rewrite vocab blocks inside every expression-bearing surface of one declaration.
-fn rewrite_declaration(
-    declaration: &mut ast::Declaration,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    match declaration {
-        ast::Declaration::Const(konst) => {
-            rewrite_spanned_expr(&mut konst.value, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Declaration::Static(static_decl) => rewrite_spanned_expr(
-            &mut static_decl.value,
-            module_path,
-            loaves,
-            runtime,
-            helper_imports,
-            errors,
-        ),
-        ast::Declaration::Partial(partial) => {
-            rewrite_partial_args(&mut partial.args, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Declaration::Function(function) => {
-            rewrite_statement_list(&mut function.body, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Declaration::Model(model) => {
-            rewrite_field_defaults(&mut model.fields, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_method_partial_args(
-                &mut model.method_partials,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            for property in &mut model.properties {
-                if let Some(body) = property.node.body.as_mut() {
-                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
-                }
-            }
-            for method in &mut model.methods {
-                if let Some(body) = method.node.body.as_mut() {
-                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
-                }
-            }
-        }
-        ast::Declaration::Class(class) => {
-            rewrite_field_defaults(&mut class.fields, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_method_partial_args(
-                &mut class.method_partials,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            for property in &mut class.properties {
-                if let Some(body) = property.node.body.as_mut() {
-                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
-                }
-            }
-            for method in &mut class.methods {
-                if let Some(body) = method.node.body.as_mut() {
-                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
-                }
-            }
-        }
-        ast::Declaration::Trait(trait_decl) => {
-            rewrite_method_partial_args(
-                &mut trait_decl.method_partials,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            for property in &mut trait_decl.properties {
-                if let Some(body) = property.node.body.as_mut() {
-                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
-                }
-            }
-            for method in &mut trait_decl.methods {
-                if let Some(body) = method.node.body.as_mut() {
-                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
-                }
-            }
-        }
-        ast::Declaration::Newtype(newtype_decl) => {
-            rewrite_method_partial_args(
-                &mut newtype_decl.method_partials,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            for method in &mut newtype_decl.methods {
-                if let Some(body) = method.node.body.as_mut() {
-                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
-                }
-            }
-        }
-        ast::Declaration::TestModule(test_module) => {
-            rewrite_declaration_list(
-                &mut test_module.body,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-        }
-        _ => {}
-    }
-}
-
-/// Rewrite vocab expressions in model or class field default values.
-fn rewrite_field_defaults(
-    fields: &mut [ast::Spanned<ast::FieldDecl>],
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    for field in fields {
-        if let Some(default) = field.node.default.as_mut() {
-            rewrite_spanned_expr(default, module_path, loaves, runtime, helper_imports, errors);
-        }
-    }
-}
-
-/// Rewrite vocab expressions inside method-level partial preset arguments.
-fn rewrite_method_partial_args(
-    partials: &mut [ast::Spanned<ast::MethodPartialDecl>],
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    for partial in partials {
-        rewrite_partial_args(
-            &mut partial.node.args,
-            module_path,
-            loaves,
-            runtime,
-            helper_imports,
-            errors,
-        );
-    }
-}
-
-/// Rewrite vocab expressions inside one partial preset argument list.
-fn rewrite_partial_args(
-    args: &mut [ast::PartialArg],
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    for arg in args {
-        rewrite_spanned_expr(&mut arg.value, module_path, loaves, runtime, helper_imports, errors);
-    }
 }
 
 /// Return whether a vocab block's body is exactly the shape `Parser::try_embedded_fragment_body` produces (RFC
@@ -352,726 +618,32 @@ fn vocab_block_body_is_embedded_fragment(block: &ast::VocabBlockStmt) -> bool {
     )
 }
 
-/// Recursively rewrite a statement list so no raw vocab block statement or expression nodes survive past this pass.
-///
-/// The recursion matters because desugarers may emit statements that themselves still contain nested control-flow
-/// bodies, and those bodies may contain additional vocab blocks introduced earlier by parsing.
-fn rewrite_statement_list(
-    statements: &mut Vec<ast::Spanned<ast::Statement>>,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    let mut rewritten = Vec::new();
-
-    for statement in statements.drain(..) {
-        let span = statement.span;
-        match statement.node {
-            // RFC 081 (#1023): a vocab block whose body is descriptor-claimed embedded-fragment content (parsed by
-            // `Parser::try_embedded_fragment_body`) is not DSL-owned statement syntax at all -- it carries no
-            // desugarer contract to bridge. Unwrap the `VocabBlockStmt` wrapper directly (rewriting the inner
-            // statement the same way any ordinary statement would be, so holes/nested DSLs still get rewritten)
-            // instead of routing it through `runtime.desugar_node`, which requires a registered WASM desugarer
-            // that embedded-fragment descriptors never need.
-            ast::Statement::VocabBlock(block) if vocab_block_body_is_embedded_fragment(&block) => {
-                let mut body = block.body;
-                rewrite_statement_list(&mut body, module_path, loaves, runtime, helper_imports, errors);
-                rewritten.extend(body);
-            }
-            ast::Statement::VocabBlock(block) => {
-                // ---- Context: bridge one raw DSL block into the public vocab AST ----
-                let bridged = internal_vocab_block_to_public(&block, span);
-                let bridged = match bridged {
-                    Ok(value) => value,
-                    Err(source) => {
-                        errors.push(error_from_pass_error(
-                            VocabDesugarPassError::Bridge {
-                                keyword: block.keyword.clone(),
-                                source,
-                            },
-                            span,
-                        ));
-                        continue;
-                    }
-                };
-
-                let bridged_keyword = bridged.keyword.clone();
-                let bridged_keyword_metadata = bridged.keyword_metadata.clone();
-                let request_node = incan_vocab::VocabSyntaxNode::Declaration(bridged);
-                let desugared = runtime.desugar_node(loaves, &request_node, module_path);
-                let desugared = match desugared {
-                    Ok(value) => value,
-                    Err(err) => {
-                        errors.push(error_from_pass_error(err, span));
-                        continue;
-                    }
-                };
-
-                let public_statements = match desugared.output {
-                    incan_vocab::DesugarOutput::Statements(statements) => statements,
-                    incan_vocab::DesugarOutput::Expression(expression) => {
-                        vec![incan_vocab::IncanStatement::Expr(expression)]
-                    }
-                    _ => {
-                        errors.push(error_from_pass_error(
-                            VocabDesugarPassError::UnsupportedOutput {
-                                keyword: bridged_keyword.clone(),
-                            },
-                            span,
-                        ));
-                        continue;
-                    }
-                };
-                let mut public_statements = public_statements;
-                if let Err(message) = resolve_helper_bindings_in_statements(
-                    &mut public_statements,
-                    bridged_keyword_metadata.as_ref(),
-                    &bridged_keyword,
-                    loaves,
-                    helper_imports,
-                ) {
-                    errors.push(error_from_pass_error(
-                        VocabDesugarPassError::HelperBinding {
-                            keyword: bridged_keyword.clone(),
-                            message,
-                        },
-                        span,
-                    ));
-                    continue;
-                }
-
-                let mut lowered = match public_statements_to_internal_with_anchor(&public_statements, span) {
-                    Ok(stmts) => stmts,
-                    Err(source) => {
-                        errors.push(error_from_pass_error(
-                            VocabDesugarPassError::Bridge {
-                                keyword: bridged_keyword.clone(),
-                                source,
-                            },
-                            span,
-                        ));
-                        continue;
-                    }
-                };
-                for lowered_statement in &mut lowered {
-                    lowered_statement.span = span;
-                }
-                rewrite_statement_list(&mut lowered, module_path, loaves, runtime, helper_imports, errors);
-                rewritten.extend(lowered);
-            }
-            ast::Statement::Assignment(mut assignment) => {
-                rewrite_spanned_expr(
-                    &mut assignment.value,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::Assignment(assignment), span));
-            }
-            ast::Statement::FieldAssignment(mut assignment) => {
-                rewrite_spanned_expr(
-                    &mut assignment.object,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewrite_spanned_expr(
-                    &mut assignment.value,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::FieldAssignment(assignment), span));
-            }
-            ast::Statement::IndexAssignment(mut assignment) => {
-                rewrite_spanned_expr(
-                    &mut assignment.object,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewrite_spanned_expr(
-                    &mut assignment.index,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewrite_spanned_expr(
-                    &mut assignment.value,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::IndexAssignment(assignment), span));
-            }
-            ast::Statement::Return(mut expr) => {
-                if let Some(expr) = expr.as_mut() {
-                    rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
-                }
-                rewritten.push(ast::Spanned::new(ast::Statement::Return(expr), span));
-            }
-            ast::Statement::If(mut if_stmt) => {
-                // ---- Context: recurse into ordinary control-flow bodies ----
-                rewrite_condition_exprs(
-                    &mut if_stmt.condition,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewrite_statement_list(
-                    &mut if_stmt.then_body,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                for (elif_condition, elif_body) in &mut if_stmt.elif_branches {
-                    rewrite_spanned_expr(elif_condition, module_path, loaves, runtime, helper_imports, errors);
-                    rewrite_statement_list(elif_body, module_path, loaves, runtime, helper_imports, errors);
-                }
-                if let Some(else_body) = if_stmt.else_body.as_mut() {
-                    rewrite_statement_list(else_body, module_path, loaves, runtime, helper_imports, errors);
-                }
-                rewritten.push(ast::Spanned::new(ast::Statement::If(if_stmt), span));
-            }
-            ast::Statement::While(mut while_stmt) => {
-                rewrite_condition_exprs(
-                    &mut while_stmt.condition,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewrite_statement_list(
-                    &mut while_stmt.body,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::While(while_stmt), span));
-            }
-            ast::Statement::Loop(mut loop_stmt) => {
-                rewrite_statement_list(
-                    &mut loop_stmt.body,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::Loop(loop_stmt), span));
-            }
-            ast::Statement::For(mut for_stmt) => {
-                rewrite_spanned_expr(&mut for_stmt.iter, module_path, loaves, runtime, helper_imports, errors);
-                rewrite_statement_list(&mut for_stmt.body, module_path, loaves, runtime, helper_imports, errors);
-                rewritten.push(ast::Spanned::new(ast::Statement::For(for_stmt), span));
-            }
-            ast::Statement::Expr(mut expr) => {
-                rewrite_spanned_expr(&mut expr, module_path, loaves, runtime, helper_imports, errors);
-                rewritten.push(ast::Spanned::new(ast::Statement::Expr(expr), span));
-            }
-            ast::Statement::VocabExpressionItem(mut item) => {
-                rewrite_spanned_expr(&mut item.expr, module_path, loaves, runtime, helper_imports, errors);
-                for modifier in &mut item.modifiers {
-                    rewrite_spanned_expr(
-                        &mut modifier.value,
-                        module_path,
-                        loaves,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
-                }
-                rewritten.push(ast::Spanned::new(ast::Statement::VocabExpressionItem(item), span));
-            }
-            ast::Statement::Assert(mut assert_stmt) => {
-                rewrite_assert_exprs(&mut assert_stmt, module_path, loaves, runtime, helper_imports, errors);
-                rewritten.push(ast::Spanned::new(ast::Statement::Assert(assert_stmt), span));
-            }
-            ast::Statement::Break(mut expr) => {
-                if let Some(expr) = expr.as_mut() {
-                    rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
-                }
-                rewritten.push(ast::Spanned::new(ast::Statement::Break(expr), span));
-            }
-            ast::Statement::CompoundAssignment(mut assignment) => {
-                rewrite_spanned_expr(
-                    &mut assignment.value,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::CompoundAssignment(assignment), span));
-            }
-            ast::Statement::TupleUnpack(mut assignment) => {
-                rewrite_spanned_expr(
-                    &mut assignment.value,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::TupleUnpack(assignment), span));
-            }
-            ast::Statement::TupleAssign(mut assignment) => {
-                for target in &mut assignment.targets {
-                    rewrite_spanned_expr(target, module_path, loaves, runtime, helper_imports, errors);
-                }
-                rewrite_spanned_expr(
-                    &mut assignment.value,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::TupleAssign(assignment), span));
-            }
-            ast::Statement::ChainedAssignment(mut assignment) => {
-                rewrite_spanned_expr(
-                    &mut assignment.value,
-                    module_path,
-                    loaves,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewritten.push(ast::Spanned::new(ast::Statement::ChainedAssignment(assignment), span));
-            }
-            other => rewritten.push(ast::Spanned::new(other, span)),
-        }
-    }
-
-    *statements = rewritten;
+/// Preserve RFC 081's no-hook route only when the owning published vocabulary supplies no native desugarer.
+fn fragment_has_hook(block: &ast::VocabBlockStmt, loaves: &LoafIndex) -> bool {
+    loaves
+        .entry(&block.keyword_binding.dependency_key)
+        .and_then(|entry| entry.artifact.manifest.vocab.as_ref())
+        .is_some_and(|vocab| vocab.desugarer_artifact.is_some())
 }
 
-/// Rewrite vocab expressions inside conditional expression wrappers.
-fn rewrite_condition_exprs(
-    condition: &mut ast::Condition,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    match condition {
-        ast::Condition::Expr(expr) | ast::Condition::Let { value: expr, .. } => {
-            rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors)
-        }
-    }
-}
-
-/// Rewrite vocab expressions inside all assert statement payloads.
-fn rewrite_assert_exprs(
-    assert_stmt: &mut ast::AssertStmt,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    match &mut assert_stmt.kind {
-        ast::AssertKind::Condition(expr) => {
-            rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors)
-        }
-        ast::AssertKind::IsPattern { value, .. } => {
-            rewrite_spanned_expr(value, module_path, loaves, runtime, helper_imports, errors)
-        }
-        ast::AssertKind::Raises { call, .. } => {
-            rewrite_spanned_expr(call, module_path, loaves, runtime, helper_imports, errors)
-        }
-    }
-    if let Some(message) = assert_stmt.message.as_mut() {
-        rewrite_spanned_expr(message, module_path, loaves, runtime, helper_imports, errors);
-    }
-}
-
-/// Recursively rewrite raw vocab expression declarations nested inside ordinary expressions.
-fn rewrite_spanned_expr(
-    expr: &mut ast::Spanned<ast::Expr>,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    if matches!(expr.node, ast::Expr::VocabBlock(_)) {
-        let placeholder = ast::Expr::Literal(ast::Literal::None);
-        let ast::Expr::VocabBlock(block) = std::mem::replace(&mut expr.node, placeholder) else {
-            unreachable!("raw vocab expression was checked immediately before replacement");
-        };
-        match desugar_vocab_block_to_expression(&block, expr.span, module_path, loaves, runtime, helper_imports) {
-            Ok(node) => expr.node = node,
-            Err(err) => {
-                errors.push(err);
-                return;
-            }
-        }
-    }
-
-    match &mut expr.node {
-        ast::Expr::Binary(left, _, right) => {
-            rewrite_spanned_expr(left, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_spanned_expr(right, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::Unary(_, inner)
-        | ast::Expr::Try(inner)
-        | ast::Expr::Paren(inner)
-        | ast::Expr::Yield(Some(inner)) => {
-            rewrite_spanned_expr(inner, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::Call(callee, _, args) => {
-            rewrite_spanned_expr(callee, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_call_args(args, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::Index(base, index) => {
-            rewrite_spanned_expr(base, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_spanned_expr(index, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::Slice(base, slice) => {
-            rewrite_spanned_expr(base, module_path, loaves, runtime, helper_imports, errors);
-            if let Some(start) = slice.start.as_mut() {
-                rewrite_spanned_expr(start, module_path, loaves, runtime, helper_imports, errors);
-            }
-            if let Some(end) = slice.end.as_mut() {
-                rewrite_spanned_expr(end, module_path, loaves, runtime, helper_imports, errors);
-            }
-            if let Some(step) = slice.step.as_mut() {
-                rewrite_spanned_expr(step, module_path, loaves, runtime, helper_imports, errors);
-            }
-        }
-        ast::Expr::Field(base, _) => {
-            rewrite_spanned_expr(base, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::MethodCall(receiver, _, _, args) => {
-            rewrite_spanned_expr(receiver, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_call_args(args, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::Partial(partial) => {
-            rewrite_spanned_expr(
-                &mut partial.target,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            for arg in &mut partial.args {
-                rewrite_spanned_expr(&mut arg.value, module_path, loaves, runtime, helper_imports, errors);
-            }
-        }
-        ast::Expr::Match(scrutinee, arms) => {
-            rewrite_spanned_expr(scrutinee, module_path, loaves, runtime, helper_imports, errors);
-            for arm in arms {
-                if let Some(guard) = arm.node.guard.as_mut() {
-                    rewrite_spanned_expr(guard, module_path, loaves, runtime, helper_imports, errors);
-                }
-                match &mut arm.node.body {
-                    ast::MatchBody::Expr(body) => {
-                        rewrite_spanned_expr(body, module_path, loaves, runtime, helper_imports, errors)
-                    }
-                    ast::MatchBody::Block(body) => {
-                        rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors)
-                    }
-                }
-            }
-        }
-        ast::Expr::If(if_expr) => {
-            rewrite_spanned_expr(
-                &mut if_expr.condition,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_statement_list(
-                &mut if_expr.then_body,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            if let Some(else_body) = if_expr.else_body.as_mut() {
-                rewrite_statement_list(else_body, module_path, loaves, runtime, helper_imports, errors);
-            }
-        }
-        ast::Expr::Loop(loop_expr) => {
-            rewrite_statement_list(
-                &mut loop_expr.body,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-        }
-        ast::Expr::ListComp(comp) => {
-            rewrite_spanned_expr(&mut comp.expr, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_spanned_expr(&mut comp.iter, module_path, loaves, runtime, helper_imports, errors);
-            if let Some(filter) = comp.filter.as_mut() {
-                rewrite_spanned_expr(filter, module_path, loaves, runtime, helper_imports, errors);
-            }
-            rewrite_comprehension_clauses(&mut comp.clauses, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::DictComp(comp) => {
-            rewrite_spanned_expr(&mut comp.key, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_spanned_expr(&mut comp.value, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_spanned_expr(&mut comp.iter, module_path, loaves, runtime, helper_imports, errors);
-            if let Some(filter) = comp.filter.as_mut() {
-                rewrite_spanned_expr(filter, module_path, loaves, runtime, helper_imports, errors);
-            }
-            rewrite_comprehension_clauses(&mut comp.clauses, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::Generator(generator) => {
-            rewrite_spanned_expr(
-                &mut generator.expr,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_comprehension_clauses(
-                &mut generator.clauses,
-                module_path,
-                loaves,
-                runtime,
-                helper_imports,
-                errors,
-            );
-        }
-        ast::Expr::Closure(_, body) => {
-            rewrite_spanned_expr(body, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::Tuple(items) | ast::Expr::Set(items) => {
-            for item in items {
-                rewrite_spanned_expr(item, module_path, loaves, runtime, helper_imports, errors);
-            }
-        }
-        ast::Expr::List(items) => {
-            for item in items {
-                match item {
-                    ast::ListEntry::Element(expr) | ast::ListEntry::Spread(expr) => {
-                        rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
-                    }
-                }
-            }
-        }
-        ast::Expr::Dict(entries) => {
-            for entry in entries {
-                match entry {
-                    ast::DictEntry::Pair(key, value) => {
-                        rewrite_spanned_expr(key, module_path, loaves, runtime, helper_imports, errors);
-                        rewrite_spanned_expr(value, module_path, loaves, runtime, helper_imports, errors);
-                    }
-                    ast::DictEntry::Spread(value) => {
-                        rewrite_spanned_expr(value, module_path, loaves, runtime, helper_imports, errors);
-                    }
-                }
-            }
-        }
-        ast::Expr::Constructor(_, args) => {
-            rewrite_call_args(args, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::FString(parts) => {
-            for part in parts {
-                if let ast::FStringPart::Expr { expr, .. } = part {
-                    rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
-                }
-            }
-        }
-        ast::Expr::Range { start, end, .. } => {
-            rewrite_spanned_expr(start, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_spanned_expr(end, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::Expr::Surface(surface) => {
-            rewrite_surface_expr(surface, module_path, loaves, runtime, helper_imports, errors)
-        }
-        // RFC 081 (#1023): unlike `VocabBlock`/`Surface` above, the embedded-fragment container itself is *not*
-        // erased or replaced by this pass -- it must survive into typecheck/lowering as itself so its holes get
-        // real Incan typing (see `EmbeddedFragmentExpr`'s rustdoc). Its expression holes are still recursed into
-        // here, exactly like `Surface`'s operands above, so a hole that itself uses some other DSL's vocab block
-        // or scoped surface still gets desugared correctly.
-        ast::Expr::Embedded(fragment) => {
-            for hole in fragment.holes_mut() {
-                rewrite_spanned_expr(hole, module_path, loaves, runtime, helper_imports, errors);
-            }
-        }
-        ast::Expr::Ident(_)
-        | ast::Expr::Literal(_)
-        | ast::Expr::SelfExpr
-        | ast::Expr::Yield(None)
-        | ast::Expr::VocabBlock(_) => {}
-    }
-}
-
-/// Rewrite vocab expressions inside positional, named, and unpacked call arguments.
-fn rewrite_call_args(
-    args: &mut [ast::CallArg],
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    for arg in args {
-        match arg {
-            ast::CallArg::Positional(expr)
-            | ast::CallArg::Named(_, expr)
-            | ast::CallArg::PositionalUnpack(expr)
-            | ast::CallArg::KeywordUnpack(expr) => {
-                rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
-            }
-        }
-    }
-}
-
-/// Rewrite vocab expressions inside comprehension iterator and filter clauses.
-fn rewrite_comprehension_clauses(
-    clauses: &mut [ast::ComprehensionClause],
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    for clause in clauses {
-        match clause {
-            ast::ComprehensionClause::For { iter, .. } | ast::ComprehensionClause::If(iter) => {
-                rewrite_spanned_expr(iter, module_path, loaves, runtime, helper_imports, errors);
-            }
-        }
-    }
-}
-
-/// Rewrite nested expressions held by non-core surface-expression payloads.
-fn rewrite_surface_expr(
-    surface: &mut ast::SurfaceExpr,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-    errors: &mut Vec<CompileError>,
-) {
-    match &mut surface.payload {
-        ast::SurfaceExprPayload::PrefixUnary(inner) => {
-            rewrite_spanned_expr(inner, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::SurfaceExprPayload::RaceFor(race) => {
-            for arm in &mut race.arms {
-                rewrite_spanned_expr(&mut arm.awaitable, module_path, loaves, runtime, helper_imports, errors);
-                match &mut arm.body {
-                    ast::RaceForBody::Expr(expr) => {
-                        rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
-                    }
-                    ast::RaceForBody::Block(body) => {
-                        rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
-                    }
-                }
-            }
-        }
-        ast::SurfaceExprPayload::LeadingDotPath { .. } => {}
-        ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-            rewrite_spanned_expr(left, module_path, loaves, runtime, helper_imports, errors);
-            rewrite_spanned_expr(right, module_path, loaves, runtime, helper_imports, errors);
-        }
-        ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-            rewrite_call_args(args, module_path, loaves, runtime, helper_imports, errors);
-        }
-    }
-}
-
-/// Desugar one expression-position vocab block and convert the expression result back to compiler AST.
-fn desugar_vocab_block_to_expression(
-    block: &ast::VocabBlockStmt,
-    span: ast::Span,
-    module_path: Option<&str>,
-    loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-) -> Result<ast::Expr, CompileError> {
-    let bridged = internal_vocab_block_to_public(block, span).map_err(|source| {
-        error_from_pass_error(
-            VocabDesugarPassError::Bridge {
-                keyword: block.keyword.clone(),
-                source,
-            },
-            span,
-        )
-    })?;
-    let bridged_keyword = bridged.keyword.clone();
-    let bridged_keyword_metadata = bridged.keyword_metadata.clone();
-    let request_node = incan_vocab::VocabSyntaxNode::Declaration(bridged);
-    let mut desugared = runtime
-        .desugar_node(loaves, &request_node, module_path)
-        .map_err(|err| error_from_pass_error(err, span))?;
-
-    let incan_vocab::DesugarOutput::Expression(expression) = &mut desugared.output else {
-        return Err(error_from_pass_error(
-            VocabDesugarPassError::UnsupportedOutput {
-                keyword: bridged_keyword,
-            },
-            span,
-        ));
-    };
-
-    resolve_helper_bindings_in_expr(
-        expression,
-        bridged_keyword_metadata.as_ref(),
-        &bridged_keyword,
-        loaves,
-        helper_imports,
+/// The refusal for a provider output that cannot occupy the block's source position.
+fn unsupported_output(block: &ast::VocabBlockStmt, span: ast::Span) -> CompileError {
+    error_from_pass_error(
+        VocabDesugarPassError::UnsupportedOutput {
+            keyword: block.keyword.clone(),
+        },
+        span,
     )
-    .map_err(|message| {
-        error_from_pass_error(
-            VocabDesugarPassError::HelperBinding {
-                keyword: bridged_keyword.clone(),
-                message,
-            },
-            span,
-        )
-    })?;
-
-    public_expr_to_internal_with_anchor(expression, span).map_err(|source| {
-        error_from_pass_error(
-            VocabDesugarPassError::Bridge {
-                keyword: bridged_keyword,
-                source,
-            },
-            span,
-        )
-    })
 }
 
 /// Map a pass/runtime error into a compiler diagnostic.
 ///
-/// These are infrastructure failures (artifact I/O, WASM compilation, checksum mismatches), not semantic type errors,
+/// These are infrastructure failures (artifact I/O, worker execution, checksum mismatches), not semantic type errors,
 /// so we use the generic `Error` kind rather than `Type`.
 fn error_from_pass_error(error: VocabDesugarPassError, fallback_span: ast::Span) -> CompileError {
-    CompileError::new(format!("vocab desugar pass failed: {error}"), fallback_span)
+    let span = match &error {
+        VocabDesugarPassError::Native { span: Some(span), .. } => *span,
+        _ => fallback_span,
+    };
+    CompileError::new(format!("vocab desugar pass failed: {error}"), span)
 }

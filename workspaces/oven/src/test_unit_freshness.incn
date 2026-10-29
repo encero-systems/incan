@@ -1,14 +1,50 @@
 """Reuse contracts: an unchanged unit is keyed from metadata alone, and any relevant change is a different key."""
 
 from rust::std::fs import OpenOptions, metadata
+from rust::std::process import Command
 from std.fs import Path
-from files import make_directory, read, remove, write as write_file
+from std.json import JsonValue
+from files import json_text, make_directory, read, remove, write as write_file
+from compiler_refusals import check_or_replay, compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
+from intake import ManifestReader
 from observation import load_ledger
+from native_closure_input import NativeClosureInput, native_bindings
+from standalone_rust import published_bindings
 from scratch import scratch_directory
+from rust_freshness import compilation_observations, inputs_unchanged, library_key
+from rust_units import (
+    BuiltUnit,
+    RegistryUnits,
+    RustBuild,
+    RustFacet,
+    compile_rust_library,
+    identity,
+    library_compile_arguments,
+    linking,
+    native_artifacts,
+    package_environment,
+    rust_library_producer_key,
+    rust_library_graph_key,
+)
+from loaf_local_graph import LocalEdge, LocalFacet
+from rust_activation import DependencyDomain
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
-from unit_freshness import Key, artifact_files, compiler_fingerprint, reusable, rust_key, source_fingerprint, staleness
+from unit_rust import add_extern, compile_library_unit
+from unit_freshness import (
+    Key,
+    artifact_files,
+    artifact_identity,
+    compiler_fingerprint,
+    reusable,
+    record,
+    rust_key,
+    description_digest,
+    unit_key_with,
+    staleness,
+    unit_key,
+)
 
 
 model Fixture:
@@ -48,8 +84,11 @@ def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
 
 def publish_loaf(directory: Path, name: str, text: str) -> Result[None, str]:
     """Write the complete artifact set of a Loaf."""
-    for artifact in artifact_files(directory, name):
-        write(artifact, f"{text} {artifact.name()}")?
+    for artifact in artifact_files(directory, name)?:
+        mut content = f"{text} {artifact.name()}"
+        if artifact.name().endswith(".incnlib"):
+            content = JsonValue.object({"fixture": JsonValue.string(text)}).to_json().unwrap_or("{}")
+        write(artifact, content)?
     return Ok(None)
 
 
@@ -98,7 +137,7 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
 def reconcile(scratch: Path, setup: Fixture) -> Result[Pass, str]:
     """Key the unit as a new process would: load its ledger, reconcile, save it. Settling is immediate."""
     mut project = load_ledger(scratch.joinpath("ledgers").joinpath("project.json"), 0)
-    key = source_fingerprint(setup.unit, compiler_fingerprint(setup.toolchain)?, project)?.digest
+    key = unit_key_with(setup.unit, compiler_fingerprint(setup.toolchain)?, description_digest(setup.unit)?, project)?.digest
     project.save()?
     return Ok(Pass(key=key, hashed=project.hashed, listed=project.listed))
 
@@ -148,29 +187,263 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     write(setup.root.joinpath("tests").joinpath("helpers.incn"), "pub def helper() -> int:\n    return 2\n")?
     helper = reconcile(scratch.path(), testing)?
     assert helper.key != before.key
+    verify_refusal_replay(scratch.path().joinpath("refusals"))?
+    verify_check_replay(scratch.path().joinpath("checks"))?
+    return Ok(None)
+
+
+def verify_refusal_replay(scratch: Path) -> Result[None, str]:
+    """
+    Exercise certified replay, edited input, malformed storage and abnormal failures with a counted compiler that
+    cannot start a worker, so every compilation is one process. Its receipt path arrives as `--certify PATH` right
+    after the sysroot, as the worker would receive it.
+
+    1. Replay an unchanged refusal with exact binary streams.
+    2. Recompile edited sources and malformed records.
+    3. Retry crashes, signals, I/O failures and success without artifacts.
+    """
+    setup = fixture(scratch)?
+    driver = Path(setup.toolchain.driver)
+    attempts = scratch.joinpath("attempts")
+    source = Path(setup.unit.source)
+    cache = scratch.joinpath("refusal.json")
+    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    script += "[ \"$6\" = --certify ] && [ \"$8\" = --library ] || exit 2\n"
+    script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\n"
+    script += "case \"$mode\" in\nio) printf 'I/O failure' >&2; exit 1;;\nmissing) exit 0;;\nesac\n"
+    script += "printf 'incan.compiler-refusal/1\\n' > \"$7\"\n"
+    script += "printf '\\377out'; printf 'named refusal\\000tail' >&2\n"
+    script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nesac\nexit 1\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    invocation = ["--unit", "unit.json", "app", "app.rlib", setup.toolchain.sysroot]
+    options = ["--library"]
+    # 1. Replay an unchanged refusal with exact binary streams.
+    write(source, "refuse")?
+    key = unit_key(setup.unit, setup.toolchain)?
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, key, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, key, "test")? == 1
+    retained = cache.read_bytes().map_err((error) => error.message())?
+    expected = b"\xffoutnamed refusal\x00tail"
+    assert retained[len(retained) - len(expected):] == expected
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    mut capturing = setup.toolchain
+    capturing.console = scratch.joinpath("console").0
+    assert compile_or_replay(setup.unit, capturing, invocation, options, cache, key, "test")? == 1
+    assert compile_or_replay(setup.unit, capturing, invocation, options, cache, key, "test")? == 1
+    output = Path(f"{capturing.console}.out").read_bytes().map_err((error) => error.message())?
+    error = Path(f"{capturing.console}.err").read_bytes().map_err((error) => error.message())?
+    assert output == b"\xffout\xffout"
+    assert error == b"named refusal\x00tailnamed refusal\x00tail"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    # 2. Recompile edited sources and malformed records.
+    write(source, "refuse edited")?
+    edited = unit_key(setup.unit, setup.toolchain)?
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
+    write(cache, "incomplete document")?
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
+    framed = cache.read_bytes().map_err((error) => error.message())?
+    cache.write_bytes(framed[:len(framed) - 1]).map_err((error) => error.message())?
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxxx"
+    # 3. Retry crashes, signals, I/O failures and success without artifacts.
+    for mode in ["crash", "signal", "io", "missing"]:
+        write(source, mode)?
+        changed = unit_key(setup.unit, setup.toolchain)?
+        before = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
+        first_status = compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, changed, "test")?
+        second_status = compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, changed, "test")?
+        assert first_status == second_status
+        after = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
+        assert after == before + "xx", mode
+    write(source, "refuse with missing artifact")?
+    linked = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
+    linked[0].unlink().map_err((error) => error.message())?
+    incomplete = unit_key(setup.unit, setup.toolchain)?
+    before_missing = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, incomplete, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, incomplete, "test")? == 1
+    after_missing = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert after_missing == before_missing + "xx"
+    return Ok(None)
+
+
+def verify_check_replay(scratch: Path) -> Result[None, str]:
+    """
+    Exercise check replay with a counted compiler that cannot start a worker, so every check is one process.
+
+    1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
+    2. Check again for another report format and after an edit.
+    3. Check again after crashes, signals, uncertified failures and statuses no report has.
+    """
+    setup = fixture(scratch)?
+    driver = Path(setup.toolchain.driver)
+    attempts = scratch.joinpath("attempts")
+    source = Path(setup.unit.source)
+    record = scratch.joinpath("main.text.oven-check")
+    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\nprevious=''\n"
+    script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\n"
+    script += "previous=$argument\ndone\n"
+    script += "case \"$mode\" in\nio) printf 'I/O failure' >&2; exit 1;;\nstatus) exit 2;;\nesac\n"
+    script += "printf 'incan.compiler-check/1\\n' > \"$receipt\"\nprintf '\\377report'; printf 'warning\\000tail' >&2\n"
+    script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nrefuse*) exit 1;;\nesac\nexit 0\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    text = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "text"]
+    # 1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
+    write(source, "pass")?
+    passing = unit_key(setup.unit, setup.toolchain)?
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
+    write(source, "refuse")?
+    refused = unit_key(setup.unit, setup.toolchain)?
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
+    mut expected = "xx"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
+    mut capturing = setup.toolchain
+    capturing.console = scratch.joinpath("console").0
+    assert check_or_replay(setup.unit, capturing, text, record, refused)? == 1
+    assert Path(f"{capturing.console}.out").read_bytes().map_err((error) => error.message())? == b"\xffreport"
+    assert Path(f"{capturing.console}.err").read_bytes().map_err((error) => error.message())? == b"warning\x00tail"
+    # 2. Check again for another report format and after an edit.
+    json = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "json"]
+    assert check_or_replay(setup.unit, setup.toolchain, json, record, refused)? == 1
+    write(source, "refuse edited")?
+    edited = unit_key(setup.unit, setup.toolchain)?
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
+    expected += "xx"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
+    # 3. Check again after crashes, signals, uncertified failures and statuses no report has.
+    for mode in ["crash", "signal", "io", "status"]:
+        write(source, mode)?
+        changed = unit_key(setup.unit, setup.toolchain)?
+        first_status = check_or_replay(setup.unit, setup.toolchain, text, record, changed)?
+        assert check_or_replay(setup.unit, setup.toolchain, text, record, changed)? == first_status
+        expected += "xx"
+        assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected, mode
     return Ok(None)
 
 
 pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
-    """A rebuilt path dependency or standard package changes the key of everything that links it."""
+    """Dependency rebuilds rekey consumers; exact relocated native artifacts and fresh ABI publication stay valid."""
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
-    write(artifact_files(Path(setup.unit.loaves[0].dir), "dep")[0], "dependency rebuilt with different code")?
+    verify_closure_readings(scratch.path().joinpath("closure.json"))?
+    dependency = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
+    write(dependency[0], "dependency rebuilt with different code")?
     rebuilt = reconcile(scratch.path(), setup)?
     assert rebuilt.key != first.key
     assert rebuilt.hashed == 0
-    write(artifact_files(Path(setup.unit.loaves[1].dir), "std")[1], "standard package recompiled")?
+    standard_artifacts = artifact_files(Path(setup.unit.loaves[1].dir), "std")?
+    write(standard_artifacts[1], "{\"fixture\":\"standard package recompiled\"}")?
     recompiled = reconcile(scratch.path(), setup)?
     assert recompiled.key != rebuilt.key
+    # A manifest that declares a vocabulary worker adds it to the artifact set; rewritten without one, it does not.
+    standard = Path(setup.unit.loaves[1].dir)
+    manifest = standard.joinpath("std.incnlib")
+    write(manifest, "{\"vocab\": {\"desugarer_artifact\": {\"artifact_kind\": \"NativeWorker\"}}}")?
+    assert "vocab-worker" in [artifact.name() for artifact in artifact_files(standard, "std")?]
+    write(manifest, "{}")?
+    assert "vocab-worker" not in [artifact.name() for artifact in artifact_files(standard, "std")?]
+    write(manifest, "malformed manifest")?
+    match artifact_files(standard, "std"):
+        Ok(_) =>
+            assert false, "a malformed manifest cannot authorize an incomplete artifact set"
+        Err(_) => pass
+    verify_completed_library_abi(scratch.path().joinpath("publication"))?
+    verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
+    verify_requested_loaf_roots(scratch.path().joinpath("requested-roots"))?
+    return Ok(None)
+
+
+def verify_requested_loaf_roots(scratch: Path) -> Result[None, str]:
+    """Requested native roots keep their offered identity; unrelated published bindings do not become graph anchors."""
+    setup = fixture(scratch)?
+    mut unit = setup.unit
+    unit.loaves = [unit.loaves[0]]
+    directory = Path(unit.loaves[0].dir)
+    closure = directory.joinpath("dep.native.json")
+    write(closure, "{\"externs\":[[\"wanted\",\"libwanted.rlib\"],[\"private\",\"libprivate.rlib\"]]}")?
+    assert published_bindings(unit, setup.toolchain, ["wanted"])? == [directory.joinpath("libwanted.rlib").0]
+    assert published_bindings(unit, setup.toolchain, ["other"])? == []
+    return Ok(None)
+
+
+def verify_native_alias_artifacts(scratch: Path) -> Result[None, str]:
+    """Retain one alias for byte-identical relocated artifacts, refusing different or unreadable candidates."""
+    setup = fixture(scratch)?
+    selected = setup.toolchain.externs[0]
+    assert len(add_extern(setup.unit, selected)?.externs) == 1
+    copy = scratch.joinpath("relocated.rlib")
+    write(copy, read(Path(selected.path))?)?
+    candidate = NativeCrate(name=selected.name, path=copy.0)
+    retained = add_extern(setup.unit, candidate)?
+    assert len(retained.externs) == 1
+    assert retained.externs[0].path == selected.path
+    write(copy, "different runtime")?
+    match add_extern(setup.unit, candidate):
+        Ok(_) =>
+            assert false, "a shared alias cannot select different artifact bytes"
+        Err(reason) =>
+            assert "names conflicting artifacts" in reason
+    remove(copy)?
+    match add_extern(setup.unit, candidate):
+        Ok(_) =>
+            assert false, "a missing candidate cannot prove artifact identity"
+        Err(reason) =>
+            assert copy.0 in reason
+    return Ok(None)
+
+
+def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
+    """
+    Reuse a library whose first compilation creates its indexed Rust ABI cache.
+
+    1. Count a compiler that cannot start a worker and publishes the complete library artifact set, including a new
+       ABI cache.
+    2. Compile the prepared library twice without changing its inputs.
+    3. Require one compiler invocation and retain the published ABI cache.
+    """
+    # 1. The optional cache appears only after the first compiler invocation.
+    setup = fixture(scratch)?
+    attempts = scratch.joinpath("attempts")
+    driver = Path(setup.toolchain.driver)
+    mut script = "#!/bin/sh\nset -eu\n[ \"$1\" = --resident ] && exit 1\n" + f"printf x >> '{attempts.0}'\n"
+    script += "directory=${4%/*}\nmkdir -p \"$directory\"\n"
+    script += "for name in libapp.rlib app.incnlib app.incnbody app.native.json app.incngraph app.rustabi; do\n"
+    script += "printf published > \"$directory/$name\"\ndone\n"
+    script += "printf '{}' > \"$directory/app.incnlib\"\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    # 2. The completed stamp must include the cache that publication added.
+    mut library = setup.unit
+    library.kind = "library"
+    output = setup.root.joinpath("target").joinpath("published").joinpath("libapp.rlib")
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    # 3. A missing cache or an incomplete stamp cannot pass by recompiling silently.
+    assert read(attempts)? == "x"
+    assert output.parent().joinpath("app.rustabi").is_file()
     return Ok(None)
 
 
 pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
-    """The driver, a native crate, a Rust ABI cache and the target each change the fingerprint; nothing else does."""
+    """Compiler, native, ABI, recorded producer selection and target changes each invalidate a unit's generation."""
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = compiler_fingerprint(setup.toolchain)?
+    mut pinned = setup.unit
+    pinned.selected_toolchain = Some(setup.toolchain)
+    assert json_text(pinned.to_json())? == json_text(setup.unit.to_json())?
     assert compiler_fingerprint(setup.toolchain)? == first
     write(Path(setup.toolchain.driver), "driver two, a longer compiler")?
     driver = compiler_fingerprint(setup.toolchain)?
@@ -181,6 +454,14 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     write(Path(setup.toolchain.rust_abi[0]), "abi two, other facts")?
     abi = compiler_fingerprint(setup.toolchain)?
     assert abi != runtime
+    mut recorded = setup.toolchain
+    lock = scratch.path().joinpath("selected.json")
+    write(lock, "first producer closure")?
+    recorded.registry_lock = lock.0
+    selected = compiler_fingerprint(recorded)?
+    assert selected != abi
+    write(lock, "other producer closure")?
+    assert compiler_fingerprint(recorded)? != selected
     mut moved = setup.toolchain
     moved.sysroot = "/rust/1.98.0-x86_64-unknown-linux-gnu"
     assert compiler_fingerprint(moved)? != abi
@@ -220,7 +501,8 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     # An installation that fails after the old stamp is withdrawn leaves no stamp to vouch for the old outputs.
     remove(staged)?
     match install_executable(staged, output, "program", stamp, two):
-        Ok(_) => assert false, "installing a missing build succeeded"
+        Ok(_) =>
+            assert false, "installing a missing build succeeded"
         Err(_) => pass
     assert not reusable([output], stamp, one)?
     assert not reusable([output], stamp, two)?
@@ -240,12 +522,65 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     assert reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
     remove(test_report(tests.joinpath("app")))?
     assert not reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
+    # Rust libraries retain rustc's file dependencies, including escaped paths outside the source directory.
+    setup = fixture(scratch.path())?
+    native = scratch.path().joinpath("native")
+    dependencies = native.joinpath("library.d")
+    included = scratch.path().joinpath("included value.txt")
+    write(included, "first included value")?
+    escaped = included.0.replace(" ", "\\ ")
+    write(dependencies, f"library: {escaped}\n\n# env-dep:CARGO_PKG_NAME=old\n")?
+    arguments = ["--extern", f"runtime={setup.toolchain.externs[0].path}"]
+    environment = {"CARGO_PKG_NAME": "app"}
+    first = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    retained = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    assert retained.digest == first.digest
+    observations = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
+    assert inputs_unchanged(dependencies, observations)?
+    write(included, "changed included value")?
+    changed = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    assert changed.digest != first.digest
+    assert not inputs_unchanged(dependencies, observations)?
+    write(included, "first included value")?
+    changed_environment = library_key(
+        setup.root,
+        native,
+        dependencies,
+        arguments,
+        {"CARGO_PKG_NAME": "other"},
+        [],
+        setup.toolchain,
+    )?
+    assert changed_environment.digest != first.digest
+    # A late source or native-artifact write invalidates publication even after a key was computed.
+    stable = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
+    _ = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    write(Path(setup.toolchain.externs[0].path), "changed while compiling")?
+    assert not inputs_unchanged(dependencies, stable)?
+    Path(setup.toolchain.externs[0].path).unlink().map_err((error) => error.message())?
+    match compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain):
+        Err(_) => pass
+        Ok(_) =>
+            assert false, "missing linked artifacts cannot supply compilation observations"
     return Ok(None)
 
 
 pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_it_links() -> Result[None, str]:
-    """A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
-    the libraries it links; unchanged, it is keyed from metadata alone."""
+    """
+    A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
+    the libraries it links; unchanged, it is keyed from metadata alone.
+    """
+    facet = LocalFacet(
+        project="root",
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=[],
+        registry_aliases=[],
+    )
+    request = RustBuild(project="root", rustc="rustc", registry=RegistryUnits(units=[], search=[]))
+    unrelated = BuiltUnit(crate_name="other", artifact="/other/library.rlib", directory="/other")
+    assert linking(facet, request, {}, [])? == linking(facet, request, {"other": unrelated}, ["/other"])?
     scratch = scratch_directory()?
     setup = rust_crate(scratch.path())?
     sources = setup.facet.joinpath("rust").joinpath("src")
@@ -275,6 +610,246 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     write(setup.dependency, "core two, rebuilt")?
     linked = rust_pass(setup, "another compiler", "alloc")?.key
     assert linked != compiler
+    verify_installed_rust_producer(scratch.path().joinpath("installed"))?
+    return Ok(None)
+
+
+def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
+    """
+    A complete installed proof reuses one producer without invoking a compiler; every changed input still refuses.
+
+    1. Stamp a source facet with an external included file and one exact native dependency.
+    2. Require installed reuse after unrelated search directories are added or the artifact store is relocated.
+    3. Refuse changed features, rustc, source, environment, output and exact extern artifacts.
+    """
+    # 1. This synthetic producer's compiler path is deliberately not executable.
+    setup = rust_crate(scratch)?
+    consumer = fixture(scratch.joinpath("consumer"))?
+    mut facet = LocalFacet(
+        project=setup.facet.0,
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[LocalEdge(alias="core", project="native-core", domain=DependencyDomain.Target)],
+        registry=[],
+        registry_aliases=[],
+    )
+    mut declared = RustFacet(
+        crate_name="data",
+        kind="lib",
+        edition="2024",
+        library=setup.facet.joinpath("rust/src/lib.rs").0,
+        binaries=[],
+        package="data",
+        version="0.1.0",
+        unstable=false,
+        sysroot=false,
+    )
+    installed = scratch.joinpath("generation")
+    artifact = installed.joinpath(f"libdata-{identity(facet, "release")}.rlib")
+    graph = installed.joinpath("data.incngraph")
+    dependencies = installed.joinpath("library.d")
+    included = scratch.joinpath("included value.txt")
+    write(artifact, "one installed library")?
+    write(graph, "one checked graph")?
+    write(included, "one included value")?
+    escaped = included.0.replace(" ", "\\ ")
+    write(dependencies, f"library: {declared.library} {escaped}\n\n# env-dep:CARGO_PKG_VERSION=0.1.0\n")?
+    mut toolchain = consumer.toolchain
+    toolchain.externs.append(NativeCrate(name="data", path=artifact.0))
+    # #2427: supply the fresh empty reader before later fields instead of deferring its nested default.
+    mut request = RustBuild(
+        project=setup.facet.0,
+        profile="release",
+        rustc="must-not-run-rustc",
+        registry=RegistryUnits(units=[], search=[]),
+        toolchain=Some(toolchain),
+        manifests=ManifestReader(),
+        native_compiler="pinned native compiler",
+        installed=native_artifacts(toolchain.externs),
+    )
+    built = {"native-core@target": BuiltUnit(crate_name="core", artifact=setup.dependency.0, directory=scratch.0)}
+    arguments = library_compile_arguments(facet, declared, installed, request, built, [])?
+    environment = package_environment(facet.project, declared, declared.crate_name)
+    key = rust_library_producer_key(facet, installed, arguments, environment, request, toolchain)?
+    stamp = installed.joinpath("library.oven-inputs")
+    record(stamp, key, [artifact, graph, dependencies])?
+    record(installed.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
+    # 2. The selected producer is returned, rather than creating a consumer-local library with the same identity.
+    output = scratch.joinpath("must-not-build")
+    request.toolchain_search = [scratch.joinpath("unrelated-standard-directory").0]
+    retained = compile_rust_library(facet, declared, output, request, built, [])?
+    assert retained.reused and retained.artifact == artifact.0
+    assert not output.is_dir()
+    verify_relocated_rust_producer(facet, declared, output, request, built, artifact)?
+    verify_installed_graph_refresh(facet, declared, output, request, built, artifact, graph, dependencies, included)?
+    # 3. Each proof dimension independently prevents reuse.
+    request.installed["data"] = [artifact.0, artifact.0]
+    require_installed_refusal(facet, declared, output, request, built, "unique")?
+    request.installed["data"] = [artifact.0]
+    remove(stamp)?
+    require_installed_refusal(facet, declared, output, request, built, "no stored build")?
+    record(stamp, key, [artifact, graph, dependencies])?
+    facet.features = ["alloc"]
+    require_installed_refusal(facet, declared, output, request, built, "features")?
+    facet.features = []
+    request.native_compiler = "different pinned native compiler"
+    require_installed_refusal(facet, declared, output, request, built, "compiler")?
+    request.native_compiler = "pinned native compiler"
+    write(included, "changed included value")?
+    require_installed_refusal(facet, declared, output, request, built, "sources")?
+    write(included, "one included value")?
+    declared.version = "0.2.0"
+    require_installed_refusal(facet, declared, output, request, built, "environment")?
+    declared.version = "0.1.0"
+    write(artifact, "replaced installed library")?
+    require_installed_refusal(facet, declared, output, request, built, "replaced")?
+    write(artifact, "one installed library")?
+    record(stamp, key, [artifact, graph, dependencies])?
+    write(setup.dependency, "rebuilt exact native dependency")?
+    require_installed_refusal(facet, declared, output, request, built, "artifacts")?
+    assert not output.is_dir()
+    return Ok(None)
+
+
+def verify_relocated_rust_producer(
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    artifact: Path,
+) -> Result[None, str]:
+    """
+    Relocate an unchanged native producer and its dependency, retaining all changed-input refusals.
+
+    1. Give graph refresh an observer that cannot compile native code.
+    2. Copy the complete producer and exact dependency into another store.
+    3. Reuse those bytes, then refuse replaced native and dependency bytes.
+    """
+    # 1. Only graph analysis is permitted after the producer was already completed.
+    selected = request
+    toolchain = match selected.toolchain:
+        Some(value) => value
+        None => return Err("relocation fixture has no selected toolchain")
+
+    driver = Path(toolchain.driver)
+    script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n"
+    write(driver, script + "printf 'relocated checked graph' > \"$2\"\n")?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    _ = compile_rust_library(facet, declared, output, selected, built, [])?
+    # 2. A fresh installation changes paths, inodes and status-change times, while preserving complete bytes.
+    directory = artifact.parent().parent().joinpath("relocated")
+    for source in artifact.parent().iterdir().map_err((error) => error.message())?:
+        if source.is_file():
+            write(directory.joinpath(source.name()), read(source)?)?
+    dependency = directory.joinpath("libcore.rlib")
+    write(dependency, read(Path(built["native-core@target"].artifact))?)?
+    mut relocated = built
+    relocated["native-core@target"] = BuiltUnit(crate_name="core", artifact=dependency.0, directory=directory.0)
+    moved = directory.joinpath(artifact.name())
+    mut moved_request = request
+    moved_request.installed["data"] = [moved.0]
+    # 3. Filesystem relocation must not authorize changed content or another native compilation.
+    proof = directory.joinpath("library.portable-inputs")
+    saved = read(proof)?
+    remove(proof)?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "command")?
+    write(proof, saved)?
+    retained = compile_rust_library(facet, declared, output, moved_request, relocated, [])?
+    assert retained.reused and retained.artifact == moved.0
+    assert read(moved)? == "one installed library"
+    assert not output.is_dir()
+    write(moved, "replaced relocated library")?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
+    write(moved, "one installed library")?
+    graph = directory.joinpath("data.incngraph")
+    original_graph = read(graph)?
+    write(graph, "replaced relocated graph")?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
+    write(graph, original_graph)?
+    write(dependency, "replaced relocated dependency")?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "artifacts")?
+    return Ok(None)
+
+
+def verify_installed_graph_refresh(
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    artifact: Path,
+    graph: Path,
+    dependencies: Path,
+    included: Path,
+) -> Result[None, str]:
+    """
+    A changed observer refreshes only the graph; stale native inputs refuse before any graph command runs.
+
+    1. Replace the synthetic graph observer with one that refuses native code generation.
+    2. Require one analysis-only refresh without changing native artifact or dependency evidence identities.
+    3. Reuse its graph, then refuse a changed source before invoking another observer generation.
+    """
+    # 1. The test driver accepts only the graph observation command.
+    selected = request
+    toolchain = match selected.toolchain:
+        Some(value) => value
+        None => return Err("graph fixture has no selected toolchain")
+
+    driver = Path(toolchain.driver)
+    attempts = graph.parent().joinpath("graph-attempts")
+    script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n" + f"printf x >> '{attempts.0}'\n" + "printf 'new checked graph' > \"$2\"\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    native_before = artifact_identity(artifact)?
+    dependencies_before = artifact_identity(dependencies)?
+    # 2. A new graph generation must retain both native outputs verbatim.
+    refreshed = compile_rust_library(facet, declared, output, selected, built, [])?
+    assert refreshed.reused and refreshed.artifact == artifact.0
+    assert graph.read_text("utf-8", "strict").map_err((error) => error.message())? == "new checked graph"
+    assert artifact_identity(artifact)? == native_before
+    assert artifact_identity(dependencies)? == dependencies_before
+    # 3. No second analysis is needed, and stale source never authorizes a graph refresh.
+    retained = compile_rust_library(facet, declared, output, selected, built, [])?
+    assert retained.artifact == artifact.0
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    write(driver, script + "# another observer generation\n")?
+    write(included, "source changed before graph refresh")?
+    require_installed_refusal(facet, declared, output, selected, built, "sources")?
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    write(included, "one included value")?
+    _ = compile_rust_library(facet, declared, output, selected, built, [])?
+    # A source mutation during observation cannot publish either the pending graph or a new native proof.
+    changed = script + f"printf 'late source write' > '{included.0}'\n" + "printf 'must not publish' > \"$2\"\n"
+    write(driver, changed)?
+    match compile_rust_library(facet, declared, output, selected, built, []):
+        Ok(_) =>
+            assert false, "graph refresh certified a source mutation"
+        Err(error) =>
+            assert "inputs changed while refreshing data" in error, error
+    assert graph.read_text("utf-8", "strict").map_err((error) => error.message())? == "new checked graph"
+    assert artifact_identity(artifact)? == native_before
+    assert artifact_identity(dependencies)? == dependencies_before
+    write(included, "one included value")?
+    return Ok(None)
+
+
+def require_installed_refusal(
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    cause: str,
+) -> Result[None, str]:
+    """Require a named installed-producer refusal without falling back to a consumer-local compilation."""
+    match compile_rust_library(facet, declared, output, request, built, []):
+        Ok(_) =>
+            assert false, f"changed {cause} authorized stale installed support"
+        Err(error) =>
+            assert "installed native" in error and "data" in error and cause in error, error
     return Ok(None)
 
 
@@ -308,3 +883,40 @@ def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str
     key = rust_key(compiler, described, manifest, sources, [setup.dependency.0], crates)?
     crates.save()?
     return Ok(Pass(key=key.digest, hashed=crates.hashed, listed=crates.listed))
+
+
+def verify_closure_readings(path: Path) -> Result[None, str]:
+    """Reuse exact linking fields, refresh rewrites, and never let deleted or malformed input serve old fields."""
+    readings = NativeClosureInput()
+    write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
+    first = readings.read(path)?
+    match first.get("unused_receipt"):
+        Some(_) =>
+            assert false, "linking fields must exclude unrelated receipt payloads"
+        None => pass
+    assert json_text(readings.read(path)?)? == json_text(first)?
+    assert first.get("externs") != None
+    assert native_bindings(path, readings)? == [("serde", "libserde.rlib")]
+    write(path, "{\"externs\":[[\"missing_artifact\"]]}")?
+    match native_bindings(path, readings):
+        Ok(_) =>
+            assert false, "a native binding without its artifact was accepted"
+        Err(reason) =>
+            assert "native extern must contain a name and artifact" in reason
+    write(path, "{\"search\":[\"other\"],\"macro_externs\":[]}")?
+    assert json_text(readings.read(path)?)? != json_text(first)?
+    selected = first.require("search").map_err((error) => error.message())?
+    assert json_text(selected)? == "[\"first\"]"
+    write(path, "malformed")?
+    match readings.read(path):
+        Ok(_) =>
+            assert false, "malformed native closure cannot reuse earlier linking fields"
+        Err(_) => pass
+    remove(path)?
+    match readings.read(path):
+        Ok(_) =>
+            assert false, "a deleted native closure cannot reuse earlier linking fields"
+        Err(_) => pass
+    write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
+    assert json_text(readings.read(path)?)? == json_text(first)?
+    return Ok(None)

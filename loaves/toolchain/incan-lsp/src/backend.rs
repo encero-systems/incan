@@ -56,9 +56,11 @@ use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_lang::lang::surface::constructors;
 use incan_lang::lang::types::collections;
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 mod analysis;
+mod analysis_cache;
+mod graph_navigation;
 mod loaves;
 mod rust_hover;
 
@@ -70,6 +72,8 @@ pub struct DocumentState {
     pub source: String,
     pub ast: Option<Program>,
     pub version: i32,
+    /// Exporter-owned graph records for this live analysis; invalidated before dependent buffers change.
+    graph_navigation: Option<graph_navigation::GraphSnapshot>,
     /// Canonical source identities produced by the same typecheck as this document state.
     ///
     /// Navigation consumers fail closed when a reference has no recorded identity; they never recover a target from
@@ -168,6 +172,10 @@ pub struct IncanLanguageServer {
     documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
     /// Only the most recently requested analysis may publish, including after a close and reopen.
     analysis_tickets: RwLock<HashMap<Url, Arc<()>>>,
+    /// Sessions hold compiled facts only; each analysis still asks Oven to prepare current dependency artifacts.
+    analysis_sessions: Arc<std::sync::Mutex<analysis_cache::Sessions>>,
+    /// Latest text, including edits awaiting the debounce interval or a checking pass.
+    pending_sources: RwLock<HashMap<Url, String>>,
 }
 
 impl IncanLanguageServer {
@@ -177,6 +185,8 @@ impl IncanLanguageServer {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
             analysis_tickets: RwLock::new(HashMap::new()),
+            analysis_sessions: Arc::new(std::sync::Mutex::new(analysis_cache::Sessions::default())),
+            pending_sources: RwLock::new(HashMap::new()),
         }
     }
 
@@ -578,41 +588,10 @@ fn local_signature_in_expr(
         Expr::Index(base, index) => local_signature_in_expr(base, ast, source, offset)
             .or_else(|| local_signature_in_expr(index, ast, source, offset)),
         Expr::Slice(base, slice) => local_signature_in_expr(base, ast, source, offset)
-            .or_else(|| {
-                slice
-                    .start
-                    .as_ref()
-                    .and_then(|start| local_signature_in_expr(start, ast, source, offset))
-            })
-            .or_else(|| {
-                slice
-                    .end
-                    .as_ref()
-                    .and_then(|end| local_signature_in_expr(end, ast, source, offset))
-            })
-            .or_else(|| {
-                slice
-                    .step
-                    .as_ref()
-                    .and_then(|step| local_signature_in_expr(step, ast, source, offset))
-            }),
+            .or_else(|| local_signature_in_slice(slice, ast, source, offset)),
         Expr::Field(base, _) => local_signature_in_expr(base, ast, source, offset),
-        Expr::Match(scrutinee, arms) => local_signature_in_expr(scrutinee, ast, source, offset).or_else(|| {
-            arms.iter().find_map(|arm| {
-                arm.node
-                    .guard
-                    .as_ref()
-                    .and_then(|guard| local_signature_in_expr(guard, ast, source, offset))
-                    .or_else(|| match &arm.node.body {
-                        incan_frontend::ast::MatchBody::Expr(expr) => {
-                            local_signature_in_expr(expr, ast, source, offset)
-                        }
-                        incan_frontend::ast::MatchBody::Block(statements) => {
-                            local_signature_in_statements(statements, ast, source, offset)
-                        }
-                    })
-            })
-        }),
+        Expr::Match(scrutinee, arms) => local_signature_in_expr(scrutinee, ast, source, offset)
+            .or_else(|| local_signature_in_match_arms(arms, ast, source, offset)),
         Expr::If(if_expr) => local_signature_in_expr(&if_expr.condition, ast, source, offset)
             .or_else(|| local_signature_in_statements(&if_expr.then_body, ast, source, offset))
             .or_else(|| {
@@ -682,25 +661,7 @@ fn local_signature_in_expr(
         Expr::Yield(None) => None,
         Expr::Range { start, end, .. } => local_signature_in_expr(start, ast, source, offset)
             .or_else(|| local_signature_in_expr(end, ast, source, offset)),
-        Expr::Surface(surface) => match &surface.payload {
-            incan_frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => {
-                local_signature_in_expr(inner, ast, source, offset)
-            }
-            incan_frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
-                local_signature_in_expr(&arm.awaitable, ast, source, offset).or_else(|| match &arm.body {
-                    RaceForBody::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
-                    RaceForBody::Block(statements) => local_signature_in_statements(statements, ast, source, offset),
-                })
-            }),
-            incan_frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
-            incan_frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                local_signature_in_expr(left, ast, source, offset)
-                    .or_else(|| local_signature_in_expr(right, ast, source, offset))
-            }
-            incan_frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-                local_signature_in_call_args(args, ast, source, offset)
-            }
-        },
+        Expr::Surface(surface) => local_signature_in_surface(&surface.payload, ast, source, offset),
         Expr::VocabBlock(block) => block
             .header_args
             .iter()
@@ -714,6 +675,73 @@ fn local_signature_in_expr(
             .into_iter()
             .find_map(|hole| local_signature_in_expr(hole, ast, source, offset)),
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
+    }
+}
+
+/// Search optional slice bounds in start/end/step order after the caller has searched the base expression.
+fn local_signature_in_slice(
+    slice: &incan_frontend::ast::SliceExpr,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    slice
+        .start
+        .as_ref()
+        .and_then(|start| local_signature_in_expr(start, ast, source, offset))
+        .or_else(|| {
+            slice
+                .end
+                .as_ref()
+                .and_then(|end| local_signature_in_expr(end, ast, source, offset))
+        })
+        .or_else(|| {
+            slice
+                .step
+                .as_ref()
+                .and_then(|step| local_signature_in_expr(step, ast, source, offset))
+        })
+}
+
+/// Search match guards before their expression or statement bodies, retaining the first signature in arm order.
+fn local_signature_in_match_arms(
+    arms: &[Spanned<incan_frontend::ast::MatchArm>],
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    arms.iter().find_map(|arm| {
+        arm.node
+            .guard
+            .as_ref()
+            .and_then(|guard| local_signature_in_expr(guard, ast, source, offset))
+            .or_else(|| match &arm.node.body {
+                MatchBody::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+                MatchBody::Block(statements) => local_signature_in_statements(statements, ast, source, offset),
+            })
+    })
+}
+
+/// Follow source surface payloads without introducing another signature authority. Race awaitables precede their
+/// bodies; leading-dot paths contain no ordinary expression to search.
+fn local_signature_in_surface(
+    payload: &SurfaceExprPayload,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    match payload {
+        SurfaceExprPayload::PrefixUnary(inner) => local_signature_in_expr(inner, ast, source, offset),
+        SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
+            local_signature_in_expr(&arm.awaitable, ast, source, offset).or_else(|| match &arm.body {
+                RaceForBody::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+                RaceForBody::Block(statements) => local_signature_in_statements(statements, ast, source, offset),
+            })
+        }),
+        SurfaceExprPayload::LeadingDotPath { .. } => None,
+        SurfaceExprPayload::ScopedGlyph { left, right, .. } => local_signature_in_expr(left, ast, source, offset)
+            .or_else(|| local_signature_in_expr(right, ast, source, offset)),
+        SurfaceExprPayload::ScopedSymbolCall { args, .. } => local_signature_in_call_args(args, ast, source, offset),
     }
 }
 
@@ -942,7 +970,7 @@ fn api_metadata_previews(ast: &Program, metadata: &CheckedApiMetadata) -> Vec<Ap
                 api_static_markdown(static_decl),
             )),
             ApiDeclaration::Alias(alias) => previews.push(ApiMetadataPreview {
-                span: source_anchor_span(&alias.anchor),
+                span: alias.anchor.span,
                 markdown: checked_api_markdown(
                     format!("pub alias {} = {}", alias.name, alias.target_path.join("::")),
                     "public import alias",
@@ -972,8 +1000,8 @@ fn registry_previews(artifacts: &typechecker::RegistryArtifacts) -> Vec<Registry
         .descriptions
         .iter()
         .map(|description| RegistryPreview {
-            registration_span: Span::new(description.decorator_span.0, description.decorator_span.1),
-            subject_span: Span::new(description.declaration_span.0, description.declaration_span.1),
+            registration_span: description.decorator_span,
+            subject_span: description.declaration_span,
             markdown: format!(
                 "```incan\n@describe({}, {}, {})\n```\n\n*checked registry membership*\n\n- Registry: `{}`\n- Subject: `{}`\n- Key: `{}`\n- Descriptor: `{}`",
                 description.registry_name,
@@ -1179,14 +1207,9 @@ fn c_binding_preview_at_offset(previews: &[CBindingPreview], offset: usize) -> O
 /// Convert a metadata anchor to an LSP preview entry.
 fn preview_for_anchor(anchor: &SourceAnchor, markdown: String) -> ApiMetadataPreview {
     ApiMetadataPreview {
-        span: source_anchor_span(anchor),
+        span: anchor.span,
         markdown,
     }
-}
-
-/// Convert a metadata anchor span to the frontend span type used by LSP ranges.
-fn source_anchor_span(anchor: &SourceAnchor) -> Span {
-    Span::new(anchor.span.start, anchor.span.end)
 }
 
 /// Find a top-level declaration by its exported source name.
@@ -1922,8 +1945,8 @@ fn checked_identity_at_offset(
         .references
         .resolved_identities
         .iter()
-        .filter_map(|((start, end), identity)| {
-            let reference_span = checked_reference_token_span(source, Span::new(*start, *end), identity)?;
+        .filter_map(|(span, identity)| {
+            let reference_span = checked_reference_token_span(source, *span, identity)?;
             (reference_span == token_span).then_some((identity, reference_span))
         })
         .min_by_key(|(_, span)| span.end.saturating_sub(span.start))
@@ -1934,8 +1957,7 @@ fn checked_identity_at_offset(
         });
     }
 
-    for ((start, end), bindings) in &snapshot.type_info.declarations.hir_bindings_by_span {
-        let declaration_span = Span::new(*start, *end);
+    for (&declaration_span, bindings) in &snapshot.type_info.declarations.hir_bindings_by_span {
         for binding in bindings {
             if binding.local_name != identifier {
                 continue;
@@ -1955,11 +1977,11 @@ fn checked_identity_at_offset(
         }
     }
 
-    for ((start, end, name), identity) in &snapshot.type_info.references.resolved_write_identities {
+    for ((span, name), identity) in &snapshot.type_info.references.resolved_write_identities {
         if name != &identifier {
             continue;
         }
-        let statement_span = Span::new(*start, *end);
+        let statement_span = *span;
         if first_identifier_span_named(source, statement_span, name) == Some(token_span) {
             return Some(CheckedIdentityOccurrence {
                 identity: identity.clone(),
@@ -1976,8 +1998,7 @@ fn checked_identity_at_offset(
                     .declaration_sources
                     .get(&identity.origin)
                     .is_some_and(|declaration_source| &declaration_source.uri == document_uri)
-                && first_identifier_span_named(source, source_span(identity.declaration_span), &identifier)
-                    == Some(token_span)
+                && first_identifier_span_named(source, identity.declaration_span, &identifier) == Some(token_span)
         })
         .map(|identity| CheckedIdentityOccurrence {
             identity,
@@ -2081,7 +2102,11 @@ fn identifier_spans(span: Span, source: &str) -> Vec<(String, Span)> {
             };
             Some((
                 name,
-                Span::new(span.start + token.span.start, span.start + token.span.end),
+                Span {
+                    start: span.start + token.span.start,
+                    end: span.start + token.span.end,
+                    expansion: span.expansion,
+                },
             ))
         })
         .collect()
@@ -2098,7 +2123,10 @@ fn first_identifier_span_named(source: &str, span: Span, name: &str) -> Option<S
 fn checked_reference_token_span(source: &str, span: Span, identity: &CanonicalSymbolId) -> Option<Span> {
     let fragment = source.get(span.start..span.end)?;
     let target_end = fragment.find('(').map(|offset| span.start + offset).unwrap_or(span.end);
-    let target_span = Span::new(span.start, target_end);
+    let target_span = Span {
+        end: target_end,
+        ..span
+    };
     let tokens = identifier_spans(target_span, source);
     tokens
         .iter()
@@ -2108,18 +2136,13 @@ fn checked_reference_token_span(source: &str, span: Span, identity: &CanonicalSy
         .map(|(_, span)| *span)
 }
 
-/// Convert a semantics-core source span into the frontend span representation.
-fn source_span(span: HirSourceSpan) -> Span {
-    Span::new(span.start, span.end)
-}
-
 /// Project a canonical identity to its genuine source file, if that exact source was retained by the analysis.
 fn definition_location_for_identity(
     identity: &CanonicalSymbolId,
     declaration_sources: &RelatedDeclarationSources,
 ) -> Option<Location> {
     let declaration_source = declaration_sources.get(&identity.origin)?;
-    let span = source_span(identity.declaration_span);
+    let span = identity.declaration_span;
     if span.start >= span.end || declaration_source.source.get(span.start..span.end).is_none() {
         return None;
     }
@@ -2146,129 +2169,6 @@ fn checked_identity_hover(source: &str, occurrence: &CheckedIdentityOccurrence) 
             value: markdown,
         }),
         range: Some(span_to_range(source, occurrence.span.start, occurrence.span.end)),
-    }
-}
-
-/// Borrowed document inputs used by identity-based reference collection.
-struct CheckedIdentityDocument<'a> {
-    uri: &'a Url,
-    source: &'a str,
-    ast: &'a Program,
-    snapshot: &'a CheckedIdentitySnapshot,
-}
-
-/// Collect all open-document occurrences of one canonical identity.
-fn checked_reference_locations<'a>(
-    identity: &CanonicalSymbolId,
-    include_declaration: bool,
-    documents: impl IntoIterator<Item = CheckedIdentityDocument<'a>>,
-    declaration_sources: &RelatedDeclarationSources,
-) -> Vec<Location> {
-    let mut locations = Vec::new();
-    let mut seen = HashSet::new();
-
-    if include_declaration && let Some(location) = definition_location_for_identity(identity, declaration_sources) {
-        push_unique_location(&mut locations, &mut seen, location);
-    }
-
-    for document in documents {
-        for ((start, end), candidate) in &document.snapshot.type_info.references.resolved_identities {
-            if candidate == identity
-                && let Some(span) = checked_reference_token_span(document.source, Span::new(*start, *end), candidate)
-                && let Some(location) = checked_source_location(document.uri, document.source, span)
-            {
-                push_unique_location(&mut locations, &mut seen, location);
-            }
-        }
-
-        for ((start, end), bindings) in &document.snapshot.type_info.declarations.hir_bindings_by_span {
-            let declaration_span = Span::new(*start, *end);
-            for binding in bindings {
-                if binding.canonical.as_ref() != Some(identity)
-                    || canonical_declaration_is_in_document(identity, document.uri, declaration_span, document.snapshot)
-                {
-                    continue;
-                }
-                if let Some(span) = checked_declaration_binding_span(
-                    document.ast,
-                    document.source,
-                    declaration_span,
-                    &binding.local_name,
-                ) && let Some(location) = checked_source_location(document.uri, document.source, span)
-                {
-                    push_unique_location(&mut locations, &mut seen, location);
-                }
-            }
-        }
-
-        for ((start, end, name), candidate) in &document.snapshot.type_info.references.resolved_write_identities {
-            if candidate != identity {
-                continue;
-            }
-            let statement_span = Span::new(*start, *end);
-            if canonical_declaration_is_in_document(identity, document.uri, statement_span, document.snapshot) {
-                continue;
-            }
-            if let Some(span) = first_identifier_span_named(document.source, statement_span, name)
-                && let Some(location) = checked_source_location(document.uri, document.source, span)
-            {
-                push_unique_location(&mut locations, &mut seen, location);
-            }
-        }
-    }
-
-    locations.sort_by(|left, right| {
-        left.uri
-            .as_str()
-            .cmp(right.uri.as_str())
-            .then(left.range.start.line.cmp(&right.range.start.line))
-            .then(left.range.start.character.cmp(&right.range.start.character))
-            .then(left.range.end.line.cmp(&right.range.end.line))
-            .then(left.range.end.character.cmp(&right.range.end.character))
-    });
-    locations
-}
-
-/// Return whether this document contains the exact declaration named by a canonical identity.
-fn canonical_declaration_is_in_document(
-    identity: &CanonicalSymbolId,
-    document_uri: &Url,
-    enclosing_span: Span,
-    snapshot: &CheckedIdentitySnapshot,
-) -> bool {
-    snapshot
-        .declaration_sources
-        .get(&identity.origin)
-        .is_some_and(|source| &source.uri == document_uri)
-        && source_span(identity.declaration_span) == enclosing_span
-}
-
-/// Build an LSP location only when the checked source span is nonempty and in bounds.
-fn checked_source_location(uri: &Url, source: &str, span: Span) -> Option<Location> {
-    if span.start >= span.end || source.get(span.start..span.end).is_none() {
-        return None;
-    }
-    Some(Location {
-        uri: uri.clone(),
-        range: span_to_range(source, span.start, span.end),
-    })
-}
-
-/// Append an LSP location once, keyed by URI and exact range.
-fn push_unique_location(
-    locations: &mut Vec<Location>,
-    seen: &mut HashSet<(String, u32, u32, u32, u32)>,
-    location: Location,
-) {
-    let key = (
-        location.uri.to_string(),
-        location.range.start.line,
-        location.range.start.character,
-        location.range.end.line,
-        location.range.end.character,
-    );
-    if seen.insert(key) {
-        locations.push(location);
     }
 }
 
@@ -2766,15 +2666,7 @@ fn scoped_symbol_in_expr<'a>(
         }
         Expr::Match(scrutinee, arms) => {
             scoped_symbol_in_expr(scrutinee, ident, symbol_span, surfaces, found);
-            for arm in arms {
-                if let Some(guard) = &arm.node.guard {
-                    scoped_symbol_in_expr(guard, ident, symbol_span, surfaces, found);
-                }
-                match &arm.node.body {
-                    MatchBody::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
-                    MatchBody::Block(body) => scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found),
-                }
-            }
+            scoped_symbol_in_match_arms(arms, ident, symbol_span, surfaces, found);
         }
         Expr::If(if_expr) => {
             scoped_symbol_in_expr(&if_expr.condition, ident, symbol_span, surfaces, found);
@@ -2811,28 +2703,8 @@ fn scoped_symbol_in_expr<'a>(
                 scoped_symbol_in_expr(item, ident, symbol_span, surfaces, found);
             }
         }
-        Expr::List(entries) => {
-            for entry in entries {
-                match entry {
-                    ListEntry::Element(expr) | ListEntry::Spread(expr) => {
-                        scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
-                    }
-                }
-            }
-        }
-        Expr::Dict(entries) => {
-            for entry in entries {
-                match entry {
-                    incan_frontend::ast::DictEntry::Pair(key, value) => {
-                        scoped_symbol_in_expr(key, ident, symbol_span, surfaces, found);
-                        scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found);
-                    }
-                    incan_frontend::ast::DictEntry::Spread(expr) => {
-                        scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
-                    }
-                }
-            }
-        }
+        Expr::List(entries) => scoped_symbol_in_list_entries(entries, ident, symbol_span, surfaces, found),
+        Expr::Dict(entries) => scoped_symbol_in_dict_entries(entries, ident, symbol_span, surfaces, found),
         Expr::Partial(partial) => {
             scoped_symbol_in_expr(&partial.target, ident, symbol_span, surfaces, found);
             for arg in &partial.args {
@@ -2851,34 +2723,8 @@ fn scoped_symbol_in_expr<'a>(
             scoped_symbol_in_expr(start, ident, symbol_span, surfaces, found);
             scoped_symbol_in_expr(end, ident, symbol_span, surfaces, found);
         }
-        Expr::Surface(surface) => match &surface.payload {
-            SurfaceExprPayload::PrefixUnary(inner) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
-            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                scoped_symbol_in_expr(left, ident, symbol_span, surfaces, found);
-                scoped_symbol_in_expr(right, ident, symbol_span, surfaces, found);
-            }
-            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-                scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found);
-            }
-            SurfaceExprPayload::RaceFor(race) => {
-                for arm in &race.arms {
-                    scoped_symbol_in_expr(&arm.awaitable, ident, symbol_span, surfaces, found);
-                    match &arm.body {
-                        RaceForBody::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
-                        RaceForBody::Block(statements) => {
-                            scoped_symbol_in_statements(statements, ident, symbol_span, surfaces, found);
-                        }
-                    }
-                }
-            }
-            SurfaceExprPayload::LeadingDotPath { .. } => {}
-        },
-        Expr::VocabBlock(block) => {
-            for arg in &block.header_args {
-                scoped_symbol_in_expr(arg, ident, symbol_span, surfaces, found);
-            }
-            scoped_symbol_in_statements(&block.body, ident, symbol_span, surfaces, found);
-        }
+        Expr::Surface(surface) => scoped_symbol_in_surface(&surface.payload, ident, symbol_span, surfaces, found),
+        Expr::VocabBlock(block) => scoped_symbol_in_vocab_block(block, ident, symbol_span, surfaces, found),
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
         Expr::Field(inner, _) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
         // A fragment's expression holes are ordinary Incan (RFC 081), so a scoped symbol written inside one
@@ -2889,6 +2735,109 @@ fn scoped_symbol_in_expr<'a>(
             }
         }
     }
+}
+
+/// Search match guards before their bodies after the caller has searched the scrutinee. The shared first-hit slot
+/// keeps later recursive visits from replacing an already resolved source occurrence.
+fn scoped_symbol_in_match_arms<'a>(
+    arms: &'a [Spanned<incan_frontend::ast::MatchArm>],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for arm in arms {
+        if let Some(guard) = &arm.node.guard {
+            scoped_symbol_in_expr(guard, ident, symbol_span, surfaces, found);
+        }
+        match &arm.node.body {
+            MatchBody::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+            MatchBody::Block(body) => scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found),
+        }
+    }
+}
+
+/// Search list elements and spreads in entry order without copying their source syntax or surface descriptors.
+fn scoped_symbol_in_list_entries<'a>(
+    entries: &'a [ListEntry],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for entry in entries {
+        match entry {
+            ListEntry::Element(expr) | ListEntry::Spread(expr) => {
+                scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found)
+            }
+        }
+    }
+}
+
+/// Search dictionary keys before values, then spread operands, using the same first-hit source occurrence slot.
+fn scoped_symbol_in_dict_entries<'a>(
+    entries: &'a [DictEntry],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for entry in entries {
+        match entry {
+            DictEntry::Pair(key, value) => {
+                scoped_symbol_in_expr(key, ident, symbol_span, surfaces, found);
+                scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found);
+            }
+            DictEntry::Spread(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+        }
+    }
+}
+
+/// Visit only a surface payload's ordinary expressions. Race awaitables precede bodies, scoped glyphs visit left
+/// before right, and leading-dot paths contribute no nested occurrence.
+fn scoped_symbol_in_surface<'a>(
+    payload: &'a SurfaceExprPayload,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    match payload {
+        SurfaceExprPayload::PrefixUnary(inner) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
+        SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+            scoped_symbol_in_expr(left, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(right, ident, symbol_span, surfaces, found);
+        }
+        SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+            scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found)
+        }
+        SurfaceExprPayload::RaceFor(race) => {
+            for arm in &race.arms {
+                scoped_symbol_in_expr(&arm.awaitable, ident, symbol_span, surfaces, found);
+                match &arm.body {
+                    RaceForBody::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+                    RaceForBody::Block(statements) => {
+                        scoped_symbol_in_statements(statements, ident, symbol_span, surfaces, found)
+                    }
+                }
+            }
+        }
+        SurfaceExprPayload::LeadingDotPath { .. } => {}
+    }
+}
+
+/// Search vocabulary header arguments before body statements, retaining source-borrowed occurrence metadata.
+fn scoped_symbol_in_vocab_block<'a>(
+    block: &'a incan_frontend::ast::VocabBlockStmt,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for arg in &block.header_args {
+        scoped_symbol_in_expr(arg, ident, symbol_span, surfaces, found);
+    }
+    scoped_symbol_in_statements(&block.body, ident, symbol_span, surfaces, found);
 }
 
 /// Search comprehension clauses for parsed scoped symbol occurrences.
@@ -3305,15 +3254,7 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
         | Expr::Yield(Some(inner)) => scoped_symbol_context_in_expr(inner, offset, context),
         Expr::Match(scrutinee, arms) => {
             scoped_symbol_context_in_expr(scrutinee, offset, context);
-            for arm in arms {
-                if let Some(guard) = &arm.node.guard {
-                    scoped_symbol_context_in_expr(guard, offset, context);
-                }
-                match &arm.node.body {
-                    MatchBody::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
-                    MatchBody::Block(body) => scoped_symbol_context_in_statements(body, offset, context),
-                }
-            }
+            scoped_symbol_context_in_match_arms(arms, offset, context);
         }
         Expr::If(if_expr) => {
             scoped_symbol_context_in_expr(&if_expr.condition, offset, context);
@@ -3359,19 +3300,7 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
                 }
             }
         }
-        Expr::Dict(entries) => {
-            for entry in entries {
-                match entry {
-                    incan_frontend::ast::DictEntry::Pair(key, value) => {
-                        scoped_symbol_context_in_expr(key, offset, context);
-                        scoped_symbol_context_in_expr(value, offset, context);
-                    }
-                    incan_frontend::ast::DictEntry::Spread(expr) => {
-                        scoped_symbol_context_in_expr(expr, offset, context);
-                    }
-                }
-            }
-        }
+        Expr::Dict(entries) => scoped_symbol_context_in_dict_entries(entries, offset, context),
         Expr::Partial(partial) => {
             scoped_symbol_context_in_expr(&partial.target, offset, context);
             for arg in &partial.args {
@@ -3390,43 +3319,8 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
             scoped_symbol_context_in_expr(start, offset, context);
             scoped_symbol_context_in_expr(end, offset, context);
         }
-        Expr::Surface(surface) => match &surface.payload {
-            SurfaceExprPayload::PrefixUnary(inner) => scoped_symbol_context_in_expr(inner, offset, context),
-            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                scoped_symbol_context_in_expr(left, offset, context);
-                scoped_symbol_context_in_expr(right, offset, context);
-            }
-            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-                scoped_symbol_context_in_call_args(args, offset, context);
-            }
-            SurfaceExprPayload::RaceFor(race) => {
-                for arm in &race.arms {
-                    scoped_symbol_context_in_expr(&arm.awaitable, offset, context);
-                    match &arm.body {
-                        RaceForBody::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
-                        RaceForBody::Block(statements) => {
-                            scoped_symbol_context_in_statements(statements, offset, context);
-                        }
-                    }
-                }
-            }
-            SurfaceExprPayload::LeadingDotPath { .. } => {}
-        },
-        Expr::VocabBlock(block) => {
-            let previous_len = context.vocab_stack.len();
-            context.vocab_stack.push(block.keyword.clone());
-            for arg in &block.header_args {
-                scoped_symbol_context_in_expr(arg, offset, context);
-            }
-            scoped_symbol_context_in_statements(&block.body, offset, context);
-            let matched_body = block
-                .body
-                .iter()
-                .any(|stmt| stmt.span.start <= offset && offset <= stmt.span.end);
-            if !matched_body {
-                context.vocab_stack.truncate(previous_len);
-            }
-        }
+        Expr::Surface(surface) => scoped_symbol_context_in_surface(&surface.payload, offset, context),
+        Expr::VocabBlock(block) => scoped_symbol_context_in_vocab_block(block, offset, context),
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
         Expr::Field(inner, _) => scoped_symbol_context_in_expr(inner, offset, context),
         // Completion context follows the cursor into a fragment's expression holes, which are ordinary Incan
@@ -3436,6 +3330,81 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
                 scoped_symbol_context_in_expr(hole, offset, context);
             }
         }
+    }
+}
+
+/// Update match-arm context in guard/body order after its scrutinee. Each recursive call retains its own cursor guard.
+fn scoped_symbol_context_in_match_arms(
+    arms: &[Spanned<incan_frontend::ast::MatchArm>],
+    offset: usize,
+    context: &mut ScopedSymbolLspContext,
+) {
+    for arm in arms {
+        if let Some(guard) = &arm.node.guard {
+            scoped_symbol_context_in_expr(guard, offset, context);
+        }
+        match &arm.node.body {
+            MatchBody::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+            MatchBody::Block(body) => scoped_symbol_context_in_statements(body, offset, context),
+        }
+    }
+}
+
+/// Visit dictionary keys before their values and spread operands in entry order using the caller's live context.
+fn scoped_symbol_context_in_dict_entries(entries: &[DictEntry], offset: usize, context: &mut ScopedSymbolLspContext) {
+    for entry in entries {
+        match entry {
+            DictEntry::Pair(key, value) => {
+                scoped_symbol_context_in_expr(key, offset, context);
+                scoped_symbol_context_in_expr(value, offset, context);
+            }
+            DictEntry::Spread(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+        }
+    }
+}
+
+/// Follow scoped surface expressions in their original order, including race awaitables before each body. Leading-dot
+/// paths contribute no nested expression context; the caller retains vocabulary stack restoration.
+fn scoped_symbol_context_in_surface(payload: &SurfaceExprPayload, offset: usize, context: &mut ScopedSymbolLspContext) {
+    match payload {
+        SurfaceExprPayload::PrefixUnary(inner) => scoped_symbol_context_in_expr(inner, offset, context),
+        SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+            scoped_symbol_context_in_expr(left, offset, context);
+            scoped_symbol_context_in_expr(right, offset, context);
+        }
+        SurfaceExprPayload::ScopedSymbolCall { args, .. } => scoped_symbol_context_in_call_args(args, offset, context),
+        SurfaceExprPayload::RaceFor(race) => {
+            for arm in &race.arms {
+                scoped_symbol_context_in_expr(&arm.awaitable, offset, context);
+                match &arm.body {
+                    RaceForBody::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+                    RaceForBody::Block(statements) => scoped_symbol_context_in_statements(statements, offset, context),
+                }
+            }
+        }
+        SurfaceExprPayload::LeadingDotPath { .. } => {}
+    }
+}
+
+/// Retain a vocabulary frame only when the cursor matches a body statement. Header-only positions restore the
+/// previous stack depth after the same header/body traversal, preserving nested vocabulary completion scope.
+fn scoped_symbol_context_in_vocab_block(
+    block: &incan_frontend::ast::VocabBlockStmt,
+    offset: usize,
+    context: &mut ScopedSymbolLspContext,
+) {
+    let previous_len = context.vocab_stack.len();
+    context.vocab_stack.push(block.keyword.clone());
+    for arg in &block.header_args {
+        scoped_symbol_context_in_expr(arg, offset, context);
+    }
+    scoped_symbol_context_in_statements(&block.body, offset, context);
+    let matched_body = block
+        .body
+        .iter()
+        .any(|stmt| stmt.span.start <= offset && offset <= stmt.span.end);
+    if !matched_body {
+        context.vocab_stack.truncate(previous_len);
     }
 }
 
@@ -3612,8 +3581,8 @@ fn compile_error_to_diagnostic_with_rust_context(
             "Rust origin: `{}` resolves to `rust::{}`",
             sym.local_name, sym.info.path
         );
-        if !enriched.notes.iter().any(|n| n == &note) {
-            enriched.notes.push(note);
+        if !enriched.notes().iter().any(|n| n == &note) {
+            enriched = enriched.with_note(note);
         }
     }
     compile_error_to_diagnostic_with_phase_and_sources(&enriched, source, uri, phase, related_sources)
@@ -4022,6 +3991,408 @@ fn emit_contract_model_command_payload(
     }
 }
 
+/// Wrap already selected Markdown and its optional exact source span without performing another symbol lookup.
+fn source_markdown_hover(source: &str, markdown: String, span: Option<Span>) -> Hover {
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: span.map(|span| span_to_range(source, span.start, span.end)),
+    }
+}
+
+/// Select ownership, registry, C binding, decorator and Loaf import hovers in their established priority. Embedded
+/// DSL ownership must win before source-text name lookup; expression holes continue to ordinary Incan hover paths.
+fn source_surface_hover(
+    doc: &DocumentState,
+    ast: &Program,
+    offset: usize,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<Hover> {
+    if let Some(ownership) = embedded_dsl_ownership_at_offset(ast, offset) {
+        return Some(source_markdown_hover(
+            &doc.source,
+            embedded_dsl_ownership_hover_markdown(&ownership),
+            Some(ownership.span),
+        ));
+    }
+    if let Some(preview) = registry_preview_at_offset(&doc.registry_previews, offset) {
+        return Some(source_markdown_hover(
+            &doc.source,
+            preview.markdown.clone(),
+            Some(preview.registration_span),
+        ));
+    }
+    if let Some(preview) = c_binding_preview_at_offset(&doc.c_binding_previews, offset) {
+        return Some(source_markdown_hover(
+            &doc.source,
+            preview.markdown.clone(),
+            Some(preview.span),
+        ));
+    }
+    if let Some((id, _resolved)) = find_decorator_at_position(ast, offset, aliases) {
+        let info = decorators::info_for(id);
+        let markdown = format!("```incan\n@{}\n```\n\n{}", info.canonical, info.description);
+        return Some(source_markdown_hover(&doc.source, markdown, None));
+    }
+    if let Some((markdown, span)) = loaves::import_item_hover(ast, &doc.source, offset, &doc.loaves) {
+        return Some(source_markdown_hover(&doc.source, markdown, Some(span)));
+    }
+    loaves::import_module_hover(ast, offset, &doc.loaves)
+        .map(|markdown| source_markdown_hover(&doc.source, markdown, None))
+}
+
+/// Prefer checked Rust calls and imports, then contextual receivers and retained Incan identities. The source
+/// identifier is scanned once for the remaining immutable lookups; no declaration or document snapshot is needed.
+fn resolved_value_hover(
+    uri: &Url,
+    doc: &DocumentState,
+    ast: &Program,
+    offset: usize,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<Hover> {
+    if let Some(hover) = rust_hover::checked_call_hover(doc, offset) {
+        return Some(hover);
+    }
+    if let Some(rust_symbol) = rust_symbol_at_offset(&doc.rust_origin_symbols, offset) {
+        let mut markdown = format!(
+            "```incan\n{}\n```\n\n*rust import* (`{}`)\n\n`rust::{}`",
+            rust_symbol.local_name,
+            rust_binding_kind_label(rust_symbol.info.binding),
+            rust_symbol.info.path
+        );
+        if let Some(metadata) = &rust_symbol.info.metadata {
+            markdown.push_str(&format!(
+                "\n\nresolved kind: `{}`",
+                rust_item_kind_label(&metadata.kind)
+            ));
+        }
+        return Some(source_markdown_hover(&doc.source, markdown, Some(rust_symbol.span)));
+    }
+    let identifier = identifier_at_offset(&doc.source, offset);
+    if let Some((ident, span)) = &identifier
+        && keywords::from_str(ident.as_str()) == Some(keywords::KeywordId::Cls)
+        && let Some(context) = classmethod_context_at_offset(ast, offset, aliases)
+    {
+        let detail = classmethod_cls_detail(&context);
+        let markdown = format!(
+            "```incan\n{detail}\n```\n\n*classmethod receiver* — callable constructor for `{}`.",
+            context.owner_type
+        );
+        return Some(source_markdown_hover(&doc.source, markdown, Some(*span)));
+    }
+    if let Some((ident, span)) = &identifier
+        && let Some(markdown) = builtin_list_repeat_hover(&doc.source, ident, *span)
+    {
+        return Some(source_markdown_hover(&doc.source, markdown, Some(*span)));
+    }
+    if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset) {
+        return Some(checked_identity_hover(&doc.source, &occurrence));
+    }
+    if let Some((ident, span)) = &identifier
+        && let Some(markdown) = unchecked_lookup_hover(&doc.source, &doc.value_types, ident, *span)
+    {
+        return Some(source_markdown_hover(&doc.source, markdown, Some(*span)));
+    }
+    None
+}
+
+/// Select context-specific completions before general document symbols. The ordering preserves Loaf imports,
+/// decorators, builtin members, Rust members and explicit call-site type arguments as distinct early-return contexts.
+fn specific_completion_items(
+    doc: &DocumentState,
+    line_prefix: &str,
+    position: Position,
+) -> Option<Vec<CompletionItem>> {
+    if let Some(items) = loaves::import_item_completions(line_prefix, &doc.loaves) {
+        return Some(items);
+    }
+    if let Some(items) = loaves::module_completions(line_prefix, &doc.loaves) {
+        return Some(items);
+    }
+    if let Some(items) = decorator_completions(line_prefix) {
+        return Some(items);
+    }
+    if let Some(items) = builtin_list_member_completions(line_prefix) {
+        return Some(items);
+    }
+    if let Some(items) = rust_member_completions(line_prefix, &doc.rust_origin_symbols) {
+        return Some(items);
+    }
+    if let Some(offset) = position_to_offset(&doc.source, position)
+        && call_site_type_args::offset_in_call_site_type_argument_list(&doc.source, offset)
+    {
+        return Some(call_site_type_args::call_site_type_argument_completion_items(
+            doc.ast.as_ref(),
+        ));
+    }
+    None
+}
+
+/// Add contextual receiver and scoped DSL symbols before builtin and declaration completions, retaining source
+/// aliases and descriptor identities rather than deriving another declaration surface.
+fn push_contextual_completions(
+    doc: &DocumentState,
+    position: Position,
+    items: &mut Vec<CompletionItem>,
+    seen: &mut HashSet<String>,
+) {
+    let Some(ast) = &doc.ast else {
+        return;
+    };
+    let aliases = collect_import_aliases(ast);
+    if let Some(offset) = position_to_offset(&doc.source, position)
+        && let Some(context) = classmethod_context_at_offset(ast, offset, &aliases)
+    {
+        push_completion(
+            items,
+            seen,
+            keywords::as_str(keywords::KeywordId::Cls),
+            CompletionItemKind::VARIABLE,
+            Some(format!(
+                "{} — classmethod receiver constructor",
+                classmethod_cls_detail(&context)
+            )),
+            Some("0_cls".to_string()),
+        );
+    }
+    if let Some(offset) = position_to_offset(&doc.source, position) {
+        for symbol in active_scoped_symbol_completions(ast, &doc.library_imported_dsl_surfaces, offset) {
+            push_completion(
+                items,
+                seen,
+                &symbol.descriptor.symbol,
+                CompletionItemKind::FUNCTION,
+                Some(scoped_symbol_completion_detail(
+                    symbol.dependency_key,
+                    symbol.descriptor,
+                )),
+                Some(format!("0_scoped_{}", symbol.descriptor.symbol)),
+            );
+        }
+    }
+}
+
+/// Add canonical registry spellings before their aliases through the existing first-label-wins completion rule.
+fn push_registry_completion_names(
+    canonical: &str,
+    aliases: &[&str],
+    kind: CompletionItemKind,
+    items: &mut Vec<CompletionItem>,
+    seen: &mut HashSet<String>,
+) {
+    push_completion(items, seen, canonical, kind, None, None);
+    for alias in aliases {
+        push_completion(items, seen, alias, kind, None, None);
+    }
+}
+
+/// Add keyword, constructor and collection vocabulary in its original registry order and completion classifications.
+fn push_builtin_completions(items: &mut Vec<CompletionItem>, seen: &mut HashSet<String>) {
+    for info in keywords::KEYWORDS {
+        push_registry_completion_names(info.canonical, info.aliases, CompletionItemKind::KEYWORD, items, seen);
+    }
+    for info in constructors::CONSTRUCTORS {
+        push_registry_completion_names(
+            info.canonical,
+            info.aliases,
+            CompletionItemKind::CONSTRUCTOR,
+            items,
+            seen,
+        );
+    }
+    for info in collections::COLLECTION_TYPES {
+        push_registry_completion_names(info.canonical, info.aliases, CompletionItemKind::CLASS, items, seen);
+    }
+}
+
+/// Describe one source declaration's ordinary completion without cloning its syntax. Feature admission belongs to
+/// the caller; field, property and enum-variant completions follow this item rather than changing its classification.
+fn document_declaration_completion<'decl>(
+    declaration: &'decl Declaration,
+    source: &str,
+) -> Option<(&'decl str, CompletionItemKind, String)> {
+    Some(match declaration {
+        Declaration::Const(value) => (
+            &value.name,
+            CompletionItemKind::CONSTANT,
+            if let Some(ty) = &value.ty {
+                format!("const {}: {}", value.name, format_type(&ty.node))
+            } else {
+                format!("const {}", value.name)
+            },
+        ),
+        Declaration::Static(value) => (
+            &value.name,
+            CompletionItemKind::CONSTANT,
+            format!("static {}: {}", value.name, format_type(&value.ty.node)),
+        ),
+        Declaration::Function(value) => (
+            &value.name,
+            CompletionItemKind::FUNCTION,
+            format_function_signature(value, source),
+        ),
+        Declaration::Partial(value) => (
+            &value.name,
+            CompletionItemKind::FUNCTION,
+            format_partial_decl_signature(value, source),
+        ),
+        Declaration::Model(value) => (&value.name, CompletionItemKind::STRUCT, format!("model {}", value.name)),
+        Declaration::Class(value) => (&value.name, CompletionItemKind::CLASS, format!("class {}", value.name)),
+        Declaration::Trait(value) => (
+            &value.name,
+            CompletionItemKind::INTERFACE,
+            format!("trait {}", value.name),
+        ),
+        Declaration::Enum(value) => (&value.name, CompletionItemKind::ENUM, enum_completion_detail(value)),
+        Declaration::TypeAlias(value) => (
+            &value.name,
+            CompletionItemKind::TYPE_PARAMETER,
+            format!("type {} = {}", value.name, format_type(&value.target.node)),
+        ),
+        Declaration::Newtype(value) => {
+            let kind = if value.is_rusttype { "rusttype" } else { "newtype" };
+            (
+                &value.name,
+                CompletionItemKind::STRUCT,
+                format!("{} {} = {}", kind, value.name, format_type(&value.underlying.node)),
+            )
+        }
+        _ => return None,
+    })
+}
+
+/// Add canonical field names before distinct metadata aliases, retaining the owner's source kind and existing sort
+/// prefixes. Models and classes share this mapping rule while their declaration classification stays separate.
+fn push_owner_field_completions(
+    fields: &[Spanned<incan_frontend::ast::FieldDecl>],
+    owner: &str,
+    owner_kind: &str,
+    items: &mut Vec<CompletionItem>,
+    seen: &mut HashSet<String>,
+) {
+    for field in fields {
+        let canonical = field.node.name.as_str();
+        push_completion(
+            items,
+            seen,
+            canonical,
+            CompletionItemKind::FIELD,
+            Some(format!("field on {owner_kind} {owner}")),
+            Some(format!("1_{canonical}")),
+        );
+        if let Some(alias) = field.node.metadata.alias.as_deref()
+            && alias != canonical
+        {
+            push_completion(
+                items,
+                seen,
+                alias,
+                CompletionItemKind::FIELD,
+                Some(format!("{alias} → {canonical} ({owner})")),
+                Some(format!("0_{alias}")),
+            );
+        }
+    }
+}
+
+/// Add an owner's properties in source order with their existing field classification and signature details.
+fn push_owner_property_completions(
+    properties: &[Spanned<incan_frontend::ast::PropertyDecl>],
+    owner: &str,
+    items: &mut Vec<CompletionItem>,
+    seen: &mut HashSet<String>,
+) {
+    for property in properties {
+        push_completion(
+            items,
+            seen,
+            &property.node.name,
+            CompletionItemKind::FIELD,
+            Some(format_property_signature(owner, &property.node)),
+            Some(format!("1_{}", property.node.name)),
+        );
+    }
+}
+
+/// Publish active source declarations and then each owner's members in source order. The shared seen set preserves
+/// the original precedence against contextual and builtin items, including labels shared by unrelated declarations.
+fn push_document_completions(doc: &DocumentState, items: &mut Vec<CompletionItem>, seen: &mut HashSet<String>) {
+    let Some(ast) = &doc.ast else {
+        return;
+    };
+    for declaration in &ast.declarations {
+        if !declaration_active_for_lsp(declaration, &doc.active_features) {
+            continue;
+        }
+        let Some((name, kind, detail)) = document_declaration_completion(&declaration.node, &doc.source) else {
+            continue;
+        };
+        push_completion(items, seen, name, kind, Some(detail), None);
+        match &declaration.node {
+            Declaration::Model(value) => {
+                push_owner_field_completions(&value.fields, &value.name, "model", items, seen);
+                push_owner_property_completions(&value.properties, &value.name, items, seen);
+            }
+            Declaration::Class(value) => {
+                push_owner_field_completions(&value.fields, &value.name, "class", items, seen);
+                push_owner_property_completions(&value.properties, &value.name, items, seen);
+            }
+            Declaration::Trait(value) => push_owner_property_completions(&value.properties, &value.name, items, seen),
+            Declaration::Enum(value) => {
+                for variant in &value.variants {
+                    let label = enum_variant_completion_label(value, &variant.node);
+                    push_completion(
+                        items,
+                        seen,
+                        &label,
+                        CompletionItemKind::CONSTRUCTOR,
+                        Some(enum_variant_completion_detail(value, &variant.node)),
+                        Some(format!("1_{label}")),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Add imported Rust bindings after source declarations, preserving inspected item kinds and the metadata-unavailable
+/// fallback. Canonical path details are display text here, not a new identity-resolution rule.
+fn push_rust_binding_completions(doc: &DocumentState, items: &mut Vec<CompletionItem>, seen: &mut HashSet<String>) {
+    for symbol in &doc.rust_origin_symbols {
+        let (kind, detail) = if let Some(metadata) = &symbol.info.metadata {
+            let item_kind = rust_item_kind_label(&metadata.kind);
+            (
+                match &metadata.kind {
+                    RustItemKind::Module(_) => CompletionItemKind::MODULE,
+                    RustItemKind::Type(_) => CompletionItemKind::CLASS,
+                    RustItemKind::Function(_) => CompletionItemKind::FUNCTION,
+                    RustItemKind::Constant { .. } => CompletionItemKind::CONSTANT,
+                    RustItemKind::Trait(_) => CompletionItemKind::INTERFACE,
+                    RustItemKind::Macro(_) => CompletionItemKind::FUNCTION,
+                    RustItemKind::Unsupported { .. } => CompletionItemKind::REFERENCE,
+                },
+                format!("rust::{} ({item_kind})", symbol.info.path),
+            )
+        } else {
+            (
+                CompletionItemKind::REFERENCE,
+                format!("rust::{} (metadata unavailable)", symbol.info.path),
+            )
+        };
+        push_completion(
+            items,
+            seen,
+            &symbol.local_name,
+            kind,
+            Some(detail),
+            Some(format!("0_{}", symbol.local_name)),
+        );
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for IncanLanguageServer {
     /// Advertise the LSP capabilities implemented by the Incan language server.
@@ -4042,6 +4413,7 @@ impl LanguageServer for IncanLanguageServer {
                 definition_provider: Some(OneOf::Left(true)),
                 // Canonical-identity references across open checked documents
                 references_provider: Some(OneOf::Left(true)),
+                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
                 // Document symbols (outline)
                 document_symbol_provider: Some(OneOf::Left(true)),
                 // Completions (basic)
@@ -4066,7 +4438,7 @@ impl LanguageServer for IncanLanguageServer {
             },
             server_info: Some(ServerInfo {
                 name: "incan-lsp".to_string(),
-                version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                version: Some(incan_lang::version::INCAN_VERSION.to_string()),
             }),
         })
     }
@@ -4129,7 +4501,7 @@ impl LanguageServer for IncanLanguageServer {
         let source = params.text_document.text;
         let version = params.text_document.version;
 
-        self.analyze_document(&uri, &source, version).await;
+        self.analyze_document(&uri, &source, version, false).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -4138,7 +4510,7 @@ impl LanguageServer for IncanLanguageServer {
 
         // We use FULL sync, so there's only one change with the full content
         if let Some(change) = params.content_changes.into_iter().next() {
-            self.analyze_document(&uri, &change.text, version).await;
+            self.analyze_document(&uri, &change.text, version, true).await;
         }
     }
 
@@ -4147,9 +4519,11 @@ impl LanguageServer for IncanLanguageServer {
         let uri = params.text_document.uri;
         let mut tickets = self.analysis_tickets.write().await;
         tickets.remove(&uri);
+        self.pending_sources.write().await.remove(&uri);
 
         // Remove document from cache
         let mut docs = self.documents.write().await;
+        graph_navigation::invalidate(&uri, &mut docs);
         docs.remove(&uri);
 
         // Clear diagnostics
@@ -4179,146 +4553,12 @@ impl LanguageServer for IncanLanguageServer {
             // most of them start from a raw source-text identifier scan that cannot tell a tag name or a selector
             // from an Incan binding that happens to share its spelling. Inside a fragment's DSL-owned syntax the
             // only correct answer is who owns this text; an expression hole is ordinary Incan and falls through.
-            if let Some(ownership) = embedded_dsl_ownership_at_offset(ast, offset) {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: embedded_dsl_ownership_hover_markdown(&ownership),
-                    }),
-                    range: Some(span_to_range(&doc.source, ownership.span.start, ownership.span.end)),
-                }));
-            }
-
-            if let Some(preview) = registry_preview_at_offset(&doc.registry_previews, offset) {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: preview.markdown.clone(),
-                    }),
-                    range: Some(span_to_range(
-                        &doc.source,
-                        preview.registration_span.start,
-                        preview.registration_span.end,
-                    )),
-                }));
-            }
-
-            if let Some(preview) = c_binding_preview_at_offset(&doc.c_binding_previews, offset) {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: preview.markdown.clone(),
-                    }),
-                    range: Some(span_to_range(&doc.source, preview.span.start, preview.span.end)),
-                }));
-            }
-
-            // Decorator hover: show decorator name + description from registry
-            if let Some((id, _resolved)) = find_decorator_at_position(ast, offset, &aliases) {
-                let info = decorators::info_for(id);
-                let markdown = format!("```incan\n@{}\n```\n\n{}", info.canonical, info.description);
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: None,
-                }));
-            }
-
-            // Loaf import item hover: the imported declaration's checked public API.
-            if let Some((markdown, span)) = loaves::import_item_hover(ast, &doc.source, offset, &doc.loaves) {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: Some(span_to_range(&doc.source, span.start, span.end)),
-                }));
-            }
-
-            // Loaf import hover: the imported module and the Loaf that owns it.
-            if let Some(markdown) = loaves::import_module_hover(ast, offset, &doc.loaves) {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: None,
-                }));
-            }
-
-            if let Some(hover) = rust_hover::checked_call_hover(doc, offset) {
+            if let Some(hover) = source_surface_hover(doc, ast, offset, &aliases) {
                 return Ok(Some(hover));
             }
 
-            if let Some(rust_symbol) = rust_symbol_at_offset(&doc.rust_origin_symbols, offset) {
-                let mut markdown = format!(
-                    "```incan\n{}\n```\n\n*rust import* (`{}`)\n\n`rust::{}`",
-                    rust_symbol.local_name,
-                    rust_binding_kind_label(rust_symbol.info.binding),
-                    rust_symbol.info.path
-                );
-                if let Some(metadata) = &rust_symbol.info.metadata {
-                    markdown.push_str(&format!(
-                        "\n\nresolved kind: `{}`",
-                        rust_item_kind_label(&metadata.kind)
-                    ));
-                }
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: Some(span_to_range(&doc.source, rust_symbol.span.start, rust_symbol.span.end)),
-                }));
-            }
-
-            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
-                && keywords::from_str(ident.as_str()) == Some(keywords::KeywordId::Cls)
-                && let Some(context) = classmethod_context_at_offset(ast, offset, &aliases)
-            {
-                let detail = classmethod_cls_detail(&context);
-                let markdown = format!(
-                    "```incan\n{detail}\n```\n\n*classmethod receiver* — callable constructor for `{}`.",
-                    context.owner_type
-                );
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: Some(span_to_range(&doc.source, span.start, span.end)),
-                }));
-            }
-
-            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
-                && let Some(markdown) = builtin_list_repeat_hover(&doc.source, &ident, span)
-            {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: Some(span_to_range(&doc.source, span.start, span.end)),
-                }));
-            }
-
-            if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset)
-            {
-                return Ok(Some(checked_identity_hover(&doc.source, &occurrence)));
-            }
-
-            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
-                && let Some(markdown) = unchecked_lookup_hover(&doc.source, &doc.value_types, &ident, span)
-            {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: Some(span_to_range(&doc.source, span.start, span.end)),
-                }));
+            if let Some(hover) = resolved_value_hover(uri, doc, ast, offset, &aliases) {
+                return Ok(Some(hover));
             }
 
             // Call-site explicit type arguments: `f[T](...)`, `_.method[U](...)`
@@ -4551,11 +4791,21 @@ impl LanguageServer for IncanLanguageServer {
             })));
         }
 
-        if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset)
-            && let Some(location) =
+        if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset) {
+            if doc
+                .graph_navigation
+                .as_ref()
+                .is_some_and(|graph| graph.is_current(&docs))
+                && let Some(location) = graph_navigation::definition(doc, &docs, &occurrence.identity)
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+            // Published dependencies without a live declaration record retain their checked manifest locations.
+            if let Some(location) =
                 definition_location_for_identity(&occurrence.identity, &doc.checked_identities.declaration_sources)
-        {
-            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
         }
 
         Ok(None)
@@ -4579,21 +4829,43 @@ impl LanguageServer for IncanLanguageServer {
         else {
             return Ok(None);
         };
-        let document_views = docs.iter().filter_map(|(document_uri, document)| {
-            document.ast.as_ref().map(|document_ast| CheckedIdentityDocument {
-                uri: document_uri,
-                source: &document.source,
-                ast: document_ast,
-                snapshot: &document.checked_identities,
-            })
-        });
-        let locations = checked_reference_locations(
+        Ok(graph_navigation::references(
+            doc,
+            &docs,
             &occurrence.identity,
             params.context.include_declaration,
-            document_views,
-            &doc.checked_identities.declaration_sources,
-        );
-        Ok(Some(locations))
+        ))
+    }
+
+    /// Prepare a checked declaration for graph-backed incoming and outgoing call navigation.
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> Result<Option<Vec<CallHierarchyItem>>> {
+        let docs = self.documents.read().await;
+        Ok(graph_navigation::prepare(
+            &params.text_document_position_params.text_document.uri,
+            params.text_document_position_params.position,
+            &docs,
+        ))
+    }
+
+    /// Traverse only incoming calls recorded by the current shared graph export.
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
+        let docs = self.documents.read().await;
+        Ok(graph_navigation::incoming(&params.item, &docs))
+    }
+
+    /// Traverse only outgoing calls recorded by the current shared graph export.
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
+        let docs = self.documents.read().await;
+        Ok(graph_navigation::outgoing(&params.item, &docs))
     }
 
     /// Provide context-aware completions for decorators, imports, type arguments, symbols, and receiver bindings.
@@ -4613,366 +4885,19 @@ impl LanguageServer for IncanLanguageServer {
         // Extract the current line text before the cursor for context-aware completions.
         let line_prefix = line_text_before_cursor(&doc.source, position);
 
-        // ---- Context: Loaf modules and their items (`from pub::package…`, `from std.…`) ----
-        if let Some(items) = loaves::import_item_completions(&line_prefix, &doc.loaves) {
-            return Ok(Some(CompletionResponse::Array(items)));
-        }
-        if let Some(modules) = loaves::module_completions(&line_prefix, &doc.loaves) {
-            return Ok(Some(CompletionResponse::Array(modules)));
-        }
-
-        // ---- Context: decorator completions (`@` at line start) ----
-        if let Some(decorator_items) = decorator_completions(&line_prefix) {
-            return Ok(Some(CompletionResponse::Array(decorator_items)));
-        }
-
-        // ---- Context: built-in collection member completions (`list.<member>`) ----
-        if let Some(list_member_items) = builtin_list_member_completions(&line_prefix) {
-            return Ok(Some(CompletionResponse::Array(list_member_items)));
-        }
-
-        // ---- Context: Rust-origin member completions (`Alias.<member>`) ----
-        if let Some(rust_member_items) = rust_member_completions(&line_prefix, &doc.rust_origin_symbols) {
-            return Ok(Some(CompletionResponse::Array(rust_member_items)));
-        }
-
-        // ---- Context: call-site type arguments (`callee[T](...)`, `recv.m[U](...)`, including `_`) ----
-        if let Some(off) = position_to_offset(&doc.source, position)
-            && call_site_type_args::offset_in_call_site_type_argument_list(&doc.source, off)
-        {
-            let items = call_site_type_args::call_site_type_argument_completion_items(doc.ast.as_ref());
+        // ---- Context-specific completions ----
+        if let Some(items) = specific_completion_items(doc, &line_prefix, position) {
             return Ok(Some(CompletionResponse::Array(items)));
         }
 
         // ---- General completions (not in a specific context) ----
 
-        if let Some(ast) = &doc.ast {
-            let aliases = collect_import_aliases(ast);
-            if let Some(off) = position_to_offset(&doc.source, position)
-                && let Some(context) = classmethod_context_at_offset(ast, off, &aliases)
-            {
-                push_completion(
-                    &mut items,
-                    &mut seen,
-                    keywords::as_str(keywords::KeywordId::Cls),
-                    CompletionItemKind::VARIABLE,
-                    Some(format!(
-                        "{} — classmethod receiver constructor",
-                        classmethod_cls_detail(&context)
-                    )),
-                    Some("0_cls".to_string()),
-                );
-            }
-            if let Some(off) = position_to_offset(&doc.source, position) {
-                for scoped_symbol in active_scoped_symbol_completions(ast, &doc.library_imported_dsl_surfaces, off) {
-                    push_completion(
-                        &mut items,
-                        &mut seen,
-                        &scoped_symbol.descriptor.symbol,
-                        CompletionItemKind::FUNCTION,
-                        Some(scoped_symbol_completion_detail(
-                            scoped_symbol.dependency_key,
-                            scoped_symbol.descriptor,
-                        )),
-                        Some(format!("0_scoped_{}", scoped_symbol.descriptor.symbol)),
-                    );
-                }
-            }
-        }
+        push_contextual_completions(doc, position, &mut items, &mut seen);
+        push_builtin_completions(&mut items, &mut seen);
 
-        // Add keywords from the registry (canonical + aliases).
-        for info in keywords::KEYWORDS {
-            push_completion(
-                &mut items,
-                &mut seen,
-                info.canonical,
-                CompletionItemKind::KEYWORD,
-                None,
-                None,
-            );
-            for &alias in info.aliases {
-                push_completion(&mut items, &mut seen, alias, CompletionItemKind::KEYWORD, None, None);
-            }
-        }
+        push_document_completions(doc, &mut items, &mut seen);
 
-        // Add surface constructors (`Ok`, `Err`, `Some`, `None`).
-        for info in constructors::CONSTRUCTORS {
-            push_completion(
-                &mut items,
-                &mut seen,
-                info.canonical,
-                CompletionItemKind::CONSTRUCTOR,
-                None,
-                None,
-            );
-            for &alias in info.aliases {
-                push_completion(
-                    &mut items,
-                    &mut seen,
-                    alias,
-                    CompletionItemKind::CONSTRUCTOR,
-                    None,
-                    None,
-                );
-            }
-        }
-
-        // Add core collection/generic type names (`Option`, `Result`, frozen variants, etc.).
-        for info in collections::COLLECTION_TYPES {
-            push_completion(
-                &mut items,
-                &mut seen,
-                info.canonical,
-                CompletionItemKind::CLASS,
-                None,
-                None,
-            );
-            for &alias in info.aliases {
-                push_completion(&mut items, &mut seen, alias, CompletionItemKind::CLASS, None, None);
-            }
-        }
-
-        // Add symbols from the current document
-        if let Some(ast) = &doc.ast {
-            for decl in &ast.declarations {
-                if !declaration_active_for_lsp(decl, &doc.active_features) {
-                    continue;
-                }
-                match &decl.node {
-                    Declaration::Const(konst) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &konst.name,
-                            CompletionItemKind::CONSTANT,
-                            Some(if let Some(ty) = &konst.ty {
-                                format!("const {}: {}", konst.name, format_type(&ty.node))
-                            } else {
-                                format!("const {}", konst.name)
-                            }),
-                            None,
-                        );
-                    }
-                    Declaration::Static(static_decl) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &static_decl.name,
-                            CompletionItemKind::CONSTANT,
-                            Some(format!(
-                                "static {}: {}",
-                                static_decl.name,
-                                format_type(&static_decl.ty.node)
-                            )),
-                            None,
-                        );
-                    }
-                    Declaration::Function(func) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &func.name,
-                            CompletionItemKind::FUNCTION,
-                            Some(format_function_signature(func, &doc.source)),
-                            None,
-                        );
-                    }
-                    Declaration::Partial(partial) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &partial.name,
-                            CompletionItemKind::FUNCTION,
-                            Some(format_partial_decl_signature(partial, &doc.source)),
-                            None,
-                        );
-                    }
-                    Declaration::Model(model) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &model.name,
-                            CompletionItemKind::STRUCT,
-                            Some(format!("model {}", model.name)),
-                            None,
-                        );
-                        for field in &model.fields {
-                            let canonical = field.node.name.as_str();
-                            push_completion(
-                                &mut items,
-                                &mut seen,
-                                canonical,
-                                CompletionItemKind::FIELD,
-                                Some(format!("field on model {}", model.name)),
-                                Some(format!("1_{}", canonical)),
-                            );
-                            if let Some(alias) = field.node.metadata.alias.as_deref()
-                                && alias != canonical
-                            {
-                                // RFC 021: show mapping detail (e.g. `type → type_`)
-                                push_completion(
-                                    &mut items,
-                                    &mut seen,
-                                    alias,
-                                    CompletionItemKind::FIELD,
-                                    Some(format!("{} → {} ({})", alias, canonical, model.name)),
-                                    Some(format!("0_{}", alias)),
-                                );
-                            }
-                        }
-                        for property in &model.properties {
-                            push_completion(
-                                &mut items,
-                                &mut seen,
-                                &property.node.name,
-                                CompletionItemKind::FIELD,
-                                Some(format_property_signature(&model.name, &property.node)),
-                                Some(format!("1_{}", property.node.name)),
-                            );
-                        }
-                    }
-                    Declaration::Class(class) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &class.name,
-                            CompletionItemKind::CLASS,
-                            Some(format!("class {}", class.name)),
-                            None,
-                        );
-                        for field in &class.fields {
-                            let canonical = field.node.name.as_str();
-                            push_completion(
-                                &mut items,
-                                &mut seen,
-                                canonical,
-                                CompletionItemKind::FIELD,
-                                Some(format!("field on class {}", class.name)),
-                                Some(format!("1_{}", canonical)),
-                            );
-                            if let Some(alias) = field.node.metadata.alias.as_deref()
-                                && alias != canonical
-                            {
-                                // RFC 021: show mapping detail (e.g. `type → type_`)
-                                push_completion(
-                                    &mut items,
-                                    &mut seen,
-                                    alias,
-                                    CompletionItemKind::FIELD,
-                                    Some(format!("{} → {} ({})", alias, canonical, class.name)),
-                                    Some(format!("0_{}", alias)),
-                                );
-                            }
-                        }
-                        for property in &class.properties {
-                            push_completion(
-                                &mut items,
-                                &mut seen,
-                                &property.node.name,
-                                CompletionItemKind::FIELD,
-                                Some(format_property_signature(&class.name, &property.node)),
-                                Some(format!("1_{}", property.node.name)),
-                            );
-                        }
-                    }
-                    Declaration::Trait(tr) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &tr.name,
-                            CompletionItemKind::INTERFACE,
-                            Some(format!("trait {}", tr.name)),
-                            None,
-                        );
-                        for property in &tr.properties {
-                            push_completion(
-                                &mut items,
-                                &mut seen,
-                                &property.node.name,
-                                CompletionItemKind::FIELD,
-                                Some(format_property_signature(&tr.name, &property.node)),
-                                Some(format!("1_{}", property.node.name)),
-                            );
-                        }
-                    }
-                    Declaration::Enum(en) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &en.name,
-                            CompletionItemKind::ENUM,
-                            Some(enum_completion_detail(en)),
-                            None,
-                        );
-                        for variant in &en.variants {
-                            let label = enum_variant_completion_label(en, &variant.node);
-                            push_completion(
-                                &mut items,
-                                &mut seen,
-                                &label,
-                                CompletionItemKind::CONSTRUCTOR,
-                                Some(enum_variant_completion_detail(en, &variant.node)),
-                                Some(format!("1_{}", label)),
-                            );
-                        }
-                    }
-                    Declaration::TypeAlias(alias) => {
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &alias.name,
-                            CompletionItemKind::TYPE_PARAMETER,
-                            Some(format!("type {} = {}", alias.name, format_type(&alias.target.node))),
-                            None,
-                        );
-                    }
-                    Declaration::Newtype(nt) => {
-                        let kind = if nt.is_rusttype { "rusttype" } else { "newtype" };
-                        push_completion(
-                            &mut items,
-                            &mut seen,
-                            &nt.name,
-                            CompletionItemKind::STRUCT,
-                            Some(format!("{} {} = {}", kind, nt.name, format_type(&nt.underlying.node))),
-                            None,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Add local rust-import bindings with canonical-path details.
-        for rust_symbol in &doc.rust_origin_symbols {
-            let (kind, detail) = if let Some(metadata) = &rust_symbol.info.metadata {
-                let item_kind = rust_item_kind_label(&metadata.kind);
-                (
-                    match &metadata.kind {
-                        RustItemKind::Module(_) => CompletionItemKind::MODULE,
-                        RustItemKind::Type(_) => CompletionItemKind::CLASS,
-                        RustItemKind::Function(_) => CompletionItemKind::FUNCTION,
-                        RustItemKind::Constant { .. } => CompletionItemKind::CONSTANT,
-                        RustItemKind::Trait(_) => CompletionItemKind::INTERFACE,
-                        RustItemKind::Macro(_) => CompletionItemKind::FUNCTION,
-                        RustItemKind::Unsupported { .. } => CompletionItemKind::REFERENCE,
-                    },
-                    format!("rust::{} ({item_kind})", rust_symbol.info.path),
-                )
-            } else {
-                (
-                    CompletionItemKind::REFERENCE,
-                    format!("rust::{} (metadata unavailable)", rust_symbol.info.path),
-                )
-            };
-            push_completion(
-                &mut items,
-                &mut seen,
-                &rust_symbol.local_name,
-                kind,
-                Some(detail),
-                Some(format!("0_{}", rust_symbol.local_name)),
-            );
-        }
+        push_rust_binding_completions(doc, &mut items, &mut seen);
 
         // Add `std` as a module name so import completions can start from it.
         push_completion(

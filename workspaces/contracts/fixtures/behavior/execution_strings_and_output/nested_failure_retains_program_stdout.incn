@@ -1,16 +1,22 @@
-# behavior: nested failure retains program stdout
+# behavior: nested failure retains program stdout when a native panic owns a computed message
 # expect-stdout:
 #   parent
 #   child
 # expect-exit: 101
 
 """Nested failure retains program stdout."""
+
+from rust::std::panic import panic_any
+
+
 def child() -> None:
-  """Fail the assertion when this callable is reached."""
-  println("child")
-  assert false
+    """Panic with an owned computed message after writing the child's output."""
+    println("child")
+    reason = "failure"
+    panic_any(f"nested {reason}")
+
 
 def main() -> None:
-  """Print `"parent"` after preparing the fixture inputs."""
-  println("parent")
-  child()
+    """Print `"parent"` before the failing child runs."""
+    println("parent")
+    child()

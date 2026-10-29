@@ -29,6 +29,7 @@ use crate::symbols::{
     CallableParam, ClassInfo, EnumInfo, MethodInfo, NewtypeInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo,
 };
 use crate::typechecker::helpers::collection_type_id;
+use incan_lang::interop::RustItemKind;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceDeriveSupport, SurfaceTypeId};
@@ -282,6 +283,36 @@ impl TypeChecker {
         } else {
             DeriveSupport::Unknown
         }
+    }
+
+    /// Report whether available native templates include an owned Clone candidate for a foreign field or rusttype.
+    /// Missing or partial metadata remains unknown. No candidate is a storage-admission refusal, never proof that
+    /// the Rust type lacks Clone: extraction may omit unsupported implementation shapes.
+    pub(super) fn native_field_clone_candidate(&self, ty: &ResolvedType) -> Option<bool> {
+        let underlying = self.rusttype_native_target(ty);
+        let native = match (ty, underlying.as_ref()) {
+            (ResolvedType::RustPath(_), _) => ty,
+            (_, Some(native)) => native,
+            _ => return None,
+        };
+        let (path, _, _, _) = self.rust_identity_for_type(native)?;
+        let metadata = self.rust_item_metadata_for_complete_type(&path)?;
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return None;
+        };
+        if !info.metadata_completeness.has_trait_impls() {
+            return None;
+        }
+        Some(derives::rust_ownership_trait_paths(DeriveId::Clone).iter().any(|path| {
+            let definition = self.rust_definition_for_path(path);
+            let suffix = Self::rust_trait_path_suffix(path);
+            info.implemented_traits.iter().any(|implementation| {
+                (implementation.path == *path
+                    || Some(implementation.path.as_str()) == definition.as_deref()
+                    || Self::rust_trait_path_suffix(&implementation.path) == suffix)
+                    && self.rust_impl_self_bindings(implementation, native).is_some()
+            })
+        }))
     }
 
     /// Combine the answers for types that must all implement `derive`: the first missing one wins, then any unknown.
@@ -753,7 +784,9 @@ impl TypeChecker {
     /// Refuse one member whose type cannot satisfy the automatic `Clone` and `Debug` derives its declaration carries.
     ///
     /// `owner_kind` is the declaration keyword (`model`, `class`, `enum`) and `owner_name` its name. The refusal names
-    /// the innermost type that lacks the derives, so `list[JoinHandle[int]]` points at `JoinHandle[int]`.
+    /// the innermost type that lacks the derives, so `list[JoinHandle[int]]` points at `JoinHandle[int]`. Direct native
+    /// fields without an admitted owned Clone template receive a missing-proof refusal instead of a negative trait
+    /// fact; conditional candidates retain native predicate validation.
     pub(in crate::typechecker) fn refuse_member_without_automatic_derives(
         &mut self,
         owner_kind: &str,
@@ -762,6 +795,22 @@ impl TypeChecker {
         member_ty: &ResolvedType,
         span: Span,
     ) {
+        // A lifetime-bearing native member has no lifetime contract to derive anything for (DD-0006).
+        if self.refuse_lifetime_bearing_rust_type(member_ty, span) {
+            return;
+        }
+        if self.native_field_clone_candidate(member_ty) == Some(false)
+            && self.native_derive_support(member_ty, DeriveId::Clone) != DeriveSupport::Supported
+        {
+            self.errors.push(errors::native_field_clone_not_retained(
+                owner_kind,
+                owner_name,
+                member,
+                &member_ty.to_string(),
+                span,
+            ));
+            return;
+        }
         let Some((holder, missing)) = self.first_missing_derives(member_ty, &[DeriveId::Clone, DeriveId::Debug]) else {
             return;
         };
@@ -939,7 +988,7 @@ impl TypeChecker {
         span: Span,
     ) {
         let Some(required) = callee
-            .and_then(|identity| self.hash_key_type_params.get(identity))
+            .and_then(|identity| self.hash_key_inference.type_params.get(identity))
             .cloned()
         else {
             return;

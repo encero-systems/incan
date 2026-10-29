@@ -1,12 +1,15 @@
 """Local intake contracts; these do not establish a selected Rust compilation plan."""
 
-from intake import parse_intent, parse_document, intake
+from intake import parse_intent, parse_document, intake, read_project, ManifestReader
 from manifest_errors import IntakeError, IntakeErrorKind
 from std.fs import Path
 from std.testing import fail
+from scratch import scratch_directory
+from toml_fields import read_manifest
+from files import write
 
 
-pub def test_formatting_changes_evidence_not_effective_requests() -> None:
+pub def test_formatting_changes_evidence_not_effective_requests() -> Result[None, str]:
     """Compare complete normalized intent while proving distinct source bytes have distinct evidence digests."""
     first = b"[project]\x0aname = 'app'\x0aversion = '0.1.0'\x0a[rust-dependencies]\x0aregex = '1'\x0a"
     second = b"# source provenance changed\x0a[project]\x0aversion='0.1.0'\x0aname='app'\x0a[rust-dependencies]\x0aregex='1'\x0a"
@@ -19,6 +22,54 @@ pub def test_formatting_changes_evidence_not_effective_requests() -> None:
                     assert left.intent == right.intent
                     assert left.evidence.raw_bytes != right.evidence.raw_bytes
                     assert left.evidence.sha256_digest != right.evidence.sha256_digest
+    snapshot_controls()?
+    return Ok(None)
+
+
+def snapshot_controls() -> Result[None, str]:
+    """Keep repeated views independent, refresh changed source, and never reuse a deleted or malformed manifest."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    reader = ManifestReader()
+    manifest = root.joinpath("loaf.toml")
+    source = "[project]\nname='snapshot'\nversion='1.0.0'\n"
+    repeated = root.joinpath("repeated")
+    repeated.mkdir(false, false).map_err((error) => error.message())?
+    write(repeated.joinpath("loaf.toml"), source)?
+    read_project(repeated, reader).map_err((error) => error.message())?
+    read_project(repeated, reader).map_err((error) => error.message())?
+    read_manifest(repeated, reader)?
+    read_manifest(repeated, reader)?
+    write(manifest, source)?
+    first = read_project(root, reader).map_err((error) => error.message())?
+    second = read_project(root, reader).map_err((error) => error.message())?
+    assert first.evidence.raw_bytes == second.evidence.raw_bytes
+    assert first.evidence.sha256_digest == second.evidence.sha256_digest
+    left = read_manifest(root, reader)?
+    right = read_manifest(root, reader)?
+    assert left.get[str]("project.name").map_err((error) => error.message())? == "snapshot"
+    assert right.get[str]("project.name").map_err((error) => error.message())? == "snapshot"
+    write(manifest, "# revised\n" + source)?
+    revised = read_project(root, reader).map_err((error) => error.message())?
+    assert revised.intent == first.intent
+    assert revised.evidence.sha256_digest != first.evidence.sha256_digest
+    assert first.evidence.source == source
+    write(manifest, "[project\n")?
+    assert refused(read_project(root, reader))
+    assert refused(read_manifest(root, reader))
+    manifest.unlink().map_err((error) => error.message())?
+    assert refused(read_project(root, reader))
+    write(manifest, source)?
+    restored = read_project(root, reader).map_err((error) => error.message())?
+    assert restored.evidence.sha256_digest == first.evidence.sha256_digest
+    return Ok(None)
+
+
+def refused[T, E](result: Result[T, E]) -> bool:
+    """Test a refusal without changing or inspecting its error representation."""
+    match result:
+        Err(_) => return true
+        Ok(_) => return false
 
 
 pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
@@ -27,9 +78,7 @@ pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
     match parse_intent(source, "loaf.toml"):
         Err(error) => fail(error.message())
         Ok(project) =>
-            assert project.target == Some("wasm32-wasip1")
-            assert project.profile == Some("release")
-            assert project.rust_edition == Some("2024")
+            assert project.rust_edition == "2024"
             request = project.rust_inputs[0]
             assert request.alias == "search"
             assert request.package == "regex"
@@ -40,23 +89,45 @@ pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
 
 
 pub def test_unsupported_intent_is_not_dropped() -> None:
-    """Refuse unimplemented top-level and project intent instead of producing a partial request."""
-    for extra in ["[workspace]\nmembers=[]\n", "[project.features]\ndefault=[]\n", "[interop.c]\n", "[rust]\ncrate-name='legacy'\n"]:
-        source = "[project]\nname='app'\nversion='0.1.0'\n" + extra
-        match parse_intent(source, "loaf.toml"):
+    """
+    Check the intake boundary.
+
+    1. Accept implemented features and empty C intent.
+    2. Refuse unsupported manifest sections.
+    """
+    # 1. Implemented intent remains accepted.
+    for extra in ["[project.features]\ndefault=[]\n", "[interop.c]\n", "[build]\nregistry-lock='closure.json'\n"]:
+        match parse_intent(project_manifest(extra), "loaf.toml"):
+            Ok(_) => pass
+            Err(error) => fail(error.message())
+    # 2. Unsupported intent must still be named instead of ignored.
+    for extra in ["[workspace]\nmembers=[]\n", "[interop.cuda]\n", "[rust]\ncrate-name='legacy'\n"]:
+        match parse_intent(project_manifest(extra), "loaf.toml"):
             Ok(_) => fail("unsupported intent was accepted")
             Err(error) =>
                 assert error.kind == IntakeErrorKind.Unsupported
 
 
 pub def test_dependency_options_are_not_silently_ignored() -> None:
-    """Name the exact unsupported local dependency feature field."""
-    source = "[project]\nname='app'\nversion='0.1.0'\n[dependencies]\nstock={path='../catalog', features=['extra']}\n"
-    match parse_intent(source, "loaf.toml"):
-        Ok(_) => fail("unimplemented local feature selection was accepted")
+    """
+    Check local dependency options.
+
+    1. Retain supported local features.
+    2. Name the exact unsupported dependency option.
+    """
+    # 1. Feature requests survive intake.
+    supported = "[dependencies]\nstock={path='../catalog', features=['extra']}\n"
+    match parse_intent(project_manifest(supported), "loaf.toml"):
+        Ok(project) =>
+            assert project.dependencies[0].features == ["extra"]
+        Err(error) => fail(error.message())
+    # 2. An unknown option does not disappear beside supported ones.
+    unsupported = "[dependencies]\nstock={path='../catalog', features=['extra'], workspace=true}\n"
+    match parse_intent(project_manifest(unsupported), "loaf.toml"):
+        Ok(_) => fail("unsupported local dependency option was accepted")
         Err(error) =>
             assert error.kind == IntakeErrorKind.Unsupported
-            assert error.field == ["dependencies", "stock", "features"]
+            assert error.field == ["dependencies", "stock", "workspace"]
 
 
 pub def test_workbench_aliases_and_unselected_rust_request() -> None:
@@ -74,8 +145,8 @@ pub def test_workbench_aliases_and_unselected_rust_request() -> None:
                     catalog_roots.append(edge.dependency_root)
             assert sorted(aliases) == ["catalog", "pricing", "stock"]
             assert catalog_roots[0] == catalog_roots[1]
-            assert len(packet.dependency_order) == 3
-            assert packet.dependency_order[0] == catalog_roots[0]
+            assert len(packet.projects) == 3
+            assert catalog_roots[0] in [project.root for project in packet.projects]
             assert packet.projects[0].intent.rust_inputs[0].alias == "regex"
             assert packet.projects[0].intent.rust_inputs[0].version == "1"
             assert packet.projects[0].intent.scripts["main"] == "src/main.incn"
@@ -121,13 +192,21 @@ pub def test_literal_alias_diagnostic_retains_segments_and_location() -> None:
 
 
 pub def test_absent_build_options_stay_absent() -> None:
-    """Preserve omitted build options without inventing target, profile or edition defaults."""
+    """Apply the default edition, prefer rust.edition, and continue validating non-executed build intent."""
     match parse_intent("[project]\nname='app'\nversion='0.1.0'\n", "loaf.toml"):
         Err(error) => fail(error.message())
         Ok(project) =>
-            assert project.target == None
-            assert project.profile == None
-            assert project.rust_edition == None
+            assert project.rust_edition == "2024"
+    source = "[project]\nname='app'\nversion='0.1.0'\n[build]\nrust-edition='2015'\n[rust]\nedition='2024'\n"
+    match parse_intent(source, "loaf.toml"):
+        Err(error) => fail(error.message())
+        Ok(project) =>
+            assert project.rust_edition == "2024"
+    for field in ["target", "profile"]:
+        invalid = f"[project]\nname='app'\nversion='0.1.0'\n[build]\n{field}=1\n"
+        match parse_intent(invalid, "loaf.toml"):
+            Ok(_) => fail(f"non-string build.{field} was accepted")
+            Err(_) => pass
 
 
 pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
@@ -135,7 +214,7 @@ pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
     source = "\n[project]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"Apache-2.0\"\nprivate = true\n[rust]\nname = \"app_lib\"\ntype = \"lib\"\nedition = \"2024\"\n[rust.source]\nroot = \"rust\"\n[dependencies]\nsearch = { loaf = \"crates-io/regex\", version = \"1\", features = [\"std\"], default-features = false, optional = true }\nlibc = [\n  { loaf = \"crates-io/libc\", version = \"0.2\", target = \"aarch64-apple-darwin\" },\n  { loaf = \"crates-io/libc\", version = \"0.2\", target = 'cfg(all(unix, not(target_os = \"macos\")))' }\n]\n"
     project = parse_intent(source, "loaf.toml")?
     assert len(project.rust_inputs) == 3
-    assert project.rust_edition == Some("2024")
+    assert project.rust_edition == "2024"
     search = project.rust_inputs[2]
     assert search.alias == "search"
     assert search.package == "regex"
@@ -144,13 +223,30 @@ pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
     assert not search.default_features
     assert search.optional
     assert project.rust_inputs[0].target == Some("aarch64-apple-darwin")
+    environment = parse_intent(
+        source + "\n[envs.test.dependencies]\nsearch={features=['test_support']}\nserde_json={loaf='crates-io/serde_json', version='1'}\n",
+        "loaf.toml",
+    )?
+    assert environment.rust_inputs == project.rust_inputs
     return Ok(None)
 
 
 pub def test_amended_loaf_refuses_retired_grammar() -> None:
     """Reject removed Rust keys, dependency kinds, extra roles and noncanonical predicates."""
-    for extra in ["[rust]\ncrate-name='app'\n", "[rust]\ncrate-type='lib'\n", "[dev-dependencies]\nregex='1'\n", "[build-dependencies]\nregex='1'\n", "[dependencies]\nregex={crate='regex', version='1'}\n", "[dependencies]\nregex={loaf='crates-io/regex', version='1', target='cfg(all(unix,windows))'}\n"]:
+    for extra in [
+        "[rust]\ncrate-name='app'\n",
+        "[rust]\ncrate-type='lib'\n",
+        "[dev-dependencies]\nregex='1'\n",
+        "[build-dependencies]\nregex='1'\n",
+        "[dependencies]\nregex={crate='regex', version='1'}\n",
+        "[dependencies]\nregex={loaf='crates-io/regex', version='1', target='cfg(all(unix,windows))'}\n",
+    ]:
         source = "[project]\nname='app'\nversion='0.1.0'\n" + extra
         match parse_intent(source, "loaf.toml"):
             Ok(_) => fail("removed or noncanonical grammar was admitted")
             Err(_) => pass
+
+
+def project_manifest(extra: str) -> str:
+    """Supply the required project identity before the intent under test."""
+    return "[project]\nname='app'\nversion='0.1.0'\n" + extra

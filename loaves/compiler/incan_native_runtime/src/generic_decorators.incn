@@ -1,9 +1,12 @@
-"""Cache closed decorated text callables with legacy declaration guards and source-module names."""
+"""Cache closed decorated text callables and register declaration names independently of callable signatures."""
 
-from rust::std::sync import Arc, Mutex
+from rust::std::sync import Arc, Mutex, Condvar, MutexGuard
 from rust::std::collections import HashMap
 from rust::std::string import String as RustString
-from rust::std::ptr import fn_addr_eq
+from rust::std::thread import current, ThreadId
+from rust::std::panic import catch_unwind, resume_unwind
+from rust::std::mem import drop
+from rust::incan_std_core::errors import raise_value_error
 
 
 type TextCallback = () -> str
@@ -12,7 +15,28 @@ type TextCallback = () -> str
 type TextInitializer = () -> TextCallback
 
 
-type TextCacheCell = Arc[Mutex[HashMap[str, TextCallback]]]
+enum CacheBinding:
+    """Distinguish an initialized callable from the thread currently constructing that instance."""
+
+    Initializing(ThreadId)
+    Ready(TextCallback)
+
+
+enum ClaimDecision:
+    """Return the locked lookup decision without retaining its guard across a caller's error reporting."""
+
+    Ready(TextCallback)
+    Acquired
+    Recursive
+    Waiting
+    Poisoned
+
+
+model BindingCache:
+    """Serialize short state changes while letting independent closed instances initialize concurrently."""
+
+    values: Arc[Mutex[HashMap[str, CacheBinding]]]
+    changed: Arc[Condvar]
 
 
 @derive(Clone)
@@ -20,7 +44,7 @@ model CacheEntry:
     """Keep one shared cell for a source declaration independently of its closed type arguments."""
 
     declaration: str
-    cell: TextCacheCell
+    cell: BindingCache
 
 
 model CacheRegistry:
@@ -28,36 +52,43 @@ model CacheRegistry:
 
     entries: list[CacheEntry]
 
-    def select(mut self, declaration: str) -> TextCacheCell:
+    def select(mut self, declaration: str) -> BindingCache:
         """Return a shared cell before any initializer runs, permitting nested calls to another declaration."""
         for entry in self.entries:
             if entry.declaration == declaration:
                 return entry.cell.clone()
-        cell: TextCacheCell = Arc.new(Mutex.new(HashMap.new()))
+        cell = BindingCache(values=Arc.new(Mutex.new(HashMap.new())), changed=Arc.new(Condvar.new()))
         self.entries.append(CacheEntry(declaration=declaration, cell=cell.clone()))
         return cell
+
+
+model NameEntry:
+    """One callable pointer and its registered name in a declaring module."""
+
+    module: str
+    address: usize
+    name: str
 
 
 model NameRegistry:
     """Retain dynamic pointer names within the same module scope as legacy's callable-name helpers."""
 
-    entries: list[tuple[str, TextCallback, str]]
+    # Exact native scalar widths in tuples remain tracked under #2256.
+    entries: list[NameEntry]
 
-    def record(mut self, module: str, callback: TextCallback, name: str) -> None:
+    def record(mut self, module: str, address: usize, name: str) -> None:
         """Replace an equal pointer's dynamic name only inside its declaring source module."""
         for index in range(len(self.entries)):
-            candidate: TextCallback = self.entries[index][1]
-            if self.entries[index][0] == module and fn_addr_eq(candidate, callback):
-                self.entries[index] = (module, callback, name)
+            if self.entries[index].module == module and self.entries[index].address == address:
+                self.entries[index] = NameEntry(module=module, address=address, name=name)
                 return
-        self.entries.append((module, callback, name))
+        self.entries.append(NameEntry(module=module, address=address, name=name))
 
-    def describe(self, module: str, callback: TextCallback) -> str:
+    def describe(self, module: str, address: usize) -> str:
         """Return the module's registered name or the legacy fallback for an unregistered pointer."""
         for entry in self.entries:
-            candidate: TextCallback = entry[1]
-            if entry[0] == module and fn_addr_eq(candidate, callback):
-                return entry[2]
+            if entry.module == module and entry.address == address:
+                return entry.name
         return "<callable>"
 
 
@@ -75,25 +106,108 @@ pub def cached_text_binding(
     declaration: str,
     instance: str,
     initialize: TextInitializer,
-    original: TextCallback,
+    original: usize,
     name: str,
 ) -> TextCallback:
-    """Register before cache lookup, initialize once per closed instance, and release the guard before invocation."""
+    """
+    Register a declaration and initialize its closed callable once without holding a mutex across user code.
+
+    1. Register the original callable's name and select its declaration cache.
+    2. Return an existing binding, wait for another thread, or claim this instance's initialization.
+    3. Initialize outside the guard, publishing success or removing the claim before resuming a panic.
+    """
+    # 1. Select the declaration cache without executing user code.
     NAMES.record(module, original, name)
     cell = CACHES.select(declaration)
-    mut guard = match cell.lock():
+    key: RustString = RustString.from(instance)
+    # 2. A claim applies only to this closed instance, never the entire declaration.
+    match claim_binding(cell, key):
+        Some(value) => return value
+        None => pass
+    # 3. Unwinding cannot leave another caller waiting on an abandoned claim.
+    match catch_unwind(initialize):
+        Ok(value) =>
+            finish_binding(cell, key, Some(value))
+            return value
+        Err(payload) =>
+            finish_binding(cell, key, None)
+            resume_unwind(payload)
+
+
+def claim_binding(cell: &BindingCache, key: &RustString) -> Option[TextCallback]:
+    """Wait for an existing owner or claim an absent instance; reject same-thread recursive initialization."""
+    owner = current().id()
+    while true:
+        match claim_once(cell, key, owner):
+            ClaimDecision.Ready(value) => return Some(value)
+            ClaimDecision.Acquired => return None
+            ClaimDecision.Recursive => raise_value_error(f"recursive initialization of decorated callable '{key}'")
+            ClaimDecision.Waiting => pass
+            ClaimDecision.Poisoned =>
+                raise_value_error(f"poisoned decorator cache while another thread initializes '{key}'")
+
+
+def claim_once(cell: &BindingCache, key: &RustString, owner: ThreadId) -> ClaimDecision:
+    """Inspect under one guard, waiting atomically for another owner and dropping the guard before returning."""
+    mut guard = match cell.values.lock():
         Ok(value) => value
         Err(error) => error.into_inner()
 
-    key: RustString = RustString.from(instance)
+    decision = inspect_claim(guard, key, owner)
+    match decision:
+        ClaimDecision.Waiting =>
+            # The seed can consume a guard once, but cannot move it across loop assignments (#2256).
+            match cell.changed.wait(guard):
+                Ok(waited) =>
+                    drop(waited)
+                    return ClaimDecision.Waiting
+                Err(error) =>
+                    mut poisoned = error.into_inner()
+                    recovered = inspect_claim(poisoned, key, owner)
+                    match recovered:
+                        ClaimDecision.Waiting => return ClaimDecision.Poisoned
+                        _ => return recovered
+        _ => return decision
+
+
+def inspect_claim(
+    mut guard: &mut MutexGuard[HashMap[str, CacheBinding]],
+    key: &RustString,
+    owner: ThreadId,
+) -> ClaimDecision:
+    """Inspect or claim while borrowing the caller's guard; another thread's claim requires an atomic wait."""
     match guard.get(borrowed_cache_key(key)):
-        Some(value) => return value.clone()
-        None => pass
-    value = initialize()
-    _ = guard.insert(RustString.from(instance), value)
-    return value
+        Some(binding) =>
+            # Only a function pointer or thread id is copied; no cached inventory is copied with the state.
+            state: CacheBinding = binding.clone()
+            match state:
+                CacheBinding.Ready(value) => return ClaimDecision.Ready(value)
+                CacheBinding.Initializing(initializer) =>
+                    if initializer == owner:
+                        return ClaimDecision.Recursive
+                    return ClaimDecision.Waiting
+        None =>
+            _ = guard.insert(RustString.from(key), CacheBinding.Initializing(owner))
+            return ClaimDecision.Acquired
 
 
-pub def callable_text_name(module: str, callback: TextCallback) -> str:
-    """Read the dynamic module registry; lowering must separately refuse unretained static name candidates."""
-    return NAMES.describe(module, callback)
+def finish_binding(cell: &BindingCache, key: RustString, value: Option[TextCallback]) -> None:
+    """Publish one initialized binding or clear its failed claim, then wake callers to recheck the state."""
+    mut guard = match cell.values.lock():
+        Ok(value) => value
+        Err(error) => error.into_inner()
+
+    match value:
+        Some(callback) => _ = guard.insert(key, CacheBinding.Ready(callback))
+        None => _ = guard.remove(borrowed_cache_key(key))
+    cell.changed.notify_all()
+
+
+pub def register_callable_name(module: str, address: usize, name: str) -> None:
+    """Register the checked declaration name when its function value is materialized, regardless of its signature."""
+    NAMES.record(module, address, name)
+
+
+pub def callable_name(module: str, address: usize) -> str:
+    """Read the declaration name registered for this module's checked function value."""
+    return NAMES.describe(module, address)

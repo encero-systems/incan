@@ -53,7 +53,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .type_info
                     .expressions
                     .local_partial_method_targets
-                    .get(&(span.start, span.end))
+                    .get(&span)
                     .ok_or("partial method target without checked value-receiver facts")?;
                 let canonical = self
                     .type_info
@@ -73,6 +73,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         intrinsic_carrier: None,
                         reflection: None,
                         loaf_trait: None,
+                        trait_arguments: None,
                         canonical: Some(canonical.clone()),
                         type_args: Vec::new(),
                         binding: bir::ArgumentBinding::resolved_positional(params.len()),
@@ -98,11 +99,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         partial: &ast::PartialExpr,
         span: ast::Span,
     ) -> Result<Vec<IncanType>, String> {
-        let arguments = self
-            .type_info
-            .calls
-            .call_site_monomorph_type_args
-            .get(&(span.start, span.end));
+        let arguments = self.type_info.calls.call_site_monomorph_type_args.get(&span);
         if !partial.type_args.is_empty() && arguments.is_none_or(|arguments| arguments.len() != partial.type_args.len())
         {
             return Err("partial function without checked instance arguments".to_owned());
@@ -156,11 +153,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.local_function_declarations
                 .get(name)
                 .and_then(|candidates| match candidates.as_slice() {
-                    [span] => Some(CompilerNodeId::declaration_span(
-                        self.module_identity,
-                        span.start,
-                        span.end,
-                    )),
+                    [span] => Some(CompilerNodeId::declaration_at(self.module_identity, *span)),
                     _ => None,
                 });
         Ok(PartialTarget {
@@ -245,6 +238,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 params,
                 captured_operands: frame.operands,
                 body: Box::new(bir::ClosureBody {
+                    native_storage: None,
                     original_callable: None,
                     consumes_environment: false,
                     function_item: false,
@@ -376,8 +370,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: param.is_mut,
+                native_owned: parameter_types::native_collection_parameter(&param.ty, self.type_info),
             });
-            if param.is_mut {
+            if params.last().is_some_and(|parameter| parameter.native_owned) {
+                self.owned_parameters.insert(local);
+            } else if param.is_mut {
                 self.borrowed_parameters.insert(local);
             }
             frame.saved.push((name.clone(), previous));

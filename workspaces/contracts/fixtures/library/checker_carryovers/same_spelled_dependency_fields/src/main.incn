@@ -1,21 +1,76 @@
-# behavior: empty list and None fields use a dependency's identifier type even when the caller declares its own type with the same name
+# behavior: provider fields and enum patterns retain canonical owners beside same-named caller types (#2256)
 # expect-stdout:
 #   0
 #   true
 #   local
+#   foreign
+#   1
+#   foreign
 
-from pub::records import Decision
+"""Keep caller and provider declarations distinct while reading populated dependency fields."""
+
+from pub::records import Decision, populated
+from pub::records import EvidenceId as ForeignEvidenceId
+from pub::records import DecisionKind as ForeignKind, chosen
+from observe import first_text
+
+
+enum DecisionKind:
+    """The caller's decision variants, which cannot name the provider's values."""
+
+    Accept
+    Reject
 
 
 model EvidenceId:
     """The caller's own identifier, independent of the dependency's type."""
+
     text: str
 
 
 def main() -> None:
-    """Build empty dependency fields and keep a local identifier usable."""
+    """
+    Read dependency collections without confusing their elements with the caller's identifier.
+
+    1. Construct empty fields under the dependency's declared element type.
+    2. Read the caller's own identifier independently.
+    3. Read populated collections through imported annotations and unimported field owners.
+    4. Match provider and caller enum values through their own declarations.
+    """
+    # 1. Empty fields take the provider's declared context.
     decision = Decision(evidence_ids=[], first=None)
     println(len(decision.evidence_ids))
     println(decision.first is None)
+    # 2. The caller's identifier keeps its own declaration.
     own = EvidenceId(text="local")
     println(own.text)
+    # 3. Both imported annotations and unimported elements retain the provider's fields.
+    println(count_foreign(populated().evidence_ids))
+    println(first_text(populated()))
+    # 4. A retained provider carrier still belongs to the imported enum.
+    observe_kinds()
+
+
+def observe_kinds() -> None:
+    """Match a returned provider enum through its alias without admitting a same-named caller declaration."""
+    selected = chosen()
+    match selected:
+        ForeignKind.Accept => pass
+        _ =>
+            assert false
+    direct = ForeignKind.Reject
+    match direct:
+        ForeignKind.Reject => pass
+        _ =>
+            assert false
+    local = DecisionKind.Reject
+    match local:
+        DecisionKind.Reject => pass
+        _ =>
+            assert false
+
+
+def count_foreign(values: list[ForeignEvidenceId]) -> int:
+    """Inspect and count provider identifiers under their imported element declaration."""
+    println(values[0].text)
+    return len(values)

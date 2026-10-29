@@ -102,14 +102,14 @@ impl BodyBuilder<'_, '_> {
         identity: &CanonicalSymbolId,
     ) -> Option<(Option<CompilerNodeId>, &FunctionBindingInfo)> {
         if incan_semantics_core::canonical_module_identity(identity).as_deref() == Some(self.module_identity) {
-            let ((start, end), binding) = self
+            let (span, binding) = self
                 .type_info
                 .declarations
                 .method_bindings_by_span
                 .iter()
                 .find(|(_, binding)| binding.identity.as_ref() == Some(identity))?;
             return Some((
-                Some(CompilerNodeId::declaration_span(self.module_identity, *start, *end)),
+                Some(CompilerNodeId::declaration_at(self.module_identity, *span)),
                 binding,
             ));
         }

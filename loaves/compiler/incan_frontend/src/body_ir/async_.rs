@@ -37,7 +37,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let ast::Expr::Paren(inner) = &expression.node {
             return self.checked_async_call(inner);
         }
-        let key = (expression.span.start, expression.span.end);
+        let key = expression.span;
         self.type_info.calls.body_ir_async_call_targets.contains_key(&key)
             || self.type_info.rust.async_call_realizations.contains(&key)
     }
@@ -55,7 +55,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let hir_span_value = hir_span(span);
         let operand = self.lower_await_operand(awaited, scope, out);
         self.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
-        self.settled_types.insert((span.start, span.end), ty.clone());
+        self.settled_types.insert(span, ty.clone());
         let destination = self.new_temp(ty.clone(), scope, hir_span_value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Await {
@@ -76,13 +76,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let operand = self.lower_expr_to_operand(awaited, scope, out);
-        let Some(conversion) = self
-            .type_info
-            .rust
-            .await_conversions
-            .get(&(awaited.span.start, awaited.span.end))
-            .cloned()
-        else {
+        let Some(conversion) = self.type_info.rust.await_conversions.get(&awaited.span).cloned() else {
             return operand;
         };
         self.emit_checked_rust_call(
@@ -109,6 +103,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// awaitable is evaluated before selection" observable in the statement sequence rather than a claim in prose.
     /// Each arm then gets its own scope and type-refined local. Those locals retain the one canonical identity and
     /// exact token span of the shared header binding, so different arm types do not invent different source objects.
+    /// Reads in a winning arm retain enclosing owners for the other selectable paths and their scope-exit drops.
     ///
     /// An arm body containing an unsupported construct keeps its own `Unsupported` node *inside* the represented
     /// race rather than collapsing the whole expression, so a consumer loses only the construct it cannot handle.
@@ -167,12 +162,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
 
             let mut arm_stmts = Vec::new();
+            self.conditional_scopes.push(arm_scope);
             let result = match &arm.body {
                 ast::RaceForBody::Expr(expr) => self.lower_expr_to_operand(expr, arm_scope, &mut arm_stmts),
                 ast::RaceForBody::Block(stmts) => {
                     self.lower_race_arm_block(stmts, arm.awaitable.span, arm_scope, &mut arm_stmts)
                 }
             };
+            self.conditional_scopes.pop();
             self.insert_scope_drops(&mut arm_stmts, arm_scope);
 
             // Every name an arm bound -- its winner binding and any local its block body declared -- is scoped to

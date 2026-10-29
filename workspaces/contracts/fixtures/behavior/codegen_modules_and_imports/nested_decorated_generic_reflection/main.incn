@@ -1,9 +1,30 @@
-# behavior: a decorated generic function in a nested module reflects its type argument's class name and field count through a helper imported from another nested module
+# behavior: decorators preserve reflection and names; nested and concurrent bindings initialize once and retry failures
 # expect-stdout:
 #   Row:2:clone
 #   Point:3:clone
+#   Row:2:clone
+#   /orders
+#   true
+#   8
+#   Nested:1:clone
+#   Nested
+#   Nested
+#   request,positive,from_csv,from_csv,from_csv,double,recursive,recursive
+#   concurrent once and retry
 
-from functions.csv.from_csv import from_csv
+"""Observe schema reflection and the names of callable values with different signatures."""
+
+from functions.csv.from_csv import (
+    from_csv,
+    request,
+    positive,
+    plain_result,
+    recorded_names,
+    nested_result,
+    trigger_recursive,
+)
+from std.testing import assert_raises
+from concurrent_cache import observe_concurrent_cache
 
 
 @derive(Clone)
@@ -20,5 +41,35 @@ model Point:
 
 
 def main() -> None:
+    """
+    Read reflected schemas and registered declarations.
+
+    1. Invoke each cached generic instance.
+    2. Invoke module-bound and plain functions with arguments and distinct result types.
+    3. Observe nested initialization and a retry after recursive initialization fails.
+    4. Read the exact names observed during registration.
+    5. Require once-only initialization and retry for competing callers.
+    """
+    # 1. Each closed schema initializes its cached callable once.
     println(from_csv[Row]())
     println(from_csv[Point]())
+    println(from_csv[Row]())
+    # 2. Named functions retain their callable signatures after introspection.
+    println(request("/orders"))
+    println(positive(2))
+    println(plain_result())
+    # 3. Different instances nest, failed same-instance recursion does not strand the cache, and retries are cached.
+    println(nested_result())
+    assert_raises[ValueError](failed_recursive_request)
+    println(trigger_recursive())
+    println(trigger_recursive())
+    # 4. Declaration names survive each registration path, including the failed attempt.
+    println(recorded_names())
+    # 5. Competing callers observe once-only initialization and retry after the first initializer fails.
+    observe_concurrent_cache()
+    println("concurrent once and retry")
+
+
+def failed_recursive_request() -> None:
+    """Request the recursive binding with the unit-returning assertion-helper contract."""
+    _ = trigger_recursive()

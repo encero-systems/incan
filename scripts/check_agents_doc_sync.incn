@@ -1,0 +1,69 @@
+"""Check that the skill table in AGENTS.md matches the public skills on disk."""
+
+from rust::std::process import exit
+from std.fs import Path
+from std.regex import Regex
+from check_support import repository_root, write_stderr
+
+
+def main() -> None:
+    """Check the repository skill inventory and exit with its result."""
+    match repository_root().and_then((root) => check(root)):
+        Ok(code) =>
+            if code == 0:
+                exit(0)
+            exit(1)
+        Err(message) =>
+            write_stderr(f"{message}\n")
+            exit(1)
+
+
+pub def check(root: Path) -> Result[int, str]:
+    """
+    Return zero when the documented skill names exactly match the installed skills.
+
+    1. Read the skills on disk and the bounded skill-table section.
+    2. Report missing and stale names in alphabetical order.
+    """
+    agents = root.joinpath("AGENTS.md")
+    skills = root.joinpath(".agents/skills")
+    if not agents.exists():
+        return Err(f"missing {agents.0}")
+    if not skills.is_dir():
+        return Err(f"missing {skills.0}")
+
+    # 1. Read both inventories.
+    mut actual: list[str] = []
+    for child in skills.iterdir().map_err((error) => error.message())?:
+        if child.is_dir() and child.joinpath("SKILL.md").exists():
+            actual.append(child.name())
+    source = agents.read_text("utf-8", "strict").map_err((error) => error.message())?
+    documented = documented_skills(source)?
+
+    # 2. Report missing and stale names.
+    undocumented = sorted([name for name in actual if name not in documented])
+    stale = sorted([name for name in documented if name not in actual])
+    if len(undocumented) > 0:
+        println("skills present in .agents/skills/ but missing from AGENTS.md's skill table:")
+        for name in undocumented:
+            println(f"  {name}")
+    if len(stale) > 0:
+        println("skills documented in AGENTS.md's skill table but no longer present in .agents/skills/:")
+        for name in stale:
+            println(f"  {name}")
+    if len(undocumented) > 0 or len(stale) > 0:
+        return Ok(1)
+    return Ok(0)
+
+
+def documented_skills(source: str) -> Result[list[str], str]:
+    """Read distinct public skill names within the Skills section's next heading boundary."""
+    section_pattern = Regex("(?s)### Skills\n(.*?)\n#{1,3} ").map_err((error) => error.message())?
+    names_pattern = Regex("`/([a-z-]+)`").map_err((error) => error.message())?
+    mut names: list[str] = []
+    if let Some(section) = section_pattern.captures(source):
+        for found in names_pattern.captures_iter(section.group(1).unwrap_or("")):
+            name = found.group(1).unwrap_or("")
+            if name not in names:
+                names.append(name)
+    return Ok(names)

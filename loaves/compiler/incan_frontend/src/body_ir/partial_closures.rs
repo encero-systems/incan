@@ -156,11 +156,7 @@ impl BodyBuilder<'_, '_> {
             .local_function_declarations
             .get(source_name)
             .and_then(|candidates| match candidates.as_slice() {
-                [span] => Some(CompilerNodeId::declaration_span(
-                    self.module_identity,
-                    span.start,
-                    span.end,
-                )),
+                [span] => Some(CompilerNodeId::declaration_at(self.module_identity, *span)),
                 _ => None,
             });
         let defaults = self.function_default_sources.get(source_name).cloned();
@@ -249,8 +245,11 @@ impl BodyBuilder<'_, '_> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: parameter.is_mut,
+                native_owned: super::parameter_types::native_collection_parameter(&parameter.ty, self.type_info),
             });
-            if parameter.is_mut {
+            if frame.parameters.last().is_some_and(|parameter| parameter.native_owned) {
+                self.owned_parameters.insert(local);
+            } else if parameter.is_mut {
                 self.borrowed_parameters.insert(local);
             }
             frame.argument_locals.push(local);
@@ -368,6 +367,7 @@ impl BodyBuilder<'_, '_> {
                 params: frame.parameters,
                 captured_operands: frame.captured_operands,
                 body: Box::new(bir::ClosureBody {
+                    native_storage: None,
                     function_item: false,
                     consumes_environment: false,
                     original_callable: None,

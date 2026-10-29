@@ -1072,262 +1072,295 @@ pub def _strptime_temporal(
     allow_time: bool,
     allow_offset: bool,
 ) -> Result[_ParsedTemporal, DateTimeError]:
+    """
+    Parse permitted civil fields and a fixed offset, retaining directive order and exact refusal behavior.
+
+    1. Expand compound directives and initialize the default date, time and offset fields.
+    2. Consume every literal and directive in order, checking each directive's permissions.
+    3. Require complete input consumption and resolve 12-hour, ordinal and week-based fields.
+    4. Validate the final date and time and return them with the parsed offset intent.
+    """
+    # 1. Compound directives share the ordinary parser and its default civil fields.
     expanded = _expand_format_aliases(format)?
-    mut year = 1900
-    mut month = 1
-    mut day = 1
-    mut hour = 0
-    mut minute = 0
-    mut second = 0
-    mut nanosecond = 0
-    mut ordinal_day = 0
-    mut iso_year = 1900
-    mut iso_week = 0
-    mut iso_weekday = 1
-    mut saw_iso = false
-    mut week_number = 0
-    mut week_starts_monday = false
-    mut saw_week_number = false
-    mut saw_weekday = false
-    mut hour_12 = 0
-    mut saw_hour_12 = false
-    mut saw_pm = false
-    mut offset = FixedOffset.utc()
-    mut has_offset = false
-    mut value_index = 0
+    mut fields = _StrptimeFields(offset=FixedOffset.utc())
     mut format_index = 0
+
+    # 2. Fields retain the last authored value while literals consume exactly one matching character.
     while format_index < len(expanded):
         if expanded[format_index:format_index + 1] != "%":
-            if value_index >= len(value) or value[value_index:value_index + 1] != expanded[format_index:format_index + 1]:
-                return Err(DateTimeError(detail="strptime literal mismatch"))
-            value_index += 1
+            _parse_temporal_literal(fields, value, expanded[format_index:format_index + 1])?
             format_index += 1
         else:
             parsed = _read_directive(expanded, format_index)?
             directive = expanded[parsed.value:parsed.value + 1]
             format_index = parsed.next
-            match directive:
-                "%" =>
-                    if value_index >= len(value) or value[value_index:value_index + 1] != "%":
-                        return Err(DateTimeError(detail="strptime literal mismatch"))
-                    value_index += 1
-                "n" =>
-                    if value_index >= len(value) or value[value_index:value_index + 1] != "\n":
-                        return Err(DateTimeError(detail="strptime literal mismatch"))
-                    value_index += 1
-                "t" =>
-                    if value_index >= len(value) or value[value_index:value_index + 1] != "\t":
-                        return Err(DateTimeError(detail="strptime literal mismatch"))
-                    value_index += 1
-                "z" | "Z" =>
-                    if not allow_offset:
-                        return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
-                    if directive == "Z":
-                        return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
-                    parsed_offset = _parse_offset(value, value_index)?
-                    offset = parsed_offset.offset
-                    has_offset = true
-                    value_index = parsed_offset.next
-                "Y" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 4, 4)?
-                    year = number.value
-                    iso_year = year
-                    value_index = number.next
-                "y" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 2, 2)?
-                    if number.value >= 70:
-                        year = 1900 + number.value
-                    else:
-                        year = 2000 + number.value
-                    iso_year = year
-                    value_index = number.next
-                "m" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 1, 2)?
-                    month = number.value
-                    value_index = number.next
-                "d" | "e" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_day_number(value, value_index)?
-                    day = number.value
-                    value_index = number.next
-                "j" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 1, 3)?
-                    ordinal_day = number.value
-                    value_index = number.next
-                "b" | "h" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_month_name(value, value_index, false)?
-                    month = number.value
-                    value_index = number.next
-                "B" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_month_name(value, value_index, true)?
-                    month = number.value
-                    value_index = number.next
-                "a" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_weekday_name(value, value_index, false)?
-                    iso_weekday = number.value
-                    saw_weekday = true
-                    value_index = number.next
-                "A" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_weekday_name(value, value_index, true)?
-                    iso_weekday = number.value
-                    saw_weekday = true
-                    value_index = number.next
-                "u" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 1, 1)?
-                    if number.value < 1 or number.value > _DAYS_PER_WEEK:
-                        return Err(DateTimeError(detail="ISO weekday must be in 1..7"))
-                    iso_weekday = number.value
-                    saw_iso = true
-                    saw_weekday = true
-                    value_index = number.next
-                "w" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 1, 1)?
-                    if number.value < 0 or number.value > 6:
-                        return Err(DateTimeError(detail="weekday must be in 0..6"))
-                    if number.value == 0:
-                        iso_weekday = 7
-                    else:
-                        iso_weekday = number.value
-                    saw_weekday = true
-                    value_index = number.next
-                "G" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 4, 4)?
-                    iso_year = number.value
-                    saw_iso = true
-                    value_index = number.next
-                "g" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 2, 2)?
-                    if number.value >= 70:
-                        iso_year = 1900 + number.value
-                    else:
-                        iso_year = 2000 + number.value
-                    saw_iso = true
-                    value_index = number.next
-                "V" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 1, 2)?
-                    iso_week = number.value
-                    saw_iso = true
-                    value_index = number.next
-                "U" | "W" =>
-                    if not allow_date:
-                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                    number = _parse_number(value, value_index, 1, 2)?
-                    if number.value < 0 or number.value > 53:
-                        return Err(DateTimeError(detail="calendar week must be in 0..53"))
-                    week_number = number.value
-                    week_starts_monday = directive == "W"
-                    saw_week_number = true
-                    value_index = number.next
-                "H" =>
-                    if not allow_time:
-                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-                    number = _parse_number(value, value_index, 1, 2)?
-                    hour = number.value
-                    value_index = number.next
-                "I" =>
-                    if not allow_time:
-                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-                    number = _parse_number(value, value_index, 1, 2)?
-                    hour_12 = number.value
-                    saw_hour_12 = true
-                    value_index = number.next
-                "M" =>
-                    if not allow_time:
-                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-                    number = _parse_number(value, value_index, 1, 2)?
-                    minute = number.value
-                    value_index = number.next
-                "S" =>
-                    if not allow_time:
-                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-                    number = _parse_number(value, value_index, 1, 2)?
-                    second = number.value
-                    value_index = number.next
-                "f" =>
-                    if not allow_time:
-                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-                    number = _parse_fractional_number(value, value_index)?
-                    nanosecond = number.value
-                    value_index = number.next
-                "p" | "P" =>
-                    if not allow_time:
-                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-                    if value[value_index:value_index + 2].upper() == "PM":
-                        saw_pm = true
-                        value_index += 2
-                    elif value[value_index:value_index + 2].upper() == "AM":
-                        saw_pm = false
-                        value_index += 2
-                    else:
-                        return Err(DateTimeError(detail="expected AM or PM"))
-                _ => return Err(DateTimeError(detail="unsupported strptime directive"))
-    if value_index != len(value):
+            _parse_temporal_directive(fields, value, directive, allow_date, allow_time, allow_offset)?
+
+    # 3. Complete consumption precedes derived-field checks, preserving the first reported error.
+    if fields.next != len(value):
         return Err(DateTimeError(detail="trailing text after strptime parse"))
-    if saw_hour_12:
-        if hour_12 < 1 or hour_12 > 12:
-            return Err(DateTimeError(detail="12-hour clock hour must be in 1..12"))
-        if saw_pm:
-            if hour_12 == 12:
-                hour = 12
-            else:
-                hour = hour_12 + 12
-        else:
-            if hour_12 == 12:
-                hour = 0
-            else:
-                hour = hour_12
-    if ordinal_day != 0:
-        ordinal_date = _date_from_ordinal(year, ordinal_day)?
+    hour = _resolve_parsed_hour(fields)?
+    date = _resolve_parsed_date(fields)?
+
+    # 4. Checked constructors enforce final ranges after directive precedence has been resolved.
+    time = Time.from_fields(hour, fields.minute, fields.second, fields.nanosecond)?
+    return Ok(
+        _ParsedTemporal(datetime=DateTime(date=date, time=time), offset=fields.offset, has_offset=fields.has_offset),
+    )
+
+
+model _StrptimeFields:
+    """Civil parse defaults, consumed input position and directive-presence flags used for final resolution."""
+
+    year: int = 1900
+    month: int = 1
+    day: int = 1
+    hour: int = 0
+    minute: int = 0
+    second: int = 0
+    nanosecond: int = 0
+    ordinal_day: int = 0
+    iso_year: int = 1900
+    iso_week: int = 0
+    iso_weekday: int = 1
+    saw_iso: bool = false
+    week_number: int = 0
+    week_starts_monday: bool = false
+    saw_week_number: bool = false
+    saw_weekday: bool = false
+    hour_12: int = 0
+    saw_hour_12: bool = false
+    saw_pm: bool = false
+    offset: FixedOffset
+    has_offset: bool = false
+    next: int = 0
+
+
+def _parse_temporal_literal(mut fields: _StrptimeFields, value: str, literal: str) -> Result[None, DateTimeError]:
+    """Consume one exact literal, including percent, newline and tab directives."""
+    if fields.next >= len(value) or value[fields.next:fields.next + 1] != literal:
+        return Err(DateTimeError(detail="strptime literal mismatch"))
+    fields.next += 1
+    return Ok(None)
+
+
+def _parse_temporal_directive(
+    mut fields: _StrptimeFields, value: str, directive: str,
+    allow_date: bool, allow_time: bool, allow_offset: bool,
+) -> Result[None, DateTimeError]:
+    """Check a directive's temporal category once, then dispatch to its field parser."""
+    match directive:
+        "%" => return _parse_temporal_literal(fields, value, "%")
+        "n" => return _parse_temporal_literal(fields, value, "\n")
+        "t" => return _parse_temporal_literal(fields, value, "\t")
+        _ => pass
+    if _is_timezone_directive(directive):
+        if not allow_offset:
+            return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+        return _parse_temporal_offset(fields, value, directive)
+    if _is_date_directive(directive):
+        if not allow_date:
+            return Err(DateTimeError(detail="date directive requires Date or DateTime"))
+        return _parse_temporal_date(fields, value, directive)
+    if _is_time_directive(directive):
+        if not allow_time:
+            return Err(DateTimeError(detail="time directive requires Time or DateTime"))
+        return _parse_temporal_time(fields, value, directive)
+    return Err(DateTimeError(detail="unsupported strptime directive"))
+
+
+def _parse_temporal_offset(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
+    """Retain the last fixed offset; named timezone directives remain a distinct refusal."""
+    if directive == "Z":
+        return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
+    parsed = _parse_offset(value, fields.next)?
+    fields.offset = parsed.offset
+    fields.has_offset = true
+    fields.next = parsed.next
+    return Ok(None)
+
+
+def _parse_temporal_date(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
+    """Assign calendar fields directly and delegate week-based directives to their shared parser."""
+    if not _is_calendar_field(directive):
+        return _parse_temporal_week(fields, value, directive)
+    number = _parse_calendar_number(value, fields.next, directive)?
+    match directive:
+        "Y" =>
+            fields.year = number.value
+            fields.iso_year = fields.year
+        "y" =>
+            fields.year = _expanded_short_year(number.value)
+            fields.iso_year = fields.year
+        "m" | "b" | "h" | "B" => fields.month = number.value
+        "d" | "e" => fields.day = number.value
+        "j" => fields.ordinal_day = number.value
+        _ => pass
+    fields.next = number.next
+    return Ok(None)
+
+
+def _is_calendar_field(directive: str) -> bool:
+    """Whether a date directive assigns a calendar field rather than an ISO or calendar-week field."""
+    return directive in ["Y", "y", "m", "d", "e", "j", "b", "h", "B"]
+
+
+def _parse_calendar_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
+    """Parse a calendar field's numeric width or English month name without changing civil state."""
+    match directive:
+        "Y" => return _parse_number(value, start, 4, 4)
+        "y" => return _parse_number(value, start, 2, 2)
+        "d" | "e" => return _parse_day_number(value, start)
+        "j" => return _parse_number(value, start, 1, 3)
+        "b" | "h" => return _parse_month_name(value, start, false)
+        "B" => return _parse_month_name(value, start, true)
+        _ => return _parse_number(value, start, 1, 2)
+
+
+def _expanded_short_year(year: int) -> int:
+    """Expand two-digit calendar and ISO years at the shared 1970/2069 boundary."""
+    if year >= 70:
+        return 1900 + year
+    return 2000 + year
+
+
+def _parse_temporal_week(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
+    """Assign week-year, week and weekday fields, preserving each directive's range and presence rules."""
+    number = _parse_week_number(value, fields.next, directive)?
+    match directive:
+        "a" | "A" =>
+            fields.iso_weekday = number.value
+            fields.saw_weekday = true
+        "u" =>
+            if number.value < 1 or number.value > _DAYS_PER_WEEK:
+                return Err(DateTimeError(detail="ISO weekday must be in 1..7"))
+            fields.iso_weekday = number.value
+            fields.saw_iso = true
+            fields.saw_weekday = true
+        "w" =>
+            if number.value < 0 or number.value > 6:
+                return Err(DateTimeError(detail="weekday must be in 0..6"))
+            fields.iso_weekday = _sunday_zero_to_iso_weekday(number.value)
+            fields.saw_weekday = true
+        "G" =>
+            fields.iso_year = number.value
+            fields.saw_iso = true
+        "g" =>
+            fields.iso_year = _expanded_short_year(number.value)
+            fields.saw_iso = true
+        "V" =>
+            fields.iso_week = number.value
+            fields.saw_iso = true
+        "U" | "W" =>
+            if number.value < 0 or number.value > 53:
+                return Err(DateTimeError(detail="calendar week must be in 0..53"))
+            fields.week_number = number.value
+            fields.week_starts_monday = directive == "W"
+            fields.saw_week_number = true
+        _ => pass
+    fields.next = number.next
+    return Ok(None)
+
+
+def _parse_week_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
+    """Parse the spelling and width of a weekday, week or ISO-year directive."""
+    match directive:
+        "a" => return _parse_weekday_name(value, start, false)
+        "A" => return _parse_weekday_name(value, start, true)
+        "u" | "w" => return _parse_number(value, start, 1, 1)
+        "G" => return _parse_number(value, start, 4, 4)
+        "g" => return _parse_number(value, start, 2, 2)
+        _ => return _parse_number(value, start, 1, 2)
+
+
+def _sunday_zero_to_iso_weekday(weekday: int) -> int:
+    """Map the Sunday-zero weekday spelling to the Monday-one civil representation."""
+    if weekday == 0:
+        return 7
+    return weekday
+
+
+def _parse_temporal_time(mut fields: _StrptimeFields, value: str, directive: str) -> Result[None, DateTimeError]:
+    """Assign numeric clock fields or the case-insensitive AM/PM period."""
+    if directive in ["p", "P"]:
+        return _parse_temporal_period(fields, value)
+    number = _parse_clock_number(value, fields.next, directive)?
+    match directive:
+        "H" => fields.hour = number.value
+        "I" =>
+            fields.hour_12 = number.value
+            fields.saw_hour_12 = true
+        "M" => fields.minute = number.value
+        "S" => fields.second = number.value
+        "f" => fields.nanosecond = number.value
+        _ => pass
+    fields.next = number.next
+    return Ok(None)
+
+
+def _parse_clock_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
+    """Parse ordinary clock fields as one or two digits, or scale fractional seconds to nanoseconds."""
+    if directive == "f":
+        return _parse_fractional_number(value, start)
+    return _parse_number(value, start, 1, 2)
+
+
+def _parse_temporal_period(mut fields: _StrptimeFields, value: str) -> Result[None, DateTimeError]:
+    """Consume AM or PM, retaining the last period independently of whether an hour has been seen."""
+    period = value[fields.next:fields.next + 2].upper()
+    if period == "PM":
+        fields.saw_pm = true
+    elif period == "AM":
+        fields.saw_pm = false
+    else:
+        return Err(DateTimeError(detail="expected AM or PM"))
+    fields.next += 2
+    return Ok(None)
+
+
+def _resolve_parsed_hour(fields: _StrptimeFields) -> Result[int, DateTimeError]:
+    """Let a seen 12-hour field override the 24-hour field, with an absent period interpreted as AM."""
+    if not fields.saw_hour_12:
+        return Ok(fields.hour)
+    if fields.hour_12 < 1 or fields.hour_12 > 12:
+        return Err(DateTimeError(detail="12-hour clock hour must be in 1..12"))
+    if fields.saw_pm:
+        if fields.hour_12 == 12:
+            return Ok(12)
+        return Ok(fields.hour_12 + 12)
+    if fields.hour_12 == 12:
+        return Ok(0)
+    return Ok(fields.hour_12)
+
+
+def _resolve_parsed_date(fields: _StrptimeFields) -> Result[Date, DateTimeError]:
+    """Resolve ordinal, calendar-week and ISO-week fields in their original precedence and refusal order."""
+    mut year = fields.year
+    mut month = fields.month
+    mut day = fields.day
+    if fields.ordinal_day != 0:
+        ordinal_date = _date_from_ordinal(year, fields.ordinal_day)?
         month = ordinal_date.month
         day = ordinal_date.day
-    if saw_week_number:
-        if saw_iso:
+    if fields.saw_week_number:
+        if fields.saw_iso:
             return Err(DateTimeError(detail="calendar week directives cannot be combined with ISO week directives"))
-        if ordinal_day != 0:
+        if fields.ordinal_day != 0:
             return Err(DateTimeError(detail="calendar week directives cannot be combined with ordinal day"))
-        if not saw_weekday:
+        if not fields.saw_weekday:
             return Err(DateTimeError(detail="%U and %W parsing require a weekday directive"))
-        week_date = _date_from_calendar_week(year, week_number, iso_weekday, week_starts_monday)?
+        week_date = _date_from_calendar_week(year, fields.week_number, fields.iso_weekday, fields.week_starts_monday)?
         year = week_date.year
         month = week_date.month
         day = week_date.day
-    if saw_iso:
-        if iso_week == 0:
+    if fields.saw_iso:
+        if fields.iso_week == 0:
             return Err(DateTimeError(detail="ISO week parsing requires %V"))
-        iso_date = Date.fromisocalendar(iso_year, iso_week, iso_weekday)?
+        iso_date = Date.fromisocalendar(fields.iso_year, fields.iso_week, fields.iso_weekday)?
         year = iso_date.year
         month = iso_date.month
         day = iso_date.day
-    date = Date.from_fields(year, month, day)?
-    time = Time.from_fields(hour, minute, second, nanosecond)?
-    return Ok(_ParsedTemporal(datetime=DateTime(date=date, time=time), offset=offset, has_offset=has_offset))
+    return Date.from_fields(year, month, day)
 
 
 def _parse_number(value: str, start: int, min_digits: int, max_digits: int) -> Result[_ParsedNumber, DateTimeError]:

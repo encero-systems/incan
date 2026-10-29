@@ -17,9 +17,14 @@ This page lists the Language Server Protocol methods `incan-lsp` serves and what
 | `textDocument/documentSymbol` | The document outline, including module-level partial declarations. |
 | `textDocument/completion` | Basic completions, including local partial names as function-like items. Triggered by `.`, `:` and `[`. |
 | `textDocument/semanticTokens/full` | See [Semantic tokens](#semantic-tokens). |
+| `textDocument/prepareCallHierarchy`, `callHierarchy/incomingCalls`, `callHierarchy/outgoingCalls` | See [Graph navigation](#graph-navigation). |
 | `workspace/executeCommand` | The one command `incan.metadata.model.emit`, which emits contract-backed model source or bundle JSON for a project, a bundle JSON file or a `.incnlib` artifact. Its arguments are in [Checked contract metadata](contract_metadata.md#lsp-command). Any other command returns an object with an `error`. |
 
 No other method is advertised: `textDocument/semanticTokens/range` is advertised as unsupported, and semantic-token deltas, `textDocument/rename` and `textDocument/formatting` are not advertised.
+
+## Graph navigation
+
+Definition, references and incoming/outgoing call hierarchy project the portable graph records of [codegraph inspection](agent_context_cli.md) from the open documents. Source ranges use the document text's UTF-16 positions. The consumer's declared Loaves must have compiled interfaces. A changed or closed document invalidates dependent results. Call hierarchy items carry a document version; an item from an earlier version returns null. Without a current analysis, navigation returns no result.
 
 ## Hover
 
@@ -33,7 +38,7 @@ After a document type-checks, hover shows:
 - for a canonical or supported-alias `@describe` decorator: the checked registry, key, descriptor and described subject.
 - for a checked C binding declaration: its header, logical system-library capability, resources and release operations, symbols with their checked C signatures, enum carriers and plain structures; for a direct raw C call: its checked declaration and its `unsafe:` acknowledgment.
 
-A document with parse or type errors keeps its diagnostics, and hover shows syntax-level details instead of checked metadata. No command returns the checked API metadata package; `incan tools metadata api` prints it.
+A document with parse or type errors keeps its diagnostics, and hover shows syntax-level details instead of checked metadata. No LSP command returns the checked API metadata package.
 
 ## Semantic tokens
 

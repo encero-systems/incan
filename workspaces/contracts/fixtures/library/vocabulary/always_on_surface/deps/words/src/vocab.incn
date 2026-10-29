@@ -1,0 +1,22 @@
+"""Register a query surface that is active in every consumer module, imported from or not."""
+
+from std.vocab import (
+    ClauseSurface, DeclarationSurface, DesugarError, DesugarOutput, DesugarRequest, DesugarResponse, DslSurface,
+    VocabRegistration, VocabSyntaxNode,
+)
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register an always-on query whose expansion is its FROM expression."""
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    surface = DslSurface.always_on().with_declaration(query.with_clause(ClauseSurface.expr("FROM").required()))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Return the FROM expression, retaining its source span."""
+    match request.node:
+        VocabSyntaxNode.Declaration(declaration) =>
+            expression = declaration.clause("FROM")?.expression()?
+            return Ok(DesugarResponse(output=DesugarOutput.Expression(expression)))
+        _ => return Err(DesugarError.at(request.node.span(), "query requires a declaration"))

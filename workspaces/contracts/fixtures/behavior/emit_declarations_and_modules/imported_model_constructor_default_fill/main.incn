@@ -1,12 +1,42 @@
-# behavior: an imported model fills omitted fields with declared defaults, including a fresh collection before an evaluated supplied field (#2256)
+# behavior: imported models retain defaults, factories, enum fields and unimported collection owners (#1530, #2256)
 # expect-stdout:
 #   7 none 0
 #   0 named 1
 #   supplied
 #   supplied
 #   1 0 buffered
+#   missing
+#   7 8
+#   8
+#   7
+#   7
+#   7
+#   9
+#   9
+#   7
+#   12
+#   9
+#   kept
+#   2
+#   true
+#   kept
+#   1
+#   3
+#   1 2
+#   3
+#   0
+#   1
+#   kept
+#   true
+#   7
+#   11
+#   visible
+#   ["visible"]
 
-from records import BufferedRecord, Record
+from records import (
+    BufferedRecord, Record, State, entries, make_factory, packet, refused, reply, replies, reply_table, wrapped_replies,
+)
+from std.testing import fail_t
 
 
 def label() -> str:
@@ -16,6 +46,12 @@ def label() -> str:
 
 
 def main() -> None:
+    """Check model defaults, then consume nominal results without importing their type.
+
+    1. Defaults preserve supplied values and allocate fresh collection fields.
+    2. Function-only imports keep their nominal payloads and selected static constructors.
+    """
+    # 1. Evaluate defaulted and supplied fields.
     first = Record(count=7)
     println(f"{first.count} {first.label} {len(first.tags)}")
     other = Record(label="named", tags=["a"])
@@ -24,3 +60,87 @@ def main() -> None:
     another = BufferedRecord(label=label())
     buffered.tags.append("first")
     println(f"{len(buffered.tags)} {len(another.tags)} {another.label}")
+    match buffered.state:
+        State.Missing => println("missing")
+        State.Text(value) => println(value)
+    # 2. Read the declaring module's payload through Result and list operations.
+    match show_replies():
+        Ok(_) => pass
+        Err(error) => println(error)
+    println(make_factory().value)
+    show_composed_replies()
+    assert packet().domain.value() == "target"
+    show_unimported_entries()
+
+
+def show_replies() -> Result[None, str]:
+    """Propagate, index and iterate nominal payloads selected by imported producer functions."""
+    value = reply().map_err((error) => error)?
+    println(f"{value.value} {replies()[0].value}")
+    for value in wrapped_replies()?:
+        println(value.value)
+    return Ok(None)
+
+
+def show_composed_replies() -> None:
+    """Keep producer-owned payload identities in literal lists and collection fields."""
+    for result in [reply(), reply()]:
+        match result:
+            Ok(value) => println(value.value)
+            Err(error) => println(error)
+    value = packet()
+    println(value.entries[0].value)
+    for entry in value.entries:
+        println(entry.value)
+    println(require_ok(reply()).value)
+    selected = reply_table()["kept"]
+    println(selected.value)
+    numbers = [entry.value for entry in packet().entries]
+    println(numbers[0])
+    show_collection_fields()
+    show_intrinsic_payloads()
+
+
+def require_ok[T](result: Result[T, str]) -> T:
+    """Infer a producer-owned payload through a checked generic argument."""
+    match result:
+        Ok(value) => return value
+        Err(error) => return fail_t[T](error)
+
+
+def show_collection_fields() -> None:
+    """Copy collection fields from indexed model values before reading their contents or membership."""
+    packets = [packet()]
+    println(packets[0].labels["kind"])
+    println(len(packets[0].tags))
+    println("kind" in packets[0].labels)
+    println(packets[0].labels.get("kind", "missing"))
+    values = {"kept": [2, 1]}
+    println(sorted(values["kept"])[0])
+    println(sum(values["kept"]))
+    println(f"{min(values['kept'])} {max(values['kept'])}")
+    combined = values["kept"] + [3]
+    println(combined[2])
+    for index, _number in enumerate(values["kept"]):
+        println(index)
+    parts = ["unused", "kept"]
+    println("/".join(parts[1:]))
+    println(bool(packets[0].labels))
+
+
+def show_intrinsic_payloads() -> None:
+    """Keep nominal owners through Some construction and inline Result callback parameters."""
+    match Some(require_ok(reply())):
+        Some(value) => println(value.value)
+        None => println("missing")
+    match refused().map_err((error) => error.message()):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+
+
+def show_unimported_entries() -> None:
+    """Keep producer-owned elements through consuming loops and comprehensions."""
+    for item in entries():
+        println(item.value)
+    values = [item.value for item in entries()]
+    println(f"{values:?}")

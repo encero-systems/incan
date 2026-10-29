@@ -1,4 +1,4 @@
-# behavior: native Path values keep their unsized and borrowed carriers: a native Cow retains its unsized text argument and resolves its associated owned output, a native option payload keeps its borrowed path component and text carriers through string conversion and output, a Rust Default constructor supplies an owned value usable by its inherent methods, an Incan int return converts a Rust usize result through the ordinary int conversion, and a native directory iterator retains its Result Item and allows methods on successful entries
+# behavior: native paths keep borrowed carriers; defaults, sizes, iterators and Rust platform text work (#2256)
 # expect-stdout:
 #   a/b
 #   file.txt
@@ -11,6 +11,7 @@
 
 """Observe native path values through borrowed, owned and defaulted carriers."""
 
+from rust::std::env::consts import OS
 from rust::std::fs import read_dir
 from rust::std::mem import size_of_val
 from rust::std::path import Path, PathBuf
@@ -25,6 +26,12 @@ def text_size() -> int:
     """Convert a parenthesized native method result at its declared return boundary."""
     path = Path.new("leaf")
     return ((path.as_os_str().len()))
+
+
+def check_platform_text() -> None:
+    """Compare and format the platform constant without imposing one operating system on the case."""
+    assert OS != ""
+    assert len(f"{OS}") > 0
 
 
 def show_owned_text() -> None:
@@ -77,6 +84,7 @@ def show_directory_iteration() -> None:
 
 def main() -> None:
     """Run each path observation in the order of the cases it carries."""
+    check_platform_text()
     show_owned_text()
     show_borrowed_component()
     show_default_constructor()

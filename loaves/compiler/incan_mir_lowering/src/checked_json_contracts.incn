@@ -5,6 +5,7 @@ from rust::incan_semantics_core import (
     IncanPrimitiveType as Primitive,
     RuntimeBuiltinType,
     SemanticSourceTargetKind,
+    CanonicalSymbolId,
 )
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
@@ -32,8 +33,10 @@ pub def checked_deserialize_name(declaration: &NominalDeclaration) -> Result[str
                 return Err("unsupported Body IR ordinary newtype Deserialize without derive selection")
             return Ok("")
         NewtypeDeserialize.Checked(_hook) =>
-            if not deserialize or len(declaration.field_types) != 1 or declaration.field_types[0] != RustType.Primitive(
-                Primitive.Str,
+            if (
+                not deserialize
+                or len(declaration.field_types) != 1
+                or declaration.field_types[0] != RustType.Primitive(Primitive.Str)
             ):
                 return Err("unsupported Body IR checked newtype Deserialize outside owned str")
             return Ok("__incan_checked_deserialize" + symbol_component(str(declaration.name)))
@@ -41,16 +44,16 @@ pub def checked_deserialize_name(declaration: &NominalDeclaration) -> Result[str
 
 pub def checked_owner_arguments(
     declaration: &NominalDeclaration,
-    instances: list[NominalInstance],
+    instances: &list[NominalInstance],
 ) -> Result[list[RustType], str]:
-    """Use the exact discovery registry for scheduling; physical names only verify the selected closed layout."""
+    """Borrow the exact discovery registry and retain only the selected owner's arguments for scheduling."""
     if len(declaration.type_parameters) == 0:
         return Ok([])
     for instance in instances:
-        if instance.declaration.canonical == declaration.canonical and nominal_symbol(
-            str(instance.declaration.name),
-            instance.arguments,
-        ) == declaration.name:
+        if (
+            instance.declaration.canonical == declaration.canonical
+            and nominal_symbol(str(instance.declaration.name), instance.arguments) == declaration.name
+        ):
             if instance.declaration.type_parameters != declaration.type_parameters:
                 return Err("unsupported Body IR checked Deserialize owner binder disagreement")
             return Ok(instance.arguments)
@@ -65,7 +68,12 @@ pub def selected_deserialize_hook(
     """Validate one exact source hook before closing its existing frame; never choose a body by conventional name."""
     match declaration.newtype_deserialize:
         NewtypeDeserialize.Checked(hook) =>
-            if hook.kind != SemanticSourceTargetKind.Method or hook.origin != declaration.canonical.origin or hook.declaration_span.start < declaration.canonical.declaration_span.start or hook.declaration_span.end > declaration.canonical.declaration_span.end:
+            if (
+                hook.kind != SemanticSourceTargetKind.Method
+                or hook.origin != declaration.canonical.origin
+                or hook.declaration_span.start < declaration.canonical.declaration_span.start
+                or hook.declaration_span.end > declaration.canonical.declaration_span.end
+            ):
                 return Err("unsupported Body IR checked Deserialize hook owner provenance")
             mut found: Option[Body] = None
             for body in module.bodies:
@@ -81,7 +89,7 @@ pub def selected_deserialize_hook(
             match found:
                 None => return Err("unsupported Body IR checked Deserialize missing hook Body")
                 Some(body) =>
-                    if body.name != hook.declaration_name or body.span.start != hook.declaration_span.start or body.span.end != hook.declaration_span.end or body.type_parameters != declaration.type_parameters:
+                    if not hook_declaration_agrees(body, hook, declaration):
                         return Err("unsupported Body IR checked Deserialize hook declaration disagreement")
                     closed: Body = instantiate(body, arguments, [])?
                     require_closed_hook(closed)?
@@ -89,12 +97,26 @@ pub def selected_deserialize_hook(
         _ => return Err("unsupported Body IR checked Deserialize without selected hook")
 
 
+def hook_declaration_agrees(body: &Body, hook: &CanonicalSymbolId, declaration: &NominalDeclaration) -> bool:
+    """Require the retained hook's full checked span and declaring type parameters to agree with its frame."""
+    return (
+        body.name == hook.declaration_name
+        and body.span == hook.declaration_span
+        and body.type_parameters == declaration.type_parameters
+    )
+
+
 def require_closed_hook(body: &Body) -> Result[None, str]:
     """Require an owned String input and the canonical builtin error before constructing an executable serde root."""
     if body.is_async or body.is_generator() or len(body.params) != 1 or len(body.locals) == 0:
         return Err("unsupported Body IR checked Deserialize hook frame")
     parameter = body.params[0]
-    if parameter.mutable or parameter.ty != RustType.Primitive(Primitive.Str) or int(parameter.local.index()) != 0 or body.locals[0].ty != parameter.ty:
+    if (
+        parameter.mutable
+        or parameter.ty != RustType.Primitive(Primitive.Str)
+        or int(parameter.local.index()) != 0
+        or body.locals[0].ty != parameter.ty
+    ):
         return Err("unsupported Body IR checked Deserialize hook owned str parameter")
     match body.locals[0].origin:
         LocalOrigin.Parameter => pass
@@ -104,8 +126,10 @@ def require_closed_hook(body: &Body) -> Result[None, str]:
         _ => return Err("unsupported Body IR checked Deserialize hook parameter default")
     match body.return_type:
         RustType.Generic(base=base, args=arguments) =>
-            if base == "Result" and len(arguments) == 2 and arguments[1] == RustType.NativeBuiltin(
-                RuntimeBuiltinType.ValidationError,
+            if (
+                base == "Result"
+                and len(arguments) == 2
+                and arguments[1] == RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError)
             ):
                 return Ok(None)
         _ => pass

@@ -101,7 +101,7 @@ There is no `incan bake` alias. Baking a loaf-shaped carrier packages a `*.loaf`
 oven init
 oven add stdlib-web
 oven add --crate serde
-oven check -p oven_model -p oven_store      # plan + check-only compile of selected members, no codegen or link
+oven check -p incan_frontend -p incan_driver # plan + check-only compile of selected members, no codegen or link
 oven check --workspace --exclude incan-lsp
 oven build --target aarch64-apple-ios
 oven plan --target aarch64-apple-ios --carrier framework

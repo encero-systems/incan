@@ -9,8 +9,14 @@ from rust::std::clone import Clone as RuntimeClone
 from rust::std::fmt import Display
 from rust::std::cmp import PartialEq
 from rust::std::convert import Into as RustInto
+from rust::std::borrow import Borrow
+from rust::std::primitive import str as RustStr
 from rust::incan_std_core::errors import raise_key_error
 from std.rust import Static
+from rust::std::vec import Vec
+from rust::incan_std_core::iter import nonnegative_count
+from native_copying import clone_native
+from native_equality import equal_native
 
 
 pub def freeze_list[T with Static](values: list[T]) -> RuntimeFrozenList[T]:
@@ -44,21 +50,35 @@ pub def frozen_list_items[T with (RuntimeClone, Static)](value: RuntimeFrozenLis
 
 
 pub def frozen_list_text_items[T with (Display, Static)](value: RuntimeFrozenList[T]) -> list[str]:
-    """Materialize static string elements as owned strings without formatting the enclosing collection."""
-    mut result: list[str] = []
-    for item in value.iter():
-        result.append(str(item))
-    return result
+    """Materialize owned text: 1. Read each static element by index. 2. Append its own display text."""
+    mut result: Vec[str] = Vec.new()
+    mut index = 0
+    while true:
+        # 1. Read the next static element without constructing an opaque borrowed iterator.
+        match frozen_text_item[T](value, index):
+            Some(item) =>
+                # 2. Append that element's display text.
+                result.push(item)
+            None => return result
+        index += 1
 
 
 pub def frozen_list_byte_items[Source with (RuntimeClone, RustInto[bytes], Static)](
     value: RuntimeFrozenList[Source],
 ) -> list[bytes]:
-    """Copy static byte slices into owned byte buffers at the same read boundary as legacy iteration."""
-    mut result: list[bytes] = []
-    for item in value.iter():
-        result.append(RustInto.into(RuntimeClone.clone(item)))
-    return result
+    """Copy byte snapshots: 1. Read each static element by index. 2. Copy it into its owned byte buffer."""
+    mut result: Vec[bytes] = Vec.new()
+    mut index = 0
+    while true:
+        # 1. Read the next static element without an opaque borrowed iterator.
+        match value.get(nonnegative_count(index)):
+            Some(item) =>
+                # 2. Copy the selected static byte slice into its owned byte buffer.
+                stored: Source = clone_native[Source](item)
+                owned: bytes = RustInto.into(stored)
+                result.push(owned)
+            None => return result
+        index += 1
 
 
 pub def own_static_bytes[Source with RustInto[bytes]](value: Source) -> bytes:
@@ -73,18 +93,13 @@ pub def frozen_set_length[T with Static](value: RuntimeFrozenSet[T]) -> int:
 
 pub def frozen_set_items[T with (RuntimeClone, Static)](value: RuntimeFrozenSet[T]) -> list[T]:
     """Read frozen set elements in baked order, as legacy's iterator does."""
-    mut result: list[T] = []
-    for item in value.iter():
-        result.append(RuntimeClone.clone(item))
-    return result
+    return frozen_list_items[T](RuntimeFrozenList.new[T](value.as_slice()))
 
 
 pub def frozen_set_text_items[T with (Display, Static)](value: RuntimeFrozenSet[T]) -> list[str]:
-    """Materialize static text set elements as owned strings in baked order."""
-    mut result: list[str] = []
-    for item in value.iter():
-        result.append(str(item))
-    return result
+    """Preserve baked text order: 1. Read the set's static slice through the same indexed text projection."""
+    # 1. Read the set's static slice through the same indexed text projection.
+    return frozen_list_text_items[T](RuntimeFrozenList.new[T](value.as_slice()))
 
 
 pub def frozen_dict_length[K with Static, V with Static](value: RuntimeFrozenDict[K, V]) -> int:
@@ -93,59 +108,105 @@ pub def frozen_dict_length[K with Static, V with Static](value: RuntimeFrozenDic
 
 
 pub def frozen_dict_keys[K with (RuntimeClone, Static), V with Static](value: RuntimeFrozenDict[K, V]) -> list[K]:
-    """Clone only scalar keys in baked iteration order; values remain unread."""
-    mut result: list[K] = []
-    for key, _item in value.iter():
-        result.append(RuntimeClone.clone(key))
-    return result
+    """Copy keys only: 1. Retain typed static entries. 2. Clone each key in baked order without reading values."""
+    # 1. Retain the exact entry tuple type before selecting native get.
+    entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
+    mut result: Vec[K] = Vec.new()
+    mut index = 0
+    # 2. Clone each key in baked order without reading values.
+    while true:
+        match entries.get(nonnegative_count(index)):
+            Some(entry) =>
+                key: &K = entry[0]
+                result.push(clone_native[K](key))
+            None => return result
+        index += 1
 
 
 pub def frozen_dict_text_keys[K with (Display, Static), V with Static](value: RuntimeFrozenDict[K, V]) -> list[str]:
-    """Read static text keys as owned strings, preserving baked order without cloning values."""
-    mut result: list[str] = []
-    for key, _item in value.iter():
-        result.append(str(key))
-    return result
+    """Read keys without cloning values: 1. Retain the static entries. 2. Project each key's display text."""
+    # 1. Retain the static entries.
+    entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
+    mut result: Vec[str] = Vec.new()
+    mut index = 0
+    # 2. Project each key's display text in baked order.
+    while true:
+        match entries.get(nonnegative_count(index)):
+            Some(entry) =>
+                key: &K = entry[0]
+                result.push(f"{key}")
+            None => return result
+        index += 1
 
 
-pub def frozen_dict_text_get[K with (Display, Static), V with (RuntimeClone, Static)](
+pub def frozen_dict_text_get[K with (Borrow[RustStr], Static), V with (RuntimeClone, Static)](
     value: RuntimeFrozenDict[K, V],
     key: &str,
 ) -> V:
-    """Read the first matching static text key, cloning only its value and preserving legacy's missing-key error."""
-    for stored, item in value.iter():
-        if str(stored) == str(key):
-            return RuntimeClone.clone(item)
+    """Use borrowed text identity to find a value, cloning only the selected owned result."""
+    match value.get[RustStr](key):
+        Some(item) => return clone_native[V](item)
+        None => pass
     return raise_key_error(f"'{key}' not found in dict")
 
 
-pub def frozen_dict_get[K with (PartialEq, Display, Static), V with (RuntimeClone, Static)](
+pub def frozen_dict_get[K with (PartialEq[K], Display, Static), V with (RuntimeClone, Static)](
     value: RuntimeFrozenDict[K, V],
     key: K,
 ) -> V:
-    """Use exact scalar key equality and return the first matching value, without cloning unrelated entries."""
+    """Read one scalar key: 1. Retain typed static entries. 2. Copy the first matching value or raise KeyError."""
+    # 1. Retain typed entries and the shared probe without cloning either.
+    entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
     reference: &K = key
-    for stored, item in value.iter():
-        if PartialEq.eq(stored, reference):
-            return RuntimeClone.clone(item)
+    mut index = 0
+    # 2. Copy only the first matching value.
+    while true:
+        match entries.get(nonnegative_count(index)):
+            Some(entry) =>
+                stored: &K = entry[0]
+                if equal_native[K](stored, reference):
+                    item: &V = entry[1]
+                    return clone_native[V](item)
+            None => break
+        index += 1
     return raise_key_error(f"'{key}' not found in dict")
 
 
-pub def frozen_dict_text_contains[K with (Display, Static), V with Static](
+pub def frozen_dict_text_contains[K with (Borrow[RustStr], Static), V with Static](
     value: RuntimeFrozenDict[K, V],
     key: &str,
 ) -> bool:
-    """Check static text keys without reading or cloning values."""
-    for stored, _item in value.iter():
-        if str(stored) == str(key):
-            return true
-    return false
+    """Check borrowed text identity through the frozen dictionary's canonical lookup."""
+    return value.contains_key[RustStr](key)
 
 
-pub def frozen_dict_contains[K with (PartialEq, Static), V with Static](value: RuntimeFrozenDict[K, V], key: K) -> bool:
-    """Test scalar key equality in baked order without requiring a hash implementation."""
+pub def frozen_dict_contains[K with (PartialEq[K], Static), V with Static](
+    value: RuntimeFrozenDict[K, V],
+    key: K,
+) -> bool:
+    """Test scalar keys: 1. Retain typed static entries. 2. Stop at the first equal key without reading values."""
+    # 1. Retain typed entries and the shared probe without cloning either.
+    entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
     reference: &K = key
-    for stored, _item in value.iter():
-        if PartialEq.eq(stored, reference):
-            return true
-    return false
+    mut index = 0
+    # 2. Stop at the first equal key without reading values.
+    while true:
+        match entries.get(nonnegative_count(index)):
+            Some(entry) =>
+                stored: &K = entry[0]
+                if equal_native[K](stored, reference):
+                    return true
+            None => return false
+        index += 1
+
+
+def frozen_text_item[T with (Display, Static)](value: RuntimeFrozenList[T], index: int) -> Option[str]:
+    """Project one static element's text, or report ordinary exhaustion without allocating an iterator carrier."""
+    match value.get(nonnegative_count(index)):
+        Some(item) => return Some(f"{item}")
+        None => return None
+
+
+def frozen_dict_entries[K with Static, V with Static](value: RuntimeFrozenDict[K, V]) -> RuntimeFrozenList[tuple[K, V]]:
+    """View a dictionary's immutable entries with explicit native owner arguments, preserving both tuple types."""
+    return RuntimeFrozenList.new[tuple[K, V]](value.as_slice())

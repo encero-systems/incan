@@ -1,0 +1,8 @@
+"""Observe debug overflow of exact-width unary negation."""
+
+
+def main() -> None:
+    """Negate the smallest signed byte after delivered output."""
+    value: i8 = -128
+    println("before")
+    println(-value)

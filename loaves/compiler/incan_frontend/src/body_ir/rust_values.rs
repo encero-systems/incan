@@ -9,8 +9,8 @@
 
 use super::{IncanType, TypeCheckInfo, bir};
 
-/// Retain selected public native layouts using their checked field identities and type binders. The adapter verifies
-/// the complete instantiated foreign layout; these facts never authorize a guessed partial field projection.
+/// Retain selected native layouts using their checked field identities, visibility and type binders. The adapter
+/// verifies the complete instantiated foreign layout; these facts never authorize a guessed partial field projection.
 pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
     let mut layouts: Vec<_> = facts.rust.checked_layouts.iter().collect();
     layouts.sort_by_key(|(path, _)| *path);
@@ -27,7 +27,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration
                 .iter()
                 .map(|field| super::parameter_types::checked_parameter_type(&field.ty, facts, &layout.type_parameters))
                 .collect();
-            declaration.field_public = vec![true; declaration.fields.len()];
+            declaration.field_public = layout.field_public.clone();
             if layout.is_copy {
                 declaration.derives.push("Copy".into());
             }
@@ -36,7 +36,8 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration
         .collect()
 }
 
-/// Project complete checked native enum templates through the same storage boundary used by native call signatures.
+/// Project complete checked native enum templates through the native signature storage boundary, retaining their
+/// unconditional Copy capability for by-value reads of borrowed enum storage.
 pub(super) fn enum_declarations(facts: &TypeCheckInfo) -> Vec<bir::EnumDeclaration> {
     let mut layouts = facts.rust.checked_enums.iter().collect::<Vec<_>>();
     layouts.sort_by_key(|(path, _)| *path);
@@ -58,7 +59,11 @@ pub(super) fn enum_declarations(facts: &TypeCheckInfo) -> Vec<bir::EnumDeclarati
                     )
                 })
                 .collect();
-            bir::native_enum_declaration(path, layout.type_parameters.clone(), variants)
+            let mut declaration = bir::native_enum_declaration(path, layout.type_parameters.clone(), variants)?;
+            if layout.is_copy {
+                declaration.derives.push("Copy".into());
+            }
+            Some(declaration)
         })
         .collect()
 }

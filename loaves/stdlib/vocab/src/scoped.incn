@@ -1,0 +1,151 @@
+"""Describe import-owned glyphs and leading-dot paths without assigning them host-language semantics."""
+
+from std.json import JsonValue
+from std.serde import json
+
+
+pub model ScopedSurfaceEligibility:
+    """A descriptor's positive declaration, clause or call-argument position."""
+
+    pub declaration: str
+    pub clause: Option[str] = None
+    pub call: Option[str] = None
+    pub position: str = "DeclarationBody"
+
+    def call_argument(declaration: str, call: str) -> Self:
+        """Accept the surface in an argument to the named call inside the owning declaration."""
+        return ScopedSurfaceEligibility(declaration=declaration, call=Some(call), position="CallArgument")
+
+    def to_json(self) -> JsonValue:
+        """Encode one positive position using the published descriptor representation."""
+        return JsonValue.object(
+            {"declaration": JsonValue.string(self.declaration), "clause": optional_text(self.clause), "call": optional_text(
+                self.call,
+            ), "position": JsonValue.string(self.position)},
+        )
+
+
+pub enum ScopedSurfaceFamily(str):
+    """Whether the surface is an operator, a binding or an expression form."""
+
+    OperatorLike = "OperatorLike"
+    BindingLike = "BindingLike"
+    ExpressionForm = "ExpressionForm"
+
+
+pub enum ScopedSurfaceSyntax:
+    """A literal glyph or a leading-dot path with explicit segment-count bounds."""
+
+    Glyph(str)
+    LeadingDotPath(int, Option[int])
+
+    def to_json(self) -> JsonValue:
+        """Encode the parser's structured syntax descriptor."""
+        match self:
+            ScopedSurfaceSyntax.Glyph(spelling) =>
+                return JsonValue.object({"Glyph": JsonValue.object({"spelling": JsonValue.string(spelling)})})
+            ScopedSurfaceSyntax.LeadingDotPath(minimum, maximum) =>
+                mut limit = JsonValue.null()
+                if let Some(value) = maximum:
+                    limit = JsonValue.int(value)
+                return JsonValue.object(
+                    {"LeadingDotPath": JsonValue.object({"min_segments": JsonValue.int(minimum), "max_segments": limit})},
+                )
+
+
+@derive(json)
+pub enum ScopedSurfaceReceiver:
+    """The declaration, clause or provider-defined context supplying a leading-dot receiver."""
+
+    OwningDeclaration
+    Clause(str)
+    Custom(str)
+
+    def custom(key: str) -> Self:
+        """Name a receiver policy interpreted by the provider's desugarer."""
+        return ScopedSurfaceReceiver.Custom(key)
+
+    def descriptor_json(self) -> JsonValue:
+        """Encode receiver descriptors independently of the worker syntax model's derived JSON."""
+        match self:
+            ScopedSurfaceReceiver.OwningDeclaration => return JsonValue.string("OwningDeclaration")
+            ScopedSurfaceReceiver.Clause(clause) =>
+                return JsonValue.object({"Clause": JsonValue.object({"clause": JsonValue.string(clause)})})
+            ScopedSurfaceReceiver.Custom(key) =>
+                return JsonValue.object({"Custom": JsonValue.object({"key": JsonValue.string(key)})})
+
+
+pub model ScopedSurfaceDescriptor:
+    """One positively scoped parser surface, with optional receiver context and pairwise formatting."""
+
+    pub key: str
+    pub syntax: ScopedSurfaceSyntax
+    pub family: ScopedSurfaceFamily = ScopedSurfaceFamily.OperatorLike
+    pub eligible_in: list[ScopedSurfaceEligibility] = []
+    pub receiver: Option[ScopedSurfaceReceiver] = None
+    pub pairwise: bool = false
+
+    def operator(key: str, glyph: str) -> Self:
+        """Register an operator-like glyph without assigning a builtin operation to it."""
+        return ScopedSurfaceDescriptor(key=key, syntax=ScopedSurfaceSyntax.Glyph(glyph))
+
+    def binding(key: str, glyph: str) -> Self:
+        """Register a binding-like glyph whose meaning belongs to its desugarer."""
+        return ScopedSurfaceDescriptor(
+            key=key,
+            syntax=ScopedSurfaceSyntax.Glyph(glyph),
+            family=ScopedSurfaceFamily.BindingLike,
+        )
+
+    def leading_dot_path(key: str) -> Self:
+        """Register a leading-dot path with at least one segment and no upper segment-count bound."""
+        return ScopedSurfaceDescriptor(
+            key=key,
+            syntax=ScopedSurfaceSyntax.LeadingDotPath(1, None),
+            family=ScopedSurfaceFamily.ExpressionForm,
+        )
+
+    def in_declaration_body(self, declaration: str) -> Self:
+        """Append a positive declaration-body position."""
+        return self.with_eligibilities([ScopedSurfaceEligibility(declaration=declaration)])
+
+    def with_eligibilities(self, eligible_in: list[ScopedSurfaceEligibility]) -> Self:
+        """Append positive positions in declaration order."""
+        mut result = self
+        result.eligible_in = result.eligible_in + eligible_in
+        return result
+
+    def with_receiver(self, receiver: ScopedSurfaceReceiver) -> Self:
+        """Set the receiver policy retained in accepted leading-dot syntax."""
+        mut result = self
+        result.receiver = Some(receiver)
+        return result
+
+    def pairwise_chain(self) -> Self:
+        """Preserve repeated operator occurrences as pairwise links for formatting."""
+        mut result = self
+        result.pairwise = true
+        return result
+
+    def to_json(self) -> JsonValue:
+        """Encode the descriptor; misuse diagnostics remain disabled outside positive positions."""
+        mut receiver = JsonValue.null()
+        if let Some(value) = self.receiver:
+            receiver = value.descriptor_json()
+        mut chain = "None"
+        if self.pairwise:
+            chain = "Pairwise"
+        return JsonValue.object(
+            {"key": JsonValue.string(self.key), "family": JsonValue.string(self.family.value()), "syntax": self.syntax.to_json(), "eligible_in": JsonValue.array(
+                [value.to_json() for value in self.eligible_in],
+            ), "misuse_scope": JsonValue.string("None"), "receiver": receiver, "diagnostics": JsonValue.array([]), "format_hint": JsonValue.object(
+                {"chain_mode": JsonValue.string(chain)},
+            )},
+        )
+
+
+def optional_text(value: Option[str]) -> JsonValue:
+    """Encode an optional descriptor string once."""
+    if let Some(text) = value:
+        return JsonValue.string(text)
+    return JsonValue.null()

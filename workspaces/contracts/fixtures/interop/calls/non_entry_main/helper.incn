@@ -1,0 +1,6 @@
+"""A module whose ordinary function is spelled `main`."""
+
+
+pub def main() -> None:
+    """Print from a function that is not the program entry."""
+    println("helper main")

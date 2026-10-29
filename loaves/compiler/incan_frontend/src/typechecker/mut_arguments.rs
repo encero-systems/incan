@@ -20,9 +20,9 @@
 //! - which call arguments are refused (`INCAN-T0117`): an immutable binding or a field of one, an element of a
 //!   collection, or a static, passed to a caller-visible parameter the callee changes, where the change would fail to
 //!   build or be lost;
-//! - which call arguments are handed over as a copy: an immutable binding or field passed to a caller-visible parameter
-//!   the callee never changes, which is what such a call always meant; one whose type cannot be copied, such as a
-//!   `Generator`, is refused (`INCAN-T0117`) instead.
+//! - which call arguments a caller-visible parameter the callee never changes accepts: an immutable binding or field is
+//!   accepted, and lowering passes it as the parameter's own marker (`CallableParam::is_mut`) says; one whose type
+//!   cannot be copied, such as a `Generator`, is refused (`INCAN-T0117`) instead.
 //!
 //! A caller-visible parameter cannot be rebound to a new value in its body: the caller would not see the rebinding.
 //! Temporaries (literals, call results) are always accepted; nothing but the callee holds them.
@@ -101,7 +101,7 @@ struct PendingMutArgument {
     uncopyable_type: Option<String>,
     span: Span,
     /// The declaration span of the local the call went through (`f(items)` after `f = extend`), when it did.
-    through_local: Option<(usize, usize)>,
+    through_local: Option<Span>,
 }
 
 /// A caller-visible parameter passed on to another callee's caller-visible parameter.
@@ -114,7 +114,7 @@ struct MutParamForward {
     callee: CanonicalSymbolId,
     callee_param: String,
     /// The declaration span of the local the call went through, when it did.
-    through_local: Option<(usize, usize)>,
+    through_local: Option<Span>,
 }
 
 /// What a binding is a view into, and how the view was bound.
@@ -222,13 +222,13 @@ pub(crate) struct MutParamFacts {
     forwards: Vec<MutParamForward>,
     /// Local bindings that hold a declared callable by reference, `f = extend`, keyed by the binding's declaration
     /// span, so a call through them is checked too.
-    function_values: HashMap<(usize, usize), CanonicalSymbolId>,
+    function_values: HashMap<Span, CanonicalSymbolId>,
     /// Binding spans of the variables of every `for` loop being checked, which are not mutable bindings, each with
     /// whether its loop's pattern destructures the element.
     loop_variables: Vec<(Span, bool)>,
     /// Local bindings reassigned anywhere in the module, keyed by declaration span. A call through such a local may
     /// run any callable it was assigned, so it counts as changing every marked parameter.
-    reassigned_locals: HashSet<(usize, usize)>,
+    reassigned_locals: HashSet<Span>,
     /// Arguments waiting for the module's change facts.
     pending: Vec<PendingMutArgument>,
     /// The body being checked, when it declares caller-visible parameters.
@@ -1186,9 +1186,7 @@ impl TypeChecker {
             return;
         };
         if self.mut_params.declared.contains_key(&callee) {
-            self.mut_params
-                .function_values
-                .insert((target_span.start, target_span.end), callee);
+            self.mut_params.function_values.insert(target_span, callee);
         }
     }
 
@@ -1201,9 +1199,7 @@ impl TypeChecker {
             .and_then(|symbol_id| self.symbols.get(symbol_id))
             && matches!(symbol.kind, SymbolKind::Variable(_))
         {
-            self.mut_params
-                .reassigned_locals
-                .insert((symbol.span.start, symbol.span.end));
+            self.mut_params.reassigned_locals.insert(symbol.span);
         }
     }
 
@@ -1244,7 +1240,7 @@ impl TypeChecker {
         if let Some(local) = &identity
             && local.kind == SemanticSourceTargetKind::Local
         {
-            let key = (local.declaration_span.start, local.declaration_span.end);
+            let key = local.declaration_span;
             through_local = Some(key);
             if let Some(callee) = self.mut_params.function_values.get(&key) {
                 identity = Some(callee.clone());
@@ -1254,17 +1250,7 @@ impl TypeChecker {
             .as_ref()
             .and_then(|identity| self.mut_params.declared.get(identity).cloned());
         let slots = match declared {
-            Some(slots) => {
-                self.type_info.calls.caller_visible_mut_arguments.insert(
-                    (call_span.start, call_span.end),
-                    slots
-                        .iter()
-                        .filter(|slot| slot.shows_changes_to_caller)
-                        .map(|slot| slot.name.clone())
-                        .collect(),
-                );
-                slots
-            }
+            Some(slots) => slots,
             None => match self.callable_type_mut_slots(callee, call_span) {
                 Some(slots) => {
                     // The callable's body is not one this check reads, so its changes are unknown.
@@ -1317,38 +1303,7 @@ impl TypeChecker {
                 continue;
             };
             let place = self.classify_argument_place(value);
-            if let ArgumentPlace::Mutable {
-                forwarded_param: Some(param),
-            } = &place
-                && self
-                    .mut_params
-                    .current
-                    .as_ref()
-                    .is_some_and(|body| body.closure_depth > 0)
-            {
-                // A closure that passes the parameter on to a parameter that may change it holds the parameter.
-                self.refuse_held_mut_param(param, value.span);
-            }
-            if let ArgumentPlace::Mutable {
-                forwarded_param: Some(param),
-            } = &place
-                && let Some(body) = &self.mut_params.current
-            {
-                match &identity {
-                    Some(callee) => self.mut_params.forwards.push(MutParamForward {
-                        owner: body.identity.clone(),
-                        param: param.clone(),
-                        callee: callee.clone(),
-                        callee_param: slot.name.clone(),
-                        through_local,
-                    }),
-                    // Passing the parameter on to a callee whose body is unknown may change it.
-                    None => {
-                        let owner = body.identity.clone();
-                        self.mut_params.changed.entry(owner).or_default().insert(param.clone());
-                    }
-                }
-            }
+            self.record_mut_argument_forwarding(&place, identity.as_ref(), &slot.name, through_local, value.span);
             let uncopyable_type = self
                 .type_info
                 .expr_type(value.span)
@@ -1364,6 +1319,49 @@ impl TypeChecker {
                 span: value.span,
                 through_local,
             });
+        }
+    }
+
+    /// Retain caller-visible forwarding effects before recording the argument's eventual copy or refusal policy.
+    ///
+    /// A closure forwarding a mutable parameter holds it. An unknown callee conservatively changes the parameter;
+    /// a known declaration records an edge whose effects are resolved after all bodies have been checked.
+    fn record_mut_argument_forwarding(
+        &mut self,
+        place: &ArgumentPlace,
+        identity: Option<&CanonicalSymbolId>,
+        callee_param: &str,
+        through_local: Option<Span>,
+        span: Span,
+    ) {
+        let ArgumentPlace::Mutable {
+            forwarded_param: Some(param),
+        } = place
+        else {
+            return;
+        };
+        if self
+            .mut_params
+            .current
+            .as_ref()
+            .is_some_and(|body| body.closure_depth > 0)
+        {
+            self.refuse_held_mut_param(param, span);
+        }
+        if let Some(body) = &self.mut_params.current {
+            match identity {
+                Some(callee) => self.mut_params.forwards.push(MutParamForward {
+                    owner: body.identity.clone(),
+                    param: param.clone(),
+                    callee: callee.clone(),
+                    callee_param: callee_param.to_owned(),
+                    through_local,
+                }),
+                None => {
+                    let owner = body.identity.clone();
+                    self.mut_params.changed.entry(owner).or_default().insert(param.clone());
+                }
+            }
         }
     }
 
@@ -1601,16 +1599,10 @@ impl TypeChecker {
                     place,
                     argument.span,
                 )
-            } else if matches!(place, MutArgumentPlace::Element | MutArgumentPlace::Static) {
-                // An element or a static already reaches the call as a copy of the stored value.
-                continue;
             } else {
-                // A binding the caller cannot change, or a loop variable, handed to a parameter the callee never
-                // changes is passed as a copy of its value.
-                self.type_info
-                    .calls
-                    .mut_argument_copies
-                    .insert((argument.span.start, argument.span.end));
+                // An element or a static already reaches the call as a copy of the stored value; a binding the caller
+                // cannot change, or a loop variable, handed to a parameter the callee never changes is accepted too:
+                // the call passes it as its parameter's own marker says.
                 continue;
             };
             let already_reported = self
@@ -1625,7 +1617,7 @@ impl TypeChecker {
 
     /// Return whether a call went through a local that is reassigned somewhere in the module, so the callable it runs
     /// is not known at the call.
-    fn call_goes_through_a_reassigned_local(&self, through_local: Option<(usize, usize)>) -> bool {
+    fn call_goes_through_a_reassigned_local(&self, through_local: Option<Span>) -> bool {
         through_local.is_some_and(|local| self.mut_params.reassigned_locals.contains(&local))
     }
 

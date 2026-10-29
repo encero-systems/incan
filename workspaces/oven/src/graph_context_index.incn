@@ -1,0 +1,510 @@
+"""Prepared context indexes rank exported facts without decoding their record payloads."""
+
+from rust::std::fs import File
+from rust::std::io import Read, Seek, SeekFrom
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.json import JsonValue, parse
+from files import json_text, read
+from graph_cache import GraphUnit, cache_file, read_graph, stamp_file
+from graph_identity import keyed
+from graph_queries import display, nested, text
+from graph_context_items import anchor_root, minimum_sizes, tokens
+from observation import trace
+from publication import publish
+from unit_freshness import artifact_identity, fingerprint
+from toolchain import Toolchain
+
+const INDEX_DOMAIN: str = "incan.context.index/4"
+
+
+pub model RecordRange:
+    """One independently decodable record in an immutable prepared payload file."""
+
+    pub path: str
+    pub offset: str
+    pub length: str
+
+
+pub model ContextNode:
+    """The exact inputs to ranking and identity joins, separate from rendering payloads."""
+
+    pub position: RecordRange
+    pub kind: str
+    pub key: str
+    pub logical: str
+    pub label: str
+    pub name: str
+    pub bonus: str
+    pub target: str
+    pub declaration: str
+    pub meaning: str
+    pub compact_minimum: str
+    pub structured_minimum: str
+    pub original_identity: str
+
+
+pub model ContextLink:
+    """An ordered, proved relationship and the byte range needed only if its endpoints are selected."""
+
+    pub source: str
+    pub target: str
+    pub kind: str
+    pub position: RecordRange
+
+
+pub class ContextIndex:
+    """Lightweight ranking rows and directed links, with byte ranges for independently read payloads."""
+
+    nodes: Dict[str, ContextNode] = {}
+    links: list[ContextLink] = []
+    seen: Dict[str, bool] = {}
+    searches: list[tuple[str, str]] = []
+    pub headers: list[JsonValue] = []
+    pub unresolved: int = 0
+    pub parsed: int = 0
+    pub read_bytes: int = 0
+    extra: Dict[str, JsonValue] = {}
+
+    def add(mut self, unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[None, str]:
+        """Load one identity-bound package index; only its header needs JSON decoding."""
+        path = prepare(unit, toolchain, owner)?
+        data = f"{path.0}.records"
+        self.searches.append((f"{path.0}.terms", data))
+        for line in read(path)?.split("\n"):
+            if line == "":
+                continue
+            row = [unescape(field) for field in line.split("\t")]
+            if row[0] == "header":
+                self.headers.append(decode(row[1])?)
+                continue
+            identifier = row[1]
+            if identifier != "" and identifier in self.seen:
+                continue
+            self.seen[identifier] = true
+            if row[0] == "node":
+                self.nodes[identifier] = context_node(row, data)
+                self.add_link(row[13], row[14], row[15], RecordRange(path=data, offset=row[2], length=row[3]))
+                continue
+            if row[0] not in ["call", "reference", "containment", "export"]:
+                continue
+            if row[0] == "call" and row[5] == "":
+                self.unresolved += 1
+            self.add_link(row[4], row[5], row[6], RecordRange(path=data, offset=row[2], length=row[3]))
+        return Ok(None)
+
+    def add_link(mut self, source: str, target: str, kind: str, position: RecordRange) -> None:
+        """Retain resolved endpoints in payload order; unresolved calls are counted separately."""
+        if target == "":
+            return
+        self.links.append(ContextLink(source=source, target=target, kind=kind, position=position))
+
+    def join(mut self) -> Result[None, str]:
+        """Join package-scoped declaration keys exactly once, retaining ambiguity and conflicting-meaning refusals."""
+        mut by_id: Dict[str, str] = {}
+        mut by_identity: Dict[str, str] = {}
+        mut meanings: Dict[str, str] = {}
+        for identifier in self.nodes.keys():
+            row = self.nodes[identifier]
+            if row.kind != "declaration" or row.key == "":
+                continue
+            key = row.key
+            by_id[identifier] = key
+            logical = row.logical
+            if logical in by_identity and by_identity[logical] != key:
+                by_identity[logical] = ""
+            else:
+                by_identity[logical] = key
+            if key in meanings and meanings[key] != row.meaning:
+                return Err(f"conflicting declaration meanings for {key}")
+            meanings[key] = row.meaning
+        for identifier in [key for key in self.nodes.keys()]:
+            mut row = self.nodes[identifier]
+            if row.kind == "declaration":
+                continue
+            mut key = ""
+            for target in [row.target, row.declaration]:
+                if target in by_id:
+                    key = by_id[target]
+            if key == "":
+                key = by_identity.get(row.logical).unwrap_or("")
+            if key != "":
+                row.key = key
+                self.nodes[identifier] = row
+        return Ok(None)
+
+    def stable(self, identifier: str) -> str:
+        """Use the joined key or the original structured identity, in the same order as graph queries."""
+        row = self.nodes[identifier]
+        if row.key != "":
+            return row.key
+        return row.original_identity
+
+    def add_process(mut self, records: list[JsonValue], root: str) -> Result[None, str]:
+        """Attach current process observations after graph joins, just as ordinary context append did."""
+        for record in records:
+            if not eligible(record):
+                continue
+            identifier = text(record, "id")
+            row = [unescape(field) for field in index_row(record, 0, 0, root)?.split("\t")]
+            self.nodes[identifier] = context_node(row, "")
+            self.extra[identifier] = record
+        return Ok(None)
+
+    def rank(self, task: str, preferences: Dict[str, int]) -> Result[tuple[Dict[str, int], Dict[str, str]], str]:
+        """
+        Preserve task scores and both propagation waves without reading a graph payload.
+
+        1. Match task substrings against the vocabulary postings.
+        2. Add exact names, feedback and provenance bonuses.
+        3. Propagate two waves in original relationship order.
+        """
+        # 1. A substring can cross no identifier-word boundary, so vocabulary postings preserve every match.
+        terms = self.term_scores(task)?
+        mut scores: Dict[str, int] = {}
+        mut reasons: Dict[str, str] = {}
+        # 2. Exact equality stays case sensitive, while substring matching stays case insensitive.
+        for identifier in self.nodes.keys():
+            row = self.nodes[identifier]
+            mut score = terms.get(identifier).unwrap_or(0)
+            if task in [identifier, self.stable(identifier), row.label, row.name]:
+                score += 4000
+            feedback = preferences.get(self.stable(identifier)).unwrap_or(0)
+            score += feedback
+            if score == 0:
+                continue
+            scores[identifier] = min([score + number(row.bonus)?, 100000])
+            reasons[identifier] = "task match"
+            if feedback > 0:
+                reasons[identifier] = "session feedback for this task and snapshot"
+        # 3. Later edges may improve a score, but ties keep the first edge's reason.
+        for wave in range(2):
+            before = scores
+            mut next_scores = {key: scores[key] for key in scores.keys()}
+            for link in self.links:
+                source, target, kind = link.source, link.target, link.kind
+                if source not in self.nodes or target not in self.nodes:
+                    continue
+                mut divisor = 4
+                if kind in ["calls", "references"]:
+                    divisor = 2
+                for left, right in [(source, target), (target, source)]:
+                    if left not in before:
+                        continue
+                    score = before[left] // divisor
+                    if score > next_scores.get(right).unwrap_or(0):
+                        next_scores[right] = score
+                        reasons[right] = f"{kind} neighbor of {self.nodes[left].label}"
+            scores = next_scores
+        return Ok((scores, reasons))
+
+    def term_scores(self, task: str) -> Result[Dict[str, int], str]:
+        """Read vocabulary rows, decoding postings only for task words that match; count each word once per node."""
+        words = keywords(task)
+        mut matched: Dict[str, bool] = {}
+        mut scores: Dict[str, int] = {}
+        for path, data in self.searches:
+            document = read(Path(path))?
+            lines = document.split("\n")
+            for position in range(0, len(lines) - 1, 2):
+                for word in words:
+                    if word not in lines[position]:
+                        continue
+                    for value in lines[position + 1].split("\t"):
+                        identifier = unescape(value)
+                        key = f"{word}\t{identifier}"
+                        if identifier not in self.nodes or key in matched:
+                            continue
+                        if self.nodes[identifier].position.path != data:
+                            continue
+                        matched[key] = true
+                        scores[identifier] = scores.get(identifier).unwrap_or(0) + 100
+        for identifier in self.extra.keys():
+            record = self.extra[identifier]
+            haystack = searchable(record)
+            for word in words:
+                if word in haystack:
+                    scores[identifier] = scores.get(identifier).unwrap_or(0) + 100
+        return Ok(scores)
+
+    def node(mut self, identifier: str) -> Result[JsonValue, str]:
+        """Decode one ranked node and attach its globally joined identity, leaving unrelated payloads unread."""
+        if identifier in self.extra:
+            return Ok(self.extra[identifier])
+        row = self.nodes[identifier]
+        record = self.payload(row.position)?
+        mut fields = record.expect_object().map_err((error) => error.message())?
+        if row.key != "":
+            fields["stable_key"] = JsonValue.string(row.key)
+        return Ok(JsonValue.object(fields))
+
+    def minimum_tokens(self, identifier: str, format: str) -> Result[int, str]:
+        """
+        Bound a node's serialized bytes from below without opening its payload.
+
+        Prepared sizes retain exact signatures, trust, details and source anchors. Joined identity fields are
+        measured now, after ambiguity resolution. Extra local-id digits, score digits and longer reasons only add
+        bytes, so these bounds never skip a node that could fit.
+        """
+        row = self.nodes[identifier]
+        if format == "compact":
+            return number(row.compact_minimum)
+        named = tokens(json_text(JsonValue.string(identifier))?)
+        stable = tokens(json_text(JsonValue.string(self.stable(identifier)))?)
+        return Ok(number(row.structured_minimum)? + named + stable - 4)
+
+    def contribution(self, identifier: str, format: str, local: str, score: int, reason: str) -> Result[int, str]:
+        """Measure the exact rendered contribution from prepared fixed fields and current ranking fields."""
+        size = self.minimum_tokens(identifier, format)?
+        reason_size = tokens(json_text(JsonValue.string(reason))?)
+        # The prepared local id is `n0` (two bytes), and its reason is `task match` (twelve JSON bytes).
+        mut added = size + tokens(local) - 2 + reason_size - 12
+        if format != "compact":
+            added += tokens(str(score)) - 1
+        return Ok(added)
+
+    def edges(mut self, local: Dict[str, str]) -> Result[list[JsonValue], str]:
+        """Decode relationships only when both endpoints reached the answer."""
+        mut records: list[JsonValue] = []
+        mut selected: list[RecordRange] = []
+        for link in self.links:
+            if link.source in local and link.target in local:
+                selected.append(link.position)
+        for row in selected:
+            records.append(self.payload(row)?)
+        return Ok(records)
+
+    def payload(mut self, position: RecordRange) -> Result[JsonValue, str]:
+        """Read one exact UTF-8 record range; a short or malformed cache refuses rather than changing ranking."""
+        mut file = File.open(position.path).map_err((error) => str(error))?
+        match file.seek(SeekFrom.Current(number(position.offset)?)):
+            Ok(_) => pass
+            Err(error) => return Err(str(error))
+        size = number(position.length)?
+        mut buffer = zeros(size)
+        match file.read_exact(buffer):
+            Ok(_) => pass
+            Err(error) => return Err(str(error))
+        self.parsed += 1
+        self.read_bytes += size
+        match RustString.from_utf8(buffer):
+            Ok(value) => return decode(str(value))
+            Err(_) => return Err("context index record is not UTF-8")
+
+
+def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, str]:
+    """
+    Persist a package index in the requesting project's preparation cache, bound to the export's full file identity.
+
+    1. Reuse only a complete index for this artifact and source anchor.
+    2. Decode each record once, recording its ranking keys and payload byte range.
+    3. Publish payloads and vocabulary before the index that makes them visible.
+    """
+    # 1. A changed export, package or anchor selects another immutable index.
+    anchors = anchor_root(owner).0
+    key = fingerprint(
+        [
+            INDEX_DOMAIN,
+            anchors,
+            unit.path.0,
+            unit.root.0,
+            unit.package,
+            unit.version,
+            artifact_identity(stamp_file(unit))?,
+        ],
+    )?
+    path = Path(f"{cache_file(owner, key)?.0}.context-index")
+    if path.is_file() and Path(f"{path.0}.records").is_file() and Path(f"{path.0}.terms").is_file():
+        return Ok(path)
+    # 2. Only preparation decodes all payloads; requests read the vocabulary and lightweight rows.
+    document = read_graph(unit, toolchain, "", context_fields()?)?
+    mut rows: list[str] = []
+    mut vocabulary: Dict[str, list[str]] = {}
+    mut package = unit.package
+    mut offset = 0
+    mut count = 0
+    for line in document.split("\n"):
+        length = len(line.encode("utf-8"))
+        if line == "":
+            offset += 1
+            continue
+        record = decode(line)?
+        if text(record, "record") == "header":
+            package = text(nested(record, "package"), "name")
+            rows.append(f"header\t{escape(line)}")
+        else:
+            fact = keyed(record, package)?
+            rows.append(index_row(fact, offset, length, anchors)?)
+            if eligible(fact):
+                for word in keywords(searchable(fact)):
+                    if word not in vocabulary:
+                        vocabulary[word] = []
+                    vocabulary[word].append(escape(text(fact, "id")))
+        offset += length + 1
+        count += 1
+    # 3. An interrupted preparation never exposes a partial index to a reader.
+    terms = [word + "\n" + "\t".join(vocabulary[word]) for word in sorted([key for key in vocabulary.keys()])]
+    publish(Path(f"{path.0}.records"), document)?
+    publish(Path(f"{path.0}.terms"), "\n".join(terms))?
+    publish(path, "\n".join(rows))?
+    trace(f"graph context prepared {unit.path.0}: {len(document.encode("utf-8"))} bytes, {count} records")
+    return Ok(path)
+
+
+def context_node(row: list[str], data: str) -> ContextNode:
+    """Decode the private row layout once; ranking uses named fields rather than storage column positions."""
+    return ContextNode(
+        position=RecordRange(path=data, offset=row[2], length=row[3]),
+        kind=row[4],
+        key=row[5],
+        logical=row[6],
+        label=row[7],
+        name=row[8],
+        bonus=row[9],
+        target=row[10],
+        declaration=row[11],
+        meaning=row[12],
+        compact_minimum=row[16],
+        structured_minimum=row[17],
+        original_identity=row[18],
+    )
+
+
+def searchable(record: JsonValue) -> str:
+    """Index exactly the label and optional text fields the public task scoring examines."""
+    return " ".join([display(record)] + [text(record, key) for key in ["path", "signature", "message", "documentation"]]).lower()
+
+
+pub def context_fields() -> Result[str, str]:
+    """Select context edges' exact fields before JSON transport; complete nodes and artifact bytes stay intact."""
+    kept = [
+        "record",
+        "id",
+        "owner_id",
+        "target_id",
+        "parent_id",
+        "child_id",
+        "source_id",
+        "module_id",
+        "span",
+        "provenance",
+        "degraded",
+    ]
+    mut projection: Dict[str, JsonValue] = {}
+    for kind in ["call", "reference", "containment", "export"]:
+        projection[kind] = JsonValue.array([JsonValue.string(key) for key in kept])
+    return JsonValue.object(projection).to_json().map_err((error) => error.message())
+
+
+def index_row(record: JsonValue, offset: int, length: int, root: str) -> Result[str, str]:
+    """Keep ranking inputs, exact join keys and ordered endpoint ranges; payload-only fields stay in the data file."""
+    kind = text(record, "record")
+    source, target, relationship = endpoints(record)
+    if not eligible(record):
+        mut fields = [kind, text(record, "id")]
+        if kind in ["call", "reference", "containment", "export"]:
+            fields = fields + [str(offset), str(length), source, target, relationship]
+        return Ok("\t".join([escape(field) for field in fields]))
+    mut bonus = 0
+    if text(record, "provenance") == "checked":
+        bonus += 20
+    if text(record, "visibility") == "public":
+        bonus += 10
+    logical = nested(record, "stable_identity")
+    mut stable = ""
+    mut original_identity = ""
+    if logical.as_object() is not None:
+        encoded = json_text(logical)?
+        stable = fingerprint(["incan.context.logical/1", encoded])?
+        if text(record, "stable_key") == "":
+            original_identity = encoded
+    compact_minimum, structured_minimum = minimum_sizes(record, root)?
+    fields = [
+        "node",
+        text(record, "id"),
+        str(offset),
+        str(length),
+        kind,
+        text(record, "stable_key"),
+        stable,
+        display(record),
+        text(record, "name"),
+        str(bonus),
+        text(record, "target_id"),
+        text(record, "declaration_id"),
+        json_text(nested(record, "semantic_digest"))?,
+        source,
+        target,
+        relationship,
+        str(compact_minimum),
+        str(structured_minimum),
+        original_identity,
+    ]
+    return Ok("\t".join([escape(field) for field in fields]))
+
+
+pub def keywords(task: str) -> list[str]:
+    """Keep unique identifier components and task words, preserving substring semantics across vocabulary entries."""
+    mut result: Dict[str, bool] = {}
+    mut word = ""
+    for character in task.lower():
+        if character in "abcdefghijklmnopqrstuvwxyz0123456789_":
+            word += character
+        elif word != "":
+            result[word] = true
+            word = ""
+    if word != "":
+        result[word] = true
+    return [key for key in result.keys()]
+
+
+pub def eligible(record: JsonValue) -> bool:
+    """Only meaningful graph nodes participate; source locations and relationships are separate records."""
+    kinds = ["declaration", "module", "import", "diagnostic", "namespace", "risk_signal"]
+    return text(record, "id") != "" and text(record, "record") in kinds
+
+
+pub def endpoints(record: JsonValue) -> tuple[str, str, str]:
+    """Read relationship endpoints verbatim; unresolved targets never become guessed edges."""
+    kind = text(record, "record")
+    if kind == "containment":
+        return (text(record, "parent_id"), text(record, "child_id"), "contains")
+    if kind in ["call", "reference"]:
+        return (text(record, "owner_id"), text(record, "target_id"), kind + "s")
+    if kind == "export":
+        return (text(record, "module_id"), text(record, "source_id"), "exports")
+    if kind == "import":
+        return (text(record, "module_id"), text(record, "id"), "imports")
+    return ("", "", "")
+
+
+def escape(value: str) -> str:
+    """Encode row delimiters reversibly, including literal percent sequences in authored text."""
+    return value.replace("%", "%25").replace("\t", "%09").replace("\n", "%0A").replace("\r", "%0D")
+
+
+def unescape(value: str) -> str:
+    """Decode only the row encoding, leaving ordinary strings unchanged."""
+    if "%" not in value:
+        return value
+    return value.replace("%0D", "\r").replace("%0A", "\n").replace("%09", "\t").replace("%25", "%")
+
+
+def decode(document: str) -> Result[JsonValue, str]:
+    """Decode a prepared record through the same JSON contract as ordinary graph inspection."""
+    return parse(document).map_err((error) => error.message())
+
+
+def number(value: str) -> Result[int, str]:
+    """Require a whole number in a private index byte range or score."""
+    return decode(value)?.expect_int().map_err((error) => error.message())
+
+
+def zeros(count: int) -> bytes:
+    """Allocate an exact mutable byte buffer without a per-byte append loop."""
+    if count == 0:
+        return "".encode("utf-8")
+    mut value = "0"
+    while len(value) < count:
+        value = value + value
+    return value[:count].encode("utf-8")

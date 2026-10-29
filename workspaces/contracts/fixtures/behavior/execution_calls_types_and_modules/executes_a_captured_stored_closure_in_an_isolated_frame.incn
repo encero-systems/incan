@@ -1,18 +1,26 @@
-# behavior: each source call constructs a stored typed closure expression that captures its own local value
+# behavior: stored closure expressions retain independent scalar and dictionary captures across repeated calls
 # expect-stdout:
 #   42
 #   42
+#   kept7
+#   kept8
+#   kept
 
 
 """Executes a captured stored closure in an isolated frame."""
 def program_result() -> int:
-  """Compute and return `add(40)`."""
-  offset = 2
-  add: (int) -> int = (value) => value + offset
-  return add(40)
+    """Compute and return `add(40)`."""
+    offset = 2
+    add: (int) -> int = (value) => value + offset
+    return add(40)
 
 
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
     println(program_result())
+    labels = {"prefix": "kept"}
+    describe: (int) -> str = (value) => labels["prefix"] + str(value)
+    println(describe(7))
+    println(describe(8))
+    println(labels["prefix"])

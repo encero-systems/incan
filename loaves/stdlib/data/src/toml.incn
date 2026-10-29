@@ -184,7 +184,9 @@ pub class TomlValue:
             name = document.get[str]("project.name")?
             targets = document.get[list[str]]("project.targets")?
         """
-        return self.get_value(path)?._read[T]()
+        match self._lookup_with[T](path, (owner, item, selected) => owner._read_at[T](item, selected))?:
+            Some(value) => return Ok(value)
+            None => return Err(self._error(TomlErrorKind.Missing, "missing TOML value", self._joined_path(path), None))
 
     def get_optional[T with (DeserializeOwned, RustSerialize)](self, path: str) -> Result[Option[T], TomlError]:
         """
@@ -196,13 +198,16 @@ pub class TomlValue:
         Example:
             version = document.get_optional[str]("project.version")?
         """
-        match self._lookup(path)?:
-            Some(value) => return Ok(Some(value._read[T]()?))
-            None => return Ok(None)
+        return self._lookup_with[T](path, (owner, item, selected) => owner._read_at[T](item, selected))
 
     def get_key[T with (DeserializeOwned, RustSerialize)](self, key: str) -> Result[T, TomlError]:
         """Read one required literal table key; dots and brackets in `key` have no special meaning."""
-        return self.get_value_key(key)?._read[T]()
+        if self.kind() != TomlKind.Table:
+            return Err(self._type_error("table", self._path))
+        path = _key_path(self._path, key)
+        if let Some(item) = self._item.get(key):
+            return self._read_at[T](item, path)
+        return Err(self._error(TomlErrorKind.Missing, "missing TOML key", path, None))
 
     def get_value(self, path: str) -> Result[TomlValue, TomlError]:
         """Select a required dot-separated path for dynamic inspection while retaining its source context."""
@@ -296,6 +301,18 @@ pub class TomlValue:
         return None
 
     def _lookup(self, path: str) -> Result[Option[TomlValue], TomlError]:
+        """Create an owned public snapshot only after borrowed path selection has succeeded."""
+        return self._lookup_with[TomlValue](path, (owner, item, selected) => owner._snapshot_at(item, selected))
+
+    def _snapshot_at(self, item: &SpannedItem, path: str) -> Result[TomlValue, TomlError]:
+        """Copy only the selected node when the public contract requests an owned dynamic snapshot."""
+        return Ok(TomlValue(_item=item.clone(), _source=self._source.clone(), _path=path))
+
+    def _lookup_with[T](
+        self,
+        path: str,
+        select: (&TomlValue, &SpannedItem, str) -> Result[T, TomlError],
+    ) -> Result[Option[T], TomlError]:
         """Validate a table-only path before traversal so absence cannot hide malformed syntax."""
         keys = path.split(".")
         for key in keys:
@@ -308,11 +325,16 @@ pub class TomlValue:
                         None,
                     ),
                 )
-        return self._traverse(self._item, keys)
+        return self._traverse_with[T](self._item, keys, select)
 
-    def _traverse(self, item: &SpannedItem, keys: list[str]) -> Result[Option[TomlValue], TomlError]:
+    def _traverse_with[T](
+        self,
+        item: &SpannedItem,
+        keys: list[str],
+        select: (&TomlValue, &SpannedItem, str) -> Result[T, TomlError],
+    ) -> Result[Option[T], TomlError]:
         """
-        Walk borrowed parser nodes and copy only the selected subtree into its public snapshot.
+        Consume a borrowed selection within its owner's lifetime, creating only the requested result.
 
         The explicit shared input retains the cursor's owner until native Body IR carries inferred cursor borrows
         (#2256).
@@ -321,18 +343,19 @@ pub class TomlValue:
         mut selected_path = self._path
         for key in keys:
             if _item_kind(current) != TomlKind.Table:
-                mut location: Option[TomlLocation] = None
-                if let Some(span) = current.span():
-                    location = _span_location(self._source.as_str(), span.start, span.end)
                 return Err(
-                    self._error(TomlErrorKind.Type, "expected table while traversing TOML path", selected_path, location),
+                    self._error(
+                        TomlErrorKind.Type,
+                        "expected table while traversing TOML path",
+                        selected_path,
+                        self._location_at(current),
+                    ),
                 )
             selected_path = _key_path(selected_path, key)
             match current.get(key):
-                Some(child) =>
-                    current = child
+                Some(child) => current = child
                 None => return Ok(None)
-        return Ok(Some(TomlValue(_item=current.clone(), _source=self._source.clone(), _path=selected_path)))
+        return Ok(Some(select(self, current, selected_path)?))
 
     def _lookup_key(self, key: str) -> Result[Option[TomlValue], TomlError]:
         """Distinguish an absent table member from an incompatible intermediate value."""
@@ -350,9 +373,13 @@ pub class TomlValue:
         return f"{self._path}.{path}"
 
     def _decode[T with DeserializeOwned](self) -> Result[T, TomlError]:
+        """Decode this snapshot using the same borrowed selection boundary as typed path lookups."""
+        return self._decode_at[T](self._item, self._path)
+
+    def _decode_at[T with DeserializeOwned](self, item: &SpannedItem, path: str) -> Result[T, TomlError]:
         """Use a serde document slot to decode scalars and containers without losing original spans."""
         mut table = EditTable.new()
-        table.insert("value", self._item.clone())
+        table.insert("value", item.clone())
         document = MutableDocument.from(table)
         decoder = EditDeserializer.from(document)
         mut track = Track.new()
@@ -360,15 +387,24 @@ pub class TomlValue:
         result: Result[_Decoded[T], EditDecodeError] = RustDeserialize.deserialize(tracked)
         match result:
             Ok(decoded) => return Ok(decoded.value)
-            Err(error) => return Err(self._decode_failure(error, str(track.path())))
+            Err(error) => return Err(self._decode_failure_at(error, str(track.path()), item, path))
 
     def _read[T with (DeserializeOwned, RustSerialize)](self) -> Result[T, TomlError]:
+        """Read this snapshot without copying it into another dynamic value."""
+        return self._read_at[T](self._item, self._path)
+
+    def _read_at[T with (DeserializeOwned, RustSerialize)](self, item: &SpannedItem, path: str) -> Result[T, TomlError]:
         """Reject serde's kind coercions by checking the decoded value's TOML shape against the source tree."""
-        decoded = self._decode[T]()?
-        self._validate_decoded(decoded)?
+        decoded = self._decode_at[T](item, path)?
+        self._validate_decoded_at(decoded, item, path)?
         return Ok(decoded)
 
-    def _validate_decoded[T with RustSerialize](self, decoded: &T) -> Result[None, TomlError]:
+    def _validate_decoded_at[T with RustSerialize](
+        self,
+        decoded: &T,
+        item: &SpannedItem,
+        path: str,
+    ) -> Result[None, TomlError]:
         """
         Compare the decoded type's serialized shape without taking ownership of the caller's value.
 
@@ -377,37 +413,52 @@ pub class TomlValue:
         Serialize as well as DeserializeOwned but writes no text and reparses nothing.
         """
         encoded_result: Result[EditValue, EditEncodeError] = RustSerialize.serialize(decoded, ValueSerializer.new())
-        encoded = encoded_result.map_err(
-            (error) => self._error(TomlErrorKind.Type, str(error), self._path, self.location()),
-        )?
-        return self._validate_kinds(encoded)
+        match encoded_result:
+            Ok(encoded) => return self._validate_kinds_at(encoded, item, path)
+            Err(error) => return Err(self._error(TomlErrorKind.Type, str(error), path, self._location_at(item)))
 
-    def _validate_kinds(self, expected: &EditValue) -> Result[None, TomlError]:
+    def _validate_kinds_at(self, expected: &EditValue, item: &SpannedItem, path: str) -> Result[None, TomlError]:
         """Validate the selected subtree, including every collection member, without reparsing TOML text."""
         expected_kind = _value_kind(expected)
-        if self.kind() != expected_kind:
-            return Err(self._type_error(expected_kind.as_str(), self._path))
+        if _item_kind(item) != expected_kind:
+            actual = _item_kind(item).as_str()
+            detail = f"expected {expected_kind.as_str()}, found {actual}"
+            return Err(self._error(TomlErrorKind.Type, detail, path, self._location_at(item)))
         if let Some(values) = expected.as_array():
             for index, value in enumerate(values):
-                self.get_index(index)?._validate_kinds(value)?
+                offset: Option[usize] = index.try_resize()
+                if let Some(position) = offset:
+                    if let Some(child) = item.get(position):
+                        self._validate_kinds_at(value, child, f"{path}[{index}]")?
+                        continue
+                return Err(self._error(TomlErrorKind.Missing, "missing TOML array element", f"{path}[{index}]", None))
         if let Some(table) = expected.as_inline_table():
             for key, value in table:
                 # Missing optional/defaulted model fields need not have an authored source entry.
-                if let Some(child) = self._lookup_key(str(key))?:
-                    child._validate_kinds(value)?
+                if let Some(child) = item.get(str(key)):
+                    self._validate_kinds_at(value, child, _key_path(path, str(key)))?
         return Ok(None)
 
-    def _decode_failure(self, error: EditDecodeError, relative: str) -> TomlError:
+    def _decode_failure_at(self, error: EditDecodeError, relative: str, item: &SpannedItem, selected: str) -> TomlError:
         """Remove the private serde slot from the error path and retain the original failing token's span."""
-        mut path = self._path
+        mut path = selected
         if relative.startswith("value."):
-            path = self._joined_path(relative[6:])
+            if selected == "":
+                path = relative[6:]
+            else:
+                path = f"{selected}.{relative[6:]}"
         elif relative.startswith("value["):
-            path = f"{self._path}{relative[5:]}"
-        mut location = self.location()
+            path = f"{selected}{relative[5:]}"
+        mut location = self._location_at(item)
         if let Some(span) = error.span():
             location = _span_location(self._source.as_str(), span.start, span.end)
         return self._error(TomlErrorKind.Type, str(error.message()), path, location)
+
+    def _location_at(self, item: &SpannedItem) -> Option[TomlLocation]:
+        """Locate a borrowed internal selection in the shared original source."""
+        if let Some(span) = item.span():
+            return _span_location(self._source.as_str(), span.start, span.end)
+        return None
 
     def _type_error(self, expected: str, path: str) -> TomlError:
         """Report a kind mismatch at the existing value, retaining its original source location."""
@@ -472,8 +523,7 @@ pub def locate(source: str, path: list[str]) -> Result[Option[TomlLocation], Tom
     mut item = document.as_item()
     for key in path:
         match item.get(key):
-            Some(child) =>
-                item = child
+            Some(child) => item = child
             None => return Ok(None)
     if let Some(span) = item.span():
         return Ok(_span_location(source, span.start, span.end))

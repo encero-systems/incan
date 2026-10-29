@@ -1,11 +1,104 @@
+"""Provide defaulted records and inferred records returned through function-only imports."""
+
+
 pub model Record:
     pub count: int = 0
     pub label: str = "none"
     pub tags: list[str] = []
 
 
+pub enum State:
+    """A selected enum default has no user-defined evaluation effect."""
+
+    Missing
+    Text(str)
+
+
 pub model BufferedRecord:
     """Declare a fresh collection default before a supplied field."""
 
     pub tags: list[str] = []
+    pub state: State = State.Missing
     pub label: str
+
+
+pub model Reply:
+    """A nominal payload whose consumer imports only its producer functions."""
+
+    pub value: int
+
+    def message(self) -> str:
+        """Observe a nominal error without requiring its type in the consumer."""
+        return str(self.value)
+
+
+pub def reply() -> Result[Reply, str]:
+    """Return a nominal payload through Result."""
+    return Ok(Reply(value=7))
+
+
+pub def replies() -> list[Reply]:
+    """Return nominal payloads for indexing and iteration."""
+    return [Reply(value=8)]
+
+
+pub def wrapped_replies() -> Result[list[Reply], str]:
+    """Return the same nominal elements through a propagated Result."""
+    return Ok(replies())
+
+
+pub model Factory:
+    """Construct a source-owned record through a selected static method."""
+
+    pub value: int
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Build the stored field without recursively calling the constructor hook."""
+        return Factory(value=7)
+
+
+pub def make_factory() -> Factory:
+    """Execute a same-module static constructor selected by the checker."""
+    return Factory()
+
+
+pub enum Domain(str):
+    """Retain a generated text observation through an unimported enum field."""
+
+    Target = "target"
+    Host = "host"
+
+
+pub model Packet:
+    """Carry a collection of nominal payloads owned by this module."""
+
+    pub entries: list[Reply]
+    pub labels: Dict[str, str]
+    pub tags: set[int]
+    pub domain: Domain = Domain.Target
+
+
+pub def packet() -> Packet:
+    """Return a nominal field whose element type is absent from consumer imports."""
+    return Packet(entries=[Reply(value=9)], labels={"kind": "kept"}, tags={7, 8})
+
+
+pub def refused() -> Result[int, Reply]:
+    """Return a producer-owned error for a contextually typed callback."""
+    return Err(Reply(value=11))
+
+
+pub def reply_table() -> Dict[str, Reply]:
+    """Return nominal dictionary values without exporting their type into the consumer's imports."""
+    return {"kept": Reply(value=12)}
+
+
+pub model Entry:
+    """Keep a source-owned element whose type the consumer never imports."""
+    pub value: str
+
+
+pub def entries() -> list[Entry]:
+    """Return records for consuming loops and comprehensions in the importing module."""
+    return [Entry(value="visible")]

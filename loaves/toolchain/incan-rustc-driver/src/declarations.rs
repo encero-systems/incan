@@ -1,14 +1,12 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
+use crate::ast_build::ident;
 use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_semantics_core::RuntimeCarrier;
 use rustc_ast as ast;
-use rustc_span::{Ident, Span, Symbol};
+use rustc_span::{Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
-
-/// Create an identifier from a name that preflight validation has already admitted.
-fn ident(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
-}
 
 /// Retain the standard library's absolute carrier identity independently of source nominal spellings.
 fn standard_path(segments: &[&str], span: Span) -> ast::Path {
@@ -24,6 +22,22 @@ fn standard_path(segments: &[&str], span: Span) -> ast::Path {
         path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
     }
     path
+}
+
+/// Name the shared builtin carrier directly, so compiling the runtime never needs its own already-built facade.
+fn runtime_carrier_ty(carrier: RuntimeCarrier, span: Span) -> ast::TyKind {
+    let mut segments = thin_vec![ast::PathSegment::path_root(span)];
+    for segment in carrier.path().split("::") {
+        segments.push(ast::PathSegment::from_ident(ident(segment, span)));
+    }
+    ast::TyKind::Path(
+        None,
+        ast::Path {
+            span,
+            segments,
+            tokens: None,
+        },
+    )
 }
 
 /// Spell `::std::boxed::Box` from the crate root, so a source declaration named `Box` cannot shadow a closure's box.
@@ -81,6 +95,36 @@ fn scalar_reference_ast(elements: &[PlanType], mutable: bool, span: Span) -> ast
 
 /// Construct an admitted native AST type without generating or parsing Rust source.
 pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    if let Some(ty) = static_reference_ty(kind, span) {
+        return ty;
+    }
+    if let PlanType::CChar = kind {
+        return Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Path(None, standard_path(&["ffi", "c_char"], span)),
+            span,
+            tokens: None,
+        });
+    }
+    if let PlanType::RawPointer(mutable, elements) = kind {
+        let pointee = elements
+            .first()
+            .map(|pointee| ty(pointee, span))
+            .unwrap_or_else(|| ty(&PlanType::Unit, span));
+        return Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Ptr(ast::MutTy {
+                ty: pointee,
+                mutbl: if *mutable {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            }),
+            span,
+            tokens: None,
+        });
+    }
     if let PlanType::TypeToken(elements) = kind {
         return type_token_ty(elements, span);
     }
@@ -110,7 +154,17 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     if let Some(ty) = collection_signature_ty(kind, span) {
         return ty;
     }
-    let kind = match kind {
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: admitted_value_ty_kind(kind, span),
+        span,
+        tokens: None,
+    })
+}
+
+/// Construct the value type after static, pointer, and specialized carrier signatures have been admitted.
+fn admitted_value_ty_kind(kind: &PlanType, span: Span) -> ast::TyKind {
+    match kind {
         PlanType::ScalarRef(elements) => scalar_reference_ast(elements, false, span),
         PlanType::ScalarMutRef(elements) => scalar_reference_ast(elements, true, span),
         PlanType::Future(arguments) => {
@@ -118,27 +172,14 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             ast::TyKind::Path(None, ast::Path::from_ident(ident(&name, span)))
         }
         PlanType::String => ast::TyKind::Path(None, standard_path(&["string", "String"], span)),
-        PlanType::StringRef => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::String, span),
-                mutbl: ast::Mutability::Not,
-            },
-        ),
         PlanType::NativeStr => ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span))),
+        PlanType::StrRef => reference_ast(ty(&PlanType::NativeStr, span), false),
         PlanType::NativeSlice(elements) => elements
             .first()
             .map_or(ast::TyKind::Infer, |element| ast::TyKind::Slice(ty(element, span))),
-        PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::NativeSlice(elements.clone()), span),
-                mutbl: if matches!(kind, PlanType::SliceMutRef(_)) {
-                    ast::Mutability::Mut
-                } else {
-                    ast::Mutability::Not
-                },
-            },
+        PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => reference_ast(
+            ty(&PlanType::NativeSlice(elements.clone()), span),
+            matches!(kind, PlanType::SliceMutRef(_)),
         ),
         PlanType::CallableArguments(inputs) => ast::TyKind::Tup(inputs.iter().map(|input| ty(input, span)).collect()),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
@@ -147,104 +188,31 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 .map(|element| ty(&tuple_element_type(element.clone()), span))
                 .collect(),
         ),
-        PlanType::TupleRef(elements) => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::Tuple(elements.clone()), span),
-                mutbl: ast::Mutability::Not,
-            },
-        ),
-        PlanType::TupleMutRef(elements) => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::Tuple(elements.clone()), span),
-                mutbl: ast::Mutability::Mut,
-            },
-        ),
+        PlanType::TupleRef(elements) => reference_ast(ty(&PlanType::Tuple(elements.clone()), span), false),
+        PlanType::TupleMutRef(elements) => reference_ast(ty(&PlanType::Tuple(elements.clone()), span), true),
         PlanType::RangeValue => ast::TyKind::Tup(range_field_types().iter().map(|field| ty(field, span)).collect()),
-        PlanType::Decimal => {
-            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments
-                .push(ast::PathSegment::from_ident(ident("DecimalCarrier", span)));
-            ast::TyKind::Path(None, path)
-        }
-        PlanType::FrozenStr => {
-            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments
-                .push(ast::PathSegment::from_ident(ident("FrozenCarrier", span)));
-            ast::TyKind::Path(None, path)
-        }
-        PlanType::FrozenBytes => {
-            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments
-                .push(ast::PathSegment::from_ident(ident("FrozenBytesCarrier", span)));
-            ast::TyKind::Path(None, path)
-        }
-        PlanType::ValidationError => {
-            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments
-                .push(ast::PathSegment::from_ident(ident("ValidationErrorCarrier", span)));
-            ast::TyKind::Path(None, path)
-        }
-        PlanType::ValidationErrorRef => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::ValidationError, span),
-                mutbl: ast::Mutability::Not,
-            },
-        ),
+        PlanType::Decimal => runtime_carrier_ty(RuntimeCarrier::Decimal, span),
+        PlanType::FrozenStr => runtime_carrier_ty(RuntimeCarrier::FrozenStr, span),
+        PlanType::FrozenBytes => runtime_carrier_ty(RuntimeCarrier::FrozenBytes, span),
+        PlanType::ValidationError => runtime_carrier_ty(RuntimeCarrier::ValidationError, span),
+        PlanType::ValidationErrorRef => reference_ast(ty(&PlanType::ValidationError, span), false),
         PlanType::ListIntoIter(leaf, depth) => list_iterator_signature_type(leaf, *depth, span),
-        PlanType::ListIntoIterMutRef(leaf, depth) => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::ListIntoIter(leaf.clone(), *depth), span),
-                mutbl: ast::Mutability::Mut,
-            },
-        ),
+        PlanType::ListIntoIterMutRef(leaf, depth) => {
+            reference_ast(ty(&PlanType::ListIntoIter(leaf.clone(), *depth), span), true)
+        }
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
         PlanType::Never => ast::TyKind::Never,
-        PlanType::UnitFunction => ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
-            safety: ast::Safety::Default,
-            ext: ast::Extern::None,
-            generic_params: ThinVec::new(),
-            decl: Box::new(ast::FnDecl {
-                inputs: ThinVec::new(),
-                output: ast::FnRetTy::Ty(ty(&PlanType::Unit, span)),
-            }),
-            decl_span: span,
-        })),
-        PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::Model(*index, name.clone()), span),
-                mutbl: if matches!(kind, PlanType::ModelMutRef(..)) {
-                    ast::Mutability::Mut
-                } else {
-                    ast::Mutability::Not
-                },
-            },
+        PlanType::UnitFunction => unit_function_ast(span),
+        PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) => reference_ast(
+            ty(&PlanType::Model(*index, name.clone()), span),
+            matches!(kind, PlanType::ModelMutRef(..)),
         ),
-        PlanType::StringRef | PlanType::StringMutRef => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::String, span),
-                mutbl: if matches!(kind, PlanType::StringMutRef) {
-                    ast::Mutability::Mut
-                } else {
-                    ast::Mutability::Not
-                },
-            },
-        ),
-        PlanType::EnumRef(index, name) | PlanType::EnumMutRef(index, name) => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::Enum(*index, name.clone()), span),
-                mutbl: if matches!(kind, PlanType::EnumMutRef(..)) {
-                    ast::Mutability::Mut
-                } else {
-                    ast::Mutability::Not
-                },
-            },
+        PlanType::StringRef | PlanType::StringMutRef => {
+            reference_ast(ty(&PlanType::String, span), matches!(kind, PlanType::StringMutRef))
+        }
+        PlanType::EnumRef(index, name) | PlanType::EnumMutRef(index, name) => reference_ast(
+            ty(&PlanType::Enum(*index, name.clone()), span),
+            matches!(kind, PlanType::EnumMutRef(..)),
         ),
         PlanType::CheckedNumeric(kind) => {
             ast::TyKind::Tup(thin_vec![numeric_ty(kind, span), ty(&PlanType::Bool, span)])
@@ -254,36 +222,59 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             None,
             ast::Path::from_ident(ident(&crate::shared_callables::name(signature), span)),
         ),
-        PlanType::Closure(signature) | PlanType::ClosureOnce(signature) => {
-            let mut path = boxed_path(span);
-            if let Some(segment) = path.segments.last_mut() {
-                segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
-                    span,
-                    args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(callable_object_ast(
-                        signature,
-                        span,
-                        matches!(kind, PlanType::ClosureOnce(_))
-                    )))],
-                })));
-            }
-            ast::TyKind::Path(None, path)
-        }
-        PlanType::ClosureRef(signature) => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: callable_object_ast(signature, span, false),
-                mutbl: ast::Mutability::Not,
-            },
+        PlanType::Closure(signature) | PlanType::ClosureOnce(signature) => boxed_object_ast(
+            callable_object_ast(signature, span, matches!(kind, PlanType::ClosureOnce(_))),
+            span,
         ),
+        PlanType::NativeClosure(signature, send, sync) => {
+            boxed_object_ast(native_callable_object_ast(signature, span, false, *send, *sync), span)
+        }
+        PlanType::NativeTraitObject(path, send, sync) => native_object_ast(path, *send, *sync, span),
+        PlanType::ClosureRef(signature) => reference_ast(callable_object_ast(signature, span, false), false),
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => primitive_or_nominal_ty(other, span),
-    };
-    Box::new(ast::Ty {
-        id: ast::DUMMY_NODE_ID,
-        kind,
-        span,
-        tokens: None,
-    })
+    }
+}
+
+/// Preserve the supplied referent's span and tokens while declaring its exact reference mutability.
+fn reference_ast(referent: Box<ast::Ty>, mutable: bool) -> ast::TyKind {
+    ast::TyKind::Ref(
+        None,
+        ast::MutTy {
+            ty: referent,
+            mutbl: if mutable {
+                ast::Mutability::Mut
+            } else {
+                ast::Mutability::Not
+            },
+        },
+    )
+}
+
+/// Declare the safe Rust function pointer used for a zero-argument unit callback.
+fn unit_function_ast(span: Span) -> ast::TyKind {
+    ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
+        safety: ast::Safety::Default,
+        ext: ast::Extern::None,
+        generic_params: ThinVec::new(),
+        decl: Box::new(ast::FnDecl {
+            inputs: ThinVec::new(),
+            output: ast::FnRetTy::Ty(ty(&PlanType::Unit, span)),
+        }),
+        decl_span: span,
+    }))
+}
+
+/// Place an already constructed callable object in the standard owning box without changing its bounds.
+fn boxed_object_ast(object: Box<ast::Ty>, span: Span) -> ast::TyKind {
+    let mut path = boxed_path(span);
+    if let Some(segment) = path.segments.last_mut() {
+        segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+            span,
+            args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(object))],
+        })));
+    }
+    ast::TyKind::Path(None, path)
 }
 
 /// Declare the actual frozen wrapper with explicit static slice/text lifetimes, including nested collections.
@@ -293,39 +284,7 @@ fn frozen_collection_ty(name: &str, elements: &[PlanType], span: Span) -> Box<as
     let mut segment = ast::PathSegment::from_ident(ident(name, span));
     let arguments = elements
         .iter()
-        .map(|element| {
-            let input = match element {
-                PlanType::StaticText | PlanType::StaticBytes => {
-                    let inner = if matches!(element, PlanType::StaticText) {
-                        ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span)))
-                    } else {
-                        ast::TyKind::Slice(ty(&PlanType::U8, span))
-                    };
-                    Box::new(ast::Ty {
-                        id: ast::DUMMY_NODE_ID,
-                        span,
-                        tokens: None,
-                        kind: ast::TyKind::Ref(
-                            Some(ast::Lifetime {
-                                id: ast::DUMMY_NODE_ID,
-                                ident: ident("'static", span),
-                            }),
-                            ast::MutTy {
-                                ty: Box::new(ast::Ty {
-                                    id: ast::DUMMY_NODE_ID,
-                                    span,
-                                    tokens: None,
-                                    kind: inner,
-                                }),
-                                mutbl: ast::Mutability::Not,
-                            },
-                        ),
-                    })
-                }
-                _ => ty(element, span),
-            };
-            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(input))
-        })
+        .map(|element| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(element, span))))
         .collect();
     segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
         span,
@@ -357,6 +316,35 @@ fn list_iterator_signature_type(leaf: &ListLeaf, depth: i64, span: Span) -> ast:
     })));
     path.segments.push(segment);
     ast::TyKind::Path(None, path)
+}
+
+/// Declare retained static text and byte loans uniformly inside frozen carriers and ordinary generic frames.
+fn static_reference_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+    let inner = match kind {
+        PlanType::StaticText => ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span))),
+        PlanType::StaticBytes => ast::TyKind::Slice(ty(&PlanType::U8, span)),
+        _ => return None,
+    };
+    Some(Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        span,
+        tokens: None,
+        kind: ast::TyKind::Ref(
+            Some(ast::Lifetime {
+                id: ast::DUMMY_NODE_ID,
+                ident: ident("'static", span),
+            }),
+            ast::MutTy {
+                ty: Box::new(ast::Ty {
+                    id: ast::DUMMY_NODE_ID,
+                    span,
+                    tokens: None,
+                    kind: inner,
+                }),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
+    }))
 }
 
 /// Name scalar primitives and crate-owned nominal aliases after their exact plan identity has been validated.
@@ -476,6 +464,34 @@ fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast:
     })
 }
 
+/// Declare a checked nongeneric native principal and its explicit auto traits without parsing display syntax.
+fn native_object_ast(path: &str, send: bool, sync: bool, span: Span) -> ast::TyKind {
+    let mut bounds = Vec::new();
+    for path in std::iter::once(path)
+        .chain(send.then_some("std::marker::Send"))
+        .chain(sync.then_some("std::marker::Sync"))
+    {
+        let native = ast::Path {
+            span,
+            segments: std::iter::once(ast::PathSegment::path_root(span))
+                .chain(
+                    path.split("::")
+                        .map(|segment| ast::PathSegment::from_ident(ident(segment, span))),
+                )
+                .collect(),
+            tokens: None,
+        };
+        bounds.push(ast::GenericBound::Trait(ast::PolyTraitRef::new(
+            ThinVec::new(),
+            native,
+            ast::TraitBoundModifiers::NONE,
+            span,
+            ast::Parens::No,
+        )));
+    }
+    ast::TyKind::TraitObject(bounds, ast::TraitObjectSyntax::Dyn)
+}
+
 /// Select the private reusable Fn alias or construct the distinct consuming FnOnce object structurally.
 /// The reusable alias retains rustc-owned bound-input lifetimes and is rooted at the crate so fields inside concrete
 /// layout namespaces see the same object type. Consuming environments never acquire its clone ABI.
@@ -494,6 +510,17 @@ pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span, consumes_e
         });
     }
 
+    native_callable_object_ast(signature, span, consumes_environment, false, false)
+}
+
+/// Construct the native Fn-family object and the auto traits proven for its owned captures, without a clone alias.
+fn native_callable_object_ast(
+    signature: &[PlanType],
+    span: Span,
+    consumes_environment: bool,
+    send: bool,
+    sync: bool,
+) -> Box<ast::Ty> {
     let (inputs, output) = match signature.split_last() {
         Some((result, parameters)) => (
             parameters.iter().map(|parameter| ty(parameter, span)).collect(),
@@ -515,9 +542,24 @@ pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span, consumes_e
         span,
         ast::Parens::No,
     ));
+    let mut bounds = vec![bound];
+    for (required, marker) in [(send, "Send"), (sync, "Sync")] {
+        if required {
+            let mut path = ast::Path::from_ident(ident("std", span));
+            path.segments.push(ast::PathSegment::from_ident(ident("marker", span)));
+            path.segments.push(ast::PathSegment::from_ident(ident(marker, span)));
+            bounds.push(ast::GenericBound::Trait(ast::PolyTraitRef::new(
+                ThinVec::new(),
+                path,
+                ast::TraitBoundModifiers::NONE,
+                span,
+                ast::Parens::No,
+            )));
+        }
+    }
     Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
-        kind: ast::TyKind::TraitObject(vec![bound], ast::TraitObjectSyntax::Dyn),
+        kind: ast::TyKind::TraitObject(bounds, ast::TraitObjectSyntax::Dyn),
         span,
         tokens: None,
     })
@@ -561,14 +603,16 @@ fn placeholder(span: Span) -> Box<ast::Block> {
     })
 }
 
-/// Inject one source-named function's declaration with no authored body in the AST.
-pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
+/// Inject one source-named function's declaration with no authored body in the AST. Future boxing constructors tie
+/// their explicit reference inputs and boxed result to the same lifetime before rustc checks the native call.
+pub fn function(function: &Function, span: Span) -> Result<Box<ast::Item>, crate::error::PlanError> {
     let inputs = function
         .parameters
         .iter()
-        .map(|parameter| ast::Param {
+        .enumerate()
+        .map(|(index, parameter)| ast::Param {
             attrs: ThinVec::new(),
-            ty: ty(&parameter.ty, span),
+            ty: crate::futures::constructor_parameter_type(function, index, span),
             pat: Box::new(ast::Pat {
                 id: ast::DUMMY_NODE_ID,
                 kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(&parameter.name, span), None),
@@ -583,6 +627,11 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
     let output = ast::FnRetTy::Ty(
         crate::futures::constructor_return_type(function, span).unwrap_or_else(|| ty(&function.return_type, span)),
     );
+    let mut declaration = ast::FnDecl { inputs, output };
+    let mut generics = crate::futures::constructor_generics(function, span);
+    generics
+        .params
+        .extend(crate::signature_lifetimes::apply(function, &mut declaration, span)?.params);
     let signature = ast::FnSig {
         header: ast::FnHeader {
             coroutine_kind: function.is_async.then_some(ast::CoroutineKind::Async {
@@ -592,14 +641,14 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             }),
             ..ast::FnHeader::default()
         },
-        decl: Box::new(ast::FnDecl { inputs, output }),
+        decl: Box::new(declaration),
         span,
     };
-    item(
+    Ok(item(
         ast::ItemKind::Fn(Box::new(ast::Fn {
             defaultness: ast::Defaultness::Implicit,
             ident: ident(&function.name, span),
-            generics: ast::Generics::default(),
+            generics,
             sig: signature,
             contract: None,
             define_opaque: None,
@@ -613,7 +662,7 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             eii_impls: ThinVec::new(),
         })),
         span,
-    )
+    ))
 }
 
 /// Build an item without source tokens; rustc assigns node identities after injection.
@@ -647,8 +696,9 @@ pub(crate) fn model_module_name(model: &crate::plan::ModelDeclaration) -> String
 }
 
 /// Keep a concrete struct's source name for derives, exposing its unique physical symbol through a type alias.
-/// Ordinary layouts stay at the crate root. Specialized layouts require no executable adapter body: Rust's derives
-/// operate on a source-named struct in a private namespace, and MIR uses the alias's identical underlying ADT.
+/// Ordinary layouts stay at the crate root. Rust's derives operate on a source-named struct in a private namespace
+/// for specialized layouts, and MIR uses the alias's identical underlying ADT.
+/// Structural Display delegates to Debug on that same type and is published with it, including in compiled libraries.
 pub(crate) fn model_items(
     model: &crate::plan::ModelDeclaration,
     generator: &ast::attr::AttrIdGenerator,
@@ -658,7 +708,11 @@ pub(crate) fn model_items(
         return vec![library_alias(&model.name, model.public, span)];
     }
     let mut declaration = self::model(model, span);
-    for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
+    for derive in model
+        .derives
+        .iter()
+        .filter(|derive| derives::from_str(derive) != Some(DeriveId::Display))
+    {
         declaration.attrs.push(derive_attribute(generator, derive, span));
     }
     if !model.checked_deserialize.is_empty() {
@@ -666,8 +720,19 @@ pub(crate) fn model_items(
             .attrs
             .push(crate::checked_json::deserialize_attribute(generator, span));
     }
+    let display = model
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Display))
+        .then(|| {
+            crate::derived_display::implementation(
+                crate::ast_build::path_ty(ast::Path::from_ident(ident(&model.name, span)), span),
+                ast::Generics::default(),
+                span,
+            )
+        });
     if !specialized_model(model) {
-        return vec![declaration];
+        return std::iter::once(declaration).chain(display).collect();
     }
     let namespace = model_module_name(model);
     let module = item(
@@ -705,7 +770,7 @@ pub(crate) fn model_items(
         span,
     );
     alias.vis = visibility(model.public, span);
-    vec![module, alias]
+    vec![module, alias].into_iter().chain(display).collect()
 }
 
 /// Declare a native layout's alias shell. The adapter supplies its exact metadata type through `type_of`, including
@@ -1150,10 +1215,7 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
 
 /// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
 pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
-    if !value.carrier.is_empty() {
-        return library_alias(&value.name, value.public, span);
-    }
-    if !value.library_item.is_empty() {
+    if !value.carrier.is_empty() || !value.library_item.is_empty() {
         return library_alias(&value.name, value.public, span);
     }
     let variants = value
@@ -1246,7 +1308,7 @@ fn enum_tokens(value: &crate::plan::EnumDeclaration, span: Span) -> ast::tokenst
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
 }
 
-/// Declare the Incan runtime wrapper and its retained shared or exclusive reference without inventing its fields.
+/// Name the selected zip storage alias and preserve its checked shared or exclusive reference.
 fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
     let (left, right, mutability) = match kind {
         PlanType::ZipIterator(left, right) => (left, right, None),
@@ -1254,16 +1316,7 @@ fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
         PlanType::ZipIteratorMutRef(left, right) => (left, right, Some(ast::Mutability::Mut)),
         _ => return None,
     };
-    let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-    let mut segment = ast::PathSegment::from_ident(ident("ZipLists", span));
-    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
-        span,
-        args: thin_vec![
-            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(left.clone()), span))),
-            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(right.clone()), span))),
-        ],
-    })));
-    path.segments.push(segment);
+    let path = ast::Path::from_ident(ident(&crate::zip_carriers::alias_name(left, right), span));
     let owned = Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::Path(None, path),
@@ -1278,6 +1331,30 @@ fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
             span,
             tokens: None,
         }),
+    })
+}
+
+/// Name the linked runtime's generic zip wrapper when no governed source result owns the closed carrier.
+pub(crate) fn linked_zip_ty(
+    left: &crate::plan::TupleElement,
+    right: &crate::plan::TupleElement,
+    span: Span,
+) -> Box<ast::Ty> {
+    let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+    let mut segment = ast::PathSegment::from_ident(ident("ZipLists", span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: thin_vec![
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(left.clone()), span))),
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(right.clone()), span))),
+        ],
+    })));
+    path.segments.push(segment);
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
     })
 }
 

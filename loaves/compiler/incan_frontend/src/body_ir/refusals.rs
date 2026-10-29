@@ -127,11 +127,9 @@ pub(super) fn unsupported_expr_label(expr: &ast::Expr) -> String {
         ast::Expr::Surface(surface) => surface_expr_label(&surface.payload),
         ast::Expr::VocabBlock(_) => undesugared_label("vocab block expression"),
         // RFC 081 (#1023): unlike `VocabBlock`/`Surface`, an embedded fragment is *not* a `build_body_ir_module`
-        // input-contract violation -- it is meant to reach lowering as itself (see `IrExprKind::EmbeddedFragment`'s
-        // rustdoc in `loaves/compiler/incan_ir/src/expr.rs`, the pipeline this replacement-backend Body IR does not yet
-        // share). This still-maturing pipeline simply does not cover it yet, so it falls through this fallback
-        // arm like any other not-yet-supported expression kind; only the label is specific enough to say which
-        // one.
+        // input-contract violation: it is meant to reach lowering as itself. This fallback does not cover it, so it
+        // falls through this arm like any other not-yet-supported expression kind; only the label is specific
+        // enough to say which one.
         ast::Expr::Embedded(_) => "embedded DSL fragment expression".to_string(),
         _ => "expression".to_string(),
     }
@@ -156,8 +154,7 @@ pub(super) fn surface_expr_label(payload: &ast::SurfaceExprPayload) -> String {
 }
 /// Resolve the per-element types for a tuple-typed value being destructured into `count` targets, falling back to
 /// [`IncanType::Unknown`] per element when the resolved type is not (or not yet) known to be a tuple of the right
-/// arity -- mirrors how the existing Rust-emission backend falls back to `IrType::Unknown` per slot in the same
-/// situation (`loaves/compiler/incan_ir/src/lower/stmt.rs`'s `TupleUnpack` lowering). Used by
+/// arity. Used by
 /// [`BodyBuilder::lower_tuple_unpack`], [`BodyBuilder::lower_tuple_assign`], and
 /// [`BodyBuilder::bind_for_pattern_fields`].
 ///
@@ -204,7 +201,24 @@ pub(super) fn unsupported_tuple_destructure(value_ty: &IncanType, arity: usize) 
     }
     None
 }
+/// Preserve a tuple reference's borrow on each component binding, including native iterator items. An invalid
+/// arity retains unknown elements for diagnostic recovery rather than authorizing a projection.
 pub(super) fn tuple_element_types(ty: &IncanType, count: usize) -> Vec<IncanType> {
+    match ty {
+        IncanType::Ref(inner) => {
+            return tuple_element_types(inner, count)
+                .into_iter()
+                .map(|ty| IncanType::Ref(Box::new(ty)))
+                .collect();
+        }
+        IncanType::RefMut(inner) => {
+            return tuple_element_types(inner, count)
+                .into_iter()
+                .map(|ty| IncanType::RefMut(Box::new(ty)))
+                .collect();
+        }
+        _ => {}
+    }
     match tuple_type_elements(ty) {
         Some(items) if items.len() == count => items.to_vec(),
         _ => vec![IncanType::Unknown; count],
@@ -212,10 +226,12 @@ pub(super) fn tuple_element_types(ty: &IncanType, count: usize) -> Vec<IncanType
 }
 /// The element types of a tuple-shaped [`IncanType`], in either spelling, or `None` when `ty` is not a tuple at
 /// all. Backs both [`tuple_element_types`] and [`unsupported_for_pattern`], so the "is this a tuple, and of what
-/// arity" question is answered in exactly one place rather than once per caller.
+/// arity" question is answered in exactly one place rather than once per caller. A reference keeps the referent's
+/// shape; `tuple_element_types` separately retains the borrow on projected component bindings.
 pub(super) fn tuple_type_elements(ty: &IncanType) -> Option<&[IncanType]> {
     match ty {
         IncanType::Tuple(items) => Some(items),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => tuple_type_elements(inner),
         IncanType::Generic { base, args } if collections::from_str(base) == Some(CollectionTypeId::Tuple) => Some(args),
         _ => None,
     }

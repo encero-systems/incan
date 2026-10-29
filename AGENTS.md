@@ -1,9 +1,9 @@
 # Agent Instructions for Incan Development
 
-Incan is a Python-like language that compiles to Rust. The compiler itself is written in Rust and generates native Rust code via an IR-based pipeline. This document contains guidance for AI agents working on the codebase.
+Incan is a Python-like language that compiles to native code through the pinned Rust compiler. The compiler is written in Rust and Incan; it lowers checked Body IR to rustc MIR without generating Rust source. This document contains guidance for AI agents working on the codebase.
 
 > **CRITICAL — NO `.unwrap()` / `.expect()` ANYWHERE.** This is the single most important rule.
-> Multiple modules enforce `#![deny(clippy::unwrap_used)]` and `#![deny(clippy::expect_used)]`.
+> This is a review rule; the native build does not run Clippy.
 > This applies to **all** code — production, tests, examples. No exceptions, no shortcuts.
 > Use `?` with `Result`-returning test functions, or propagate errors explicitly.
 > See [Error handling in tests](#error-handling-in-tests) for the correct pattern.
@@ -77,7 +77,7 @@ These budgets hold for every contributor and every automated workflow.
 3. **Prove changes with the contract families**: `workspaces/contracts/README.md` defines the families and how to run them. During development, run the smallest selector that proves a change (one case, or one area). Run whole families at commit points. The repository has no Cargo project: never run `cargo`.
 4. **Respect the test and record budgets**: see [Tests and design records](#tests-and-design-records).
 5. **Boy Scout Rule**: Leave every file you touch in better shape than you found it — fix stale TODOs, missing doc comments, unused imports, misleading names.
-6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.py` through `make pre-commit-fast`.
+6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.incn` through `make pre-commit-fast`.
 
 ### Pattern intake before edits
 
@@ -96,7 +96,7 @@ When debugging a Rust compiler error, capture the full error context before prop
 
 - the exact command that failed;
 - the complete diagnostic, including error code, notes, help text, and secondary spans;
-- active feature flags or build mode, especially default build vs. `rust-metadata`;
+- the active package features and selected build profile;
 - the relevant function signature and nearby type definitions;
 - the local files or tests that establish the intended pattern.
 
@@ -124,7 +124,7 @@ When making changes under `workspaces/docs-site/`:
 - **Apply Divio intent before writing**: choose the reader's task and the matching page type. Tutorials teach through a guided learning exercise; how-to guides solve a concrete task; references provide factual lookup; explanations develop understanding and rationale. Content must match its type, not merely live in the matching directory.
 - **References document the public contract**: inventory the relevant public surface and include exact signatures, parameter and return types, defaults, errors, constraints, and observable behavior. Organize by API or concept so a reader can look up one item independently. Small syntax examples are welcome, but a walkthrough, feature overview, or implementation narrative is not a substitute for a reference. A reference also states nothing beyond that contract; the checklist reviewers apply is *Reference pages state the contract only* in `.agents/skills/review-docs-claims/SKILL.md`, and the separate `make reference-contract-check` target enforces its lexical part. Touching a reference page means bringing the whole page to contract, and a true sentence taken off it moves to its how-to or explanation page in the same change.
 - **Separate mixed intents with links**: move task procedures to how-to guides and design rationale to explanations when those need their own treatment. Do not create all four page types mechanically for every feature. Check the actual source and same-kind precedents; an existing page is not proof that its organization is correct.
-- **Build docs locally**: run `mkdocs build --strict` from `workspaces/docs-site` to catch broken links/anchors early.
+- **Build docs locally**: run `make docs-build` from `workspaces/docs-site` to generate RFC snippets, check docs contracts and build MkDocs strictly.
 - **Review intent separately from the build**: a successful MkDocs build checks rendering and links, not Divio placement or reference completeness. Verify both before checking off documentation in a PR.
 - **Line length: no hard wrap** for docs-site `.md` files. Write prose as natural paragraphs — let the renderer handle wrapping. This applies to all markdown under `workspaces/docs-site/` and other non-code markdown files.
 
@@ -144,13 +144,13 @@ Spell everything in US English -- identifiers, comments, docstrings, diagnostics
 
 **No Python in production logic.** Product and tooling behavior is written in Rust or Incan, never Python:
 
-- the compiler and the Oven;
+- the compiler and Oven;
 - the Loaf registry side;
 - the CI evidence and release pipeline that decides what an artifact or a test result is.
 
-New evidence operations belong beside the existing ones as `incan oven` subcommands. Python remains only for:
+New evidence operations belong beside the existing ones as Oven commands in `workspaces/oven/src/`. Python remains only for:
 
-- the repository-hygiene `check_*` gates and the test-inventory generator;
+- the docs site's MkDocs hooks, Pygments lexer and asset extraction script;
 - the benchmarks' Python baselines;
 - the pip installer shim;
 - agent hooks and research scripts.
@@ -210,7 +210,7 @@ The project style guide covers broad principles. This section is a concrete quic
 
 | Instead of                                    | Prefer                                 | Why                                                               |
 | --------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------- |
-| `.unwrap()` / `.expect("…")` **anywhere**     | `?`, `.context()`, or explicit `match` | Panics crash the compiler; deny lints reject these in CI          |
+| `.unwrap()` / `.expect("…")` **anywhere**     | `?`, `.context()`, or explicit `match` | Panic paths violate the repository's review rule                 |
 | `.clone()` to appease the borrow checker      | Restructure ownership or borrow        | Hides design issues and adds unnecessary allocations              |
 | `&String`, `&Vec<T>`, `&Box<T>` in parameters | `&str`, `&[T]`, `&T`                   | More general — accepts owned and borrowed callers alike           |
 | `x as u32` (silent truncation)                | `x.try_into()` or `From`/`Into`        | `as` silently wraps/truncates; conversions should be explicit     |
@@ -223,10 +223,10 @@ The project style guide covers broad principles. This section is a concrete quic
 
 ### Error handling — NEVER use `.unwrap()` or `.expect()`
 
-**This is non-negotiable.** Any `.unwrap()` or `.expect()` call — in production code **or test code** — will be rejected by clippy and fail CI. Always propagate errors with `?`:
+**This is non-negotiable.** Any `.unwrap()` or `.expect()` call — in production code **or test code** — is refused in review. Always propagate errors with `?`:
 
 ```rust
-// WRONG — will not compile due to deny lint
+// WRONG — violates the review rule
 let file = File::open(path).unwrap();
 
 // CORRECT — propagate with ?
@@ -255,24 +255,25 @@ The repository has no Cargo project, so `cargo clippy`, `cargo test` and `cargo 
 ## Compiler Pipeline
 
 ```text
-Source → Lexer → Parser/AST → Typechecker → Lowering (AST→IR) → Emission (IR→Rust)
+Source → Lexer → Parser/AST → Typechecker → Body IR → Incan lowering → Native plan → rustc MIR
 ```
 
 Key directories:
 
 - `loaves/kernel/incan_syntax/src/parser/` — Parsing; syntax definitions are in `loaves/kernel/incan_syntax/src/ast/`
 - `loaves/compiler/incan_frontend/src/typechecker/` — Type checking and semantic analysis
-- `loaves/compiler/incan_ir/src/lower/` — AST to IR lowering
-- `loaves/compiler/incan_emit/src/emit/` — IR to Rust code emission
+- `loaves/compiler/incan_frontend/src/body_ir/` — checked AST to Body IR
+- `loaves/compiler/incan_mir_lowering/src/` — Body IR to native plan
+- `loaves/toolchain/incan-rustc-driver/src/` — native plan to rustc MIR
 
 ## Code Locations Reference
 
-The parser column is relative to `loaves/kernel/incan_syntax/src/`; typechecker entries are relative to `loaves/compiler/incan_frontend/src/typechecker/`; lowering entries are relative to `loaves/compiler/incan_ir/src/`; emission entries are relative to `loaves/compiler/incan_emit/src/`. Fully qualified paths override those bases.
+The parser column is relative to `loaves/kernel/incan_syntax/src/`; typechecker entries are relative to `loaves/compiler/incan_frontend/src/typechecker/`; lowering entries are relative to `loaves/compiler/incan_mir_lowering/src/`; adapter entries are relative to `loaves/toolchain/incan-rustc-driver/src/`. Fully qualified paths override those bases.
 
-| Feature          | Parser                                                 | Typechecker                                                         | Lowering        | Emission        |
+| Feature          | Parser                                                 | Typechecker                                                         | Lowering        | Adapter        |
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------- | --------------- | --------------- |
-| Field metadata   | `parser/decl/`                                       | `check_decl.rs`                                                     | `lower/decl/` | `emit/decls/` |
-| Alias resolution | -                                                      | `check_expr/access.rs`, `check_expr/calls.rs`, `check_expr/match_.rs`                     | `lower/expr/` | -               |
+| Field metadata   | `parser/decl/`                                       | `check_decl.rs`                                                     | `models.incn` | `field_metadata.rs` |
+| Alias resolution | -                                                      | `check_expr/access.rs`, `check_expr/calls.rs`, `check_expr/match_.rs`                     | `unions.incn` | -               |
 | Soft keywords    | `parser/core.rs`, `parser/helpers.rs`, `parser/decl/*` | `collect/stdlib_imports.rs`                                         | -               | -               |
 | Stdlib registry  | -                                                      | `incan_lang::lang::stdlib` (`loaves/kernel/incan_lang/src/lang/stdlib.rs`) | -               | -               |
 | Diagnostics      | -                                                      | `diagnostics/catalog/errors/*` in `loaves/kernel/incan_syntax/src/`        | -               | -               |
@@ -343,7 +344,7 @@ Subagents in `.agents/` run as isolated specialists that can be delegated to:
 
 | Agent        | When it's used                                   | What it does                                                  |
 | ------------ | ------------------------------------------------ | ------------------------------------------------------------- |
-| `test-suite` | Validating changes, checking regressions, pre-PR | Analyzes diff, runs targeted tests, checks snapshots + clippy |
+| `test-suite` | Validating changes, checking regressions, pre-PR | Analyzes diff, runs focused contract selectors and families   |
 
 ## Implementation Learnings
 

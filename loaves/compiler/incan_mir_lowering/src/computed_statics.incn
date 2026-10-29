@@ -39,9 +39,9 @@ pub def is_computed_static(declaration: &StaticDeclaration) -> bool:
 
 
 pub def has_native_static_cell(declaration: &StaticDeclaration) -> bool:
-    """Use guarded adapter storage for computed values and literal dictionaries, without making literals effectful."""
+    """Keep computed values and literal lists or dictionaries in guarded cells without making literals effectful."""
     match declaration.initial:
-        StaticInitializer.Dict(_entries) => return true
+        StaticInitializer.List(_) | StaticInitializer.Dict(_) => return true
         _ => return is_computed_static(declaration)
 
 
@@ -100,11 +100,11 @@ pub def module_initialization_externals(span: SourceSpan) -> list[ExternalFuncti
 
 pub def module_initializer(statics: &list[StaticDeclaration], key: int, span: SourceSpan) -> Function:
     """
-    Build the initializer of the module keyed `key`: claim the module's initialization, and when this is the first
-    claim, force its computed statics in declaration order before recording it complete.
+    Build the initializer of the module keyed `key` without changing its declaration order or reentrancy behavior.
 
-    A later call, and one made while the statics are still initializing, returns without forcing anything, as legacy's
-    once and running guards do.
+    1. Return immediately when the module has completed initialization.
+    2. Use the runtime claim to force computed statics once in declaration order; reentrant calls return.
+    3. Publish completion only after initialization succeeds.
     """
     owner = static_owner(statics[key])
     mut forced: list[int] = []
@@ -113,23 +113,35 @@ pub def module_initializer(statics: &list[StaticDeclaration], key: int, span: So
         if is_computed_static(declaration) and static_owner(declaration) == owner:
             forced.append(slot)
         slot += 1
-    # Blocks: 0 claims, 1 branches, then one block per forced static, the completion record, and the return.
-    done = 2 + len(forced) + 1
-    claim = TerminatorKind.Call(
-        Callee(kind=CalleeKind.External("incan_native_runtime::begin_module_initialization"), span=span),
-        [literal(Constant.Int(key), span)],
+    # 1. Completed modules return after a single native atomic load.
+    done = 4 + len(forced) + 2
+    probe = TerminatorKind.Call(
+        Callee(kind=CalleeKind.ModuleInitialized(key), span=span),
+        [],
         plan_place(1, span),
         1,
         Unwind.Continue,
     )
+    claim = TerminatorKind.Call(
+        Callee(kind=CalleeKind.External("incan_native_runtime::begin_module_initialization"), span=span),
+        [literal(Constant.Int(key), span)],
+        plan_place(1, span),
+        3,
+        Unwind.Continue,
+    )
     claimed = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
-    mut blocks = [plan_block([], claim, span), plan_block([], TerminatorKind.SwitchBool(claimed, done, 2), span)]
+    mut blocks = [plan_block([], probe, span), plan_block([], TerminatorKind.SwitchBool(claimed, 2, done), span), plan_block(
+        [],
+        claim,
+        span,
+    ), plan_block([], TerminatorKind.SwitchBool(claimed, done, 4), span)]
+    # 2. The original claim still controls first entry and reentrancy, in declaration order.
     for index in range(len(forced)):
         force = TerminatorKind.Call(
             Callee(kind=CalleeKind.StaticForce(forced[index]), span=span),
             [],
             plan_place(2, span),
-            3 + index,
+            5 + index,
             Unwind.Continue,
         )
         blocks.append(plan_block([], force, span))
@@ -137,10 +149,19 @@ pub def module_initializer(statics: &list[StaticDeclaration], key: int, span: So
         Callee(kind=CalleeKind.External("incan_native_runtime::end_module_initialization"), span=span),
         [literal(Constant.Int(key), span)],
         plan_place(2, span),
-        done,
+        done - 1,
         Unwind.Continue,
     )
     blocks.append(plan_block([], complete, span))
+    # 3. Publish completion only after every static and the runtime completion record succeed.
+    publish = TerminatorKind.Call(
+        Callee(kind=CalleeKind.ModuleComplete(key), span=span),
+        [],
+        plan_place(2, span),
+        done,
+        Unwind.Continue,
+    )
+    blocks.append(plan_block([], publish, span))
     unit = plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span)
     blocks.append(plan_block([unit], TerminatorKind.Return, span))
     return Function(

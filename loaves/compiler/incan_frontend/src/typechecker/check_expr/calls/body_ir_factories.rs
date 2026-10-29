@@ -10,7 +10,8 @@ use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
 use crate::typechecker::nominal_type_param_bounds::NominalTypeParamBounds;
 
 impl TypeChecker {
-    /// Close a selected source static factory from its original owner signature and already checked context.
+    /// Retain a selected source static factory from its original owner signature and already checked context.
+    /// Concrete callers close its owner; a provider's active declared binders remain explicit for specialization.
     /// Private bindings and Body IR tables keep legacy's open Self result and Rust inference unchanged.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn retain_body_ir_factory_owner(
@@ -43,7 +44,7 @@ impl TypeChecker {
             ResolvedType::Generic(_, arguments) => names
                 .iter()
                 .zip(arguments)
-                .filter(|(_, argument)| concrete(argument))
+                .filter(|(_, argument)| self.factory_type_is_bound(argument))
                 .map(|(name, argument)| (name.clone(), argument.clone()))
                 .collect::<HashMap<_, _>>(),
             _ => HashMap::new(),
@@ -52,23 +53,23 @@ impl TypeChecker {
         // ---- Checked argument and destination constraints ----
         let mut bindings: HashMap<_, _> = legacy
             .iter()
-            .filter(|(_, ty)| concrete(ty))
+            .filter(|(_, ty)| self.factory_type_is_bound(ty))
             .map(|(name, ty)| (name.clone(), ty.clone()))
             .collect();
         if let Some(expected) = expected {
             self.infer_type_param_bindings(&result, &normalized(expected, &[], self), &mut bindings);
         }
         for (expression, parameter) in Self::arguments_with_parameter_types(&parameters, args) {
-            let Some(actual) = self.type_info.expr_type(expression.span) else {
+            let Some(actual) = self.body_ir_checked_value_type(expression.span) else {
                 return;
             };
             let actual = normalized(actual, &[], self);
             let parameter = normalized(parameter, &names, self);
-            if !concrete(&actual) {
+            if !self.factory_type_is_bound(&actual) {
                 return;
             }
             let constrained = substitute_resolved_type(&parameter, &fixed);
-            if concrete(&constrained) && !self.types_compatible(&constrained, &actual) {
+            if self.factory_type_is_bound(&constrained) && !self.types_compatible(&constrained, &actual) {
                 self.refuse_body_ir_factory_result(span);
                 return;
             }
@@ -80,7 +81,7 @@ impl TypeChecker {
         }
         let arguments: Option<Vec<_>> = names
             .iter()
-            .map(|name| bindings.get(name).filter(|ty| concrete(ty)).cloned())
+            .map(|name| bindings.get(name).filter(|ty| self.factory_type_is_bound(ty)).cloned())
             .collect();
         let Some(arguments) = arguments else {
             return;
@@ -98,28 +99,58 @@ impl TypeChecker {
             return;
         }
         let output = substitute_resolved_type(&result, &bindings);
-        if !concrete(&output) || expected.is_some_and(|expected| !self.types_compatible(&output, expected)) {
-            if concrete(&output) {
+        if !self.factory_type_is_bound(&output)
+            || expected.is_some_and(|expected| !self.types_compatible(&output, expected))
+        {
+            if self.factory_type_is_bound(&output) {
                 self.refuse_body_ir_factory_result(span);
             }
             return;
         }
         self.type_info
             .calls
-            .body_ir_call_type_arguments
-            .insert((span.start, span.end), arguments);
-        self.type_info
-            .calls
-            .body_ir_call_result_types
-            .insert((span.start, span.end), output);
+            .body_ir_factory_owner_types
+            .insert(span, ResolvedType::Generic(owner, arguments.clone()));
+        self.type_info.calls.body_ir_call_type_arguments.insert(span, arguments);
+        self.type_info.calls.body_ir_call_result_types.insert(span, output);
+    }
+
+    /// Admit only fixed leaves and type parameters declared by the active frame, recursively through storage.
+    /// Unknown placeholders and callee-owned binders cannot create an executable owner fact.
+    fn factory_type_is_bound(&self, ty: &ResolvedType) -> bool {
+        if concrete(ty) {
+            return true;
+        }
+        match ty {
+            ResolvedType::TypeVar(_) => self.active_type_param_name(ty).is_some(),
+            ResolvedType::Generic(_, parts) | ResolvedType::Tuple(parts) => {
+                parts.iter().all(|part| self.factory_type_is_bound(part))
+            }
+            ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner)
+            | ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::TypeToken(inner) => self.factory_type_is_bound(inner),
+            ResolvedType::FrozenDict(key, value) => {
+                self.factory_type_is_bound(key) && self.factory_type_is_bound(value)
+            }
+            ResolvedType::Function(parameters, result) => {
+                parameters
+                    .iter()
+                    .all(|parameter| self.factory_type_is_bound(&parameter.ty))
+                    && self.factory_type_is_bound(result)
+            }
+            _ => false,
+        }
     }
 
     /// Retain a checked factory contradiction once, clearing only supplemental native results. Legacy inference and
     /// signatures stay unchanged; neither nominal member propagation nor destination filling may reopen this call.
     pub(in crate::typechecker::check_expr) fn refuse_body_ir_factory_result(&mut self, span: Span) {
-        let key = (span.start, span.end);
+        let key = span;
         self.type_info.calls.body_ir_factory_result_conflicts.insert(key);
         self.type_info.calls.body_ir_call_result_types.remove(&key);
+        self.type_info.calls.body_ir_factory_owner_types.remove(&key);
         self.type_info.calls.body_ir_call_type_arguments.remove(&key);
         self.type_info.expressions.body_ir_expr_types.remove(&key);
     }
@@ -132,6 +163,7 @@ impl TypeChecker {
         let (methods, overloads) = match self.lookup_semantic_type_info(owner)? {
             TypeInfo::Class(info) => (&info.methods, &info.method_overloads),
             TypeInfo::Model(info) => (&info.methods, &info.method_overloads),
+            TypeInfo::Newtype(info) => (&info.methods, &info.method_overloads),
             _ => return None,
         };
         methods
@@ -146,7 +178,7 @@ impl TypeChecker {
         self.declared_nominal_bounds(owner).cloned().unwrap_or_default()
     }
 
-    /// Restore only a source model or class's declared owner binders; concrete receiver arguments remain fixed.
+    /// Restore a source nominal's declared owner binders; concrete receiver arguments remain fixed.
     fn body_ir_factory_template(&self, receiver: &ResolvedType) -> Option<(String, Vec<String>, ResolvedType)> {
         let (owner, actual) = match receiver {
             ResolvedType::Named(owner) => (owner, &[][..]),
@@ -156,6 +188,7 @@ impl TypeChecker {
         let names = match self.lookup_semantic_type_info(owner)? {
             TypeInfo::Class(info) => info.type_params.clone(),
             TypeInfo::Model(info) => info.type_params.clone(),
+            TypeInfo::Newtype(info) => info.type_params.clone(),
             _ => return None,
         };
         if names.is_empty() || (!actual.is_empty() && actual.len() != names.len()) {

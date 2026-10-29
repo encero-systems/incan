@@ -1,4 +1,4 @@
-# behavior: ** over a literal base, a negated or grouped literal base or a literal-bound name computes in the result type, and a narrow integer base computes in its own type
+# behavior: integer power keeps its carrier and low 32 exponent bits; floating power keeps floating results
 # expect-stdout:
 #   8
 #   4.0
@@ -6,8 +6,16 @@
 #   9
 #   8
 #   225
+#   1
+#   1
+#   -1
+#   4 4 4 4 4
+#   4 4 4 4 4
+
+"""Observe native power across exact integer carriers, exponent conversion and floating results."""
 
 def main() -> None:
+    """Observe ordinary powers, exponent conversion and every exact-width native integer family."""
     println(2 ** 3)
     println(2.0 ** 2.0)
     println((-2) ** 3)
@@ -16,3 +24,24 @@ def main() -> None:
     println(base ** 3)
     small: u8 = 15
     println(small ** 2)
+    println(small ** 0)
+    println(2 ** 4294967296)
+    negative: i8 = -1
+    println(negative ** 4294967295)
+    exact_width_powers()
+
+
+def exact_width_powers() -> None:
+    """Keep signed, unsigned and pointer-width powers in their original carriers."""
+    signed16: i16 = 2
+    signed32: i32 = 2
+    signed128: i128 = 2
+    signed_pointer: isize = 2
+    signed8: i8 = 2
+    println(f"{signed16 ** 2} {signed32 ** 2} {signed128 ** 2} {signed_pointer ** 2} {signed8 ** 2}")
+    unsigned16: u16 = 2
+    unsigned32: u32 = 2
+    unsigned64: u64 = 2
+    unsigned128: u128 = 2
+    unsigned_pointer: usize = 2
+    println(f"{unsigned16 ** 2} {unsigned32 ** 2} {unsigned64 ** 2} {unsigned128 ** 2} {unsigned_pointer ** 2}")

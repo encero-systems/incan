@@ -1,6 +1,9 @@
 [project]
 name = "incan_mir_plan"
-version = "0.6.0-dev.7"
+version = "0.6.0-dev.8"
+
+[dependencies]
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 
 [build]
 rust-edition = "2024"

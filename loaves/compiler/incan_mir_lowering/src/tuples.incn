@@ -22,6 +22,7 @@ from pub::incan_mir_plan import (
 pub def type_name(ty: &RustType) -> str:
     """Name every canonical type kind even when its legacy Display implementation is empty."""
     match ty:
+        RustType.NativeCChar | RustType.NativePointer(mutable=_, pointee=_) => return str(ty)
         RustType.Tuple(elements) =>
             mut names: list[str] = []
             for element in elements:
@@ -43,6 +44,7 @@ pub def type_name(ty: &RustType) -> str:
         RustType.RustInteropPath(_path) => return "RustInteropPath"
         RustType.NativeArray(element=_element, length=_length) => return "NativeArray"
         RustType.NativeBuiltin(_builtin) => return str(ty)
+        RustType.NativeTraitObject(path=_path, send=_send, sync=_sync) => return str(ty)
         RustType.Unsupported(description) => return f"Unsupported[{description}]"
         RustType.Never => return "Never"
         RustType.SelfType => return "SelfType"
@@ -65,7 +67,7 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
     """Admit only tuple elements whose native scalar layout is already supported."""
     # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
     if len(elements) == 1:
-        return Err("unsupported Body IR singleton Tuple: legacy scalar emission")
+        return Err("a one-element tuple cannot be represented as a scalar")
     mut types: list[TupleElement] = []
     for element in elements:
         match element:
@@ -94,7 +96,13 @@ pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, s
         PlanType.StringRef => return Ok(TupleElement.Reference(false, [PlanType.String]))
         PlanType.StringMutRef => return Ok(TupleElement.Reference(true, [PlanType.String]))
         PlanType.FrozenStr => return Ok(TupleElement.FrozenStr)
+        PlanType.FrozenBytes => return Ok(TupleElement.FrozenBytes)
+        PlanType.StaticText => return Ok(TupleElement.StaticText)
+        PlanType.StaticBytes => return Ok(TupleElement.StaticBytes)
+        PlanType.FrozenCollection(name, elements) => return Ok(TupleElement.FrozenCollection(name, elements))
         PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
+        PlanType.Dict(key, value) => return Ok(TupleElement.Dict(key, value))
+        PlanType.Set(leaf) => return Ok(TupleElement.Set(leaf))
         PlanType.Model(owner, name) => return Ok(TupleElement.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
         PlanType.Tuple(elements) => return Ok(TupleElement.Tuple(elements))
@@ -130,8 +138,7 @@ pub def tuple_slot(projection: &PlaceElem, count: int) -> Result[int, str]:
             match index.as_ref():
                 Operand.Constant(constant) =>
                     match constant:
-                        Constant.Int(value) =>
-                            slot = value.clone()
+                        Constant.Int(value) => slot = value.clone()
                         _ => return Err("unsupported Body IR nonconstant tuple index")
                 _ => return Err("unsupported Body IR nonconstant tuple index")
             if slot < 0:
@@ -168,6 +175,8 @@ pub def carrier_element(element: TupleElement) -> bool:
     """Report whether a tuple element carries a list, nominal value or nested tuple requiring its retained layout."""
     match element:
         TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Dict(_key, _value) => return true
+        TupleElement.Set(_leaf) => return true
         TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
         TupleElement.Tuple(_elements) => return true
@@ -179,6 +188,8 @@ pub def owned_carrier(ty: PlanType) -> bool:
     match ty:
         PlanType.ValidationError => return true
         PlanType.List(_leaf, _depth) => return true
+        PlanType.Dict(_key, _value) => return true
+        PlanType.Set(_leaf) => return true
         PlanType.Model(_owner, _name) => return true
         PlanType.Enum(_owner, _name) => return true
         _ => return false
@@ -189,6 +200,8 @@ pub def element_has_owner(element: TupleElement) -> bool:
     match element:
         TupleElement.String => return true
         TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Dict(_key, _value) => return true
+        TupleElement.Set(_leaf) => return true
         TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
         TupleElement.Tuple(elements) =>

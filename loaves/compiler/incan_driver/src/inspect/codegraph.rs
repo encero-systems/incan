@@ -1,13 +1,11 @@
 //! Compiler-backed codegraph inspection.
 //!
-//! `incan inspect codegraph` emits the first durable RFC 106 graph slice under the broader RFC 102 semantic inspection
-//! umbrella. The export is intentionally source- and syntax-fact oriented in 0.4: it gives tools stable files,
-//! modules, declarations, imports, exports, containment, and diagnostics without introducing a storage/indexing engine
-//! into the compiler.
+//! The RFC 106 graph under the broader RFC 102 semantic inspection umbrella, behind `incan inspect codegraph` and the
+//! language server: stable files, modules, declarations, imports, exports, containment, checked references and
+//! diagnostics, without a storage or indexing engine inside the compiler.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -35,8 +33,8 @@ use serde_json::{Value, json};
 
 use incan_frontend::ast::{
     AssertKind, CallArg, ComprehensionClause, Condition, Declaration, Decorator, DecoratorArg, DecoratorArgValue,
-    DictEntry, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, ListEntry, MatchBody,
-    RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
+    DictEntry, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, ListEntry, MatchArm,
+    MatchBody, RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
 };
 use incan_frontend::diagnostics::{self, StableDiagnostic};
 use incan_frontend::library_manifest::LibraryManifest;
@@ -87,45 +85,17 @@ impl CodegraphError {
 pub type CodegraphResult<T> = Result<T, CodegraphError>;
 
 impl From<crate::error::CliError> for CodegraphError {
-    /// Absorb an error raised by the session and discovery code this module still calls into.
-    ///
-    /// Transitional, and in the direction that resolves itself: that code is `common.rs`, which the workspace
-    /// layout rewrite (#1478) sends to `incan_driver`. When it moves, it stops raising a CLI error and this conversion
-    /// goes with it.
+    /// Absorb an error raised by the session and discovery code this module calls into, which reports `CliError`.
     fn from(error: crate::error::CliError) -> Self {
         Self::failure(error.message)
     }
 }
 
 impl From<CodegraphError> for crate::error::CliError {
-    /// Convert at the command boundary, so a CLI command can report an analysis failure as its own.
-    ///
-    /// This is the direction that stays. A command consuming analysis and translating its errors is the normal
-    /// shape; analysis reaching for the CLI's error type is not.
+    /// Convert at the command boundary, so a command can report an analysis failure as its own.
     fn from(error: CodegraphError) -> Self {
         Self::failure(error.message)
     }
-}
-
-/// Collect checked or tolerant graph records for one normalized input path, a file or a directory, whose sources the
-/// described units own (DD-0008).
-pub fn collect_codegraph_records(
-    path: &Path,
-    units: &[UnitDescription],
-    allow_errors: bool,
-) -> CodegraphResult<Vec<CodegraphRecord>> {
-    collect_codegraph_records_with_rust(path, units, allow_errors, None)
-}
-
-/// Export the same graph with the unit's exact Rust facts source, so interop inspection checks against the crates
-/// selected for compilation rather than silently losing checked references.
-pub fn collect_codegraph_records_with_rust(
-    path: &Path,
-    units: &[UnitDescription],
-    allow_errors: bool,
-    rust: Option<&crate::session::RustFactsSetup>,
-) -> CodegraphResult<Vec<CodegraphRecord>> {
-    Ok(collect_codegraph_with_interface(path, units, allow_errors, rust)?.0)
 }
 
 /// Project a compiled library's graph from the exact checking pass and Body IR used by compilation. This boundary
@@ -138,23 +108,65 @@ pub fn collect_checked_unit_codegraph(
     bodies: &mut [incan_semantics_core::body_ir::BodyIrModule],
 ) -> Vec<CodegraphRecord> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::checked_unit_codegraph", modules = modules.len()).entered();
-    let package = CodegraphPackage {
-        name: Some(unit.package.clone()),
-        version: Some(unit.version.clone()),
-        root_path: Some(path_string(&unit.project_root)),
-    };
-    let mut builder = CodegraphBuilder::new(&unit.source, Some(package), false);
-    builder.semantic_contexts = vec![codegraph_semantic_context(&unit.project_root, session)];
-    builder.set_semantic_snapshots(Cow::Borrowed(analysis.semantic_snapshots()));
+    let mut builder = checked_unit_builder(unit, session, modules, analysis);
     builder.set_lowered_declaration_facts(bodies.iter_mut().flat_map(body_declaration_facts).collect());
-    builder.set_registry_metadata(checked_registry_metadata_by_path(analysis, modules, &unit.package));
-    builder.set_capabilities(checked_capabilities_by_path(analysis, modules));
-    builder.set_c_abi_artifacts(checked_c_abi_by_path(analysis, modules));
-    builder.seed_canonical_target_ids(modules);
     for module in modules {
         builder.collect_parsed_module(module, Vec::new());
     }
     builder.finish()
+}
+
+/// Project editor buffers from their existing checking pass into the same records as persisted inspection. A failed
+/// pass contributes only marked parseable facts and diagnostics; it never retains checked call or reference edges.
+pub fn collect_live_unit_codegraph(
+    session: &CompilationSession,
+    modules: &[ParsedModule],
+    analysis: Result<&CompilationAnalysis, &CliDiagnosticFailure>,
+) -> Vec<CodegraphRecord> {
+    let unit = session.unit();
+    let mut builder = match analysis {
+        Ok(analysis) => {
+            let mut builder = checked_unit_builder(unit, session, modules, analysis);
+            builder.set_lowered_declaration_facts(lowered_declaration_facts(modules, analysis, session));
+            builder
+        }
+        Err(failure) => {
+            let mut builder = CodegraphBuilder::new(&unit.source, Some(unit_package(unit)), true);
+            builder.semantic_contexts = vec![codegraph_semantic_context(&unit.project_root, session)];
+            builder.collect_diagnostics(stable_diagnostics(failure));
+            builder
+        }
+    };
+    for module in modules {
+        builder.collect_parsed_module_with_degraded(module, Vec::new(), analysis.is_err());
+    }
+    builder.finish()
+}
+
+/// Configure one graph projection from session-owned checked facts, shared by compilation and live navigation.
+fn checked_unit_builder<'analysis>(
+    unit: &UnitDescription,
+    session: &CompilationSession,
+    modules: &[ParsedModule],
+    analysis: &'analysis CompilationAnalysis,
+) -> CodegraphBuilder<'analysis> {
+    let mut builder = CodegraphBuilder::new(&unit.source, Some(unit_package(unit)), false);
+    builder.semantic_contexts = vec![codegraph_semantic_context(&unit.project_root, session)];
+    builder.set_semantic_snapshots(Cow::Borrowed(analysis.semantic_snapshots()));
+    builder.set_registry_metadata(checked_registry_metadata_by_path(analysis, modules, &unit.package));
+    builder.set_capabilities(checked_capabilities_by_path(analysis, modules));
+    builder.set_c_abi_artifacts(checked_c_abi_by_path(analysis, modules));
+    builder.seed_canonical_target_ids(modules);
+    builder
+}
+
+/// Preserve the unit's declared package identity for every consumer of its graph.
+fn unit_package(unit: &UnitDescription) -> CodegraphPackage {
+    CodegraphPackage {
+        name: Some(unit.package.clone()),
+        version: Some(unit.version.clone()),
+        root_path: Some(path_string(&unit.project_root)),
+    }
 }
 
 /// Export checked facts and, for a library entry, its checked interface from one analysis pass. The interface has
@@ -321,22 +333,17 @@ fn directory_modules_diagnostics_and_info(
                         // Lowering happens here rather than in `SemanticModuleSnapshot`, so only the graph pays
                         // for it. A module whose type info is unavailable contributes no signatures, and its
                         // declarations export an identity a consumer must read as unproven.
-                        for module in &modules {
-                            let Some(type_info) = analysis.type_info_for_path(&module.file_path) else {
-                                continue;
-                            };
-                            for (identity, signature) in lowered_declaration_facts(module, type_info, session) {
-                                signatures_by_identity.entry(identity).or_insert(signature);
-                            }
+                        for (identity, signature) in lowered_declaration_facts(&modules, &analysis, session) {
+                            signatures_by_identity.entry(identity).or_insert(signature);
                         }
                     }
                     Err(failure) => {
-                        dedup_diagnostics(&mut diagnostics, stable_diagnostics(failure));
+                        dedup_diagnostics(&mut diagnostics, stable_diagnostics(&failure));
                     }
                 }
             }
             Err(failure) => {
-                dedup_diagnostics(&mut diagnostics, stable_diagnostics(failure));
+                dedup_diagnostics(&mut diagnostics, stable_diagnostics(&failure));
             }
         }
     }
@@ -422,14 +429,7 @@ fn typecheck_diagnostics_and_info(
             interface,
             diagnostics: Vec::new(),
             semantic_snapshots_by_path: analysis.semantic_snapshots().clone(),
-            signatures_by_identity: modules
-                .iter()
-                .filter_map(|module| {
-                    let type_info = analysis.type_info_for_path(&module.file_path)?;
-                    Some(lowered_declaration_facts(module, type_info, session))
-                })
-                .flatten()
-                .collect(),
+            signatures_by_identity: lowered_declaration_facts(modules, &analysis, session),
             registry_metadata_by_path: checked_registry_metadata_by_path(
                 &analysis,
                 modules,
@@ -440,7 +440,7 @@ fn typecheck_diagnostics_and_info(
         }),
         Err(failure) => Ok(CheckedCodegraphAnalysis {
             interface: None,
-            diagnostics: stable_diagnostics(failure),
+            diagnostics: stable_diagnostics(&failure),
             semantic_snapshots_by_path: BTreeMap::new(),
             signatures_by_identity: BTreeMap::new(),
             registry_metadata_by_path: BTreeMap::new(),
@@ -511,19 +511,8 @@ fn checked_c_abi_by_path(
 
 /// Convert shared CLI diagnostic failures into the public diagnostic projection used by both `incan check` and
 /// codegraph records.
-fn stable_diagnostics(failure: CliDiagnosticFailure) -> Vec<StableDiagnostic> {
-    failure
-        .diagnostics
-        .iter()
-        .map(|diagnostic| {
-            diagnostics::stable_diagnostic(
-                &diagnostic.file_path,
-                &diagnostic.source,
-                &diagnostic.error,
-                diagnostic.phase,
-            )
-        })
-        .collect()
+fn stable_diagnostics(failure: &CliDiagnosticFailure) -> Vec<StableDiagnostic> {
+    crate::check::stable_diagnostics_from(&failure.diagnostics)
 }
 
 /// Append diagnostics while suppressing duplicate records produced by overlapping directory entrypoint checks.
@@ -561,49 +550,15 @@ fn render_diagnostics(diagnostics: &[StableDiagnostic]) -> String {
 /// Discover `.incn` files below a directory in deterministic path order.
 fn discover_incan_files(root: &Path) -> CodegraphResult<Vec<PathBuf>> {
     let mut files = Vec::new();
-    collect_incan_files(root, &mut files)?;
+    crate::sources::collect_incan_source_files(root, &mut files)
+        .map_err(|error| CodegraphError::failure(format!("cannot discover {}: {error}", root.display())))?;
     files.sort();
     Ok(files)
 }
 
-/// Recursively collect Incan source files while skipping build, VCS, and agent state directories that are not source
-/// roots.
-fn collect_incan_files(dir: &Path, files: &mut Vec<PathBuf>) -> CodegraphResult<()> {
-    for entry in fs::read_dir(dir)
-        .map_err(|error| CodegraphError::failure(format!("failed to read directory {}: {error}", dir.display())))?
-    {
-        let entry =
-            entry.map_err(|error| CodegraphError::failure(format!("failed to read directory entry: {error}")))?;
-        let path = entry.path();
-        if path.is_dir() {
-            if should_skip_directory(&path) {
-                continue;
-            }
-            collect_incan_files(&path, files)?;
-        } else if path.extension().is_some_and(|extension| extension == "incn") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// Return whether a directory should be ignored by broad directory codegraph inspection.
-fn should_skip_directory(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".git" | ".agents" | ".venv" | "node_modules" | "target"))
-}
-
-/// Read package identity from the nearest manifest so exported graph headers can be joined with build reports and
-/// metadata exports.
-/// The package of the unit owning `path`, when one does.
+/// Project the owning unit's package so graph headers agree with compilation.
 fn package_identity(sessions: &UnitSessions<'_>, path: &Path) -> Option<CodegraphPackage> {
-    let unit = sessions.unit_for(path).ok()?;
-    Some(CodegraphPackage {
-        name: Some(unit.package.clone()),
-        version: Some(unit.version.clone()),
-        root_path: Some(path_string(&unit.project_root)),
-    })
+    sessions.unit_for(path).ok().map(unit_package)
 }
 
 /// Build the Loaf header projection from the same sessions used by codegraph checking: one per described unit.
@@ -687,17 +642,6 @@ fn codegraph_semantic_context(project_root: &Path, session: &CompilationSession)
     }
 }
 
-/// Normalize a user-provided CLI path relative to the current working directory.
-pub fn normalize_input_path(path: &Path) -> CodegraphResult<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(env::current_dir()
-            .map_err(|error| CodegraphError::failure(format!("failed to determine current directory: {error}")))?
-            .join(path))
-    }
-}
-
 struct CodegraphBuilder<'analysis> {
     records: Vec<CodegraphRecord>,
     diagnostics: Vec<StableDiagnostic>,
@@ -723,6 +667,19 @@ struct CodegraphBuilder<'analysis> {
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
     canonical_target_ids: BTreeMap<CanonicalSymbolId, String>,
+    /// Full compiler spans distinguish generated references that share authored coordinates.
+    reference_sites: BTreeSet<(String, Span, Option<CanonicalSymbolId>)>,
+    /// Call linkage retains expansion context even though public locations contain authored coordinates.
+    call_ids: BTreeMap<(String, Span), String>,
+}
+
+/// Borrowed source and owner context shared by one expression-record walk. Helper boundaries retain the same
+/// module identity and degraded status without copying the parsed module or deriving new checking authority.
+struct ExpressionRecordContext<'source> {
+    module: &'source ParsedModule,
+    module_id: &'source str,
+    owner_id: Option<&'source str>,
+    degraded: bool,
 }
 
 /// Compact source declaration facts used before serializing a public declaration record.
@@ -772,6 +729,8 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             capabilities_by_path: BTreeMap::new(),
             c_abi_by_path: BTreeMap::new(),
             canonical_target_ids: BTreeMap::new(),
+            reference_sites: BTreeSet::new(),
+            call_ids: BTreeMap::new(),
         }
     }
 
@@ -860,15 +819,12 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 };
                 let declaration_id = declaration_id(module, declaration, index);
                 let canonical = snapshot.hir.declarations.iter().find_map(|checked| {
-                    (checked.span.start == declaration.span.start
-                        && checked.span.end == declaration.span.end
-                        && checked.name.as_deref() == Some(summary.name.as_str()))
-                    .then(|| checked.canonical.clone())
-                    .flatten()
+                    (checked.span == declaration.span && checked.name.as_deref() == Some(summary.name.as_str()))
+                        .then(|| checked.canonical.clone())
+                        .flatten()
                 });
                 if let Some(canonical) = canonical
-                    && canonical.declaration_span.start == declaration.span.start
-                    && canonical.declaration_span.end == declaration.span.end
+                    && canonical.declaration_span == declaration.span
                     && match &canonical.origin {
                         SymbolOrigin::Module(path) => path == &module.path_segments,
                         SymbolOrigin::Package { library, module_path } => {
@@ -897,7 +853,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             self.collect_tolerant_file_with_session(path, session)?;
         }
         if self.diagnostics.len() == before {
-            self.collect_diagnostics(stable_diagnostics(failure));
+            self.collect_diagnostics(stable_diagnostics(&failure));
         }
         Ok(())
     }
@@ -1030,9 +986,9 @@ impl<'analysis> CodegraphBuilder<'analysis> {
     ///
     /// The declaration these point at is not emitted here. It cannot be: naming a Rust item is not the same as
     /// locating one, and inventing a module and file node for a crate whose source this pass never opens would put
-    /// a placeholder where a fact belongs. `rust_inspect` resolves crate, module, item and defining file together,
-    /// and the declaration half arrives with it; until then `target_id` says unresolved, which RFC 106 already
-    /// binds consumers to read as affected rather than as absent.
+    /// a placeholder where a fact belongs. Rust declarations arrive through the native driver's rustc metadata
+    /// export; until that export supplies the declaration, `target_id` says unresolved, which RFC 106 binds
+    /// consumers to read as affected rather than as absent.
     ///
     /// The identity is not guessed either. Where the typechecker resolved the binding, the import's own checked
     /// projection carries it and the reference is `Checked`; where it did not, the reference is `Syntax` and the
@@ -1138,17 +1094,6 @@ impl<'analysis> CodegraphBuilder<'analysis> {
     /// The snapshot supplies both anchors and identities. These records do not infer a dependency from type spelling
     /// or reconstruct a source owner; they project the same relationship query used by executable requirements.
     fn collect_remaining_checked_references(&mut self, module: &ParsedModule, module_id: &str) {
-        let mut existing = self
-            .records
-            .iter()
-            .filter_map(|record| match record {
-                CodegraphRecord::Reference(reference) if reference.module_id == module_id => reference
-                    .span
-                    .as_ref()
-                    .map(|span| (span.start, span.end, reference.canonical_identity.clone())),
-                _ => None,
-            })
-            .collect::<BTreeSet<_>>();
         let sites = self
             .semantic_snapshots_by_path
             .get(&module.file_path)
@@ -1157,7 +1102,10 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             .map(|(span, reference)| (span, reference.target.clone(), reference.owner.cloned()))
             .collect::<Vec<_>>();
         for (span, target, owner) in sites {
-            if !existing.insert((span.start, span.end, Some(codegraph_canonical_identity(&target)))) {
+            if self
+                .reference_sites
+                .contains(&(module_id.to_owned(), span, Some(target.clone())))
+            {
                 continue;
             }
             let name = target.declaration_name.clone();
@@ -1171,7 +1119,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 None,
                 &name,
                 "type",
-                Span::new(span.start, span.end),
+                span,
                 false,
                 Some((target, owner)),
             );
@@ -1263,11 +1211,21 @@ impl<'analysis> CodegraphBuilder<'analysis> {
     ///
     /// The generic codegraph walker still emits ordinary syntax-level `call` records. These records attach the
     /// compiler-owned ABI facts to those source spans rather than asking consumers to infer C interop from a spelling.
+    /// Temporarily move the owned snapshot out of the builder while projecting records, then restore it for any
+    /// repeated module collection; borrowing the builder's map across its record mutations would alias `self`.
     fn collect_checked_c_binding_records(&mut self, module: &ParsedModule, module_id: &str) {
-        let Some(c_abi) = self.c_abi_by_path.get(&module.file_path).cloned() else {
+        let Some((path, c_abi)) = self.c_abi_by_path.remove_entry(&module.file_path) else {
             return;
         };
+        self.collect_c_binding_declarations(module, module_id, &c_abi);
+        self.collect_c_binding_raw_calls(module, module_id, &c_abi);
+        self.collect_c_binding_facades(module, module_id, &c_abi);
+        self.c_abi_by_path.insert(path, c_abi);
+    }
 
+    /// Emit checked C binding declarations and their containment records in the existing span/name order.
+    /// The shared artifact snapshot remains owned by the caller across all three C-record phases.
+    fn collect_c_binding_declarations(&mut self, module: &ParsedModule, module_id: &str, c_abi: &CAbiInteropArtifacts) {
         let mut bindings = c_abi.bindings.values().collect::<Vec<_>>();
         bindings.sort_by(|left, right| {
             left.span
@@ -1309,7 +1267,11 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 false,
             )));
         }
+    }
 
+    /// Attach checked raw-call authority to already collected source call spans, preserving span/binding/symbol
+    /// ordering and the refusal to invent a descriptor when the shared checked artifact has none.
+    fn collect_c_binding_raw_calls(&mut self, module: &ParsedModule, module_id: &str, c_abi: &CAbiInteropArtifacts) {
         let mut raw_calls = c_abi.raw_calls.iter().collect::<Vec<_>>();
         raw_calls.sort_by(|left, right| {
             left.span
@@ -1348,7 +1310,11 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     degraded: false,
                 }));
         }
+    }
 
+    /// Emit facade-to-bridge records only when both declarations and checked raw-call coverage exist. Coverage IDs
+    /// retain their existing sorting and deduplication before the facade record is published.
+    fn collect_c_binding_facades(&mut self, module: &ParsedModule, module_id: &str, c_abi: &CAbiInteropArtifacts) {
         let mut facades = c_abi.facades.iter().collect::<Vec<_>>();
         facades.sort_by(|left, right| {
             left.facade
@@ -1401,18 +1367,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
 
     /// Return the generic source-level call fact emitted for one checked raw-call span.
     fn call_record_id_at_span(&self, module_id: &str, span: Span) -> Option<String> {
-        self.records.iter().rev().find_map(|record| match record {
-            CodegraphRecord::Call(call)
-                if call.module_id == module_id
-                    && call
-                        .span
-                        .as_ref()
-                        .is_some_and(|candidate| candidate.start == span.start && candidate.end == span.end) =>
-            {
-                Some(call.id.clone())
-            }
-            _ => None,
-        })
+        self.call_ids.get(&(module_id.to_owned(), span)).cloned()
     }
 
     /// Add declaration, import, export, and containment records for a parsed module body.
@@ -1420,63 +1375,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         for (index, declaration) in module.ast.declarations.iter().enumerate() {
             match &declaration.node {
                 Declaration::Import(import) => {
-                    let import_id = import_id(module, index);
-                    let import_bindings = self.import_canonical_bindings(module, declaration.span);
-                    let import_provenance = if import_bindings
-                        .iter()
-                        .any(|binding| binding.canonical_identity.is_some())
-                    {
-                        CodegraphProvenance::Checked
-                    } else {
-                        CodegraphProvenance::Syntax
-                    };
-                    self.records.push(CodegraphRecord::Import(import_record(
-                        module,
-                        module_id,
-                        &import_id,
-                        import,
-                        declaration.span,
-                        import_bindings.clone(),
-                        import_provenance,
-                        degraded,
-                    )));
-                    self.records.push(CodegraphRecord::Containment(containment_record(
-                        module_id,
-                        &import_id,
-                        "module_contains_import",
-                        &module.file_path,
-                        &module.source,
-                        declaration.span,
-                        degraded,
-                    )));
-                    self.collect_rust_item_references(
-                        module,
-                        module_id,
-                        &import_id,
-                        import,
-                        declaration.span,
-                        &import_bindings,
-                        degraded,
-                    );
-                    if import.visibility == Visibility::Public {
-                        for name in import_export_names(import) {
-                            let exported_binding = import_bindings.iter().find(|binding| binding.local_name == name);
-                            let canonical_identity =
-                                exported_binding.and_then(|binding| binding.canonical_identity.clone());
-                            let stable_identity = exported_binding.and_then(|binding| binding.stable_identity.clone());
-                            self.records.push(CodegraphRecord::Export(export_record(
-                                module,
-                                module_id,
-                                &import_id,
-                                &name,
-                                "import",
-                                declaration.span,
-                                canonical_identity,
-                                stable_identity,
-                                degraded,
-                            )));
-                        }
-                    }
+                    self.collect_import_records(module, module_id, index, import, declaration.span, degraded);
                 }
                 Declaration::Docstring(_) => {}
                 _ => {
@@ -1534,6 +1433,67 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     }
                     self.collect_declaration_body_records(module, module_id, &declaration_id, declaration, degraded);
                 }
+            }
+        }
+    }
+
+    /// Add an import before containment, Rust references and public exports. Canonical binding evidence alone
+    /// selects checked provenance; source/degraded imports do not gain authority by entering a helper.
+    fn collect_import_records(
+        &mut self,
+        module: &ParsedModule,
+        module_id: &str,
+        index: usize,
+        import: &ImportDecl,
+        span: Span,
+        degraded: bool,
+    ) {
+        let import_id = import_id(module, index);
+        let import_bindings = self.import_canonical_bindings(module, span);
+        let provenance = if import_bindings
+            .iter()
+            .any(|binding| binding.canonical_identity.is_some())
+        {
+            CodegraphProvenance::Checked
+        } else {
+            CodegraphProvenance::Syntax
+        };
+        self.records.push(CodegraphRecord::Import(import_record(
+            module,
+            module_id,
+            &import_id,
+            import,
+            span,
+            import_bindings.clone(),
+            provenance,
+            degraded,
+        )));
+        self.records.push(CodegraphRecord::Containment(containment_record(
+            module_id,
+            &import_id,
+            "module_contains_import",
+            &module.file_path,
+            &module.source,
+            span,
+            degraded,
+        )));
+        self.collect_rust_item_references(module, module_id, &import_id, import, span, &import_bindings, degraded);
+        if import.visibility == Visibility::Public {
+            for name in import_export_names(import) {
+                let binding = import_bindings.iter().find(|binding| binding.local_name == name);
+                let canonical_identity = binding.and_then(|binding| binding.canonical_identity.clone());
+                let stable_identity = binding.and_then(|binding| binding.stable_identity.clone());
+                self.records.push(CodegraphRecord::Export(export_record(
+                    module,
+                    module_id,
+                    &import_id,
+                    &name,
+                    "import",
+                    span,
+                    canonical_identity,
+                    stable_identity,
+                    degraded,
+                )));
             }
         }
     }
@@ -1838,6 +1798,12 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         expr: &Spanned<Expr>,
         degraded: bool,
     ) {
+        let context = ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        };
         match &expr.node {
             Expr::Ident(name) => {
                 self.push_reference(module, module_id, owner_id, name, "identifier", expr.span, degraded)
@@ -1851,53 +1817,8 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             Expr::Unary(_, value) | Expr::Try(value) | Expr::Paren(value) => {
                 self.collect_expr(module, module_id, owner_id, value, degraded);
             }
-            Expr::Call(callee, type_args, args) => {
-                self.push_call(
-                    module,
-                    module_id,
-                    owner_id,
-                    &expr_label(&callee.node),
-                    "function",
-                    args.len(),
-                    type_args.len(),
-                    expr.span,
-                    codegraph_callee_identity_span(callee),
-                    degraded,
-                );
-                self.collect_expr(module, module_id, owner_id, callee, degraded);
-                for arg in args {
-                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
-                }
-            }
-            Expr::MethodCall(receiver, method, type_args, args) => {
-                // `helpers.make_widget(..)` parses as a method call, but it is a call into an imported module, not a
-                // method on a value. Labeling it by the bare method name loses which module answers the call and
-                // makes it indistinguishable from a local `make_widget(..)` in the same file.
-                let qualified;
-                let callee_label = if Self::receiver_names_an_imported_module(module, receiver)
-                    || Self::receiver_names_a_declared_type(module, receiver)
-                {
-                    qualified = format!("{}.{method}", expr_label(&receiver.node));
-                    qualified.as_str()
-                } else {
-                    method.as_str()
-                };
-                self.push_call(
-                    module,
-                    module_id,
-                    owner_id,
-                    callee_label,
-                    "method",
-                    args.len(),
-                    type_args.len(),
-                    expr.span,
-                    expr.span,
-                    degraded,
-                );
-                self.collect_expr(module, module_id, owner_id, receiver, degraded);
-                for arg in args {
-                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
-                }
+            Expr::Call(..) | Expr::MethodCall(..) | Expr::Constructor(..) => {
+                self.collect_callable_expression(context, expr)
             }
             Expr::Partial(partial) => {
                 self.collect_expr(module, module_id, owner_id, &partial.target, degraded);
@@ -1915,35 +1836,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 self.collect_expr(module, module_id, owner_id, base, degraded);
                 self.push_reference(module, module_id, owner_id, field, "field", expr.span, degraded);
             }
-            Expr::Constructor(name, args) => {
-                self.push_call(
-                    module,
-                    module_id,
-                    owner_id,
-                    name,
-                    "constructor",
-                    args.len(),
-                    0,
-                    expr.span,
-                    expr.span,
-                    degraded,
-                );
-                for arg in args {
-                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
-                }
-            }
-            Expr::Match(scrutinee, arms) => {
-                self.collect_expr(module, module_id, owner_id, scrutinee, degraded);
-                for arm in arms {
-                    if let Some(guard) = &arm.node.guard {
-                        self.collect_expr(module, module_id, owner_id, guard, degraded);
-                    }
-                    match &arm.node.body {
-                        MatchBody::Expr(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
-                        MatchBody::Block(body) => self.collect_statements(module, module_id, owner_id, body, degraded),
-                    }
-                }
-            }
+            Expr::Match(scrutinee, arms) => self.collect_match_expression(context, scrutinee, arms),
             Expr::If(if_expr) => {
                 self.collect_expr(module, module_id, owner_id, &if_expr.condition, degraded);
                 self.collect_statements(module, module_id, owner_id, &if_expr.then_body, degraded);
@@ -1983,17 +1876,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     }
                 }
             }
-            Expr::Dict(entries) => {
-                for entry in entries {
-                    match entry {
-                        DictEntry::Pair(key, value) => {
-                            self.collect_expr(module, module_id, owner_id, key, degraded);
-                            self.collect_expr(module, module_id, owner_id, value, degraded);
-                        }
-                        DictEntry::Spread(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
-                    }
-                }
-            }
+            Expr::Dict(entries) => self.collect_dictionary_entries(context, entries),
             Expr::FString(parts) => {
                 for part in parts {
                     if let FStringPart::Expr { expr, .. } = part {
@@ -2006,56 +1889,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 self.collect_expr(module, module_id, owner_id, start, degraded);
                 self.collect_expr(module, module_id, owner_id, end, degraded);
             }
-            Expr::Surface(surface) => match &surface.payload {
-                SurfaceExprPayload::PrefixUnary(value) => {
-                    self.collect_expr(module, module_id, owner_id, value, degraded);
-                }
-                SurfaceExprPayload::RaceFor(race) => {
-                    for arm in &race.arms {
-                        self.collect_expr(module, module_id, owner_id, &arm.awaitable, degraded);
-                        match &arm.body {
-                            RaceForBody::Expr(value) => {
-                                self.collect_expr(module, module_id, owner_id, value, degraded);
-                            }
-                            RaceForBody::Block(body) => {
-                                self.collect_statements(module, module_id, owner_id, body, degraded);
-                            }
-                        }
-                    }
-                }
-                SurfaceExprPayload::LeadingDotPath { segments, .. } => {
-                    self.push_reference(
-                        module,
-                        module_id,
-                        owner_id,
-                        &segments.join("."),
-                        "surface_path",
-                        expr.span,
-                        degraded,
-                    );
-                }
-                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                    self.collect_expr(module, module_id, owner_id, left, degraded);
-                    self.collect_expr(module, module_id, owner_id, right, degraded);
-                }
-                SurfaceExprPayload::ScopedSymbolCall { symbol, args, .. } => {
-                    self.push_call(
-                        module,
-                        module_id,
-                        owner_id,
-                        symbol,
-                        "surface_symbol",
-                        args.len(),
-                        0,
-                        expr.span,
-                        expr.span,
-                        degraded,
-                    );
-                    for arg in args {
-                        self.collect_call_arg(module, module_id, owner_id, arg, degraded);
-                    }
-                }
-            },
+            Expr::Surface(surface) => self.collect_surface_expression(context, &surface.payload, expr.span),
             Expr::VocabBlock(block) => {
                 self.collect_decorators(module, module_id, owner_id, &block.decorators, degraded);
                 for arg in &block.header_args {
@@ -2072,6 +1906,192 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 }
             }
             Expr::Yield(None) => {}
+        }
+    }
+
+    /// Record callable forms before walking their receiver/callee and arguments. The dispatcher admits only Call,
+    /// MethodCall and Constructor here; other expression variants remain owned by its ordinary walk.
+    fn collect_callable_expression(&mut self, context: ExpressionRecordContext<'_>, expr: &Spanned<Expr>) {
+        let ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        } = context;
+        match &expr.node {
+            Expr::Call(callee, type_args, args) => {
+                self.push_call(
+                    module,
+                    module_id,
+                    owner_id,
+                    &expr_label(&callee.node),
+                    "function",
+                    args.len(),
+                    type_args.len(),
+                    expr.span,
+                    codegraph_callee_identity_span(callee),
+                    degraded,
+                );
+                self.collect_expr(module, module_id, owner_id, callee, degraded);
+                for arg in args {
+                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
+                }
+            }
+            Expr::MethodCall(receiver, method, type_args, args) => {
+                // Imported module and declared type calls retain their qualified label rather than collapsing
+                // onto an unrelated same-name local method.
+                let qualified;
+                let callee_label = if Self::receiver_names_an_imported_module(module, receiver)
+                    || Self::receiver_names_a_declared_type(module, receiver)
+                {
+                    qualified = format!("{}.{method}", expr_label(&receiver.node));
+                    qualified.as_str()
+                } else {
+                    method.as_str()
+                };
+                self.push_call(
+                    module,
+                    module_id,
+                    owner_id,
+                    callee_label,
+                    "method",
+                    args.len(),
+                    type_args.len(),
+                    expr.span,
+                    expr.span,
+                    degraded,
+                );
+                self.collect_expr(module, module_id, owner_id, receiver, degraded);
+                for arg in args {
+                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
+                }
+            }
+            Expr::Constructor(name, args) => {
+                self.push_call(
+                    module,
+                    module_id,
+                    owner_id,
+                    name,
+                    "constructor",
+                    args.len(),
+                    0,
+                    expr.span,
+                    expr.span,
+                    degraded,
+                );
+                for arg in args {
+                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Walk the match scrutinee before each arm's guard and body in source order. Patterns remain outside this
+    /// expression walk, and block arms retain the ordinary statement collector rather than inventing references.
+    fn collect_match_expression(
+        &mut self,
+        context: ExpressionRecordContext<'_>,
+        scrutinee: &Spanned<Expr>,
+        arms: &[Spanned<MatchArm>],
+    ) {
+        let ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        } = context;
+        self.collect_expr(module, module_id, owner_id, scrutinee, degraded);
+        for arm in arms {
+            if let Some(guard) = &arm.node.guard {
+                self.collect_expr(module, module_id, owner_id, guard, degraded);
+            }
+            match &arm.node.body {
+                MatchBody::Expr(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
+                MatchBody::Block(body) => self.collect_statements(module, module_id, owner_id, body, degraded),
+            }
+        }
+    }
+
+    /// Walk dictionary key/value pairs and spreads in source order, using the same owner and provenance context as
+    /// the surrounding expression. Literal keys retain the ordinary expression walk's no-reference behavior.
+    fn collect_dictionary_entries(&mut self, context: ExpressionRecordContext<'_>, entries: &[DictEntry]) {
+        let ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        } = context;
+        for entry in entries {
+            match entry {
+                DictEntry::Pair(key, value) => {
+                    self.collect_expr(module, module_id, owner_id, key, degraded);
+                    self.collect_expr(module, module_id, owner_id, value, degraded);
+                }
+                DictEntry::Spread(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
+            }
+        }
+    }
+
+    /// Walk surface payloads without reconstructing their DSL semantics. Prefix/race/glyph operands retain their
+    /// expression/body order; explicit paths and symbols keep the authored surface span and record kind.
+    fn collect_surface_expression(
+        &mut self,
+        context: ExpressionRecordContext<'_>,
+        payload: &SurfaceExprPayload,
+        span: Span,
+    ) {
+        let ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        } = context;
+        match payload {
+            SurfaceExprPayload::PrefixUnary(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
+            SurfaceExprPayload::RaceFor(race) => {
+                for arm in &race.arms {
+                    self.collect_expr(module, module_id, owner_id, &arm.awaitable, degraded);
+                    match &arm.body {
+                        RaceForBody::Expr(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
+                        RaceForBody::Block(body) => {
+                            self.collect_statements(module, module_id, owner_id, body, degraded)
+                        }
+                    }
+                }
+            }
+            SurfaceExprPayload::LeadingDotPath { segments, .. } => {
+                self.push_reference(
+                    module,
+                    module_id,
+                    owner_id,
+                    &segments.join("."),
+                    "surface_path",
+                    span,
+                    degraded,
+                );
+            }
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                self.collect_expr(module, module_id, owner_id, left, degraded);
+                self.collect_expr(module, module_id, owner_id, right, degraded);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { symbol, args, .. } => {
+                self.push_call(
+                    module,
+                    module_id,
+                    owner_id,
+                    symbol,
+                    "surface_symbol",
+                    args.len(),
+                    0,
+                    span,
+                    span,
+                    degraded,
+                );
+                for arg in args {
+                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
+                }
+            }
         }
     }
 
@@ -2152,6 +2172,8 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             Some((target, owner)) => (Some(target), owner),
             None => (None, None),
         };
+        self.reference_sites
+            .insert((module_id.to_owned(), span, canonical_identity.clone()));
         let owner_id = self.navigable_owner_id(canonical_owner.as_ref(), owner_id, has_checked_target);
         let target_id = canonical_identity
             .as_ref()
@@ -2266,6 +2288,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         degraded: bool,
     ) {
         let id = self.next_body_fact_id("call", module, span, callee);
+        self.call_ids.insert((module_id.to_owned(), span), id.clone());
         let checked = self.source_checked_reference(module, target_span);
         let canonical_identity = checked.map(|reference| reference.target.clone());
         let canonical_owner = checked.and_then(|reference| reference.owner.cloned());
@@ -2479,7 +2502,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         span: Span,
     ) -> Option<incan_semantics_core::dependencies::CheckedReference<'_>> {
         let module_identity = incan_semantics_core::module_identity_for_path(&module.path_segments);
-        let subject = CompilerNodeId::expression_span(&module_identity, span.start, span.end);
+        let subject = CompilerNodeId::expression_at(&module_identity, span);
         self.semantic_snapshots_by_path
             .get(&module.file_path)?
             .facts
@@ -2540,34 +2563,16 @@ struct LoweredDeclarationFacts {
     doc_digest: Option<String>,
 }
 
-/// Lower one module and collect what its declarations contribute to the export.
-///
-/// Lowering happens here rather than in `SemanticModuleSnapshot` deliberately: putting Body IR in the snapshot
-/// would make every consumer of it pay for lowering, `build` and `check` included, to satisfy a need only the
-/// graph has. One pass yields both the signature that separates overloads and the digests that say whether a
-/// declaration changed.
-///
-/// A module whose declarations do not lower contributes nothing. Its declarations then export an absent digest and
-/// an unproven signature, which a consumer must read as *changed* and *not a key* respectively — the direction that
-/// costs a rebuild rather than a wrong build.
+/// Project declaration digests from the shared compilation boundary; a failed lowering exports no proven digest.
 fn lowered_declaration_facts(
-    module: &ParsedModule,
-    type_info: &incan_frontend::typechecker::TypeCheckInfo,
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
     session: &CompilationSession,
 ) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
-    let Ok(provider_operations) = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())
-    else {
+    let Ok(mut bodies) = crate::body_ir::checked_modules(modules, analysis, session) else {
         return BTreeMap::new();
     };
-    let context = incan_frontend::body_ir::BodyIrContext {
-        modules: &[],
-        provider_operations: &provider_operations,
-        registry_package: Some(session.unit().package.as_str()),
-        library_package: None,
-    };
-    let mut body_ir =
-        incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);
-    body_declaration_facts(&mut body_ir)
+    bodies.iter_mut().flat_map(body_declaration_facts).collect()
 }
 
 /// Read signatures and digests from checked Body IR once. Digesting temporarily detaches a leading docstring and
@@ -2656,7 +2661,7 @@ fn codegraph_stable_identity_from_semantic(stable: &StableDeclarationId) -> Code
 /// This keeps the span, deliberately. It is the record's provenance — where the declaration sat in the compilation
 /// that produced it — and a consumer reporting a location needs it. What a consumer must not do is key on it across
 /// compilations; [`codegraph_stable_identity`] is what it keys on instead.
-fn codegraph_canonical_identity(identity: &CanonicalSymbolId) -> CodegraphCanonicalSymbolId {
+pub fn codegraph_canonical_identity(identity: &CanonicalSymbolId) -> CodegraphCanonicalSymbolId {
     let origin = match &identity.origin {
         SymbolOrigin::Module(path) => CodegraphSymbolOrigin::Module { path: path.clone() },
         SymbolOrigin::Package { library, module_path } => CodegraphSymbolOrigin::Package {
@@ -3624,8 +3629,10 @@ fn module_segments_for_file(path: &Path, base: &Path) -> Vec<String> {
 fn source_span(path: &Path, source: &str, span: Span) -> CodegraphSourceSpan {
     let start = span.start.min(source.len());
     let end = span.end.min(source.len()).max(start);
-    let (start_line, start_column) = line_column_for_offset(source, start);
-    let (end_line, end_column) = line_column_for_offset(source, end);
+    let start_position = incan_frontend::diagnostics::position_for_offset(source, start);
+    let end_position = incan_frontend::diagnostics::position_for_offset(source, end);
+    let (start_line, start_column) = (start_position.line, start_position.column);
+    let (end_line, end_column) = (end_position.line, end_position.column);
     CodegraphSourceSpan {
         file: path_string(path),
         start,
@@ -3635,25 +3642,6 @@ fn source_span(path: &Path, source: &str, span: Span) -> CodegraphSourceSpan {
         end_line,
         end_column,
     }
-}
-
-/// Convert a byte offset into 1-based line and column coordinates.
-fn line_column_for_offset(source: &str, offset: usize) -> (usize, usize) {
-    let offset = offset.min(source.len());
-    let mut line = 1usize;
-    let mut column = 1usize;
-    for (idx, ch) in source.char_indices() {
-        if idx >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-    (line, column)
 }
 
 /// Format a filesystem path using the process-native display spelling.

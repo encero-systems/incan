@@ -1,0 +1,156 @@
+"""Reuse Apple SDK discovery while the compiler, developer selection and SDK observations remain identical."""
+
+from rust::std::env::consts import OS
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from files import json_text, read_json
+from home import home
+from json_fields import required_text
+from observation import observe
+from publication import publish
+
+const SELECTORS = [
+    "/var/select/developer_dir", "/var/db/xcode_select_link",
+    "/usr/share/xcode-select/xcode_dir_link", "/usr/share/xcode-select/xcode_dir_path",
+    "/Applications", "/Applications/Xcode.app", "/Library/Developer/CommandLineTools", "/usr/bin/xcrun",
+]
+
+
+pub def selected_sdk(sysroot: str) -> Result[str, str]:
+    """
+    Return a discovered SDK or an empty string when rustc must retain its ordinary discovery policy.
+
+    1. Preserve explicit SDKROOT and non-Apple compilation.
+    2. Reuse discovery only while every selection and SDK observation matches.
+    3. Discover once, then publish the observations atomically for other owners.
+    """
+    # 1. An explicit SDKROOT still passes through rustc's own platform and path validation.
+    if OS != "macos" or get_or("SDKROOT", "") != "":
+        return Ok("")
+    basis = selection_identity(sysroot)
+    record = home()?.joinpath("cache").joinpath("apple-sdk.json")
+    # 2. Unreadable, malformed and stale records all require fresh discovery.
+    match retained_sdk(record, basis):
+        Ok(root) => return Ok(root)
+        Err(_) => pass
+    # 3. Failure to discover preserves rustc's own error and fallback behavior.
+    match discover():
+        Err(_) => return Ok("")
+        Ok(root) =>
+            _ = remember(record, basis, root)
+            return Ok(root)
+
+
+pub def sdk_identity(sysroot: str) -> Result[str, str]:
+    """Bind executable reuse and worker selection to the selected SDK's current settings and location."""
+    mut root = selected_sdk(sysroot)?
+    if root == "":
+        root = get_or("SDKROOT", "")
+    return Ok(selection_identity(sysroot) + "\n" + root + "\n" + sdk_observation(root))
+
+
+pub def configure_sdk(mut command: &mut Command, sysroot: str) -> Result[None, str]:
+    """Configure the caller's command with the validated SDK without changing the parent process's environment."""
+    mut root = selected_sdk(sysroot)?
+    if root != "":
+        command.env("SDKROOT", root)
+    return Ok(None)
+
+
+pub def sdk_paths(sysroot: str) -> Result[list[str], str]:
+    """The selection and SDK generations a resident owner must watch before reusing its compiler fingerprint."""
+    if OS != "macos":
+        return Ok([])
+    mut paths: list[str] = [sysroot]
+    for path in SELECTORS:
+        paths.append(str(path))
+    developer = get_or("DEVELOPER_DIR", "")
+    if developer != "":
+        paths.append(developer)
+    mut root = selected_sdk(sysroot)?
+    if root == "":
+        root = get_or("SDKROOT", "")
+    if root != "":
+        paths.append(root)
+        paths.append(Path(root).parent().0)
+        paths.append(Path(root).joinpath("SDKSettings.json").0)
+    return Ok(paths)
+
+
+def selection_identity(sysroot: str) -> str:
+    """Observe rustc's selector locations, explicit developer configuration and the exact compiler installation."""
+    mut parts = ["incan.apple-sdk/1", sysroot, observed(sysroot)]
+    for name in ["DEVELOPER_DIR", "TOOLCHAINS", "SDKROOT"]:
+        value = get_or(name, "")
+        parts.append(f"{name}={value}")
+        if name == "DEVELOPER_DIR" and value != "":
+            parts.append(observed(value))
+    for path in SELECTORS:
+        text = str(path)
+        parts.append(f"{text}={observed(text)}")
+    return "\n".join(parts)
+
+
+def observed(path: str) -> str:
+    """A followed file generation, or an explicit absent observation that cannot match an installed replacement."""
+    match observe(Path(path)):
+        Ok(value) => return value.stamp
+        Err(_) => return "absent"
+
+
+def sdk_observation(root: str) -> str:
+    """Observe the chosen SDK, its selectable siblings and its settings, including in-place SDK replacement."""
+    if root == "":
+        return ""
+    path = Path(root)
+    return "\n".join([observed(root), observed(path.parent().0), observed(path.joinpath("SDKSettings.json").0)])
+
+
+def retained_sdk(record: Path, basis: str) -> Result[str, str]:
+    """Admit a cached path only against the current selector and SDK generations."""
+    document = read_json(record)?
+    if required_text(document, "basis")? != basis:
+        return Err("the developer selection changed")
+    root = required_text(document, "root")?
+    if not valid_sdk(root) or required_text(document, "sdk")? != sdk_observation(root):
+        return Err("the selected SDK changed")
+    return Ok(root)
+
+
+def valid_sdk(root: str) -> bool:
+    """A discovered macOS SDK is an absolute directory with its settings file."""
+    return root.startswith("/") and root != "/" and Path(root).joinpath("SDKSettings.json").is_file()
+
+
+def discover() -> Result[str, str]:
+    """Ask the same absolute xcrun rustc uses for its default macOS SDK, preserving inherited developer settings."""
+    mut command = Command.new("/usr/bin/xcrun")
+    for argument in ["--sdk", "macosx", "--show-sdk-path"]:
+        command.arg(argument)
+    output = command.output().map_err((error) => str(error))?
+    if not output.status.success():
+        return Err("xcrun could not select the macOS SDK")
+    root = decode(output.stdout)?.strip()
+    if not valid_sdk(root):
+        return Err("xcrun returned no usable macOS SDK")
+    return Ok(root)
+
+
+def decode(content: bytes) -> Result[str, str]:
+    """Require Unicode discovery output rather than selecting a repaired SDK path."""
+    match RustString.from_utf8(content):
+        Ok(text) => return Ok(str(text))
+        Err(_) => return Err("xcrun returned a non-Unicode SDK path")
+
+
+def remember(record: Path, basis: str, root: str) -> Result[None, str]:
+    """Publish a complete cache record; a racing owner may publish the same observation without weakening it."""
+    record.parent().mkdir(true, true).map_err((error) => error.message())?
+    document = JsonValue.object({
+        "basis": JsonValue.string(basis), "root": JsonValue.string(root),
+        "sdk": JsonValue.string(sdk_observation(root)),
+    })
+    return publish(record, json_text(document)?)

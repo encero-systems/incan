@@ -21,6 +21,7 @@ use incan_lang::lang::trait_capabilities::{
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
+use incan_semantics_core::canonical_module_identity;
 
 /// Which declaration's type parameters [`TypeChecker::refuse_unsupported_callable_markers`] is reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +131,11 @@ impl TypeChecker {
             return satisfies;
         }
         if bound.type_args.is_empty() {
+            if let Some(published) = self.published_nominal_bound_name(bound) {
+                // This identity already proves a source trait. Do not require its canonical provider path to be a
+                // visible consumer binding before comparing the nominal's checked adoptions.
+                return self.type_satisfies_nominal_trait_bound(ty, &published);
+            }
             return self.type_satisfies_explicit_bound(ty, &bound.name);
         }
         if is_rust_capability_bound(&bound.name) {
@@ -154,6 +160,32 @@ impl TypeChecker {
             return self.type_satisfies_explicit_bound(ty, &bound.name);
         }
         self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args)
+    }
+
+    /// Keep a published plain trait bound in its declaring module rather than resolving its bare name in the
+    /// consumer. Registry-owned builtin and Rust capability bounds retain their existing semantic relations.
+    /// An admitted visible alias keeps its spelling when it names the same declaration; its public projection may
+    /// be usable even when the declaration's canonical source module is private.
+    fn published_nominal_bound_name(&self, bound: &TypeBoundInfo) -> Option<String> {
+        if is_rust_capability_bound(&bound.name)
+            || builtin_traits::from_str(Self::type_bound_source_name(bound))
+                .is_some_and(|id| self.bound_is_builtin_trait(bound, id))
+        {
+            return None;
+        }
+        let module_path = bound.module_path.as_deref()?;
+        let identity = self.package_trait_declaration(module_path, Self::type_bound_source_name(bound))?;
+        let visible = self
+            .resolve_bound_trait_path(&bound.name)
+            .and_then(|(path, name)| self.package_trait_declaration(&path, &name));
+        if visible.as_ref() == Some(&identity) {
+            return None;
+        }
+        Some(format!(
+            "{}::{}",
+            canonical_module_identity(&identity)?,
+            identity.declaration_name
+        ))
     }
 
     /// Match a function or closure value against the exact `std.traits.callable.CallableN` signature.
@@ -455,18 +487,25 @@ impl TypeChecker {
             .then_some(name.as_str())
     }
 
+    /// Return the declared bounds of the active type parameter `name` from the innermost frame that declares it.
+    ///
+    /// This is the only reading of the bound frames: an outer frame's parameter of the same name is shadowed, so its
+    /// bounds grant no trait, method or native-call authority inside the inner declaration.
+    pub(in crate::typechecker) fn innermost_type_param_bounds(&self, name: &str) -> Option<&[TypeBoundInfo]> {
+        self.current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(name))
+            .map(Vec::as_slice)
+    }
+
     /// Whether the checker sees every method the bounds of the active type parameter `placeholder_name` give it: each
     /// bound names a trait whose declaration it has, or a `CallableN` trait (#1561).
     ///
     /// A bound on a Rust trait, or on a trait the checker cannot resolve, may declare methods the checker does not
     /// know, so a method call through such a parameter is left to the Rust compiler.
     pub(in crate::typechecker) fn active_type_param_bounds_are_visible(&self, placeholder_name: &str) -> bool {
-        let Some(bounds) = self
-            .current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(placeholder_name))
-        else {
+        let Some(bounds) = self.innermost_type_param_bounds(placeholder_name) else {
             return false;
         };
         bounds.iter().all(|bound| {
@@ -484,12 +523,7 @@ impl TypeChecker {
         placeholder_name: &str,
         member: &str,
     ) -> bool {
-        let Some(bounds) = self
-            .current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(placeholder_name))
-        else {
+        let Some(bounds) = self.innermost_type_param_bounds(placeholder_name) else {
             return false;
         };
         let declares = |info: &crate::symbols::TraitInfo| {
@@ -513,18 +547,12 @@ impl TypeChecker {
         required: &TypeBoundInfo,
         bindings: &HashMap<String, ResolvedType>,
     ) -> bool {
-        for frame in self.current_type_param_bound_details.iter().rev() {
-            let Some(active_bounds) = frame.get(placeholder_name) else {
-                continue;
-            };
-            for active in active_bounds {
-                if self.type_bound_implies_bound_info(active, required, bindings) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        false
+        self.innermost_type_param_bounds(placeholder_name)
+            .is_some_and(|bounds| {
+                bounds
+                    .iter()
+                    .any(|active| self.type_bound_implies_bound_info(active, required, bindings))
+            })
     }
 
     /// Return whether an active type parameter explicitly or transitively carries one builtin trait bound.
@@ -977,7 +1005,7 @@ impl TypeChecker {
     ) -> Option<&'static TraitCapabilityInfo> {
         let capability = if let Some(module_path) = &bound.module_path {
             let trait_name = Self::type_bound_source_name(bound);
-            let capability = trait_capabilities::for_trait_path(module_path, trait_name)?;
+            let capability = self.temporary_trait_capability_at_path(module_path, trait_name)?;
             self.validated_temporary_trait_capability(
                 capability,
                 &bound.name,
@@ -991,6 +1019,29 @@ impl TypeChecker {
         };
         self.capability_type_args_match(capability, bound, bindings)
             .then_some(capability)
+    }
+
+    /// Resolve a registered bridge through its published trait identity. Equal short names in another package grant
+    /// no capability; standard imports and package-qualified bounds must select the same canonical declaration.
+    fn temporary_trait_capability_at_path(
+        &self,
+        module_path: &[String],
+        trait_name: &str,
+    ) -> Option<&'static TraitCapabilityInfo> {
+        if let Some(capability) = trait_capabilities::for_trait_path(module_path, trait_name) {
+            return Some(capability);
+        }
+        let selected = self.package_trait_declaration(module_path, trait_name)?;
+        trait_capabilities::TRAIT_CAPABILITIES.iter().find(|capability| {
+            let standard_path = capability
+                .module_path
+                .iter()
+                .map(|part| (*part).to_string())
+                .collect::<Vec<_>>();
+            self.package_trait_declaration(&standard_path, capability.trait_name)
+                .as_ref()
+                == Some(&selected)
+        })
     }
 
     /// Return whether a checked trait bound carries the concrete arguments required by a capability bridge.
@@ -1037,8 +1088,10 @@ impl TypeChecker {
                 .find(|segment| !segment.is_empty())
                 .unwrap_or(visible_bound)
         });
-        let manifest_bound_identifies_capability = resolved_source_name == capability.trait_name
-            && module_path.is_some_and(|path| trait_capabilities::module_path_matches(capability, path));
+        let manifest_bound_identifies_capability = module_path.is_some_and(|path| {
+            self.temporary_trait_capability_at_path(path, resolved_source_name)
+                .is_some_and(|selected| selected.id == capability.id)
+        });
         manifest_bound_identifies_capability.then_some(capability)
     }
 

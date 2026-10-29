@@ -1,6 +1,11 @@
-# behavior: an adopter calls a receiver-free static trait default without an instance
+# behavior: an adopter calls a receiver-free static trait default without an instance, and its override of a receiver default is selected for a temporary, call-result, indexed or field receiver, also from a default that calls it (incan-4.7a)
 # expect-stdout:
 #   42
+#   point 1
+#   point 2
+#   point 3
+#   point 4
+#   point 5!
 
 trait Answer:
     """Supply a receiver-free default."""
@@ -11,12 +16,52 @@ trait Answer:
         return 42
 
 
+trait Describe:
+    """Supply receiver defaults, one of which calls the other."""
+
+    def describe(self) -> str:
+        """Return the default description."""
+        return "default"
+
+    def shout(self) -> str:
+        """Describe the receiver through its own override."""
+        return self.describe() + "!"
+
+
 model Item with Answer:
     """Adopt the default without an override."""
 
     value: int
 
 
+model Point with Describe:
+    """Override the receiver default."""
+
+    x: int
+
+    def describe(self) -> str:
+        """Describe the point."""
+        return f"point {self.x}"
+
+
+model Holder:
+    """Hold a point in a field."""
+
+    point: Point
+
+
+def make(x: int) -> Point:
+    """Return a point as a call result."""
+    return Point(x=x)
+
+
 def main() -> None:
-    """Call the adopted receiver-free default."""
+    """Call the adopted receiver-free default, then the override through each receiver shape."""
     println(Item.answer())
+    println(Point(x=1).describe())
+    println(make(2).describe())
+    points = [Point(x=3)]
+    println(points[0].describe())
+    holder = Holder(point=Point(x=4))
+    println(holder.point.describe())
+    println(make(5).shout())

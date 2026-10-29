@@ -19,7 +19,8 @@ mod publication;
 use crate::CanonicalSymbolId;
 use crate::CompilerNodeId;
 use crate::body_ir::{
-    Body, BodyIrModule, EnumDeclaration, FieldlessEnumDeclaration, NominalDeclaration, ValueEnumDeclaration,
+    Body, BodyIrModule, EnumDeclaration, FieldlessEnumDeclaration, NominalDeclaration, TraitFieldImplementation,
+    ValueEnumDeclaration,
 };
 
 /// Version of the encoded representation, independent of the manifest that ships beside it.
@@ -39,7 +40,29 @@ use crate::body_ir::{
 /// Version 25 retains callable union payload signatures and producer-owned captured environment aliases.
 /// Version 26 appends native fixed-size arrays with their checked element storage and evaluated length.
 /// Version 27 retains checked native callable signatures with deferred executable bodies.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 27;
+/// Version 28 retains native default callees alongside compiled callable frames and appends checked panic-hook
+/// registration.
+/// Version 29 retains checked owned callback storage and native Send/Sync capture obligations.
+/// Version 30 carries checked required-field witnesses in nominal fragment trailers.
+/// Version 31 appends the pure generated field-table operation for closed type parameters.
+/// Version 32 retains owned native collection parameter ABIs independently of source callable mutability markers.
+/// Version 33 retains verified foreign call descriptors independently of source class layouts.
+/// Version 34 retains checked private pointer carriers and foreign bridge operations.
+/// Version 35 retains expansion contexts in every checked source span and canonical identity.
+/// Version 36 appends the typed C span bridge operations.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 36;
+
+/// Version 36 only appends enum variants, so a version 35 payload decodes unchanged; older layouts are incompatible
+/// with this reader and require regenerated providers.
+const OLDEST_SUPPORTED_VERSION: u32 = 35;
+
+/// Required-field witnesses transported separately from the legacy positional nominal layout.
+#[derive(Serialize, Deserialize)]
+struct TraitFieldBindings {
+    owner: CanonicalSymbolId,
+    trait_owner: CanonicalSymbolId,
+    fields: Vec<TraitFieldImplementation>,
+}
 
 /// Largest index this format admits, in bytes.
 ///
@@ -118,9 +141,11 @@ pub fn encode_module(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableReprese
         version: EXECUTABLE_REPRESENTATION_VERSION,
         module,
     };
-    postcard::to_allocvec(&framed).map_err(|error| ExecutableRepresentationError::Malformed {
+    let mut bytes = postcard::to_allocvec(&framed).map_err(|error| ExecutableRepresentationError::Malformed {
         reason: format!("could not encode the checked module: {error}"),
-    })
+    })?;
+    append_trait_fields(&mut bytes, &module.nominal_declarations)?;
+    Ok(bytes)
 }
 
 /// Decode an internal whole-module snapshot, refusing an unfamiliar version before decoding its contents.
@@ -130,16 +155,11 @@ pub fn encode_module(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableReprese
 /// encoded; there is no reconstruction step in which a consumer could arrive at a different answer.
 pub fn decode_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableRepresentationError> {
     require_supported_version(bytes)?;
-    let framed: EncodedModuleRepresentation =
-        postcard::from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
+    let (mut framed, remainder): (EncodedModuleRepresentation, _) =
+        postcard::take_from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
             reason: format!("could not decode the framed representation: {error}"),
         })?;
-    if framed.version != EXECUTABLE_REPRESENTATION_VERSION {
-        return Err(ExecutableRepresentationError::UnsupportedVersion {
-            found: framed.version,
-            supported: EXECUTABLE_REPRESENTATION_VERSION,
-        });
-    }
+    restore_trait_fields(&mut framed.module.nominal_declarations, remainder)?;
     Ok(framed.module)
 }
 
@@ -161,11 +181,86 @@ pub fn representation_version(bytes: &[u8]) -> Result<u32, ExecutableRepresentat
 /// Reject an unfamiliar encoding from its stable leading version, before decoding any version-specific fields.
 pub fn require_supported_version(bytes: &[u8]) -> Result<(), ExecutableRepresentationError> {
     let found = representation_version(bytes)?;
-    if found != EXECUTABLE_REPRESENTATION_VERSION {
+    if !supports_version(found) {
         return Err(ExecutableRepresentationError::UnsupportedVersion {
             found,
             supported: EXECUTABLE_REPRESENTATION_VERSION,
         });
+    }
+    Ok(())
+}
+
+/// Accept the current positional schema and the oldest version whose layout it still decodes unchanged.
+pub fn supports_version(version: u32) -> bool {
+    (OLDEST_SUPPORTED_VERSION..=EXECUTABLE_REPRESENTATION_VERSION).contains(&version)
+}
+
+/// Append canonical required-field witnesses without changing any positional nominal or adoption field.
+fn append_trait_fields(
+    bytes: &mut Vec<u8>,
+    nominals: &[NominalDeclaration],
+) -> Result<(), ExecutableRepresentationError> {
+    let mut bindings = Vec::new();
+    for nominal in nominals {
+        for adoption in &nominal.trait_adoptions {
+            if !adoption.fields.is_empty() {
+                bindings.push(TraitFieldBindings {
+                    owner: nominal.canonical.clone(),
+                    trait_owner: adoption.trait_identity.clone(),
+                    fields: adoption.fields.clone(),
+                });
+            }
+        }
+    }
+    if !bindings.is_empty() {
+        bindings.sort_by(|left, right| {
+            left.owner
+                .cmp(&right.owner)
+                .then_with(|| left.trait_owner.cmp(&right.trait_owner))
+        });
+        bytes.extend(postcard::to_allocvec(&bindings).map_err(|error| malformed(error.to_string()))?);
+    }
+    Ok(())
+}
+
+/// Restore only fully bounded, owner-matched field witnesses; legacy fragments retain no such authority.
+fn restore_trait_fields(
+    nominals: &mut [NominalDeclaration],
+    bytes: &[u8],
+) -> Result<(), ExecutableRepresentationError> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let (bindings, remainder): (Vec<TraitFieldBindings>, _) =
+        postcard::take_from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+    if bindings.is_empty() || !remainder.is_empty() {
+        return Err(malformed("invalid required-field witness trailer"));
+    }
+    for binding in bindings {
+        let nominal = nominals
+            .iter_mut()
+            .find(|nominal| nominal.canonical == binding.owner)
+            .ok_or_else(|| malformed("required-field witness has no nominal owner"))?;
+        let mut requirements = BTreeSet::new();
+        for field in &binding.fields {
+            if field.requirement.namespace != crate::SymbolNamespace::Member
+                || field.requirement.kind != crate::SemanticSourceTargetKind::Field
+                || field.requirement.declaration_name != field.implementation.declaration_name
+                || !nominal.field_identities.contains(&field.implementation)
+                || !requirements.insert(&field.requirement)
+            {
+                return Err(malformed("required-field witness differs from the checked layout"));
+            }
+        }
+        let adoption = nominal
+            .trait_adoptions
+            .iter_mut()
+            .find(|adoption| adoption.trait_identity == binding.trait_owner)
+            .ok_or_else(|| malformed("required-field witness has no trait adoption"))?;
+        if binding.fields.is_empty() || !adoption.fields.is_empty() {
+            return Err(malformed("empty or duplicate required-field witness"));
+        }
+        adoption.fields = binding.fields;
     }
     Ok(())
 }
@@ -226,13 +321,19 @@ pub enum ExecutableDeclaration {
         /// Only explicit original-callable reads select this implementation under the same declared binders.
         binding: Box<crate::body_ir::DecoratedBinding>,
     },
-    /// Authenticated signature and defaults of a compiled item. Its empty statement block is never executable.
-    CompiledCallable(Box<Body>),
     /// Deferred checked meaning and the exact native instantiations its calls select.
     NativeBody {
         /// The generic or otherwise caller-instantiated source frame.
         body: Box<Body>,
         /// Checker-produced signatures, matched by canonical identity and native type arguments.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
+    /// Producer-authenticated passing modes and defaults of a compiled callable, with no executable implementation.
+    /// Consumers call the canonical rlib export; this frame never joins their executable body queue.
+    CompiledCallableFrame {
+        /// Exact declaration-local parameter passing, representation and default computations.
+        frame: Box<Body>,
+        /// Producer-selected native callees used by retained default computations.
         callables: Vec<crate::body_ir::LoafCallable>,
     },
 }
@@ -243,17 +344,11 @@ impl ExecutableDeclaration {
     pub fn identity(&self) -> Option<&CanonicalSymbolId> {
         match self {
             Self::Body(body) => body.canonical.as_ref(),
-            Self::NativeBody { body, callables } => (!callables.is_empty()
-                && callables.iter().all(|callable| {
-                    matches!(callable.canonical.origin, crate::SymbolOrigin::RustCrate(_))
-                        && crate::body_ir::rust_item_identity(&callable.item).as_ref() == Some(&callable.canonical)
-                        && callable.type_parameters.is_empty()
-                        && callable.parameter_defaults.is_empty()
-                        && callable.declaration_frame.is_none()
-                }))
-            .then_some(body.canonical.as_ref())
-            .flatten(),
-            Self::CompiledCallable(frame) => (frame.block.stmts.is_empty()
+            Self::NativeBody { body, callables } => (!callables.is_empty() && valid_native_calls(callables))
+                .then_some(body.canonical.as_ref())
+                .flatten(),
+            Self::CompiledCallableFrame { frame, callables } => (frame.block.stmts.is_empty()
+                && valid_native_calls(callables)
                 && crate::body_ir::LoafCallable::from_body(frame).is_some())
             .then_some(frame.canonical.as_ref())
             .flatten(),
@@ -298,6 +393,18 @@ impl ExecutableDeclaration {
             Self::Static(value) => Some(&value.canonical),
         }
     }
+}
+
+/// Native records carry exact Rust identities and closed signatures, never another source declaration's executable
+/// authority.
+fn valid_native_calls(callables: &[crate::body_ir::LoafCallable]) -> bool {
+    callables.iter().all(|callable| {
+        matches!(callable.canonical.origin, crate::SymbolOrigin::RustCrate(_))
+            && crate::body_ir::rust_item_identity(&callable.item).as_ref() == Some(&callable.canonical)
+            && callable.type_parameters.is_empty()
+            && callable.parameter_defaults.is_empty()
+            && callable.declaration_frame.is_none()
+    })
 }
 
 /// Explicit admission and payload address for one public root or internal execution dependency.
@@ -567,9 +674,11 @@ fn project_declarations(
             if !declarations.contains_key(identity) {
                 continue;
             }
-            // A profile-level refusal is recorded exactly like a projection failure, so the two reach a consumer
-            // through one vocabulary rather than two.
-            let projected = if unrepresentable.contains(identity) {
+            // A compiled implementation publishes its declaration independently; a consumer-instantiated body must
+            // retain the full executable closure and its ordinary refusal vocabulary.
+            let projected = if publishes_compiled_frame(module, body) {
+                publication::project_compiled_frame(body, module, library, public)
+            } else if unrepresentable.contains(identity) {
                 Err(CoverageReason::UnsupportedConstruct)
             } else {
                 publication::project_callable(body, module, library, public, &native_callables)
@@ -594,6 +703,36 @@ fn project_declarations(
         project_enums(module, library, public, &mut admitted, declarations)?;
     }
     Ok(admitted)
+}
+
+/// Compiled callables retain declaration frames independently of their implementation's portable closure.
+/// Open owners, trait defaults and generator producers still require their executable governed representation.
+fn publishes_compiled_frame(module: &BodyIrModule, body: &Body) -> bool {
+    let Some(identity) = &body.canonical else {
+        return false;
+    };
+    crate::body_ir::LoafCallable::from_body(body).is_some()
+        && !module.body_requires_instantiation(body)
+        && !body.is_generator()
+        && !module
+            .decorated_bindings
+            .iter()
+            .any(|binding| binding.original_body.canonical.as_ref() == Some(identity))
+        && !module
+            .static_declarations
+            .iter()
+            .any(|storage| &storage.canonical == identity)
+        && matches!(
+            identity.kind,
+            crate::SemanticSourceTargetKind::Function
+                | crate::SemanticSourceTargetKind::Method
+                | crate::SemanticSourceTargetKind::Property
+        )
+        && !module.trait_declarations.iter().any(|owner| {
+            owner.origin == identity.origin
+                && owner.declaration_span.start <= identity.declaration_span.start
+                && owner.declaration_span.end >= identity.declaration_span.end
+        })
 }
 
 /// Project public nominal layouts and retain checked trait slots without synthesizing consumer dispatch.
@@ -835,7 +974,7 @@ fn record_type_context_members(
             ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
             ExecutableDeclaration::Body(_)
             | ExecutableDeclaration::NativeBody { .. }
-            | ExecutableDeclaration::CompiledCallable(_)
+            | ExecutableDeclaration::CompiledCallableFrame { .. }
             | ExecutableDeclaration::DecoratedBody { .. }
             | ExecutableDeclaration::InvocationDecoratedBody { .. }
             | ExecutableDeclaration::Trait(_)
@@ -895,7 +1034,13 @@ fn encode_surface(
     // ---- Payloads: encode in canonical order across public and implementation declarations ----
     let mut payload = Vec::new();
     for (identity, entry) in admitted {
-        let encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
+        let mut encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
+        match &entry.declaration {
+            ExecutableDeclaration::Nominal(nominal) | ExecutableDeclaration::NominalWithTraits(nominal, _) => {
+                append_trait_fields(&mut encoded, std::slice::from_ref(nominal))?;
+            }
+            _ => {}
+        }
         declarations.insert(
             identity,
             DeclarationCoverage::Covered {
@@ -1048,8 +1193,15 @@ impl SurfaceIndex {
         if u64::try_from(bytes.len()).ok() != Some(*length) {
             return Err(malformed("selected fragment length differs from its index"));
         }
-        let declaration: ExecutableDeclaration =
-            postcard::from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+        let (mut declaration, remainder): (ExecutableDeclaration, _) =
+            postcard::take_from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+        match &mut declaration {
+            ExecutableDeclaration::Nominal(nominal) | ExecutableDeclaration::NominalWithTraits(nominal, _) => {
+                restore_trait_fields(std::slice::from_mut(nominal), remainder)?;
+            }
+            _ if !remainder.is_empty() => return Err(malformed("unexpected declaration trailer")),
+            _ => {}
+        }
         if declaration.identity() != Some(identity) {
             return Err(malformed("fragment identity differs from its index"));
         }
@@ -1098,7 +1250,7 @@ impl<'bytes> SurfaceReader<'bytes> {
         &self.index
     }
 
-    /// Canonical identities with covered executable fragments; uncovered exports remain visible through the index.
+    /// Canonical identities with covered declaration fragments; uncovered exports remain visible through the index.
     pub fn covered_identities(&self) -> impl Iterator<Item = &CanonicalSymbolId> {
         self.index.declarations.iter().filter_map(|(identity, coverage)| {
             matches!(coverage, DeclarationCoverage::Covered { .. }).then_some(identity)
@@ -1187,6 +1339,8 @@ mod tests {
     fn body(name: &str, ordinal: usize) -> Body {
         let identity = identity(name, ordinal);
         Body {
+            nominal_instantiation: Vec::new(),
+            trait_default_instantiation: None,
             type_parameters: vec!["Fixture".into()],
             decl_id: CompilerNodeId::declaration_span(
                 "lib",
@@ -1223,6 +1377,7 @@ mod tests {
     /// Synthetic module context used only for codec and public-closure invariants.
     fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
+            runtime_callable_bindings: Vec::new(),
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
             program_entrypoints: Vec::new(),
@@ -1276,7 +1431,7 @@ mod tests {
     #[test]
     fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
         for version in [
-            EXECUTABLE_REPRESENTATION_VERSION - 1,
+            super::OLDEST_SUPPORTED_VERSION - 1,
             EXECUTABLE_REPRESENTATION_VERSION + 1,
         ] {
             let bytes = postcard::to_allocvec(&version)?;
@@ -1361,7 +1516,7 @@ mod tests {
         Ok(())
     }
 
-    /// Native implementation calls do not enter compiled contracts; governed bodies still need a portable closure.
+    /// Native implementations stay outside compiled frames; governed calls require a retained checked native selection.
     #[test]
     fn compiled_contract_excludes_native_implementation() -> Result<(), Box<dyn std::error::Error>> {
         let mut native = identity("serialize", 9);
@@ -1376,7 +1531,8 @@ mod tests {
             &BTreeSet::from([identity("compiled", 1), identity("governed", 2)]),
         )?;
         let reader = SurfaceReader::open(&bytes)?;
-        let ExecutableDeclaration::CompiledCallable(frame) = reader.fragment(&identity("compiled", 1))? else {
+        let ExecutableDeclaration::CompiledCallableFrame { frame, .. } = reader.fragment(&identity("compiled", 1))?
+        else {
             return Err("compiled callable contract missing".into());
         };
         assert!(frame.block.stmts.is_empty());
@@ -1384,7 +1540,7 @@ mod tests {
         assert!(reader.declaration(&identity("compiled", 1)).is_err());
         assert!(matches!(
             reader.index().coverage(&identity("governed", 2))?,
-            DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
+            DeclarationCoverage::Uncovered(CoverageReason::UnresolvedReference)
         ));
         Ok(())
     }
@@ -1432,6 +1588,22 @@ mod tests {
                 .windows(b"private_secret".len())
                 .any(|part| part == b"private_secret")
         );
+        // A compiled export's checked signature survives an unavailable implementation without becoming a body.
+        let mut compiled = module;
+        compiled.bodies[2].type_parameters.clear();
+        compiled.bodies[2].callable_representation = Some(crate::body_ir::CallableRepresentation {
+            function_pointer_locals: Vec::new(),
+            closure_holding_locals: Vec::new(),
+            closure_holding_parameters: Vec::new(),
+            closure_holding_return: false,
+        });
+        let bytes = publish(&compiled, &public)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(matches!(
+            reader.fragment(&identity("unsupported", 4))?,
+            ExecutableDeclaration::CompiledCallableFrame { frame, .. } if frame.block.stmts.is_empty()
+        ));
+        assert!(reader.declaration(&identity("unsupported", 4)).is_err());
         Ok(())
     }
 
@@ -1490,6 +1662,7 @@ mod tests {
         let mut exported = body("exported", 1);
         exported.params.push(CallableParam {
             mutable: false,
+            native_owned: false,
             kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
             name: "x".into(),
@@ -1727,6 +1900,42 @@ mod tests {
         Ok(())
     }
 
+    /// Build the generic Holder layout used to test parameter scope and lazy protocol dependencies together.
+    fn generic_holder_declaration(
+        owner: CanonicalSymbolId,
+        field: CanonicalSymbolId,
+    ) -> crate::body_ir::NominalDeclaration {
+        crate::body_ir::NominalDeclaration {
+            trait_adoptions: Vec::new(),
+            native_item: String::new(),
+            class_inheritance: None,
+            native_type_arguments: Vec::new(),
+            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
+            canonical: owner,
+            name: "Holder".into(),
+            fields: vec!["value".into()],
+            field_identities: vec![field],
+            field_aliases: Vec::new(),
+            field_types: vec![IncanType::TypeVar("T".into())],
+            owned_callable_fields: Vec::new(),
+            field_public: vec![true],
+            reflection_fields: None,
+            display_method: None,
+            newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
+            newtype_string_conversion: crate::body_ir::NewtypeStringConversion::Unselected,
+            reflection_metadata: None,
+            comparison_equality: None,
+            public: true,
+            has_field_defaults: false,
+            field_default_body: None,
+            method_partial_defaults: Vec::new(),
+            derives: Vec::new(),
+            named_type_identities: Default::default(),
+            type_parameters: vec!["T".into()],
+            type_parameter_count: 1,
+        }
+    }
+
     /// A generic nominal layout and its receiver method share the owner's binders, with canonical use requirements.
     #[test]
     fn published_nominals_cover_their_declared_parameters() -> Result<(), Box<dyn std::error::Error>> {
@@ -1748,35 +1957,9 @@ mod tests {
             args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
         };
         let mut module = module(vec![method, user]);
-        module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
-            trait_adoptions: Vec::new(),
-            native_item: String::new(),
-            class_inheritance: None,
-            native_type_arguments: Vec::new(),
-            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
-            canonical: owner.clone(),
-            name: "Holder".into(),
-            fields: vec!["value".into()],
-            field_identities: vec![field.clone()],
-            field_aliases: Vec::new(),
-            field_types: vec![IncanType::TypeVar("T".into())],
-            owned_callable_fields: Vec::new(),
-            field_public: vec![true],
-            reflection_fields: None,
-            display_method: None,
-            newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
-            newtype_string_conversion: crate::body_ir::NewtypeStringConversion::Unselected,
-            reflection_metadata: None,
-            comparison_equality: None,
-            public: true,
-            has_field_defaults: false,
-            field_default_body: None,
-            method_partial_defaults: Vec::new(),
-            derives: Vec::new(),
-            named_type_identities: Default::default(),
-            type_parameters: vec!["T".into()],
-            type_parameter_count: 1,
-        });
+        module
+            .nominal_declarations
+            .push(generic_holder_declaration(owner.clone(), field.clone()));
         let public = BTreeSet::from([owner.clone(), field, method_id.clone(), identity("use_holder", 1)]);
         let bytes = publish(&module, &public)?;
         let reader = SurfaceReader::open(&bytes)?;
@@ -1811,11 +1994,14 @@ mod tests {
                 trait_identity: protocol.clone(),
                 arguments: Vec::new(),
                 methods: Some(vec![slot.clone()]),
+                primitive_adapter: None,
+                fields: Vec::new(),
             });
         module.trait_implementations.push(crate::body_ir::TraitImplementation {
             owner: owner.clone(),
             method: slot.clone(),
             implementation: slot.clone(),
+            slot_arguments: Vec::new(),
             type_arguments: Vec::new(),
         });
         let mut public = public;
@@ -1973,6 +2159,7 @@ mod tests {
         ]);
         exported.params.push(CallableParam {
             mutable: false,
+            native_owned: false,
             kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
             name: "product".into(),

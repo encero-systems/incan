@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     CanonicalIdentityExport, EnumValueExport, EnumValueTypeExport, ExportIdentityKind, ExportIdentityProjection,
-    FieldExport, FieldVisibilityExport, FunctionExport, ImplementationTraitBoundOriginExport, LibraryManifest,
-    LibraryManifestError, MethodExport, NewtypeConstraintExport, ParamDefaultExport, ParamExport, ParamKindExport,
-    PartialTargetKindExport, PresetValueExport, PropertyExport, ReceiverExport, TypeBoundExport, TypeParamExport,
-    TypeRef, VisitTypeRefs, params_from_checked, resolved_type_from_manifest_type_ref,
+    FieldExport, FieldVisibilityExport, FunctionExport, ImplementationTraitBoundOriginExport, LibraryExports,
+    LibraryManifest, LibraryManifestError, MethodExport, NewtypeConstraintExport, ParamDefaultExport, ParamExport,
+    ParamKindExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ReceiverExport, TypeBoundExport,
+    TypeParamExport, TypeRef, VisitTypeRefs, params_from_checked, resolved_type_from_manifest_type_ref,
 };
 use crate::library_exports::{
     CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedEnumVariant,
@@ -25,6 +25,10 @@ use crate::library_exports::{
 use crate::symbols::{
     CallableParam, ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo,
 };
+use incan_semantics_core::CanonicalSymbolId;
+
+/// A reconstructed export shape paired with the manifest kind that must match its exact root identity.
+type ReplayShape = (ExportIdentityKind, CheckedExportKind);
 
 /// Versioned checked export replay, binding each exact public shape to its original checked identity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,44 +50,8 @@ impl CheckedExportReplay {
         Self::from_projection(projection)
     }
 
-    /// Capture one checked shape with the finalized package's validated namespace proof for its projection hops.
-    /// The selected root must already occur in that package under its exact identity and projection. Supporting
-    /// nested entries and their checked API backing remain in the replay; they grant no additional root shape.
-    pub fn from_checked_in_package(
-        package: &LibraryManifest,
-        export: &CheckedNamedExport,
-    ) -> Result<Self, LibraryManifestError> {
-        package.to_json_string()?;
-        validate_replayable_shape(&export.kind)?;
-        let mut projection =
-            LibraryManifest::from_checked_exports(&package.name, &package.version, std::slice::from_ref(export));
-        let roots = &projection.contract_metadata.identity_graph.exports;
-        if roots.len() != 1 || !package.contract_metadata.identity_graph.exports.contains(&roots[0]) {
-            return Err(invalid(
-                "checked export replay root is absent from its finalized package",
-            ));
-        }
-        // Most declarations need no namespace context. Keep their existing compact replay rather than copying
-        // a package's complete checked API into every ordinary declaration record.
-        if let Ok(replay) = Self::from_projection(projection.clone()) {
-            return Ok(replay);
-        }
-        projection.contract_metadata.identity_graph.exports.extend(
-            package
-                .contract_metadata
-                .identity_graph
-                .exports
-                .iter()
-                .filter(|entry| entry.public_path.len() > 2)
-                .cloned(),
-        );
-        projection.contract_metadata.api = package.contract_metadata.api.clone();
-        Self::from_projection(projection)
-    }
-
     /// Validate the complete manifest boundary before retaining or consuming its one exact root shape.
     fn from_projection(projection: LibraryManifest) -> Result<Self, LibraryManifestError> {
-        projection.to_json_string()?;
         let replay = Self {
             schema_version: 1,
             projection,
@@ -143,218 +111,248 @@ impl CheckedExportReplay {
                 }),
             ));
         }
-        for value in &exports.models {
-            kinds.push((
-                ExportIdentityKind::Model,
-                CheckedExportKind::Model(CheckedModelExport {
-                    name: value.name.clone(),
-                    type_params: type_params(&value.type_params),
-                    traits: value.traits.clone(),
-                    trait_adoptions: bounds(&value.trait_adoptions),
-                    derives: value.derives.clone(),
-                    fields: fields(&value.fields)?,
-                    properties: properties(&value.properties),
-                    methods: methods(&value.methods)?,
-                }),
-            ));
-        }
-        for value in &exports.classes {
-            kinds.push((
-                ExportIdentityKind::Class,
-                CheckedExportKind::Class(CheckedClassExport {
-                    name: value.name.clone(),
-                    type_params: type_params(&value.type_params),
-                    extends: value.extends.clone(),
-                    traits: value.traits.clone(),
-                    trait_adoptions: bounds(&value.trait_adoptions),
-                    derives: value.derives.clone(),
-                    fields: fields(&value.fields)?,
-                    properties: properties(&value.properties),
-                    methods: methods(&value.methods)?,
-                }),
-            ));
-        }
-        for value in &exports.traits {
-            kinds.push((
-                ExportIdentityKind::Trait,
-                CheckedExportKind::Trait(CheckedTraitExport {
-                    name: value.name.clone(),
-                    source_name: value.source_name.clone().unwrap_or_else(|| value.name.clone()),
-                    type_params: type_params(&value.type_params),
-                    supertraits: bounds(&value.supertraits),
-                    requires: value
-                        .requires
-                        .iter()
-                        .map(|field| (field.name.clone(), resolved_type_from_manifest_type_ref(&field.ty)))
-                        .collect(),
-                    methods: methods(&value.methods)?,
-                }),
-            ));
-        }
-        for value in &exports.enums {
-            kinds.push((
-                ExportIdentityKind::Enum,
-                CheckedExportKind::Enum(CheckedEnumExport {
-                    name: value.name.clone(),
-                    type_params: type_params(&value.type_params),
-                    traits: value.traits.clone(),
-                    trait_adoptions: bounds(&value.trait_adoptions),
-                    value_type: value.value_type.map(|backing| match backing {
-                        EnumValueTypeExport::Str => crate::symbols::ValueEnumBacking::Str,
-                        EnumValueTypeExport::Int => crate::symbols::ValueEnumBacking::Int,
-                    }),
-                    variants: value
-                        .variants
-                        .iter()
-                        .map(|variant| CheckedEnumVariant {
-                            name: variant.name.clone(),
-                            canonical: variant.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate),
-                            fields: variant
-                                .fields
-                                .iter()
-                                .map(resolved_type_from_manifest_type_ref)
-                                .collect(),
-                            value: variant.value.as_ref().map(|value| match value {
-                                EnumValueExport::Str(value) => crate::symbols::ValueEnumValue::Str(value.clone()),
-                                EnumValueExport::Int(value) => crate::symbols::ValueEnumValue::Int(*value),
-                            }),
-                        })
-                        .collect(),
-                    variant_aliases: value
-                        .variant_aliases
-                        .iter()
-                        .map(|alias| CheckedEnumVariantAlias {
-                            name: alias.name.clone(),
-                            target: alias.target.clone(),
-                        })
-                        .collect(),
-                    methods: methods(&value.methods)?,
-                    derives: value.derives.clone(),
-                }),
-            ));
-        }
-        for value in &exports.newtypes {
-            kinds.push((
-                ExportIdentityKind::Newtype,
-                CheckedExportKind::Newtype(CheckedNewtypeExport {
-                    name: value.name.clone(),
-                    type_params: type_params(&value.type_params),
-                    traits: value.traits.clone(),
-                    trait_adoptions: bounds(&value.trait_adoptions),
-                    derives: value.derives.clone(),
-                    is_rusttype: value.is_rusttype,
-                    underlying: resolved_type_from_manifest_type_ref(&value.underlying),
-                    checked_constructor: value.checked_constructor.clone(),
-                    constraints: value
-                        .constraints
-                        .iter()
-                        .map(NewtypeConstraintExport::to_checked)
-                        .collect(),
-                    implicit_coercion_enabled: value.implicit_coercion_enabled,
-                    methods: methods(&value.methods)?,
-                }),
-            ));
-        }
-        for value in &exports.consts {
-            kinds.push((
-                ExportIdentityKind::Const,
-                CheckedExportKind::Const(CheckedConstExport {
-                    name: value.name.clone(),
-                    ty: resolved_type_from_manifest_type_ref(&value.ty),
-                }),
-            ));
-        }
-        for value in &exports.statics {
-            kinds.push((
-                ExportIdentityKind::Static,
-                CheckedExportKind::Static(CheckedStaticExport {
-                    name: value.name.clone(),
-                    ty: resolved_type_from_manifest_type_ref(&value.ty),
-                }),
-            ));
-        }
-        for value in &exports.partials {
-            kinds.push((
-                ExportIdentityKind::Partial,
-                CheckedExportKind::Partial(CheckedPartialExport {
-                    name: value.name.clone(),
-                    target_path: value.target_path.clone(),
-                    target_kind: partial_kind(value.target_kind),
-                    presets: value
-                        .presets
-                        .iter()
-                        .map(|preset| {
-                            Ok(CheckedPartialPreset {
-                                name: preset.name.clone(),
-                                ty: resolved_type_from_manifest_type_ref(&preset.ty),
-                                value: preset_value(&preset.value)?,
-                            })
-                        })
-                        .collect::<Result<_, LibraryManifestError>>()?,
-                    type_params: type_params(&value.type_params),
-                    params: params(&value.params),
-                    return_type: resolved_type_from_manifest_type_ref(&value.return_type),
-                    is_async: value.is_async,
-                }),
-            ));
-        }
-        let [(kind, shape)] = kinds.as_slice() else {
-            return Err(invalid("checked export replay requires one complete shape"));
-        };
-        if *kind != identity.kind || shape_name(shape) != identity.public_name {
-            return Err(invalid("checked export replay shape and identity kinds disagree"));
-        }
-        validate_replayable_shape(shape)?;
-        let mut origins = BTreeMap::new();
-        let mut projected = manifest.exports.clone();
-        let mut competing = false;
-        projected.visit_type_refs(&mut |ty| {
-            if let TypeRef::Named {
-                origin: Some(origin), ..
-            }
-            | TypeRef::Applied {
-                origin: Some(origin), ..
-            } = ty
-            {
-                let key = origin.binding_key();
-                if origins
-                    .insert(key, origin.clone())
-                    .is_some_and(|previous| previous != *origin)
-                {
-                    competing = true;
-                }
-            }
-        });
-        if competing {
-            return Err(invalid("checked export replay has competing nominal owners"));
-        }
-        let projection = match &identity.projection {
-            ExportIdentityProjection::Direct => CheckedExportProjection::Direct,
-            ExportIdentityProjection::Alias { target_path } => CheckedExportProjection::Alias {
-                target_path: target_path.clone(),
-            },
-            ExportIdentityProjection::Reexport { target_path } => CheckedExportProjection::Reexport {
-                target_path: target_path.clone(),
-            },
-            ExportIdentityProjection::Partial {
-                target_path,
-                target_kind,
-            } => CheckedExportProjection::Partial {
-                target_path: target_path.clone(),
-                target_kind: partial_kind(*target_kind),
-            },
-        };
-        Ok(CheckedNamedExport {
-            name: identity.public_name.clone(),
-            identity: CheckedExportIdentity {
-                source_path: identity.source_path.clone(),
-                projection,
-                canonical: Some(canonical),
-                type_origins: origins,
-            },
-            kind: shape.clone(),
-        })
+        append_nominal_replay_shapes(exports, &mut kinds)?;
+        append_remaining_replay_shapes(exports, &mut kinds)?;
+        finish_replayed_export(manifest, identity, canonical, kinds)
     }
+}
+
+/// Reconstruct model, class, trait and enum shapes in manifest order using the same field and method decoders.
+/// The caller's root identity proof stays separate from these shape conversions and is checked after all kinds.
+fn append_nominal_replay_shapes(
+    exports: &LibraryExports,
+    kinds: &mut Vec<ReplayShape>,
+) -> Result<(), LibraryManifestError> {
+    for value in &exports.models {
+        kinds.push((
+            ExportIdentityKind::Model,
+            CheckedExportKind::Model(CheckedModelExport {
+                name: value.name.clone(),
+                type_params: type_params(&value.type_params),
+                traits: value.traits.clone(),
+                trait_adoptions: bounds(&value.trait_adoptions),
+                derives: value.derives.clone(),
+                fields: fields(&value.fields)?,
+                properties: properties(&value.properties),
+                methods: methods(&value.methods)?,
+            }),
+        ));
+    }
+    for value in &exports.classes {
+        kinds.push((
+            ExportIdentityKind::Class,
+            CheckedExportKind::Class(CheckedClassExport {
+                name: value.name.clone(),
+                type_params: type_params(&value.type_params),
+                extends: value.extends.clone(),
+                traits: value.traits.clone(),
+                trait_adoptions: bounds(&value.trait_adoptions),
+                derives: value.derives.clone(),
+                fields: fields(&value.fields)?,
+                properties: properties(&value.properties),
+                methods: methods(&value.methods)?,
+            }),
+        ));
+    }
+    for value in &exports.traits {
+        kinds.push((
+            ExportIdentityKind::Trait,
+            CheckedExportKind::Trait(CheckedTraitExport {
+                name: value.name.clone(),
+                source_name: value.source_name.clone().unwrap_or_else(|| value.name.clone()),
+                type_params: type_params(&value.type_params),
+                supertraits: bounds(&value.supertraits),
+                requires: value
+                    .requires
+                    .iter()
+                    .map(|field| (field.name.clone(), resolved_type_from_manifest_type_ref(&field.ty)))
+                    .collect(),
+                methods: methods(&value.methods)?,
+            }),
+        ));
+    }
+    for value in &exports.enums {
+        kinds.push((
+            ExportIdentityKind::Enum,
+            CheckedExportKind::Enum(CheckedEnumExport {
+                name: value.name.clone(),
+                type_params: type_params(&value.type_params),
+                traits: value.traits.clone(),
+                trait_adoptions: bounds(&value.trait_adoptions),
+                value_type: value.value_type.map(|backing| match backing {
+                    EnumValueTypeExport::Str => crate::symbols::ValueEnumBacking::Str,
+                    EnumValueTypeExport::Int => crate::symbols::ValueEnumBacking::Int,
+                }),
+                variants: value
+                    .variants
+                    .iter()
+                    .map(|variant| CheckedEnumVariant {
+                        name: variant.name.clone(),
+                        canonical: variant.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate),
+                        fields: variant
+                            .fields
+                            .iter()
+                            .map(resolved_type_from_manifest_type_ref)
+                            .collect(),
+                        value: variant.value.as_ref().map(|value| match value {
+                            EnumValueExport::Str(value) => crate::symbols::ValueEnumValue::Str(value.clone()),
+                            EnumValueExport::Int(value) => crate::symbols::ValueEnumValue::Int(*value),
+                        }),
+                    })
+                    .collect(),
+                variant_aliases: value
+                    .variant_aliases
+                    .iter()
+                    .map(|alias| CheckedEnumVariantAlias {
+                        name: alias.name.clone(),
+                        target: alias.target.clone(),
+                    })
+                    .collect(),
+                methods: methods(&value.methods)?,
+                derives: value.derives.clone(),
+            }),
+        ));
+    }
+    Ok(())
+}
+
+/// Append newtype, constant, static and partial shapes after the other nominal forms. Fallible method and preset
+/// decoding keeps its original order so malformed replay payloads retain their first diagnostic.
+fn append_remaining_replay_shapes(
+    exports: &LibraryExports,
+    kinds: &mut Vec<ReplayShape>,
+) -> Result<(), LibraryManifestError> {
+    for value in &exports.newtypes {
+        kinds.push((
+            ExportIdentityKind::Newtype,
+            CheckedExportKind::Newtype(CheckedNewtypeExport {
+                name: value.name.clone(),
+                type_params: type_params(&value.type_params),
+                traits: value.traits.clone(),
+                trait_adoptions: bounds(&value.trait_adoptions),
+                derives: value.derives.clone(),
+                is_rusttype: value.is_rusttype,
+                underlying: resolved_type_from_manifest_type_ref(&value.underlying),
+                checked_constructor: value.checked_constructor.clone(),
+                constraints: value
+                    .constraints
+                    .iter()
+                    .map(NewtypeConstraintExport::to_checked)
+                    .collect(),
+                implicit_coercion_enabled: value.implicit_coercion_enabled,
+                methods: methods(&value.methods)?,
+            }),
+        ));
+    }
+    for value in &exports.consts {
+        kinds.push((
+            ExportIdentityKind::Const,
+            CheckedExportKind::Const(CheckedConstExport {
+                name: value.name.clone(),
+                ty: resolved_type_from_manifest_type_ref(&value.ty),
+            }),
+        ));
+    }
+    for value in &exports.statics {
+        kinds.push((
+            ExportIdentityKind::Static,
+            CheckedExportKind::Static(CheckedStaticExport {
+                name: value.name.clone(),
+                ty: resolved_type_from_manifest_type_ref(&value.ty),
+            }),
+        ));
+    }
+    for value in &exports.partials {
+        kinds.push((
+            ExportIdentityKind::Partial,
+            CheckedExportKind::Partial(CheckedPartialExport {
+                name: value.name.clone(),
+                target_path: value.target_path.clone(),
+                target_kind: partial_kind(value.target_kind),
+                presets: value
+                    .presets
+                    .iter()
+                    .map(|preset| {
+                        Ok(CheckedPartialPreset {
+                            name: preset.name.clone(),
+                            ty: resolved_type_from_manifest_type_ref(&preset.ty),
+                            value: preset_value(&preset.value)?,
+                        })
+                    })
+                    .collect::<Result<_, LibraryManifestError>>()?,
+                type_params: type_params(&value.type_params),
+                params: params(&value.params),
+                return_type: resolved_type_from_manifest_type_ref(&value.return_type),
+                is_async: value.is_async,
+            }),
+        ));
+    }
+    Ok(())
+}
+
+/// Bind the sole reconstructed shape to its root identity, reject competing nominal owners and retain the exact
+/// public projection. This runs only after the replay's schema, manifest and every shape conversion have passed.
+fn finish_replayed_export(
+    manifest: &LibraryManifest,
+    identity: &super::ExportIdentity,
+    canonical: CanonicalSymbolId,
+    kinds: Vec<ReplayShape>,
+) -> Result<CheckedNamedExport, LibraryManifestError> {
+    let [(kind, shape)] = <[ReplayShape; 1]>::try_from(kinds)
+        .map_err(|_| invalid("checked export replay requires one complete shape"))?;
+    if kind != identity.kind || shape_name(&shape) != identity.public_name {
+        return Err(invalid("checked export replay shape and identity kinds disagree"));
+    }
+    validate_replayable_shape(&shape)?;
+    let mut origins = BTreeMap::new();
+    let mut projected = manifest.exports.clone();
+    let mut competing = false;
+    projected.visit_type_refs(&mut |ty| {
+        if let TypeRef::Named {
+            origin: Some(origin), ..
+        }
+        | TypeRef::Applied {
+            origin: Some(origin), ..
+        } = ty
+        {
+            let key = origin.binding_key();
+            if origins
+                .insert(key, origin.clone())
+                .is_some_and(|previous| previous != *origin)
+            {
+                competing = true;
+            }
+        }
+    });
+    if competing {
+        return Err(invalid("checked export replay has competing nominal owners"));
+    }
+    let projection = match &identity.projection {
+        ExportIdentityProjection::Direct => CheckedExportProjection::Direct,
+        ExportIdentityProjection::Alias { target_path } => CheckedExportProjection::Alias {
+            target_path: target_path.clone(),
+        },
+        ExportIdentityProjection::Reexport { target_path } => CheckedExportProjection::Reexport {
+            target_path: target_path.clone(),
+        },
+        ExportIdentityProjection::Partial {
+            target_path,
+            target_kind,
+        } => CheckedExportProjection::Partial {
+            target_path: target_path.clone(),
+            target_kind: partial_kind(*target_kind),
+        },
+    };
+    Ok(CheckedNamedExport {
+        name: identity.public_name.clone(),
+        identity: CheckedExportIdentity {
+            source_path: identity.source_path.clone(),
+            projection,
+            canonical: Some(canonical),
+            type_origins: origins,
+        },
+        kind: shape,
+    })
 }
 
 /// Refuse projections that would silently discard a checked callable fact. Source preparation remains available

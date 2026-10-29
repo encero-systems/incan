@@ -24,6 +24,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
         .iter()
         .chain(&facts.rust.await_conversions)
         .chain(argument_calls)
+        .chain(facts.rust.element_adjustments.iter())
         .chain(field_calls)
         .chain(facts.rust.checked_function_values.iter())
         .map(|(span, call)| (*span, call))
@@ -41,6 +42,9 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
         .map(|(_, call)| call)
         .flat_map(|call| call.receiver_adjustments.iter().chain(std::iter::once(call)))
     {
+        if call.path == "std::panic::set_hook" {
+            continue;
+        }
         let Some(canonical) = bir::rust_item_identity(&call.path) else {
             continue;
         };
@@ -54,6 +58,17 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
             return_type: storage.return_type.clone(),
             type_parameters: Vec::new(),
             native_type_arguments: storage.type_arguments.clone(),
+            native_callable_parameters: facts
+                .rust
+                .native_callable_parameters
+                .get(&call.path)
+                .into_iter()
+                .flatten()
+                .map(|&(parameter_slot, type_argument_slot)| bir::NativeCallableParameter {
+                    parameter_slot,
+                    type_argument_slot,
+                })
+                .collect(),
             parameter_defaults: Vec::new(),
             declaration_frame: None,
         };
@@ -65,6 +80,119 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
 }
 
 impl BodyBuilder<'_, '_> {
+    /// Materialize the shared reference layers inside a checked parameter before its final argument loan.
+    /// Each temporary carries an explicit borrow fact and the retained signature's exact type; a foreign `&T`
+    /// whose selected T is `&Owner` therefore receives `&&Owner` without downstream type or trait inference.
+    /// A different referent or an exclusive inner reference keeps the ordinary boundary's existing validation.
+    pub(super) fn materialize_argument_loans(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        mut value: bir::Operand,
+        referent: &IncanType,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let source = self.resolve_ty(expression.span);
+        let mut target = referent;
+        let mut loans = Vec::new();
+        while target != &source {
+            let IncanType::Ref(inner) = target else {
+                return value;
+            };
+            loans.push(target.clone());
+            target = inner;
+        }
+        for loan in loans.into_iter().rev() {
+            if let bir::Operand::Place(read) = &mut value {
+                self.retain_argument_borrow(read, false);
+            }
+            value = self.push_assign_temp(bir::Rvalue::Use(value), loan, scope, hir_span(expression.span), out);
+        }
+        value
+    }
+
+    /// Evaluate a source list once, convert each element through its exact checked native call, and collect owned
+    /// results in order. This uses ordinary Body IR iteration and list growth; no mapping policy reaches lowering.
+    fn lower_native_list_conversion(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        conversion: &RustCheckedCall,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        // ---- Checked input and output carriers ----
+        let storage = conversion
+            .storage
+            .as_ref()
+            .ok_or("native element conversion without checked storage")?;
+        let [element] = storage.parameters.as_slice() else {
+            return Err("native element conversion requires one input".into());
+        };
+        let ty = IncanType::Generic {
+            base: "List".into(),
+            args: vec![storage.return_type.clone()],
+        };
+        let span = hir_span(expression.span);
+
+        // ---- Owned result list ----
+        let result = self.new_temp(ty.clone(), scope, span);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(result),
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::List, Vec::new()),
+            },
+            span,
+        });
+        self.record_runtime_requirement(incan_semantics_core::AbiV0RuntimeRequirement::Allocator);
+
+        // ---- One checked conversion per source element ----
+        let loop_scope = self.new_scope(Some(scope), span);
+        let item = self.new_temp(element.clone(), loop_scope, span);
+        self.lower_general_iteration(
+            expression,
+            item,
+            scope,
+            loop_scope,
+            span,
+            out,
+            |builder, scope, body| {
+                let input = builder.temp_operand(item, element);
+                let Some(value) = builder.emit_checked_rust_call(
+                    conversion,
+                    vec![bir::ArgumentElement::One(input)],
+                    bir::ArgumentBinding::resolved_positional(1),
+                    expression.span,
+                    scope,
+                    body,
+                ) else {
+                    builder.push_unsupported_stmt(
+                        "native element conversion without checked identity".into(),
+                        span,
+                        body,
+                    );
+                    return;
+                };
+                body.push(bir::Statement {
+                    kind: bir::StatementKind::Call {
+                        destination: None,
+                        callee: bir::Callee::Method(bir::MethodTarget {
+                            native_trait_delegation: None,
+                            canonical: Some(crate::symbols::canonical_builtin_member_identity("List", "append")),
+                            ..bir::MethodTarget::synthesized("push")
+                        }),
+                        args: super::args::fixed_elements(vec![
+                            bir::Operand::place(bir::Place::from_local(result), bir::OwnershipFact::MutBorrow, false),
+                            value,
+                        ]),
+                        may_panic: false,
+                    },
+                    span,
+                });
+            },
+        );
+        Ok(self.temp_operand(result, &ty))
+    }
+
     /// Evaluate one argument and its retained native dereference steps in source order. The initial owner is borrowed
     /// according to the checked adjustment signature; each result keeps its reference carrier for the source callee.
     pub(super) fn lower_adjusted_argument(
@@ -73,12 +201,10 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<Result<bir::Operand, String>> {
-        let steps = self
-            .type_info
-            .rust
-            .argument_adjustments
-            .get(&(expr.span.start, expr.span.end))?
-            .clone();
+        if let Some(conversion) = self.type_info.rust.element_adjustments.get(&expr.span).cloned() {
+            return Some(self.lower_native_list_conversion(expr, &conversion, scope, out));
+        }
+        let steps = self.type_info.rust.argument_adjustments.get(&expr.span)?.clone();
         Some(self.lower_native_adjustment_value(expr, &steps, scope, out))
     }
 
@@ -127,13 +253,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Place {
-        let Some(steps) = self
-            .type_info
-            .rust
-            .field_adjustments
-            .get(&(span.start, span.end))
-            .cloned()
-        else {
+        let Some(steps) = self.type_info.rust.field_adjustments.get(&span).cloned() else {
             return self.lower_expr_to_place(base, scope, out);
         };
         let value = match self.lower_native_adjustment_value(base, &steps, scope, out) {
@@ -156,12 +276,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
-        let call = self
-            .type_info
-            .rust
-            .checked_function_values
-            .get(&(expr.span.start, expr.span.end))?
-            .clone();
+        let call = self.type_info.rust.checked_function_values.get(&expr.span)?.clone();
         let span = hir_span(expr.span);
         let storage = call.storage.as_ref()?;
         if call.has_receiver || !call.receiver_adjustments.is_empty() || !storage.type_arguments.is_empty() {
@@ -189,6 +304,7 @@ impl BodyBuilder<'_, '_> {
                 span,
                 default: bir::CallableParamDefault::Required,
                 mutable: false,
+                native_owned: super::runtime_nominals::owned_collection_storage(ty),
             });
             arguments.push(bir::ArgumentElement::One(self.temp_operand(local, ty)));
         }
@@ -200,6 +316,7 @@ impl BodyBuilder<'_, '_> {
                 params: parameters,
                 captured_operands: Vec::new(),
                 body: Box::new(bir::ClosureBody {
+                    native_storage: None,
                     function_item: true,
                     consumes_environment: false,
                     original_callable: None,
@@ -225,7 +342,22 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
-        let call = self.type_info.rust.checked_calls.get(&(span.start, span.end))?.clone();
+        let call = self.type_info.rust.checked_calls.get(&span)?.clone();
+        if call.path == "std::panic::set_hook" {
+            let (operands, _binding) = match self.bind_declared_args(&call.path, None, args, scope, out) {
+                Ok(bound) => bound,
+                Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
+            };
+            return Some(self.push_call_temp(
+                bir::Callee::Helper(bir::HelperOp::InstallPanicHook),
+                operands,
+                self.checked_type(&call.return_type),
+                scope,
+                hir_span(span),
+                false,
+                out,
+            ));
+        }
         let storage = call.storage.as_ref()?;
         if !call.receiver_adjustments.is_empty() {
             let (receiver, args) = if call.has_receiver {
@@ -236,12 +368,11 @@ impl BodyBuilder<'_, '_> {
                 };
                 (receiver, &args[1..])
             };
-            return Some(
-                match self.lower_adjusted_rust_call(&call, receiver, args, span, scope, out) {
-                    Ok(value) => value,
-                    Err(reason) => self.unsupported_operand(reason, scope, hir_span(span), out),
-                },
-            );
+            let value = match self.lower_adjusted_rust_call(&call, receiver, args, span, scope, out) {
+                Ok(value) => value,
+                Err(reason) => self.unsupported_operand(reason, scope, hir_span(span), out),
+            };
+            return Some(self.retain_checked_numeric_result(value, span, scope, out));
         }
         let mut arguments = Vec::new();
         if call.has_receiver {
@@ -263,7 +394,7 @@ impl BodyBuilder<'_, '_> {
                 return Some(self.unsupported_operand(reason, scope, hir_span(span), out));
             }
         };
-        if self.type_info.rust.copy_receivers.contains_key(&(span.start, span.end))
+        if self.type_info.rust.copy_receivers.contains_key(&span)
             && let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = operands.first_mut()
         {
             read.fact = bir::OwnershipFact::Copy;
@@ -272,7 +403,8 @@ impl BodyBuilder<'_, '_> {
                 self.moved_out.remove(&local);
             }
         }
-        self.emit_checked_rust_call(&call, operands, binding, span, scope, out)
+        let value = self.emit_checked_rust_call(&call, operands, binding, span, scope, out)?;
+        Some(self.retain_checked_numeric_result(value, span, scope, out))
     }
 
     /// Emit an already bound call through the shared canonical external target; no method resolution occurs here.

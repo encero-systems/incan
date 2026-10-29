@@ -2,10 +2,13 @@
 
 from std.fs import Path
 from std.json import JsonValue
+from rust::std::fs import OpenOptions, metadata
+from rust::std::os::unix::fs import MetadataExt
 from compare import compare
 from files import (
     items,
     json_text,
+    optional_text as string_field,
     parse_json,
     read,
     read_bytes,
@@ -18,21 +21,28 @@ from files import (
 )
 from header import Header
 from run import Outcome, invoke
+from graph_context_contract import check_context
+from graph_mcp_contract import check_mcp
+from graph_lsp_contract import check_lsp
+from graph_process_contract import check_process
 
 
-pub def compare_graph(incan: str, project: Path, header: Header) -> Result[list[str], str]:
+pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list[str], str]:
     """
     Run the declared inspections twice, compare warm answers, and compare their observable output.
 
-    1. Each declared inspection runs twice, and the warm second answer must equal the first.
+    1. Resolve the fixture path and run each inspection twice; the warm answer must equal the first.
     2. Their answers together, with the project path removed, meet the header's expectations.
     3. When every inspection succeeded, the exported documents are checked too.
     """
+    # Resolve once so graph file records, git history and editor URIs share the same project identity.
+    project = selected.resolve().map_err((error) => error.message())?
     mut stdout = ""
     mut stderr = ""
     mut code: Option[int] = Some(0)
     mut failures: list[str] = []
     # 1. Every declared inspection runs twice, and its warm second answer must equal the first.
+    existing = library_artifacts(project)?
     for invocation in header.items("graph-commands"):
         arguments = ["inspect", "codegraph"] + invocation.split(" ")
         outcome = invoke(incan, arguments, project)?
@@ -49,7 +59,7 @@ pub def compare_graph(incan: str, project: Path, header: Header) -> Result[list[
         failures.append(stderr)
     # 3. Only when every inspection succeeded are the exported documents checked as well.
     if code == Some(0):
-        for failure in check_documents(incan, project)?:
+        for failure in check_documents(incan, project, existing)?:
             failures.append(failure)
     return Ok(failures)
 
@@ -75,18 +85,65 @@ def document(incan: str, project: Path, format: str) -> Result[str, str]:
 
 def declaration_identities(document: str) -> Result[list[str], str]:
     """Compare only declaration identities across a position-only source edit; spans must change independently."""
+    records = items(parse_json(document)?)?
+    check_expansion_sites(records)?
+    meanings = required(records[0], "declaration_digests")?
     mut identities: list[str] = []
-    for record in items(parse_json(document)?)?:
+    for record in records:
         if required_text(record, "record")? != "declaration":
+            continue
+        # Published standard graphs may retain declarations whose executable signature is unproven.
+        # Position edits in this fixture must preserve its own declarations and those of its local providers.
+        if string_field(record.get("span").unwrap_or(JsonValue.null()), "file").startswith("@std/"):
             continue
         stable = required(record, "stable_identity")?
         if stable.is_null():
             return Err("a checked fixture declaration has no stable identity")
-        identities.append(json_text(stable)?)
+        key = string_field(record, "stable_key")
+        if stable.get("signature").unwrap_or(JsonValue.null()).is_null():
+            if key != "":
+                return Err("a declaration without a proved signature has a portable identity key")
+            continue
+        if not key.startswith("symbol:"):
+            return Err("a checked fixture declaration has no portable identity key")
+        meaning = required(meanings, key)?
+        digest = record.get("semantic_digest").unwrap_or(JsonValue.null())
+        if json_text(meaning)? != json_text(digest)?:
+            return Err("a declaration digest is not indexed by its own identity")
+        identities.append(key)
     return Ok(sorted(identities))
 
 
-def check_documents(incan: str, project: Path) -> Result[list[str], str]:
+def check_expansion_sites(records: list[JsonValue]) -> Result[None, str]:
+    """The vocabulary fixture retains both generated helper calls and references at one authored range."""
+    package = records[0].get("package").unwrap_or(JsonValue.null())
+    if string_field(package, "name") != "vocabulary_graph":
+        return Ok(None)
+    for kind in ["call", "reference"]:
+        mut sites: Dict[str, list[str]] = {}
+        mut repeated = false
+        for record in records:
+            if string_field(record, "record") != kind:
+                continue
+            identity = record.get("canonical_identity").unwrap_or(JsonValue.null())
+            if string_field(identity, "declaration_name") != "helper":
+                continue
+            if record.get("target_id").unwrap_or(JsonValue.null()).is_null():
+                return Err(f"a generated {kind} has no checked target")
+            span = json_text(record.get("span").unwrap_or(JsonValue.null()))?
+            identifier = string_field(record, "id")
+            mut retained = sites.get(span).unwrap_or([])
+            if identifier not in retained:
+                retained.append(identifier)
+            sites[span] = retained
+            if len(retained) >= 2:
+                repeated = true
+        if not repeated:
+            return Err(f"generated {kind} records sharing one authored range were lost")
+    return Ok(None)
+
+
+def check_documents(incan: str, project: Path, existing: list[str]) -> Result[list[str], str]:
     """
     JSON and JSONL agree; changed bytes invalidate the cache while declaration identities survive line movement.
 
@@ -98,9 +155,18 @@ def check_documents(incan: str, project: Path) -> Result[list[str], str]:
     """
     # 1. The JSON export answers identity queries consistently, built no Incan library, and links its Rust facts.
     original = document(incan, project, "json")?
+    original_records = items(parse_json(original)?)?
+    snapshot = string_field(original_records[0], "snapshot_id")
+    if not snapshot.startswith("snapshot:"):
+        return Err("an export has no content-addressed snapshot identity")
+    fresh = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    if fresh.code != Some(0) or snapshot_stale(fresh.stdout)?:
+        return Err("an unchanged snapshot is stale")
     check_identity_queries(incan, project, original)?
-    for artifact in project.rglob("*.incnbody").map_err((error) => error.message())?:
-        return Err(f"graph inspection compiled an Incan library: {artifact.0}")
+    check_context(incan, project)?
+    check_mcp(incan, project)?
+    if library_artifacts(project)? != existing:
+        return Err("graph inspection created or changed a compiled Incan library")
     check_rust_links(original)?
     # 2. The JSONL export holds exactly the records the JSON export does.
     jsonl = document(incan, project, "jsonl")?
@@ -110,10 +176,12 @@ def check_documents(incan: str, project: Path) -> Result[list[str], str]:
     if canonical != json_text(JsonValue.array(lines))?:
         failures.append("JSON and JSONL exports disagree")
     # 3. A source edit changes the export's spans but not its declaration identities, and broken source is unchecked.
-    failures = failures + check_source_edits(incan, project, original)?
+    failures = failures + check_source_edits(incan, project, original, snapshot)?
     # 4. A failing unit costs its siblings nothing, and a published provider graph is read as it was published.
     check_tolerant_export(incan, project)?
     check_published_graph(incan, project)?
+    check_lsp(incan, project)?
+    check_process(incan, project)?
     return Ok(failures)
 
 
@@ -126,7 +194,7 @@ def json_lines(text: str) -> Result[list[JsonValue], str]:
     return Ok(lines)
 
 
-def check_source_edits(incan: str, project: Path, original: str) -> Result[list[str], str]:
+def check_source_edits(incan: str, project: Path, original: str, snapshot: str) -> Result[list[str], str]:
     """
     Edit the project's source and restore it: a moved line reuses no stale span and keeps declaration identities, and
     broken source is exported as an unchecked unit with a warning, while `--strict` refuses it.
@@ -136,8 +204,12 @@ def check_source_edits(incan: str, project: Path, original: str) -> Result[list[
         source = project.joinpath("src").joinpath("main.incn")
     before = read(source)?
     mut failures: list[str] = []
+    check_comment_freshness(incan, project, source, before)?
     write(source, f"\n{before}")?
     moved = document(incan, project, "json")?
+    stale = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    if stale.code != Some(0) or not snapshot_stale(stale.stdout)?:
+        return Err("changed source did not invalidate the snapshot")
     if original == moved:
         failures.append("source edit reused stale source spans")
     if declaration_identities(original)? != declaration_identities(moved)?:
@@ -151,6 +223,60 @@ def check_source_edits(incan: str, project: Path, original: str) -> Result[list[
     if invalid.code != Some(0) or "is unchecked" not in invalid.stderr or invalid.stdout.strip() == original.strip():
         failures.append(f"broken source was not exported as an unchecked unit with a warning: {invalid.stderr}")
     return Ok(failures)
+
+
+def library_artifacts(project: Path) -> Result[list[str], str]:
+    """Record ordinary library observations; executable vocabulary providers are an inspection prerequisite."""
+    mut result: list[str] = []
+    for artifact in project.rglob("*.incnbody").map_err((error) => error.message())?:
+        if executed_vocabulary(artifact)?:
+            continue
+        name = f"{artifact.0}"
+        info = metadata(artifact.0).map_err((error) => str(error))?
+        identity = f"{name}:{info.dev()}:{info.ino()}:{info.size()}"
+        clock = f"{info.mtime()}.{info.mtime_nsec()}:{info.ctime()}.{info.ctime_nsec()}"
+        result.append(f"{identity}:{clock}")
+    return Ok(sorted(result))
+
+
+def executed_vocabulary(artifact: Path) -> Result[bool, str]:
+    """A published vocabulary worker requires its provider's executable body before the consumer can be checked."""
+    package = artifact.name()[:-len(".incnbody")]
+    manifest = parse_json(read(artifact.parent().joinpath(f"{package}.incnlib"))?)?
+    vocabulary = manifest.get("vocab").unwrap_or(JsonValue.null())
+    return Ok(not vocabulary.get("desugarer_artifact").unwrap_or(JsonValue.null()).is_null())
+
+
+def check_comment_freshness(incan: str, project: Path, source: Path, before: str) -> Result[None, str]:
+    """Equal-size comment edits with a restored modification time must expire the retained source snapshot."""
+    mut prefix = "#"
+    if source.name().endswith(".rs"):
+        prefix = "//"
+    write(source, f"{before}\n{prefix} snapshot a\n")?
+    records = items(parse_json(document(incan, project, "json")?)?)?
+    snapshot = string_field(records[0], "snapshot_id")
+    replace_with_time_preserved(source, f"{before}\n{prefix} snapshot b\n")?
+    status = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    write(source, before)?
+    if status.code != Some(0) or not snapshot_stale(status.stdout)?:
+        return Err("an equal-size comment edit left the source snapshot fresh")
+    return Ok(None)
+
+
+def snapshot_stale(document: str) -> Result[bool, str]:
+    """Read the public snapshot-status flag without accepting absent or malformed responses."""
+    return required(parse_json(document)?, "stale")?.expect_bool().map_err((error) => error.message())
+
+
+def replace_with_time_preserved(path: Path, content: str) -> Result[None, str]:
+    """Replace source bytes in place and restore mtime, leaving ctime as the evidence of an equal-size edit."""
+    modified = metadata(f"{path.0}").map_err((error) => str(error))?.modified().map_err((error) => str(error))?
+    write(path, content)?
+    mut options = OpenOptions.new()
+    options.write(true)
+    file = options.open(f"{path.0}").map_err((error) => str(error))?
+    file.set_modified(modified).map_err((error) => str(error))?
+    return Ok(None)
 
 
 def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
@@ -200,8 +326,7 @@ def check_identity_queries(incan: str, project: Path, document: str) -> Result[N
             Some(span) =>
                 if not string_field(span, "file").startswith(f"{project.0}/"):
                     continue
-            None =>
-                continue
+            None => continue
         name = string_field(declaration, "name")
         if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
             continue
@@ -228,13 +353,24 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     source = provider.joinpath("src").joinpath("lib.incn")
     if not source.is_file():
         return Ok(None)
+    checked = invoke(incan, ["inspect", "codegraph", provider.0, "--format", "json"], project)?
+    if checked.code != Some(0):
+        return Err(f"provider inspection failed: {checked.stderr}")
+    checked_digest = helper_digest(checked.stdout)?
     # 1. The provider's compiled Loaf carries a version-one binary graph that names no physical project root.
     built = invoke(incan, ["build", source.0], project)?
     if built.code != Some(0):
         return Err(f"provider build failed: {built.stderr}")
-    artifacts = provider.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("graph_checked")
-    graph = artifacts.joinpath("debug").joinpath("graph_checked.incngraph")
-    check_binary_graph(read_bytes(graph)?, project)?
+    consumer = invoke(incan, ["build", "src/main.incn"], project)?
+    if consumer.code != Some(0):
+        return Err(f"consumer preparation failed: {consumer.stderr}")
+    publications = published_graphs(project, provider)
+    if len(publications) == 0:
+        return Err("provider build published no graph")
+    check_binary_graph(read_bytes(publications[0])?, project)?
+    compiled = document(incan, project, "json")?
+    if helper_digest(compiled)? != checked_digest:
+        return Err("the inspected cross-module library body differs from its compiled publication")
     # 2. A consumer reads the published graph, though the provider's source has since become invalid.
     arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
     original = invoke(incan, arguments, project)?
@@ -245,18 +381,32 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
         return Err(f"published dependency graph was rechecked from source: {published.stderr}")
     write(source, before)?
     # 3. A corrupt published graph is refused, never silently replaced or reused.
-    write_bytes(graph, b"\x7f\x00\x00\x00")?
+    for graph in publications:
+        write_bytes(graph, b"\x7f\x00\x00\x00")?
     corrupt = invoke(incan, arguments, project)?
     if corrupt.code == Some(0):
         return Err("a corrupt published graph was silently replaced or reused")
     # 4. A provider with no published graph is exported once, and a second export gives the same answer.
-    remove(graph)?
+    for graph in publications:
+        remove(graph)?
     legacy = invoke(incan, arguments, project)?
     repeated = invoke(incan, arguments, project)?
     stable = legacy.stdout == repeated.stdout and legacy.code == repeated.code
     if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
         return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
     return Ok(None)
+
+
+def helper_digest(document: str) -> Result[str, str]:
+    """Read a proved helper digest and portable identity from either source inspection or its publication."""
+    for record in items(parse_json(document)?)?:
+        if string_field(record, "record") != "declaration" or string_field(record, "name") != "checked_helper":
+            continue
+        digest = string_field(record, "semantic_digest")
+        if not digest.startswith("sha256:"):
+            return Err("the checked library helper has no proved semantic digest")
+        return Ok(string_field(record, "stable_key") + ":" + digest)
+    return Err("the library graph omitted its checked helper")
 
 
 def check_binary_graph(data: bytes, project: Path) -> Result[None, str]:
@@ -270,15 +420,15 @@ def check_binary_graph(data: bytes, project: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def string_field(value: JsonValue, key: str) -> str:
-    """Read an optional wire string for referential-integrity checks."""
-    match value.get(key):
-        Some(item) =>
-            match item.as_str():
-                Some(text) => return text
-                None => pass
-        None => pass
-    return ""
+def published_graphs(project: Path, provider: Path) -> list[Path]:
+    """Find the consumer and provider copies so corruption cannot fall through to an intact publication."""
+    mut graphs: list[Path] = []
+    for root in [project, provider]:
+        directory = root.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("graph_checked")
+        graph = directory.joinpath("debug").joinpath("graph_checked.incngraph")
+        if graph.is_file():
+            graphs.append(graph)
+    return graphs
 
 
 def check_rust_links(document: str) -> Result[None, str]:

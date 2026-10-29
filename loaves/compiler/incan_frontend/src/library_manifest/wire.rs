@@ -7,10 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
-    LibraryExportView, LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, ModelExport,
-    NewtypeExport, PartialExport, SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport,
-    TypeAliasExport, VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration, VocabProviderManifest,
-    legacy_library_contract_metadata,
+    LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, ModelExport, NewtypeExport, PartialExport,
+    SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact,
+    VocabExports, VocabKeywordRegistration, VocabProviderManifest, legacy_library_contract_metadata,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,29 +54,6 @@ pub(super) struct RawLibraryExports {
     pub(super) statics: Vec<StaticExport>,
 }
 
-impl RawLibraryExports {
-    /// Borrow the wire export lists as the shared public-surface view.
-    ///
-    /// Validation runs on the wire form before it is loaded, so it answers eligibility questions here rather than on
-    /// `LibraryExports`; routing through the same view keeps the provider's own build and every consumer's frontend
-    /// agreeing on what the package exports.
-    pub(super) fn view(&self) -> LibraryExportView<'_> {
-        LibraryExportView {
-            aliases: &self.aliases,
-            partials: &self.partials,
-            models: &self.models,
-            classes: &self.classes,
-            functions: &self.functions,
-            traits: &self.traits,
-            enums: &self.enums,
-            type_aliases: &self.type_aliases,
-            newtypes: &self.newtypes,
-            consts: &self.consts,
-            statics: &self.statics,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub(super) struct RawSoftKeywordExports {
     #[serde(default)]
@@ -86,6 +62,8 @@ pub(super) struct RawSoftKeywordExports {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct RawVocabExports {
+    pub(super) metadata_version: u32,
+    pub(super) unit_identity: String,
     pub(super) crate_path: String,
     pub(super) package_name: String,
     #[serde(default)]
@@ -102,6 +80,8 @@ impl RawVocabExports {
     /// Preserve the single vocabulary wire shape for library publication and producer identity encoding.
     pub(super) fn from_semantic(vocab: &VocabExports) -> Self {
         Self {
+            metadata_version: vocab.metadata_version,
+            unit_identity: vocab.unit_identity.clone(),
             crate_path: vocab.crate_path.clone(),
             package_name: vocab.package_name.clone(),
             keyword_registrations: vocab.keyword_registrations.clone(),
@@ -163,6 +143,8 @@ impl RawLibraryManifest {
                 statics: self.exports.statics,
             },
             vocab: self.vocab.map(|vocab| VocabExports {
+                metadata_version: vocab.metadata_version,
+                unit_identity: vocab.unit_identity,
                 crate_path: vocab.crate_path,
                 package_name: vocab.package_name,
                 keyword_registrations: vocab.keyword_registrations,

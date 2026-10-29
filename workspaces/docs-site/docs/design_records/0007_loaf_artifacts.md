@@ -41,7 +41,9 @@ dev.8 removes generated Rust crates and Cargo artifact coordinates. The library-
 
 One index per compilation records each reachable Loaf's key, artifact directory, manifest, and namespace: `pub::<key>` for ordinary dependencies and compiler-pinned `std.*` roots for standard packages. Every module path selects exactly one entry; types come from its manifest, governed bodies from `.incnbody`, and linkage from its rlib and native closure.
 
-An unchanged native source unit may reuse its canonical dependency footprint under complete source, artifact, and compiler file-generation guards; invalid or unsupported observations require the full index, and checking still runs anew.
+A checked source interface may publish declarations and governed bodies through this same index before native compilation, allowing the runtime and its standard trait declarations to be built from source without an earlier runtime. It grants no compiled callable or native layout and is never a substitute for a complete compiled Loaf in a release toolchain.
+
+Validated manifest inventories and facts may be retained privately for an exact file generation and compiler; public artifact admission remains authoritative. Canonical lookups load complete manifests on first demand, including every global vocabulary, provider-operation, and native-union contributor; failed demands refuse analysis, and previous source footprints supply no negative lookup facts.
 
 ### Calling into a Loaf
 
@@ -53,9 +55,13 @@ Every public callable's `.incnbody` declaration supplies parameters, default com
 
 Published unions retain checked semantic carriers, public native owners, canonical nominal payload identities, and physical variant order; consumers use that representation for construction, narrowing, and tests, refusing conflicting owners instead of inventing wrappers or import-dependent order.
 
+Source enum carriers retain their checked owner across module and artifact boundaries; equal source names do not merge owners.
+
 Each public model/class with type parameters has one native ADT preserving binders and authored field order; provider and consumer layouts alias its instantiations, with otherwise unused parameters retained by a private, validated zero-sized marker excluded from Debug output, which shows authored fields under the source name.
 
 A callable union member owns its captured environment. Its checked signature and producer-owned callable object type cross the artifact boundary with the union representation; consumers preserve that ownership during injection, narrowing, invocation, and cloning.
+
+A compiled callable retains its checked declaration frame even when its implementation cannot be published as a governed body. That frame authorizes calling the canonical rlib item, never compiling a consumer copy of its implementation.
 
 Every package identity takes this one route. No Body IR record, lowering branch or driver path is specific to the standard packages.
 
@@ -66,7 +72,7 @@ The standard packages are Loaves like any other. A project depends on the standa
 ## Consequences
 
 - The provider plan, the library-manifest index, the SDK inventory with its components, profiles and bootstrap grants, the standard source publication, and the generated-crate artifact record are replaced by the artifact and the index.
-- A dependency is always compiled before its consumer is checked (DD-0005's eager preparation), so there is no checked-source or parser-source stand-in for a missing artifact.
+- Ordinary dependency preparation remains eager (DD-0005); an explicitly selected checked source interface supplies only its checked declarations and governed bodies, and a consumer requiring its compiled items refuses until native compilation completes.
 - The checker sees the standard library only through manifests, the same contract every dependency already meets.
 
 ## Non-goals

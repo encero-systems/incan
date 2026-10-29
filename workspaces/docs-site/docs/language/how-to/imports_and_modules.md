@@ -85,7 +85,7 @@ Build the checked library artifact:
 
 ```bash
 cd hyperquant-lib
-incan build --lib
+incan build src/lib.incn
 ```
 
 Add the library to the consumer:

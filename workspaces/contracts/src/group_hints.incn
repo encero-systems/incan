@@ -26,7 +26,7 @@ pub def hint_path(root: Path, family: str) -> Option[Path]:
         Err(_) => return None
         Ok(canonical) =>
             scope = canonical.0.replace("_", "_u").replace("/", "_s")
-            directory = Path(toolchain_home).joinpath("cache").joinpath("contract-groups-v1")
+            directory = Path(toolchain_home).joinpath("cache").joinpath("contract-groups-v2")
             return Some(directory.joinpath(f"{scope}-{family}.tsv"))
 
 
@@ -39,7 +39,7 @@ pub def retain_hint(hint: Option[Path], partition: list[str]) -> None:
             _ = write_hint(path, "\n".join(partition) + "\n")
 
 
-def write_hint(path: Path, text: str) -> Result[None, str]:
+pub def write_hint(path: Path, text: str) -> Result[None, str]:
     """Keep concurrent readers on a complete old or new partition, without storing compilation or case results."""
     make_directory(path.parent())?
     temporary = path.parent().joinpath(f".{path.name()}.{id()}.pending")

@@ -1,0 +1,174 @@
+"""Recover missing legacy producer edges from pinned rustc metadata, retaining each artifact reading."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.json import JsonValue
+from observation import observe
+from retained_readings import recall, retain
+from registry_units import RegistryUnit, sole_library
+from rust_target import decoded
+from toolchain import load_toolchain, rust_compiler
+
+
+pub def complete_legacy(units: list[RegistryUnit]) -> Result[list[RegistryUnit], str]:
+    """
+    Complete older closure records without inventing edges from names or compatible feature sets.
+
+    1. Fully recorded closures require no compiler metadata queries.
+    2. Index native crate hashes from the selected pinned compiler's retained artifact readings.
+    3. Bind legacy edges to their exact compiled identities; sysroot edges stay outside this registry.
+    """
+    # 1. New producers already publish all required entry identities.
+    toolchain = load_toolchain()?
+    if len([unit for unit in units if not unit.recorded]) == 0 and len(toolchain.externs) == 0:
+        return Ok(units)
+    # 2. Legacy rustc metadata supplies the real crate identity, never a feature-based approximation.
+    rustc = rust_compiler(toolchain)
+    mut hashes: Dict[str, str] = {}
+    mut readings: Dict[str, str] = {}
+    mut crate_names: Dict[str, str] = {}
+    mut crate_hashes: Dict[str, str] = {}
+    mut artifacts: Dict[str, str] = {}
+    mut refusals: Dict[str, str] = {}
+    for unit in units:
+        match unit_metadata(unit, rustc):
+            Err(reason) => refusals[unit.entry] = reason
+            Ok((artifact, printed, name, digest)) =>
+                artifacts[unit.entry] = artifact
+                readings[unit.entry] = printed
+                if digest in hashes and hashes[digest] != unit.entry:
+                    return Err(
+                        f"ambiguous legacy registry crate identity for {unit.loaf}: {hashes[digest]} and {unit.entry}",
+                    )
+                hashes[digest] = unit.entry
+                crate_names[unit.entry] = name
+                crate_hashes[unit.entry] = digest
+    # 3. Every registry dependency must have the exact hash its producer recorded.
+    mut completed: list[RegistryUnit] = []
+    for original in units:
+        mut unit = original
+        if unit.entry in refusals:
+            unit.refusal = refusals[unit.entry]
+            completed.append(unit)
+            continue
+        unit.name = crate_names[unit.entry]
+        unit.crate_hash = crate_hashes[unit.entry]
+        unit.artifact = artifacts[unit.entry]
+        if "proc_macro true" in readings[unit.entry]:
+            unit.kind = "proc-macro"
+        if not unit.recorded:
+            match dependencies(readings[unit.entry], hashes, unit.loaf, toolchain.sysroot):
+                Ok(found) =>
+                    unit.dependencies = found
+                    unit.recorded = true
+                Err(reason) => unit.refusal = reason
+        completed.append(unit)
+    return Ok(completed)
+
+
+def unit_metadata(unit: RegistryUnit, rustc: str) -> Result[Tuple[str, str, str, str], str]:
+    """Read one producer's native identity without making an unavailable catalog alternative a global failure."""
+    artifact = sole_library(unit)?
+    printed = metadata(artifact, rustc)?
+    name, digest = crate_identity(printed)?
+    return Ok((artifact, printed, name, digest))
+
+
+pub def bound_entries(units: list[RegistryUnit], paths: list[str]) -> Result[list[str], str]:
+    """Pin requested Loaf-offered identities after relocation; unrelated installation dependencies stay private."""
+    mut artifacts: Dict[str, str] = {}
+    mut hashes: Dict[str, str] = {}
+    for unit in units:
+        if unit.artifact != "":
+            artifacts[unit.artifact] = unit.entry
+        if unit.crate_hash != "":
+            hashes[unit.crate_hash] = unit.entry
+    rustc = rust_compiler(load_toolchain()?)
+    mut result: list[str] = []
+    for path in paths:
+        physical = Path(path).resolve().map_err((error) => error.message())?.0
+        mut entry = ""
+        if physical in artifacts:
+            entry = artifacts[physical]
+        else:
+            _name, digest = crate_identity(metadata(physical, rustc)?)?
+            if digest in hashes:
+                entry = hashes[digest]
+        if entry != "" and entry not in result:
+            result.append(entry)
+    return Ok(result)
+
+
+def metadata(artifact: str, rustc: str) -> Result[str, str]:
+    """Read one artifact generation once with its pinned compiler; native dependencies are immutable metadata."""
+    path = Path(artifact)
+    observed = observe(path)?
+    compiler = observe(Path(rustc))?
+    selection = f"registry-crate-metadata/1:{rustc}:{compiler.stamp}"
+    if let Some(value) = recall(path, selection, observed.stamp):
+        if let Some(printed) = value.as_str():
+            return Ok(printed)
+    mut command = Command.new(rustc)
+    command.env("RUSTC_BOOTSTRAP", "1")
+    command.arg("-Zls=root")
+    command.arg(artifact)
+    output = command.output().map_err((error) => error.to_string())?
+    if not output.status.success():
+        return Err(f"cannot read registry producer metadata {artifact}: {decoded(output.stderr)}")
+    printed = decoded(output.stdout)
+    retain(path, selection, observed, JsonValue.string(printed))
+    return Ok(printed)
+
+
+def crate_identity(printed: str) -> Result[Tuple[str, str], str]:
+    """Read pinned rustc's root name and crate hash, refusing an unfamiliar metadata format."""
+    mut name = ""
+    mut digest = ""
+    for line in printed.split("\n"):
+        if line.startswith("name "):
+            name = line[5:].strip()
+        if line.startswith("hash "):
+            digest = line.split(" ")[1]
+    if name == "" or digest == "":
+        return Err("registry artifact metadata names no crate identity")
+    return Ok((name, digest))
+
+
+def dependencies(
+    printed: str,
+    hashes: Dict[str, str],
+    owner: str,
+    sysroot: str,
+    owned: list[str] = [],
+) -> Result[list[str], str]:
+    """Match the exact native hashes of registry edges; compiler-owned sysroot crates are not registry roots."""
+    mut result: list[str] = []
+    for line in printed.split("\n"):
+        if " host_hash " not in line or " hash " not in line:
+            continue
+        parts = line.split(" ")
+        if len(parts) < 5:
+            return Err(f"malformed registry dependency metadata for {owner}")
+        name = parts[1].split("-")[0]
+        digest = parts[3]
+        if digest in hashes:
+            entry = hashes[digest]
+            if entry not in result:
+                result.append(entry)
+        elif digest not in owned and not sysroot_dependency(printed, parts[1], sysroot)?:
+            return Err(f"registry producer {owner} names absent native dependency {name} hash {digest}")
+    return Ok(result)
+
+
+def sysroot_dependency(printed: str, name: str, sysroot: str) -> Result[bool, str]:
+    """Recognize the producer's hash-qualified sysroot file; plain registry crate names never take this path."""
+    mut target = ""
+    for line in printed.split("\n"):
+        if line.startswith("triple "):
+            target = line[7:].strip()
+    if target == "":
+        return Err("registry artifact metadata names no target")
+    if "-" not in name:
+        return Ok(false)
+    library = Path(sysroot).joinpath("lib/rustlib").joinpath(target).joinpath("lib").joinpath(f"lib{name}.rlib")
+    return Ok(library.is_file())

@@ -66,10 +66,7 @@ pub(super) fn project(program: &Program, info: &TypeCheckInfo) -> NativeNewtypeF
         if let Declaration::Function(function) = &declaration.node
             && function.type_params.is_empty()
             && function.params.is_empty()
-            && let Some(binding) = info
-                .declarations
-                .function_bindings_by_span
-                .get(&(declaration.span.start, declaration.span.end))
+            && let Some(binding) = info.declarations.function_bindings_by_span.get(&declaration.span)
             && !binding.is_async
             && let Some(facts) = body_transaction(
                 &function.body,
@@ -88,7 +85,7 @@ pub(super) fn project(program: &Program, info: &TypeCheckInfo) -> NativeNewtypeF
     for owner in &owners {
         for method in &owner.source.methods {
             let span = method.span;
-            let Some(binding) = info.declarations.method_bindings_by_span.get(&(span.start, span.end)) else {
+            let Some(binding) = info.declarations.method_bindings_by_span.get(&span) else {
                 continue;
             };
             let Some(identity) = &binding.identity else {
@@ -252,11 +249,11 @@ impl BodyFactsBuilder<'_> {
             .guards
             .push(NativeFactGuard::Reference(span, identity.clone()));
         self.facts.guards.push(NativeFactGuard::Parameters(span, params));
-        self.facts.parameters.insert((span.start, span.end), closed_params);
+        self.facts.parameters.insert(span, closed_params);
         if frame.source.node.receiver.is_none() {
             self.facts
                 .static_receivers
-                .insert((span.start, span.end), frame.owner.instantiated_type(argument.clone()));
+                .insert(span, frame.owner.instantiated_type(argument.clone()));
         }
         let parameter = (!holes.is_empty()).then(|| frame.owner.binder_origin(argument));
         Some(NativeValue {
@@ -327,11 +324,7 @@ impl BodyFactsBuilder<'_> {
         self.facts.guards.push(NativeFactGuard::Expression(
             span,
             checked.clone(),
-            self.info
-                .expressions
-                .expression_type_identities
-                .get(&(span.start, span.end))
-                .cloned(),
+            self.info.expressions.expression_type_identities.get(&span).cloned(),
         ));
         let fallback = NativeValue {
             ty: checked.clone(),
@@ -479,7 +472,7 @@ impl BodyFactsBuilder<'_> {
         if *name != owner.source.name {
             return None;
         }
-        self.facts.field_owners.insert((span.start, span.end), identity.clone());
+        self.facts.field_owners.insert(span, identity.clone());
         Some(NativeValue {
             ty: payload.clone(),
             owner: None,
@@ -502,7 +495,7 @@ impl BodyFactsBuilder<'_> {
             self.info
                 .expressions
                 .expression_type_identities
-                .get(&(index.span.start, index.span.end))
+                .get(&index.span)
                 .cloned(),
         ));
         let index = crate::typechecker::TypeChecker::constant_tuple_index(index)?;
@@ -668,7 +661,7 @@ impl BodyFactsBuilder<'_> {
             if !refines_checked_type(checked, &value, self.info) {
                 return None;
             }
-            self.facts.assignments.insert((span.start, span.end), value.ty.clone());
+            self.facts.assignments.insert(span, value.ty.clone());
         }
         self.bindings.insert(identity, value);
         Some(())
@@ -681,7 +674,7 @@ impl BodyFactsBuilder<'_> {
                 .info
                 .expressions
                 .expression_type_identities
-                .get(&(span.start, span.end))
+                .get(&span)
                 .is_some_and(|identities| value.holes.iter().any(|path| identities.contains_key(path)))
             {
                 return None;
@@ -689,7 +682,7 @@ impl BodyFactsBuilder<'_> {
             if !refines_checked_type(checked, &value, self.info) {
                 return None;
             }
-            self.facts.expressions.insert((span.start, span.end), value.ty.clone());
+            self.facts.expressions.insert(span, value.ty.clone());
         }
         Some(value)
     }
@@ -802,6 +795,9 @@ fn close_method_type(
 }
 
 /// Preserve all concrete checked positions while closing only the guarded owner or its original binder holes.
+///
+/// A checked tuple and a closed `Tuple[...]` signature are the same slots in either encoding: a method declared to
+/// return `Tuple[T, T]` closes to the written encoding, while its checked call result can retain the structural one.
 fn refines_checked_type(checked: &ResolvedType, native: &NativeValue, info: &TypeCheckInfo) -> bool {
     /// Preserve concrete positions and close only the exact retained owner template holes.
     fn agrees(
@@ -814,24 +810,12 @@ fn refines_checked_type(checked: &ResolvedType, native: &NativeValue, info: &Typ
         if old == new {
             return true;
         }
+        if let (Some(old), Some(new)) = (tuple_elements(old), tuple_elements(new)) {
+            return slots_agree(old, new, value, info, path);
+        }
         match (old, new) {
             (ResolvedType::Generic(old_name, old_args), ResolvedType::Generic(new_name, new_args)) => {
-                if old_name != new_name || old_args.len() != new_args.len() {
-                    return false;
-                }
-                old_args.iter().zip(new_args).enumerate().all(|(index, (old, new))| {
-                    let mut child = path.to_vec();
-                    child.push(index);
-                    agrees(old, new, value, info, &child)
-                })
-            }
-            (ResolvedType::Tuple(old), ResolvedType::Tuple(new)) => {
-                old.len() == new.len()
-                    && old.iter().zip(new).enumerate().all(|(index, (old, new))| {
-                        let mut child = path.to_vec();
-                        child.push(index);
-                        agrees(old, new, value, info, &child)
-                    })
+                old_name == new_name && slots_agree(old_args, new_args, value, info, path)
             }
             (ResolvedType::TypeVar(name), _) => {
                 value.holes.contains(path) && value.parameter.as_ref().is_some_and(|origin| origin.name == *name)
@@ -845,5 +829,22 @@ fn refines_checked_type(checked: &ResolvedType, native: &NativeValue, info: &Typ
             _ => false,
         }
     }
+
+    /// Compare positional children of one owner or tuple, each under its own hole path.
+    fn slots_agree(
+        old: &[ResolvedType],
+        new: &[ResolvedType],
+        value: &NativeValue,
+        info: &TypeCheckInfo,
+        path: &[usize],
+    ) -> bool {
+        old.len() == new.len()
+            && old.iter().zip(new).enumerate().all(|(index, (old, new))| {
+                let mut child = path.to_vec();
+                child.push(index);
+                agrees(old, new, value, info, &child)
+            })
+    }
+
     agrees(checked, &native.ty, native, info, &[])
 }

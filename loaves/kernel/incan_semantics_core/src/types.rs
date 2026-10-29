@@ -98,6 +98,45 @@ pub enum IncanType {
         element: Box<IncanType>,
         length: u64,
     },
+    /// A checked nongeneric native trait object with independently retained auto traits.
+    NativeTraitObject {
+        path: String,
+        send: bool,
+        sync: bool,
+    },
+    /// Exact compiler-managed foreign pointer storage; source code receives it only through a checked bridge.
+    NativePointer {
+        mutable: bool,
+        pointee: Box<IncanType>,
+    },
+    /// The target's C char category, whose signedness comes from the selected native toolchain.
+    NativeCChar,
+}
+
+/// Physical Rust storage of compiler-owned builtin values. These paths identify the existing native ABI, not a
+/// source declaration or an authority grant, and remain usable while the Incan runtime itself is being compiled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCarrier {
+    /// Exact decimal coefficient and written scale.
+    Decimal,
+    /// Immutable UTF-8 text with static storage.
+    FrozenStr,
+    /// Immutable bytes with static storage.
+    FrozenBytes,
+    /// The builtin validation error's owned message and optional code.
+    ValidationError,
+}
+
+impl RuntimeCarrier {
+    /// Return the canonical Rust definition supplying this builtin's physical storage.
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Decimal => "incan_std_core::num::Decimal128",
+            Self::FrozenStr => "incan_std_core::frozen::FrozenStr",
+            Self::FrozenBytes => "incan_std_core::frozen::FrozenBytes",
+            Self::ValidationError => "incan_std_core::validation::ValidationError",
+        }
+    }
 }
 
 /// Builtin runtime storage admitted by the direct route without impersonating a same-spelled source declaration.
@@ -118,7 +157,7 @@ impl RuntimeBuiltinType {
     /// Return the Rust path of the runtime storage this builtin is.
     pub fn carrier_path(&self) -> &'static str {
         match self {
-            Self::ValidationError => "incan_std_core::validation::ValidationError",
+            Self::ValidationError => RuntimeCarrier::ValidationError.path(),
         }
     }
 
@@ -188,7 +227,9 @@ impl IncanType {
         match self {
             Self::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Numeric(_))
             | Self::Primitive(IncanPrimitiveType::Bool | IncanPrimitiveType::Unit)
-            | Self::Decimal { .. } => AbiV0Ownership::CopyOrTrivial,
+            | Self::Decimal { .. }
+            | Self::NativePointer { .. }
+            | Self::NativeCChar => AbiV0Ownership::CopyOrTrivial,
             Self::Ref(_) => AbiV0Ownership::Borrowed,
             Self::RefMut(_) => AbiV0Ownership::MutBorrowed,
             Self::Never | Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown | Self::Unsupported(_) => {
@@ -211,9 +252,12 @@ impl IncanType {
             Self::TypeVar(_) => AbiV0Representation::TypeParameter,
             Self::SelfType => AbiV0Representation::SelfType,
             Self::Ref(_) | Self::RefMut(_) => AbiV0Representation::Borrow,
-            Self::RustInteropPath(_) | Self::NativeBuiltin(_) | Self::NativeArray { .. } => {
-                AbiV0Representation::RustInterop
-            }
+            Self::RustInteropPath(_)
+            | Self::NativeBuiltin(_)
+            | Self::NativeArray { .. }
+            | Self::NativeTraitObject { .. }
+            | Self::NativePointer { .. }
+            | Self::NativeCChar => AbiV0Representation::RustInterop,
             Self::Never | Self::Infer | Self::Unknown | Self::Unsupported(_) => AbiV0Representation::Unknown,
         }
     }
@@ -254,7 +298,19 @@ impl fmt::Display for IncanType {
             Self::Ref(inner) => write!(f, "&{inner}"),
             Self::RefMut(inner) => write!(f, "&mut {inner}"),
             Self::RustInteropPath(path) => write!(f, "rust::{path}"),
+            Self::NativeTraitObject { path, send, sync } => write!(
+                f,
+                "dyn {path}{}{}",
+                if *send { " + Send" } else { "" },
+                if *sync { " + Sync" } else { "" }
+            ),
             Self::NativeBuiltin(builtin) => write!(f, "runtime::{}", builtin.binding_name()),
+            Self::NativePointer { mutable, pointee } => write!(
+                f,
+                "native {} pointer[{pointee}]",
+                if *mutable { "mutable" } else { "const" }
+            ),
+            Self::NativeCChar => write!(f, "c.c_char"),
             Self::Unsupported(description) => write!(f, "unsupported[{description}]"),
             Self::Infer => write!(f, "_"),
             Self::Unknown => write!(f, "?"),
@@ -324,6 +380,10 @@ pub struct IncanCallableParam {
     /// field existed decodes it as `false`.
     #[serde(default)]
     pub is_mut: bool,
+    /// A checked native collection parameter consumes its outer value even when its carrier is an inline builtin
+    /// collection. This passing fact is separate from the source callable's `mut` marker and preserves nested loans.
+    #[serde(default)]
+    pub native_owned: bool,
 }
 
 impl fmt::Display for IncanCallableParam {
@@ -448,6 +508,7 @@ mod tests {
                     has_default: false,
                     is_partial_preset: false,
                     is_mut: false,
+                    native_owned: false,
                 },
                 IncanCallableParam {
                     name: Some("rest".to_string()),
@@ -456,6 +517,7 @@ mod tests {
                     has_default: false,
                     is_partial_preset: false,
                     is_mut: false,
+                    native_owned: false,
                 },
             ],
             return_type: Box::new(IncanType::Tuple(vec![

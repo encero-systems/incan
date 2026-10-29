@@ -5,10 +5,12 @@
 //! [`crate::session::CompilationSession::analyze_unit`] visits it; nothing here checks again.
 
 mod exports;
+pub(crate) mod vocab;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
@@ -35,7 +37,7 @@ use incan_frontend::registry_metadata::{
     CheckedRegistryPackageIdentity, collect_checked_registry_metadata, materialize_registry_reexport_projections,
 };
 use incan_frontend::typechecker::TypeChecker;
-use incan_lang::interop::RustItemMetadata;
+use incan_lang::interop::{RustItemKind, RustItemMetadata};
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::body_ir::NativeUnionDeclaration;
@@ -57,8 +59,8 @@ pub struct PublicationFacts {
     alias_modules: Vec<CheckedApiMetadata>,
     /// Checked registries and entries, one per module.
     registry_modules: Vec<CheckedRegistryMetadataModule>,
-    /// Inspected native facts used by declarations and deferred bodies, independent of source import visibility.
-    rust_items: Vec<RustItemMetadata>,
+    /// First inspected fact per exact canonical query path, shared across module visits until ABI publication.
+    rust_items: BTreeMap<String, Arc<RustItemMetadata>>,
 }
 
 impl PublicationFacts {
@@ -71,7 +73,7 @@ impl PublicationFacts {
             api_modules: Vec::new(),
             alias_modules: Vec::new(),
             registry_modules: Vec::new(),
-            rust_items: Vec::new(),
+            rust_items: BTreeMap::new(),
         }
     }
 
@@ -103,8 +105,11 @@ impl PublicationFacts {
             .insert(module_key(&module.path_segments), checked_exports_by_name(exports));
     }
 
-    /// Ship imported and demanded native facts with aliases, signatures, and deferred bodies. A private Rust import
-    /// can back a public rusttype or generic function; retaining its ABI grants no source-visible import binding.
+    /// Retain each exact queried native surface once across checked modules, sharing its inspected metadata until the
+    /// Loaf publishes its owned ABI payload. The first record for a canonical path wins, matching
+    /// `LibraryRustAbi::from_items`; retaining ABI facts does not grant a source-visible import binding.
+    /// Private trait snapshots are excluded because the consumer's native closure can add implementations and
+    /// associated definitions; explicit public Rust reexports remain part of the declared ABI.
     fn collect_native_rust_items(&mut self, module: &ParsedModule, checker: &TypeChecker) {
         let mut paths = checker.observed_rust_metadata_queries();
         let mut public_paths = BTreeSet::new();
@@ -142,14 +147,21 @@ impl PublicationFacts {
                 continue;
             }
             if let Some(metadata) = checker.rust_item_metadata_for_path(&path) {
-                self.rust_items.push(metadata.as_ref().clone());
+                // A private trait snapshot describes the producer's native closure, not implementations a later
+                // consumer adds. Let that consumer inspect its own closure instead of shadowing it with this snapshot.
+                if !public_paths.contains(&path) && matches!(&metadata.kind, RustItemKind::Trait(_)) {
+                    continue;
+                }
+                self.rust_items
+                    .entry(metadata.canonical_path.clone())
+                    .or_insert(metadata);
             }
         }
     }
 
     /// Build the Loaf's library manifest: the entry module's public names, its checked API and identity graph, its
-    /// public registries and its publishable contract models. `modules` are the unit's checked modules, for
-    /// diagnostics.
+    /// public registries, prepared vocabulary and publishable contract models. `modules` are the unit's checked
+    /// modules, for diagnostics.
     pub fn library_manifest(
         mut self,
         modules: &[ParsedModule],
@@ -191,7 +203,9 @@ impl PublicationFacts {
                 CliError::failure(rendered.trim_end())
             })?;
         let mut manifest = LibraryManifest::from_checked_exports(&self.package, &unit.version, &selected);
-        manifest.rust_abi = LibraryRustAbi::from_items(self.rust_items);
+        manifest.vocab = vocab::prepared_registration(unit)?;
+        manifest.rust_abi =
+            LibraryRustAbi::from_items(self.rust_items.into_values().map(Arc::unwrap_or_clone).collect());
         retain_feature_requirements(&mut manifest, modules, unit);
         manifest.contract_metadata.models = ContractMetadataPackage::new(
             model_bundles
@@ -277,8 +291,8 @@ pub fn write_loaf(
     };
 
     // ---- Executable representation ----
-    // A body with a gap in its Body IR is unrepresentable for every consumer: what a package publishes is a fact
-    // about the package.
+    // A Body IR gap refuses publication of that executable body. A compiled export can independently publish its
+    // declaration frame, because consumers call its rlib item rather than instantiate its implementation.
     let public = public_executable_identities(&manifest);
     let unrepresentable = bodies
         .iter()
@@ -304,13 +318,35 @@ pub fn write_loaf(
     write_rust_abi_cache(dir, &mut manifest)?;
 
     // ---- Native closure and manifest ----
-    let closure = serde_json::to_vec_pretty(closure)
+    let closure = serde_json::to_vec_pretty(&sibling_relative_closure(dir, closure))
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
     write(format!("{name}.native.json"), &closure)?;
     let manifest = manifest
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
     write(format!("{name}.incnlib"), manifest.as_bytes())
+}
+
+/// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new
+/// home does not change its closure bytes. Native inputs outside that root retain their exact selected paths.
+/// Readers resolve relative paths against the publishing Loaf's directory before comparing or linking artifacts.
+fn sibling_relative_closure(directory: &Path, closure: &LoafNativeClosure) -> LoafNativeClosure {
+    let mut published = closure.clone();
+    let Some(root) = directory.parent().and_then(Path::parent) else {
+        return published;
+    };
+    let paths = published
+        .externs
+        .iter_mut()
+        .chain(&mut published.macro_externs)
+        .map(|(_, path)| path)
+        .chain(&mut published.search);
+    for path in paths {
+        if let Ok(relative) = path.strip_prefix(root) {
+            *path = Path::new("../..").join(relative);
+        }
+    }
+    published
 }
 
 /// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts

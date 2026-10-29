@@ -1,0 +1,43 @@
+# behavior: A Rust Vec specializes private Deref targets, native defaults and reference-only generic inputs (#2425)
+# expect-stdout:
+#   0
+#   7
+#   7
+#   1
+#   1
+#   7
+#   0
+#   3
+
+"""Call the public API without naming its private receiver dependencies."""
+
+from rust::wrappers import Both, Owner, Wrapper, read
+
+
+def main() -> None:
+    """1. Create storage. 2. Exercise reference-only inputs and Deref methods. 3. Check owned preference."""
+    # 1. Create storage using a reference-only generic input.
+    owner = Owner.new()
+    mut values = Wrapper.new_in[u32](owner)
+    println(values.len())
+    # 2. Keep the input owner available while exercising the private target's specialized methods.
+    println(read(owner))
+    println(read(owner))
+    values.push(7)
+    println(values.len())
+    println(values.receipt().count())
+    show_u32(values.remove())
+    println(values.len())
+    # 3. Prefer an already admitted owned implementation over another loan.
+    show_binding_preference()
+
+
+def show_binding_preference() -> None:
+    """Keep an admitted owned implementation when a reference implementation also exists."""
+    both = Both.new()
+    println(read(both))
+
+
+def show_u32(value: u32) -> None:
+    """Require the hidden target's type argument to remain u32."""
+    println(value)

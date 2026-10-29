@@ -29,7 +29,7 @@ struct ReservedNameWalk {
     refusals: Vec<CompileError>,
     /// Names and positions already reported, so a node reached twice (a comprehension's mirrored first clause)
     /// reports once while two names of one import declaration each report.
-    reported: HashSet<(String, usize, usize)>,
+    reported: HashSet<(String, crate::ast::Span)>,
 }
 
 impl ReservedNameWalk {
@@ -38,7 +38,7 @@ impl ReservedNameWalk {
         if !name.starts_with(RESERVED_COMPILER_NAME_PREFIX) || is_synthetic_span(span) {
             return;
         }
-        if self.reported.insert((name.to_string(), span.start, span.end)) {
+        if self.reported.insert((name.to_string(), span)) {
             self.refusals.push(errors::reserved_compiler_name(name, kind, span));
         }
     }

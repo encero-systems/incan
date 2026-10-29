@@ -2,7 +2,7 @@
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
-incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.6.0-dev.8" }
 thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
 
 [project]
@@ -10,7 +10,7 @@ description = "The Incan source formatter"
 license = "Apache-2.0"
 name = "incan_format"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.8"
 
 [rust]
 edition = "2024"

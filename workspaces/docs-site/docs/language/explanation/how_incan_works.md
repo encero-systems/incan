@@ -1,27 +1,17 @@
 # How Incan works
 
-This page is a user-level mental model of what happens when you run Incan.
+Incan source compiles to native machine code through the pinned Rust compiler. Dev.8 does not generate a Rust project as its normal compilation path.
 
-## The short version
-
-In the current beta, Incan checks `.incn` source code, lowers it through the Rust backend, and builds an executable. Generated Rust is inspectable backend output today, but the longer-lived public contract is the checked source, diagnostics, build reports, semantic facts, package metadata, and native artifacts.
-
-## Pipeline (conceptual)
+## Pipeline
 
 ```mermaid
 --8<-- "_snippets/diagrams/compiler_pipeline.mmd"
 ```
 
-<p class="inc-diagram-caption">The checked Incan program owns the public meaning. Generated Rust is inspectable backend output, while diagnostics and reports expose stable tooling facts.</p>
+<p class="inc-diagram-caption">Oven describes a unit; the checker owns its meaning; Incan lowering and the native adapter translate the checked result.</p>
 
-## What this means in practice
+The project manifest supplies package identity, dependencies and features. Checked Body IR records language facts once. Lowering consumes those facts, and the native plan reaches rustc through its Rust adapter.
 
-- Incan programs are compiled (not interpreted).
-- The “happy path” is: edit code → run `incan` → get an executable or an error.
-- When things fail, you typically care about which stage failed (parse, typecheck, codegen, build).
+Libraries publish checked contracts and native artifacts together. Standard packages use the same Loaf boundary. Oven can reuse unchanged executables and retain project preparation in a resident owner, while each program or test execution remains fresh.
 
-## Where to go next
-
-- Build/run commands: [Install, build, and run](../../tooling/how-to/install_and_run.md)
-- CLI surface: [CLI reference](../../tooling/reference/cli_reference.md)
-- Deeper internals (contributors): [Compiler architecture](../../contributing/explanation/architecture.md)
+Source diagnostics and codegraph records expose compiler facts to tools. See [CLI reference](../../tooling/reference/cli_reference.md) for commands and [Architecture](../../contributing/explanation/architecture.md) for contributor boundaries.

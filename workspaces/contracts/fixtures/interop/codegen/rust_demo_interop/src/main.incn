@@ -1,4 +1,4 @@
-# behavior: Rust interop preserves constructors, borrowed and mutable arguments, projections, trait-qualified calls, callbacks, and exported derive macros selected through direct imports or a rust.module facade
+# behavior: Rust interop preserves constructors, loans, trait calls, callbacks and facade macros (#2256)
 # expect-stdout:
 #   1 2 3 2
 #   7
@@ -93,7 +93,9 @@ pub def setup(mut commands: Commands) -> int:
     return commands.spawned
 
 
-pub def move_items(mut items: FooBar[tuple[&mut Widget, &mut Gadget]]) -> None:
+pub def move_items(first: &mut Widget, second: &mut Gadget) -> None:
+    """Mutate references stored in a native tuple while their owner stays in this frame."""
+    mut items = FooBar.pair(first, second)
     for widget, gadget in items.iter_mut():
         widget.value += 10
         gadget.value += 20
@@ -120,6 +122,7 @@ model Velocity:
 @derive(NativeComponent)
 model FacadeComponent:
     """Select a dependency's exported derive through its source facade and an alias."""
+
     value: int
 
 
@@ -137,7 +140,7 @@ pub def inspect_two(items: FooBar2[Widget, Gadget]) -> str:
 
 
 trait Replacer:
-    def replace(self, items: PlainBar[tuple[Widget, Gadget]]) -> str: ...
+    def replace(self, items: PlainBar[tuple[Widget, Gadget]]) -> str
 
 
 model Swapper with Replacer:
@@ -221,7 +224,7 @@ pub def evaluate(expression: Expression, snapshot: CfgSnapshot) -> Option[bool]:
 
 
 def main() -> None:
-    kinds = build([3])
+    kinds = build([3, 4])
     println(f"{kinds[0].payload()} {kinds[1].payload()} {kinds[2].payload()} {kinds[3].payload()}")
     println(retain(File(number=7)).number)
     pair = build_pair()
@@ -234,7 +237,7 @@ def main() -> None:
     println(setup(Commands.new()))
     mut widget = Widget(value=1)
     mut gadget = Gadget(value=1)
-    move_items(FooBar.pair(widget, gadget))
+    move_items(widget, gadget)
     println(f"{widget.value} {gadget.value}")
     println(inspect_plain(PlainBar.new((Widget(value=1), Gadget(value=2)))))
     println(inspect_two(FooBar2(first=Widget(value=5), second=Gadget(value=6))))

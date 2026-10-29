@@ -18,25 +18,31 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import place as plan_place
+from pub::incan_mir_plan import source_span as plan_span
 from frame import Builder, temporary, read_place, terminate_call, forget_owned, drop_all_owned
 from string_input import owned_string_frame
 from classes import function_name
-from type_parameters import Instance
+from type_parameters import Instance, request_instance, merge_instance_requests
 from lowering import instantiated_external_call
 from checked_json_contracts import checked_deserialize_name, checked_owner_arguments, selected_deserialize_hook
 from nominal_instances import NominalInstance
 from options import retain_body_carriers, retain_carrier, result_layout
-from unions import native_source_type, collect_unions
+from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
+from rust::std::sync import Arc
+from unions import collect_unions
 from decls import library_item
 
 
 pub def lower_checked_deserialize(
+    constructor_owner: Arc[ConstructorIndex],
     module: &BodyIrModule,
-    instances: list[NominalInstance],
+    instances: &list[NominalInstance],
     file: str,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[list[Function], list[ExternalFunction], list[Instance]], str]:
-    """Close every selected checked ingress before tuple Deserialize can be admitted for a concrete source owner."""
+    """Borrow the instance registry to close each checked ingress before admitting its concrete tuple Deserialize."""
+    constructors = constructor_owner.as_ref()
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     mut pending: list[Instance] = []
@@ -49,12 +55,13 @@ pub def lower_checked_deserialize(
             continue
         arguments = checked_owner_arguments(declaration, instances)?
         hook, selected = selected_deserialize_hook(module, declaration, arguments)?
-        retain_body_carriers(module, intrinsics, selected, file)?
+        retain_body_carriers(constructors, module, intrinsics, selected, file)?
         owner = PlanType.Model(owner_index, str(declaration.name))
         success: RustType = checked_success(selected)?
         output: RustType = generic("Result", [success, RustType.Primitive(Primitive.Str)])
-        retain_carrier(module, intrinsics, output, file)?
+        retain_carrier(constructors, module, intrinsics, output, file)?
         hook_result = native_source_type(
+            constructors,
             list(module.nominal_declarations),
             list(module.enum_declarations),
             collect_unions(module),
@@ -62,14 +69,16 @@ pub def lower_checked_deserialize(
             intrinsics,
         )?
         result = native_source_type(
+            constructors,
             list(module.nominal_declarations),
             list(module.enum_declarations),
             collect_unions(module),
             output,
             intrinsics,
         )?
-        span = SourceSpan(file=file, line=1, column=1)
+        span = plan_span(file=file, line=1, column=1)
         function, runtime, scheduled = checked_json_function(
+            constructor_owner,
             module,
             hook,
             selected,
@@ -83,7 +92,7 @@ pub def lower_checked_deserialize(
         )?
         functions.append(function)
         externals.extend(runtime)
-        pending.extend(scheduled)
+        merge_instance_requests(pending, scheduled)
     return Ok((functions, externals, pending))
 
 
@@ -98,6 +107,7 @@ def checked_success(hook: &Body) -> Result[RustType, str]:
 
 
 def checked_json_function(
+    constructors: Arc[ConstructorIndex],
     module: &BodyIrModule,
     hook: &Body,
     selected: &Body,
@@ -110,10 +120,14 @@ def checked_json_function(
     span: SourceSpan,
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance]], str]:
     """Invoke the previously validated source hook once, then return its actual displayed error through owned Result."""
-    mut builder = owned_string_frame(module, name, result, intrinsics, span)
+    mut builder = owned_string_frame(constructors, module, name, result, intrinsics, span)
     checked_layout = checked_result_layout(builder, hook_result)?
     result_layout_value = checked_result_layout(builder, result)?
-    if checked_layout.variants[0].fields != [owner] or result_layout_value.variants[0].fields != [owner] or result_layout_value.variants[1].fields != [PlanType.String]:
+    if (
+        checked_layout.variants[0].fields != [owner]
+        or result_layout_value.variants[0].fields != [owner]
+        or result_layout_value.variants[1].fields != [PlanType.String]
+    ):
         return Err("unsupported Body IR checked Deserialize Result owner disagreement")
     error = checked_layout.variants[1].fields[0]
     if error != PlanType.ValidationError:
@@ -150,9 +164,7 @@ def checked_json_function(
     )
     mut pending: list[Instance] = []
     if len(hook.type_parameters) != 0:
-        pending.append(
-            Instance(body=hook.clone(), arguments=arguments, owned_callable_slots=[], original_callable=false),
-        )
+        request_instance(pending, hook, arguments, [], false)
     return Ok((function, builder.externals, pending))
 
 
@@ -168,8 +180,11 @@ def checked_result_layout(mut builder: Builder, ty: PlanType) -> Result[EnumDecl
     _owner, declaration = result_layout(builder, ty)?
     if len(declaration.variants) != 2:
         return Err("unsupported Body IR checked Deserialize Result variants")
-    if declaration.variants[0].name != "Ok" or declaration.variants[1].name != "Err" or len(
-        declaration.variants[0].fields,
-    ) != 1 or len(declaration.variants[1].fields) != 1:
+    if (
+        declaration.variants[0].name != "Ok"
+        or declaration.variants[1].name != "Err"
+        or len(declaration.variants[0].fields) != 1
+        or len(declaration.variants[1].fields) != 1
+    ):
         return Err("unsupported Body IR checked Deserialize Result payloads")
     return Ok(declaration)

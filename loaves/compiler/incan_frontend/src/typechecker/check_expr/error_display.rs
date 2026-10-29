@@ -1,14 +1,13 @@
-//! Display of `Error` adopters that define no `__str__` (#1778).
+//! Checked source display methods and the message fallback for `Error` adopters (#1778).
 //!
 //! A model, class, enum or newtype has a textual form of its own only through `__str__`, an enum's declared values, or
 //! a `Display` adoption. An `Error` adopter without one carries its human-readable text in `message()` instead, so
 //! wherever such a value is displayed -- an f-string `{value}` part, `str(value)`, and each `print`/`println` argument
 //! -- it renders that text. That holds for a concrete adopter, for one whose `message`
 //! comes from a trait default, for a value of a type parameter bounded by `Error`, and for `self` inside a default
-//! method of a trait that extends `Error`. The checker proves which operands take that route and resolves their
-//! `message()` call exactly as a written `value.message()` is resolved, trait dispatch included; lowering rewrites each
-//! recorded operand into that call. A concrete adopter also satisfies a `Display` bound, so the checker resolves the
-//! same call once on each such type the module declares, and lowering gives the type a Rust `Display` that writes it.
+//! method of a trait that extends `Error`. A concrete adopter also satisfies a `Display` bound, so the checker resolves
+//! its `message()` call once on each such type the module declares, exactly as a written `value.message()` is
+//! resolved, trait dispatch included, and lowering gives the type a Rust `Display` that writes it.
 //! Nothing here refuses a program: a value with no printed form is refused by the display rule in `printed_form`, and
 //! every other operand keeps its existing display path.
 
@@ -29,40 +28,33 @@ use crate::typechecker::type_info::{ErrorMessageDisplay, ResolvedMethodCall};
 const ERROR_MESSAGE_METHOD: &str = "message";
 
 impl TypeChecker {
-    /// Record that one display operand renders through `message()` when its checked type adopts `Error` and has no
-    /// `Display` of its own.
-    ///
-    /// Callers pass each operand in a display position with the type `check_expr` just returned for it. An operand of
-    /// any other type, or one whose `message()` does not resolve to text, records nothing.
-    pub(in crate::typechecker) fn record_error_message_display(
-        &mut self,
-        operand_span: Span,
-        operand_ty: &ResolvedType,
-    ) {
-        if matches!(operand_ty, ResolvedType::SelfType) {
-            // A written `self.message()` in a trait default resolves no further than the trait's `Self`; the display
-            // records the same, with the adopters that display themselves, and lowering decides per adopter.
-            if let Some(trait_name) = self.current_trait_name.clone()
-                && self.trait_default_self_displays_through_error_message(&trait_name)
-            {
-                let self_displaying_adopters = self.self_displaying_adopters_of(&trait_name);
-                self.type_info.record_error_message_display(
-                    operand_span,
-                    ErrorMessageDisplay {
-                        identity: None,
-                        dispatch: None,
-                        receiver_is_trait_self: true,
-                        self_displaying_adopters,
-                    },
-                );
-            }
+    /// Select a source nominal's string method while the checker still owns method resolution and receiver provenance.
+    pub(in crate::typechecker::check_expr) fn record_source_display_method(&mut self, span: Span, ty: &ResolvedType) {
+        let retained = self.body_ir_checked_value_type(span).unwrap_or(ty).clone();
+        let mut source = &retained;
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = source {
+            source = inner;
+        }
+        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = source else {
+            return;
+        };
+        if !matches!(
+            self.lookup_semantic_type_info(name),
+            Some(
+                crate::symbols::TypeInfo::Model(_)
+                    | crate::symbols::TypeInfo::Class(_)
+                    | crate::symbols::TypeInfo::Enum(_)
+                    | crate::symbols::TypeInfo::Newtype(_)
+            )
+        ) {
             return;
         }
-        if !self.displays_through_error_message(operand_ty) {
-            return;
-        }
-        if let Some(display) = self.resolve_error_message_call(operand_span, operand_ty) {
-            self.type_info.record_error_message_display(operand_span, display);
+        let method = magic_methods::as_str(MagicMethodId::Str);
+        if let Some(identity) = self
+            .resolve_display_method_call(method, span, source)
+            .and_then(|selected| selected.identity)
+        {
+            self.type_info.calls.source_display_methods.insert(span, identity);
         }
     }
 
@@ -81,34 +73,9 @@ impl TypeChecker {
         if !self.displays_through_error_message(self_ty) {
             return;
         }
-        if let Some(display) = self.resolve_error_message_call(decl_span, self_ty) {
+        if let Some(display) = self.resolve_display_method_call(ERROR_MESSAGE_METHOD, decl_span, self_ty) {
             self.type_info.record_error_message_display_type(type_name, display);
         }
-    }
-
-    /// Return whether `self` inside a default method of `trait_name` renders its `message()`.
-    ///
-    /// That holds in a default method of a trait that extends `Error` (or is `Error`) when neither the trait nor any
-    /// supertrait gives `Self` a `Display`: a `Display` supertrait or a `__str__` declaration. Which adopters display
-    /// themselves anyway is [`Self::self_displaying_adopters_of`].
-    fn trait_default_self_displays_through_error_message(&self, trait_name: &str) -> bool {
-        self.trait_reaches(trait_name, TraitId::Error)
-            && !self.trait_reaches(trait_name, TraitId::Display)
-            && !self.trait_supplies_str(trait_name)
-    }
-
-    /// Return the types of this module that adopt `trait_name` and have a `Display` of their own.
-    ///
-    /// A trait default is expanded into each adopter, and `{self}` there follows the adopter: one that has a `Display`
-    /// by the same rule [`Self::displays_through_error_message`] applies (see [`Self::nominal_own_display`]) keeps
-    /// it, every other adopter renders `message()`. Lowering reads this set while expanding the default.
-    fn self_displaying_adopters_of(&self, trait_name: &str) -> BTreeSet<String> {
-        self.symbols
-            .active_module_source_bindings()
-            .map(|(_, name, _)| name.to_string())
-            .filter(|name| self.type_implements_trait(name, trait_name))
-            .filter(|name| self.nominal_own_display(name) == Some(true))
-            .collect()
     }
 
     /// Return whether a displayed value of this type renders its `message()`.
@@ -134,7 +101,8 @@ impl TypeChecker {
             && self.type_implements_trait(type_name, core_traits::as_str(TraitId::Error))
     }
 
-    /// Resolve the `message()` call one display operand renders through, the way a written `value.message()` is.
+    /// Resolve a string-returning display method exactly as a written instance call, retaining its declaration and
+    /// trait dispatch.
     ///
     /// The ordinary method resolution records its facts at the call's span, in exactly four maps:
     /// `calls.resolved_method_calls` (the trait dispatch), `references.resolved_identities` (the selected
@@ -144,41 +112,27 @@ impl TypeChecker {
     /// probe wrote there afterwards, and puts the earlier entries back, so the probe leaves the facts as it found them
     /// at the cost of four map operations. Diagnostics raised while probing are discarded: the probe is not something
     /// the program wrote.
-    fn resolve_error_message_call(
+    fn resolve_display_method_call(
         &mut self,
+        method: &str,
         operand_span: Span,
         operand_ty: &ResolvedType,
     ) -> Option<ErrorMessageDisplay> {
         if operand_span.start >= operand_span.end {
             return None;
         }
-        let probe = Span::new(operand_span.end, operand_span.start);
+        let probe = Span::new(operand_span.end, operand_span.start).with_expansion(operand_span.expansion);
         let before = ProbeFacts::take(&mut self.type_info, probe);
         let first_error = self.errors.len();
-        // The two resolutions a written `value.message()` goes through, in the same order: the owner's sole direct or
+        // The two resolutions a written instance call goes through, in the same order: the owner's sole direct or
         // adopted method first, then the general resolution that also covers a type parameter's bounds.
-        let message_ty = self
-            .resolve_synthesized_source_method_call(
-                ERROR_MESSAGE_METHOD,
-                operand_ty,
-                operand_span,
-                probe,
-                Some(&ResolvedType::Str),
-            )
-            .or_else(|| {
-                self.resolve_operator_dunder(
-                    operand_ty,
-                    ERROR_MESSAGE_METHOD,
-                    &[],
-                    &[],
-                    probe,
-                    Some(&ResolvedType::Str),
-                )
-            });
+        let result_ty = self
+            .resolve_synthesized_source_method_call(method, operand_ty, operand_span, probe, Some(&ResolvedType::Str))
+            .or_else(|| self.resolve_operator_dunder(operand_ty, method, &[], &[], probe, Some(&ResolvedType::Str)));
         self.errors.truncate(first_error);
         let probed = ProbeFacts::take(&mut self.type_info, probe);
         before.restore(&mut self.type_info, probe);
-        let renders_text = message_ty.is_some_and(|ty| self.types_compatible(&ty, &ResolvedType::Str));
+        let renders_text = result_ty.is_some_and(|ty| self.types_compatible(&ty, &ResolvedType::Str));
         renders_text.then(|| ErrorMessageDisplay {
             identity: probed.identity,
             dispatch: probed.method_call.map(|call| call.dispatch),
@@ -187,12 +141,10 @@ impl TypeChecker {
         })
     }
 
-    /// Return the trait bounds active for one type parameter, innermost scope first.
+    /// Return the trait bounds the innermost declaration of one type parameter gives it.
     pub(in crate::typechecker::check_expr) fn placeholder_bounds(&self, placeholder: &str) -> Vec<TypeBoundInfo> {
-        self.current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(placeholder).cloned())
+        self.innermost_type_param_bounds(placeholder)
+            .map(<[TypeBoundInfo]>::to_vec)
             .unwrap_or_default()
     }
 
@@ -264,7 +216,7 @@ struct ProbeFacts {
 impl ProbeFacts {
     /// Remove and return the call facts held under `span`, including executable type facts.
     fn take(info: &mut TypeCheckInfo, span: Span) -> Self {
-        let key = (span.start, span.end);
+        let key = span;
         Self {
             body_ir_type_arguments: info.calls.body_ir_call_type_arguments.remove(&key),
             inferred_constructor_type: info.calls.inferred_constructor_types.remove(&key),
@@ -278,7 +230,7 @@ impl ProbeFacts {
 
     /// Put these entries back under `span`, leaving absent ones absent.
     fn restore(self, info: &mut TypeCheckInfo, span: Span) {
-        let key = (span.start, span.end);
+        let key = span;
         if let Some(arguments) = self.body_ir_type_arguments {
             info.calls.body_ir_call_type_arguments.insert(key, arguments);
         }

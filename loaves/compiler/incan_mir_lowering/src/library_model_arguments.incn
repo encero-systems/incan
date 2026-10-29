@@ -3,27 +3,36 @@
 from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
 from pub::incan_mir_plan import PlanType, EnumDeclaration
 from nominal_instances import NominalInstance, nominal_symbol
-from unions import native_source_type, collect_unions
+from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType
 
 
-pub def local_generic_item(declaration: &NominalDeclaration, instances: list[NominalInstance]) -> Result[str, str]:
+pub def local_generic_item(declaration: &NominalDeclaration, instances: &list[NominalInstance]) -> Result[str, str]:
     """Select the retained template of a local closed carrier, so its storage aliases the ADT published by this Loaf."""
     for instance in instances:
-        if instance.declaration.canonical == declaration.canonical and nominal_symbol(str(instance.declaration.name), instance.arguments) == declaration.name:
+        if (
+            instance.declaration.canonical == declaration.canonical
+            and nominal_symbol(str(instance.declaration.name), instance.arguments) == declaration.name
+        ):
             return Ok("crate::" + str(instance.declaration.name))
     return Err("invalid Body IR local generic layout without its template")
 
 
 pub def library_model_arguments(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
-    instances: list[NominalInstance],
-    mut intrinsics: list[EnumDeclaration],
+    instances: &list[NominalInstance],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
-    """Transport a retained instance's actual arguments, without decoding names or inferring them from fields."""
+    """Transport retained instance arguments against the enclosing layout pass's ordered union inventory."""
+    native_item: str = str(declaration.native_item)
     if len(declaration.type_parameters) == 0:
-        return native_arguments(module, declaration, intrinsics)
+        return native_arguments(constructors, module, declaration, unions, intrinsics).map_err(
+            (reason) => f"{reason} in native arguments of {native_item}",
+        )
     mut selected: Option[NominalInstance] = None
     for instance in instances:
         if instance.declaration.canonical != declaration.canonical:
@@ -31,31 +40,35 @@ pub def library_model_arguments(
         if nominal_symbol(str(instance.declaration.name), instance.arguments) != declaration.name:
             continue
         if len(instance.arguments) != len(declaration.type_parameters):
-            return Err("unsupported Body IR SDK model argument arity")
+            return Err("the standard library model type argument count is unsupported")
         match selected:
-            None =>
-                selected = Some(instance)
+            None => selected = Some(instance)
             Some(previous) =>
                 if previous.arguments != instance.arguments:
-                    return Err("unsupported Body IR conflicting SDK model arguments")
+                    return Err("the standard library model has conflicting type arguments")
     match selected:
-        None => return Err("unsupported Body IR SDK model without checked instance arguments")
-        Some(instance) => return instance_native_arguments(module, declaration, instance, intrinsics)
+        None => return Err(f"standard library model {declaration.name} has no checked instance type arguments")
+        Some(instance) =>
+            return instance_native_arguments(constructors, module, declaration, instance, unions, intrinsics).map_err(
+                (reason) => f"{reason} in native instance arguments of {native_item}",
+            )
 
 
 def native_arguments(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
-    mut intrinsics: list[EnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
-    """Preserve fixed runtime arguments of a nongeneric source surface without manufacturing an instance."""
-    mut unions = collect_unions(module)
+    """Preserve fixed native arguments using the caller's already collected union inventory."""
     mut arguments: list[PlanType] = []
     for argument in declaration.native_type_arguments:
         arguments.append(
             native_source_type(
-                list(module.nominal_declarations),
-                list(module.enum_declarations),
+                constructors,
+                module.nominal_declarations,
+                module.enum_declarations,
                 unions,
                 argument,
                 intrinsics,
@@ -65,12 +78,14 @@ def native_arguments(
 
 
 def instance_native_arguments(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
-    instance: NominalInstance,
-    mut intrinsics: list[EnumDeclaration],
+    instance: &NominalInstance,
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
-    """Close native argument templates and retain each generic value's field storage through the linked owner ABI."""
+    """Close native templates using the caller's union inventory and preserve each argument's field storage."""
     mut templates: list[RustType] = []
     for argument in instance.declaration.native_type_arguments:
         templates.append(argument.clone())
@@ -85,12 +100,12 @@ def instance_native_arguments(
             closed.append(argument.clone())
     if len(templates) != len(closed):
         return Err("invalid Body IR native owner argument templates")
-    mut unions = collect_unions(module)
     mut arguments: list[PlanType] = []
     for index in range(len(closed)):
         ty = native_source_type(
-            list(module.nominal_declarations),
-            list(module.enum_declarations),
+            constructors,
+            module.nominal_declarations,
+            module.enum_declarations,
             unions,
             closed[index],
             intrinsics,

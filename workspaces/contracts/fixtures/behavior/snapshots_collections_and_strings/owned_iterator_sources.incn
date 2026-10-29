@@ -1,43 +1,52 @@
-# behavior: iterator and generator sources built from a list still leave the list readable afterwards, whether the list is used once or again (#602)
+# behavior: flat and nested list iterators and generator expressions keep the source readable after use (#602, #2426)
 # expect-stdout:
 #   2
 #   1
 #   1
 #   7
 #   4
+#   [2, 1] [2, 1] 3
 
-"""Issue #602: owned iterator sources should avoid whole-list clones on last use."""
+"""Retain ordered flat and nested values and readable sources across lazy consumers."""
 
 
 def double(x: int) -> int:
+    """Double an iterator item."""
     return x * 2
 
 
 def collect_last_use(xs: list[int]) -> list[int]:
+    """Collect transformed items from a list parameter."""
     return xs.iter().map(double).collect()
 
 
 def generator_last_use(xs: list[int]) -> Generator[int]:
+    """Return a lazy producer whose caller owns the source."""
     return (x for x in xs if x > 0)
 
 
 def generator_one_shot() -> Generator[int]:
+    """Return a lazy producer that retains its temporary source."""
     return (x for x in [1, 2, 3] if x > 0)
 
 
 def collect_reused(values: list[int]) -> int:
+    """Read a flat source after its iterator has been consumed."""
     total = values.iter().sum()
     first = values[0]
     return total + first
 
 
 def generator_reused(values: list[int]) -> int:
+    """Read a flat source after its generator expression has been consumed."""
     generated = (x for x in values if x > 0).collect()
     first = values[0]
     return len(generated) + first
 
 
 def main() -> None:
+    """1. Exercise flat sources. 2. Compare nested iterator forms and reread their original source."""
+    # 1. Exercise flat sources.
     collected = collect_last_use([1, 2, 3])
     generated = generator_last_use([1, 2, 3]).collect()
     generated_direct = generator_one_shot().collect()
@@ -48,3 +57,16 @@ def main() -> None:
     println(generated_direct[0])
     println(reused_iter)
     println(reused_gen)
+
+    # 2. Compare nested iterator forms and reread their original source.
+    show_nested_sources()
+
+
+def show_nested_sources() -> None:
+    """Collect row lengths through both lazy forms while retaining the original nested list."""
+    rows = [[1, 2], [3]]
+    mut iterated: list[int] = []
+    for row in rows.iter():
+        iterated.append(len(row))
+    generated = (len(row) for row in rows).collect()
+    println(f"{iterated:?} {generated:?} {rows[1][0]}")

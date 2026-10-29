@@ -33,6 +33,7 @@ impl TypeChecker {
 
     /// Read a complete native enum template for both construction and matching. Exact field displays retain Box and
     /// reference storage; named slots follow metadata order. Neither caller may invent a partial executable layout.
+    /// Unconditional Copy capability remains a separate checked fact from the open payload templates.
     pub(in crate::typechecker::check_expr) fn checked_rust_enum_layout(
         &self,
         path: &str,
@@ -47,6 +48,10 @@ impl TypeChecker {
             return None;
         }
         Some(RustCheckedEnum {
+            is_copy: self.derive_support(
+                &ResolvedType::RustPath(path.into()),
+                incan_lang::lang::derives::DeriveId::Copy,
+            ) == crate::typechecker::derive_requirements::DeriveSupport::Supported,
             type_parameters: info.type_params.clone(),
             variants: info
                 .variants
@@ -57,7 +62,12 @@ impl TypeChecker {
                         variant
                             .field_type_displays
                             .iter()
-                            .map(|field| self.native_rust_signature_type(field, path))
+                            .map(|field| {
+                                self.rust_inference_type(
+                                    &self.native_rust_signature_type(field, path),
+                                    &info.type_params,
+                                )
+                            })
                             .collect(),
                         variant.field_names.clone(),
                     )
@@ -136,7 +146,7 @@ impl TypeChecker {
                 vec![param.ty.clone()],
             ));
             self.type_info.rust.argument_adjustments.insert(
-                (value.span.start, value.span.end),
+                value.span,
                 vec![RustCheckedCall {
                     storage: None,
                     source_type_parameters: self.native_call_type_parameters(),
@@ -193,10 +203,41 @@ impl TypeChecker {
             .is_some()
     }
 
-    /// Retain ordered public field templates once, keyed by their public native owner. No hidden-field access is
-    /// inferred: the adapter must verify the complete native field count, visibility and instantiated types.
+    /// Retain one canonical Copy layout across modules. Readable owners keep their complete field layout; owners
+    /// with no public fields remain opaque, so a by-value method grants no access to internal storage.
+    pub(in crate::typechecker::check_expr) fn retain_rust_copy_owner(&mut self, path: &str, info: &RustTypeInfo) {
+        if info
+            .fields
+            .iter()
+            .any(|field| info.metadata_completeness.field_is_public(&field.name))
+        {
+            self.retain_rust_layout(path, info);
+            return;
+        }
+        let path = Self::rust_generic_base_and_args(path).map_or(path, |(base, _)| base);
+        self.type_info
+            .rust
+            .checked_layouts
+            .entry(path.to_owned())
+            .or_insert_with(|| RustCheckedLayout {
+                field_public: Vec::new(),
+                is_copy: true,
+                type_parameters: info.type_params.clone(),
+                fields: Vec::new(),
+                field_identities: Vec::new(),
+            });
+    }
+
+    /// Retain exact native field templates once, keyed by their public native owner. Private slots retain order and
+    /// storage for adapter validation; source reads and construction require their own metadata authority.
     pub(in crate::typechecker::check_expr) fn retain_rust_layout(&mut self, path: &str, info: &RustTypeInfo) {
         let path = Self::rust_generic_base_and_args(path).map_or(path, |(base, _)| base);
+        // A layout already retained for this owner, with the same field count and type parameters, is the same one.
+        if self.type_info.rust.checked_layouts.get(path).is_some_and(|layout| {
+            layout.fields.len() == info.fields.len() && layout.type_parameters == info.type_params
+        }) {
+            return;
+        }
         let Some(owner) = body_ir::rust_item_identity(path) else {
             return;
         };
@@ -222,6 +263,11 @@ impl TypeChecker {
         self.type_info.rust.checked_layouts.insert(
             path.to_owned(),
             RustCheckedLayout {
+                field_public: info
+                    .fields
+                    .iter()
+                    .map(|field| info.metadata_completeness.field_is_public(&field.name))
+                    .collect(),
                 is_copy: self.derive_support(
                     &ResolvedType::RustPath(path.into()),
                     incan_lang::lang::derives::DeriveId::Copy,
@@ -234,7 +280,8 @@ impl TypeChecker {
     }
 
     /// Close the native owner from the already checked field arguments and retain the ordinary constructor slots.
-    /// A missing/default-filled field or unresolved type binder grants no executable construction.
+    /// A missing/default-filled field or unresolved type binder grants no executable construction. A nongeneric
+    /// declaration retains its bare owner identity rather than acquiring an empty generic application.
     pub(super) fn retain_rust_construction(
         &mut self,
         path: &str,
@@ -243,7 +290,7 @@ impl TypeChecker {
         selected: &[String],
         span: Span,
     ) -> Option<ResolvedType> {
-        if args.len() != info.fields.len() || selected.len() != args.len() || info.fields.is_empty() {
+        if args.len() != info.fields.len() || selected.len() != args.len() {
             return None;
         }
         self.retain_rust_layout(path, info);
@@ -275,13 +322,17 @@ impl TypeChecker {
         {
             return None;
         }
-        let result = ResolvedType::Generic(base.to_owned(), arguments);
+        let result = if arguments.is_empty() {
+            ResolvedType::RustPath(base.to_owned())
+        } else {
+            ResolvedType::Generic(base.to_owned(), arguments)
+        };
         self.type_info
             .calls
             .body_ir_constructor_types
-            .insert((span.start, span.end), result.clone());
+            .insert(span, result.clone());
         self.type_info.calls.body_ir_native_constructor_bindings.insert(
-            (span.start, span.end),
+            span,
             (
                 body_ir::rust_item_identity(base)?,
                 ConstructorFieldBinding {

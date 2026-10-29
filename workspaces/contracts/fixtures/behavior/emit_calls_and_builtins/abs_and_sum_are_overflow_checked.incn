@@ -9,7 +9,7 @@
 
 from std.testing import assert_raises
 
-const LOWEST: int = -9223372036854775807 - 1
+const LOWEST: int = -9223372036854775808
 const HIGHEST: int = 9223372036854775807
 
 

@@ -288,6 +288,12 @@ impl TypeChecker {
         Self::mark_compiled_class_field_provider(&mut kind, library);
         match kind {
             SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
+                let declaration = self
+                    .public_library_type_identities
+                    .get(&key)
+                    .and_then(|identity| identity.canonical.as_ref())
+                    .cloned();
+                self.cache_retained_nominal_layout(declaration.as_ref(), &info);
                 self.transitive_pub_types.entry(key).or_default().push(info);
             }
             SymbolKind::Trait(info) => {

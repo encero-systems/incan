@@ -18,19 +18,22 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
+from codegen import native_arguments
 from files import json_text
 from home import unit_ledger
 from loaf_local_graph import unique
+from manifest_vocabulary import manifest_vocabulary
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
+from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription
-
+from apple_sdk import sdk_identity
 
 const UNIT_DOMAIN: str = "incan.oven.unit/1"
 
 
-pub def artifact_files(directory: Path, package: str) -> list[Path]:
+pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]:
     """The complete DD-0007 artifact set required to reuse a library."""
     linked = package.replace("-", "_")
     compiled = [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody"]
@@ -39,17 +42,26 @@ pub def artifact_files(directory: Path, package: str) -> list[Path]:
     cache = directory.joinpath(f"{package}.rustabi")
     if cache.is_file():
         artifacts.append(cache)
-    return artifacts
+    manifest = directory.joinpath(f"{package}.incnlib")
+    if manifest.is_file():
+        declared = manifest_vocabulary(manifest)?
+        if not declared.desugarer.is_null():
+            artifacts.append(directory.joinpath("vocab-worker"))
+    return Ok(artifacts)
 
 
 pub def artifact_identity(path: Path) -> Result[str, str]:
-    """Identify a published artifact by its filesystem identity, without reading its bytes.
+    """
+    Identify a published artifact by its filesystem identity, without reading its bytes.
 
     That is its device and inode, size and mode, and the nanosecond times of its last modification and last status
     change: replacing the file changes the inode, and rewriting it in place changes the status change time even when
     the modification time is put back.
     """
-    return Ok(observe(path)?.stamp)
+    clock = begin()
+    result = observe(path)
+    record_work("artifact_identity", path.0, clock)
+    return Ok(result?.stamp)
 
 
 pub model Key:
@@ -60,10 +72,13 @@ pub model Key:
     pub parts: list[str]
 
 
-pub def unit_key(unit: UnitDescription, toolchain: Toolchain) -> Result[Key, str]:
+pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
     """Reconcile every input of `unit` against the retained observations; the key its outputs are valid for."""
     mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
-    return reconciled_key(unit, compiler_fingerprint(toolchain)?, description_digest(unit)?, project)
+    mut selected_compiler = compiler
+    if selected_compiler == "":
+        selected_compiler = compiler_fingerprint(toolchain)?
+    return reconciled_key(unit, selected_compiler, description_digest(unit)?, project)
 
 
 pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
@@ -96,16 +111,18 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     The installed driver is named by its content digest, and its path is part of the fingerprint.
 
     1. The driver, its sysroot and the driver's identity.
-    2. The native crates every unit links, and the Rust ABI caches checking reads.
+    2. The native crates every unit links, its recorded registry selection and the Rust ABI caches checking reads.
     3. The directories the dependencies of those crates live in.
     """
     # 1. A different driver, at another path or rebuilt in place, is a different compiler.
     driver = [toolchain.driver, toolchain.sysroot, artifact_identity(Path(toolchain.driver))?]
     # 2. So is a changed runtime or support crate, or a changed Rust fact cache.
     natives = native_identities(toolchain.externs)?
-    caches = cache_identities(toolchain.rust_abi)?
+    mut caches = cache_identities(toolchain.rust_abi)?
+    if toolchain.registry_lock != "":
+        caches.append(artifact_identity(Path(toolchain.registry_lock))?)
     # 3. The directories the crates' own dependencies live in are part of the compiler's reach.
-    return fingerprint(driver + natives + caches + toolchain.search)
+    return fingerprint(driver + natives + caches + toolchain.search + [sdk_identity(toolchain.sysroot)?])
 
 
 pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
@@ -128,13 +145,8 @@ pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
 
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
-    """The digest of what the unit's description says: profile, features, kind and every path and crate it names."""
-    return fingerprint([json_text(unit.to_json())?])
-
-
-pub def source_fingerprint(unit: UnitDescription, compiler: str, mut project: Ledger) -> Result[Key, str]:
-    """The key of a unit whose description has not been digested yet; see `unit_key_with`."""
-    return unit_key_with(unit, compiler, description_digest(unit)?, project)
+    """The unit description and its effective native flags: changing a profile's code generation invalidates reuse."""
+    return fingerprint([json_text(unit.to_json())?] + native_arguments(unit.profile))
 
 
 pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
@@ -171,7 +183,7 @@ def loaf_identities(unit: UnitDescription) -> Result[list[str], str]:
     """The path and identity of every artifact of every Loaf the unit links; a missing artifact is `absent`."""
     mut inputs: list[str] = []
     for loaf in unit.loaves:
-        for path in artifact_files(Path(loaf.dir), loaf.name):
+        for path in artifact_files(Path(loaf.dir), loaf.name)?:
             inputs.append(path.0)
             if path.is_file():
                 inputs.append(artifact_identity(path)?)
@@ -241,6 +253,8 @@ def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], 
         paths = paths + project.sources(entry_directory, entry_directory.0 != unit.project_root)?
     for extra in unit.contract_models + unit.c_headers:
         paths.append(root.joinpath(extra).0)
+    if let Some(vocab) = unit.vocab:
+        paths.append(vocab)
     return Ok(unique(paths))
 
 

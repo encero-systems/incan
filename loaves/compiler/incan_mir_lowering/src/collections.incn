@@ -21,12 +21,18 @@ from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,
     OwnershipFact,
 )
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, NumericTypeId
 from tuples import tuple_type, generic_tuple_type
+from models import runtime_storage_marker
 
 
 pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
-    """Admit primitive leaves and flat scalar tuple keys; floating point keys lack Eq and Hash."""
+    """Admit primitive leaves, owned byte buffers and flat scalar tuple keys; floating point keys lack Eq and Hash."""
+    match runtime_storage_marker(ty):
+        Some(PlanType.Decimal) => return Ok(ListLeaf.Decimal)
+        _ => pass
+    if native_byte_buffer(ty):
+        return Ok(ListLeaf.List([ListLeaf.U8], 1))
     match ty:
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(ListLeaf.Decimal)
         RustType.Primitive(primitive) =>
@@ -35,6 +41,7 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
                 Primitive.Bool => return Ok(ListLeaf.Bool)
                 Primitive.Str => return Ok(ListLeaf.Str)
                 Primitive.FrozenStr => return Ok(ListLeaf.FrozenStr)
+                Primitive.Bytes => return Ok(ListLeaf.List([ListLeaf.U8], 1))
                 Primitive.Unit => return Ok(ListLeaf.Unit)
                 Primitive.Float =>
                     if not hashed:
@@ -50,6 +57,19 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
                     Err(_reason) => pass
         _ => pass
     return Err(f"unsupported Body IR collection leaf {ty}")
+
+
+def native_byte_buffer(ty: &RustType) -> bool:
+    """Recognize the byte buffer's native storage after a governed argument preserves Vec[u8] rather than bytes."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if base != "List" or len(arguments) != 1:
+                return false
+            match arguments[0]:
+                RustType.Primitive(Primitive.Numeric(NumericTypeId.U8)) => return true
+                _ => pass
+        _ => pass
+    return false
 
 
 def hashed_tuple_leaf(ty: PlanType) -> Result[ListLeaf, str]:
@@ -296,8 +316,7 @@ pub def extend_collection(
     """Splice one checked owner into a set constructor or dictionary literal, then consume that owner."""
     mut source_place = destination
     match source.kind:
-        OperandKind.Move(place) =>
-            source_place = place
+        OperandKind.Move(place) => source_place = place
         _ => return Err("unsupported Body IR collection spread without owned source")
     ty = builder.locals[destination.local].ty
     source_type = builder.locals[source_place.local].ty

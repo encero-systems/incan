@@ -2,10 +2,11 @@
 
 use crate::error::PlanError;
 use crate::plan::{Callee, CalleeKind};
+use incan_lang::lang::traits::{self, TraitId};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::fast_reject::SimplifiedType;
+use rustc_middle::ty::{self, Ty, TyCtxt};
 
 /// Resolve a retained public module constant, inherent associated constant or unit-variant constructor. Inherent
 /// constants use the same metadata lookup as checking; statics and trait constants still require their own
@@ -38,6 +39,9 @@ pub fn constant(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
 pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
     match &callee.kind {
         CalleeKind::Planned(name) => planned(tcx, name),
+        CalleeKind::InstallPanicHook(signature) => planned(tcx, &crate::panic_hooks::name(signature)),
+        CalleeKind::Foreign(declaration) => crate::foreign::resolve(tcx, &declaration.name),
+        CalleeKind::FormatValue(_, debug) => planned(tcx, crate::formatting::name(*debug)),
         CalleeKind::Value(_) => Err(PlanError::UnknownCallee(
             "local callable has no declaration callee".into(),
         )),
@@ -62,6 +66,8 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::StaticLoad(slot) => planned(tcx, &crate::statics::load_name(*slot)),
         CalleeKind::StaticStore(slot) => planned(tcx, &crate::statics::store_name(*slot)),
         CalleeKind::StaticForce(slot) => planned(tcx, &crate::statics::force_name(*slot)),
+        CalleeKind::ModuleInitialized(slot) => planned(tcx, &crate::statics::initialized_name(*slot)),
+        CalleeKind::ModuleComplete(slot) => planned(tcx, &crate::statics::complete_name(*slot)),
         CalleeKind::FieldMetadata(owner, _) => planned(tcx, &crate::field_metadata::name(*owner)),
         CalleeKind::StaticMethod(slot, method) => planned(tcx, &crate::statics::method_name(*slot, method)),
     }
@@ -72,7 +78,7 @@ pub fn clone_method(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
     let trait_id = tcx
         .lang_items()
         .clone_trait()
-        .ok_or_else(|| PlanError::UnknownCallee("Clone".into()))?;
+        .ok_or_else(|| PlanError::UnknownCallee(traits::as_str(TraitId::Clone).into()))?;
     tcx.associated_item_def_ids(trait_id)
         .iter()
         .copied()
@@ -152,20 +158,34 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
     public_item(tcx, path, &[kind], reason)
 }
 
-/// Resolve an opaque carrier's public type item without granting field or variant projections. An alias keeps its
-/// own metadata parameters; field-bearing queries use [`library_item`] to select the underlying ADT. A trait principal
-/// requires the native object constructor rather than a nominal `type_of` query and grants no field projection.
+/// Resolve a checked carrier's exact type item, including dependency-only types, without granting source access.
+/// An alias keeps its own metadata parameters; field-bearing queries use [`library_item`] to select the underlying ADT.
+/// A trait principal requires the native object constructor rather than a nominal `type_of` query and grants no field
+/// projection.
 pub fn native_type_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
-    public_item(
+    layout_item(
         tcx,
         path,
         &[DefKind::Struct, DefKind::Enum, DefKind::TyAlias, DefKind::Trait],
-        "Loaf layout names no public type",
+        false,
+        "checked native layout names no type",
     )
 }
 
 /// Walk one public module path, selecting a final item only from the caller's admitted namespace kinds.
 fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> Result<DefId, PlanError> {
+    layout_item(tcx, path, kinds, true, reason)
+}
+
+/// Walk an exact retained native identity. Authored Loaf layout queries require public paths; compiler-selected
+/// Rust storage may cross private modules because its metadata authority was established by checking.
+fn layout_item(
+    tcx: TyCtxt<'_>,
+    path: &str,
+    kinds: &[DefKind],
+    public_only: bool,
+    reason: &str,
+) -> Result<DefId, PlanError> {
     let unknown = || PlanError::Invalid {
         function: path.into(),
         reason: reason.into(),
@@ -182,7 +202,7 @@ fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> 
         } else {
             kinds
         };
-        current = public_layout_child(tcx, current, segment, wanted).ok_or_else(unknown)?;
+        current = layout_child(tcx, current, segment, wanted, public_only).ok_or_else(unknown)?;
     }
     if !kinds.contains(&tcx.def_kind(current)) {
         return Err(unknown());
@@ -190,9 +210,9 @@ fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> 
     Ok(current)
 }
 
-/// Resolve a public module item in its owning query domain. Local injected ADTs are HIR items; the external-only
+/// Resolve a module item with the caller's visibility authority. Local injected ADTs are HIR items; the external-only
 /// `module_children` query must never receive the current crate's definitions.
-fn public_layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefKind]) -> Option<DefId> {
+fn layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefKind], public_only: bool) -> Option<DefId> {
     if module.is_local() {
         return tcx
             .hir_crate_items(())
@@ -201,13 +221,13 @@ fn public_layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefK
             .filter(|def| {
                 tcx.parent(*def) == module
                     && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
-                    && tcx.visibility(*def).is_public()
+                    && (!public_only || tcx.visibility(*def).is_public())
             })
             .find_map(|def| admitted_layout_definition(tcx, def, kinds));
     }
     tcx.module_children(module)
         .iter()
-        .filter(|child| child.ident.name.as_str() == name && child.vis.is_public())
+        .filter(|child| child.ident.name.as_str() == name && (!public_only || child.vis.is_public()))
         .filter_map(|child| child.res.opt_def_id())
         .find_map(|def| admitted_layout_definition(tcx, def, kinds))
 }
@@ -240,20 +260,27 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
     (tcx.def_kind(adt.did()) == expected).then_some(adt.did())
 }
 
-/// Walk only public module children, rejecting nonfunction callees before constructing MIR.
+/// Resolve a retained call, rejecting nonpublic callables before constructing MIR. Compiler-selected receivers may
+/// live behind private module prefixes; the callable itself must still be public.
 ///
 /// A segment inside a module selects by kind as well as name, as [`library_item`] does: a class with field defaults
 /// compiles a constructor function under its own name beside its struct, so `Class::method` must step through the
 /// struct while a call of `Class` itself selects the function. A trait path selects its declared associated function;
 /// concrete Self arguments and bounds remain subject to native signature validation.
+/// A structural slice owner selects one public builtin impl item through the same rustc index used by extraction.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
-    if let Some(method) = path.strip_prefix("[]::") {
-        return primitive_function(tcx, SimplifiedType::Slice, method)
-            .ok_or_else(|| PlanError::UnknownCallee(path.into()));
+    // A public primitive alias names the primitive itself; scalar buckets resolve first, text and slices below.
+    let primitive = path
+        .strip_prefix("std::primitive::")
+        .or_else(|| path.strip_prefix("core::primitive::"));
+    if let Some(definition) = primitive.and_then(|primitive| primitive_path(tcx, primitive)) {
+        return Ok(definition);
     }
-    if let Some(method) = path.strip_prefix("str::") {
-        return primitive_function(tcx, SimplifiedType::Str, method)
-            .ok_or_else(|| PlanError::UnknownCallee(path.into()));
+    let path = primitive.unwrap_or(path);
+    if let Some((owner, _)) = path.split_once("::")
+        && crate::rust_facts::primitive_owner(owner)
+    {
+        return primitive_path(tcx, path).ok_or_else(|| PlanError::UnknownCallee(path.into()));
     }
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
@@ -264,13 +291,18 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
             DefKind::Mod => tcx
                 .module_children(current)
                 .iter()
-                .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+                .filter(|child| child.ident.name.as_str() == segment && (!last || child.vis.is_public()))
                 .filter_map(|child| child.res.opt_def_id())
                 .find(|child| callee_path_step(tcx.def_kind(*child), last))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
             DefKind::Struct | DefKind::Enum => inherent_function(tcx, current, segment)
                 .or_else(|| enum_constructor(tcx, current, segment))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
+            DefKind::TyAlias => {
+                let target = tcx.type_of(current).instantiate_identity().skip_normalization();
+                inherent_function_in(tcx, &type_inherent_impls(tcx, target), segment)
+                    .ok_or_else(|| PlanError::UnknownCallee(path.into()))?
+            }
             DefKind::Trait => trait_function(tcx, current, segment).ok_or_else(|| PlanError::Unsupported {
                 function: path.into(),
                 reason: "the SDK trait publishes no method with this name".into(),
@@ -285,6 +317,30 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
         return Err(PlanError::UnknownCallee(path.into()));
     }
     Ok(current)
+}
+
+/// Resolve a primitive's public inherent function from rustc's own impl bucket and canonical primitive identity.
+/// Method spelling alone grants no signature; the ordinary native signature and predicate checks still apply.
+fn primitive_path(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
+    let (owner, method) = path.split_once("::")?;
+    if owner == "str" {
+        return primitive_function(tcx, SimplifiedType::Str, method);
+    }
+    if owner == "[]" {
+        return primitive_function(tcx, SimplifiedType::Slice, method);
+    }
+    let (_, native) = crate::rust_facts::primitive_types(tcx)
+        .into_iter()
+        .find(|(name, _)| *name == owner)?;
+    let bucket = match native.kind() {
+        rustc_middle::ty::Bool => SimplifiedType::Bool,
+        rustc_middle::ty::Char => SimplifiedType::Char,
+        rustc_middle::ty::Int(kind) => SimplifiedType::Int(*kind),
+        rustc_middle::ty::Uint(kind) => SimplifiedType::Uint(*kind),
+        rustc_middle::ty::Float(kind) => SimplifiedType::Float(*kind),
+        _ => return None,
+    };
+    primitive_function(tcx, bucket, method)
 }
 
 /// Select the exact public constructor definition of a tuple or unit enum variant. The caller distinguishes
@@ -313,7 +369,10 @@ fn callee_path_step(kind: DefKind, last: bool) -> bool {
     if last {
         kind == DefKind::Fn
     } else {
-        matches!(kind, DefKind::Mod | DefKind::Struct | DefKind::Enum | DefKind::Trait)
+        matches!(
+            kind,
+            DefKind::Mod | DefKind::Struct | DefKind::Enum | DefKind::Trait | DefKind::TyAlias
+        )
     }
 }
 
@@ -342,6 +401,58 @@ pub fn owner_inherent_impls(tcx: TyCtxt<'_>, owner: DefId) -> Vec<DefId> {
     let mut implementations = tcx.inherent_impls(owner).to_vec();
     implementations.extend_from_slice(tcx.incoherent_impls(SimplifiedType::Adt(owner)));
     implementations
+}
+
+/// Select inherent impls for an alias's actual target, shared by fact extraction and executable callee lookup.
+/// Specialized owners can have same-named methods in distinct impls; rustc unification excludes impls for other
+/// instantiations before the ordinary unique-callee and signature/predicate checks apply.
+pub(crate) fn type_inherent_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>) -> Vec<DefId> {
+    let implementations = match owner.kind() {
+        rustc_middle::ty::Adt(adt, _) => owner_inherent_impls(tcx, adt.did()),
+        _ => primitive_inherent_impls(tcx, owner).to_vec(),
+    };
+    implementations
+        .into_iter()
+        .filter(|implementation| inherent_impl_matches_type(tcx, *implementation, owner))
+        .collect()
+}
+
+/// Test an inherent impl's structural Self type against an alias target without inventing native type arguments.
+/// Open impl parameters remain inference variables; the selected call still proves its declaration's predicates.
+fn inherent_impl_matches_type<'tcx>(tcx: TyCtxt<'tcx>, implementation: DefId, owner: Ty<'tcx>) -> bool {
+    use rustc_infer::infer::TyCtxtInferExt;
+    use rustc_trait_selection::traits::ObligationCtxt;
+
+    let (infcx, environment) = tcx
+        .infer_ctxt()
+        .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
+    let arguments = infcx.fresh_args_for_item(rustc_span::DUMMY_SP, implementation);
+    let declared = tcx
+        .type_of(implementation)
+        .instantiate(tcx, arguments)
+        .skip_normalization();
+    let obligations = ObligationCtxt::new(&infcx);
+    obligations
+        .eq(
+            &rustc_middle::traits::ObligationCause::dummy(),
+            environment,
+            declared,
+            owner,
+        )
+        .is_ok()
+}
+
+/// Read the exact inherent impl bucket for a primitive carrier, shared by metadata extraction and executable callee
+/// selection.
+pub(crate) fn primitive_inherent_impls<'tcx>(tcx: TyCtxt<'tcx>, native: rustc_middle::ty::Ty<'tcx>) -> &'tcx [DefId] {
+    let Some(bucket) = rustc_middle::ty::fast_reject::simplify_type(
+        tcx,
+        native,
+        rustc_middle::ty::fast_reject::TreatParams::InstantiateWithInfer,
+    ) else {
+        return &[];
+    };
+    tcx.incoherent_impls(bucket)
 }
 
 /// Resolve a retained native slice or `str` method through the same primitive impl bucket rustc uses for method
@@ -415,7 +526,8 @@ pub fn inferred_arguments(
 ///
 /// Trailing parameters the plan omits take the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s
 /// `A = Global`), instantiated over the arguments before them, as rustc does for a written path.
-/// Lifetime parameters receive erased regions and never consume a retained type argument; const parameters refuse.
+/// Lifetime parameters receive erased regions and consume no retained type argument. Omitted const parameters use
+/// their declaration's defaults; an explicit const value still requires a retained value contract and is refused.
 pub fn arguments<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: DefId,
@@ -438,27 +550,61 @@ pub fn arguments<'tcx>(
                 Some(ty) => crate::types::native_type(tcx, ty)?.into(),
                 None => parameter
                     .default_value(tcx)
+                    .map(|default| default.instantiate(tcx, tcx.mk_args(&arguments)).skip_normalization())
+                    .or_else(|| owner_parameter_default(tcx, def, index, &arguments))
                     .ok_or_else(|| PlanError::Invalid {
                         function: tcx.def_path_str(def),
                         reason: "omitted generic argument has no default".into(),
-                    })?
-                    .instantiate(tcx, tcx.mk_args(&arguments))
-                    .skip_normalization(),
+                    })?,
             },
-            rustc_middle::ty::GenericParamDefKind::Const { .. } => {
-                return Err(PlanError::Unsupported {
+            rustc_middle::ty::GenericParamDefKind::Const { .. } => parameter
+                .default_value(tcx)
+                .map(|default| default.instantiate(tcx, tcx.mk_args(&arguments)).skip_normalization())
+                .ok_or_else(|| PlanError::Unsupported {
                     function: tcx.def_path_str(def),
                     reason: "native const arguments require a retained value contract".into(),
-                });
-            }
+                })?,
         };
         arguments.push(argument);
     }
     Ok(tcx.mk_args(&arguments))
 }
 
+/// Recover an inherent impl parameter's default from its exact receiver ADT, such as Vec's allocator.
+/// Impl generics do not repeat the ADT's defaults. Map the impl parameter through Self's actual arguments instead
+/// of guessing an allocator by name; earlier explicit bindings instantiate any default referring to them.
+fn owner_parameter_default<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def: DefId,
+    index: usize,
+    supplied: &[rustc_middle::ty::GenericArg<'tcx>],
+) -> Option<rustc_middle::ty::GenericArg<'tcx>> {
+    let implementation = tcx.impl_of_assoc(def)?;
+    let mut arguments = rustc_middle::ty::GenericArgs::identity_for_item(tcx, implementation).to_vec();
+    for (slot, argument) in arguments.iter_mut().zip(supplied) {
+        *slot = *argument;
+    }
+    let owner = tcx
+        .type_of(implementation)
+        .instantiate(tcx, tcx.mk_args(&arguments))
+        .skip_normalization();
+    let rustc_middle::ty::Adt(owner, owner_arguments) = owner.kind() else {
+        return None;
+    };
+    let position = owner_arguments.iter().position(|argument| {
+        argument.as_type().is_some_and(|ty| {
+            matches!(ty.kind(), rustc_middle::ty::Param(parameter)
+            if usize::try_from(parameter.index).ok() == Some(index))
+        })
+    })?;
+    tcx.generics_of(owner.did())
+        .param_at(position, tcx)
+        .default_value(tcx)
+        .map(|default| default.instantiate(tcx, owner_arguments).skip_normalization())
+}
+
 /// Whether `written` type arguments instantiate `def`: lifetimes consume no slot, omitted types need defaults, and
-/// const arguments require a separate value contract.
+/// omitted const parameters need declaration defaults. Written const values require a separate value contract.
 pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
     let generics = tcx.generics_of(def);
     let mut supplied = 0;
@@ -466,9 +612,12 @@ pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
         let parameter = generics.param_at(index, tcx);
         match parameter.kind {
             rustc_middle::ty::GenericParamDefKind::Lifetime => continue,
+            rustc_middle::ty::GenericParamDefKind::Const { .. } if parameter.default_value(tcx).is_some() => continue,
             rustc_middle::ty::GenericParamDefKind::Const { .. } => return false,
             rustc_middle::ty::GenericParamDefKind::Type { .. } if supplied < written => supplied += 1,
-            rustc_middle::ty::GenericParamDefKind::Type { .. } if parameter.default_value(tcx).is_some() => {}
+            rustc_middle::ty::GenericParamDefKind::Type { .. }
+                if parameter.default_value(tcx).is_some()
+                    || owner_parameter_default(tcx, def, index, &[]).is_some() => {}
             _ => return false,
         }
     }
@@ -480,7 +629,8 @@ pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
 /// The borrow checker proves a callee's bounds again and reports a failure as an internal compiler error rather than
 /// a diagnostic, so an unsatisfied bound must stop here. The checker already proved the call's bounds for its source
 /// types, so a failure means the direct route emits no native impl for one of them (a newtype's `TryFrom[str]`, for
-/// one): an unsupported route gap rather than an invalid plan.
+/// one): an unsupported route gap rather than an invalid plan. Normalize concrete associated outputs before testing
+/// each obligation, so equivalent `IntoIterator::Item` and `Iterator::Item` projections satisfy equality bounds.
 pub fn verify_bounds<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: DefId,
@@ -492,11 +642,17 @@ pub fn verify_bounds<'tcx>(
         .infer_ctxt()
         .build_with_typing_env(rustc_middle::ty::TypingEnv::fully_monomorphized());
     for (clause, _) in tcx.predicates_of(def).instantiate(tcx, args) {
+        let predicate = tcx
+            .try_normalize_erasing_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), clause)
+            .map_err(|error| PlanError::Unsupported {
+                function: tcx.def_path_str(def),
+                reason: format!("callee bound has no concrete native projection; arguments {args:?}; {error:?}"),
+            })?;
         let obligation = rustc_infer::traits::Obligation::new(
             tcx,
             rustc_middle::traits::ObligationCause::dummy(),
             param_env,
-            clause.skip_normalization(),
+            predicate,
         );
         if !infcx.predicate_must_hold_modulo_regions(&obligation) {
             return Err(PlanError::Unsupported {

@@ -1,0 +1,105 @@
+"""Observe concurrent once-only initialization and successful retry after another caller's initializer panics."""
+
+from rust::std::thread import spawn, JoinHandle
+from rust::std::sync::mpsc import Sender
+from rust::std::panic import resume_unwind
+from rust::incan_std_testing import panic_text
+from functions.csv.from_csv import concurrent_success, concurrent_retry
+import initialization_probe as probe
+
+
+pub def observe_concurrent_cache() -> None:
+    """
+    Verify the observable cache contract with two competing callers per scenario.
+
+    1. Hold a successful initializer while another caller announces its request, then require one execution.
+    2. Fail the held initializer and require the competing caller to retry successfully with the cause preserved.
+    """
+    # 1. Synchronize requests without assuming which instruction the second caller has reached when released.
+    observe_success()
+    # 2. A failed owner cannot leave the second caller blocked on an abandoned initialization claim.
+    observe_retry()
+
+
+def observe_success() -> None:
+    """Release a known active initializer only after a second caller announces its request."""
+    first_sender, first_done = probe.signals()
+    first = spawn(() => completed_success(first_sender))
+    probe.await_success_started()
+    sender, announced = probe.signals()
+    second_sender, second_done = probe.signals()
+    second = spawn(() => announced_success(sender, second_sender))
+    probe.await_signal(announced, "second successful request")
+    probe.release_success()
+    probe.await_signal(first_done, "first successful request completion")
+    probe.await_signal(second_done, "second successful request completion")
+    assert joined_text(first) == "Nested"
+    assert joined_text(second) == "Nested"
+    assert probe.success_count() == 1
+    assert concurrent_success() == "Nested"
+    assert probe.success_count() == 1
+
+
+def observe_retry() -> None:
+    """Require the original panic cause, a successful competing caller, and exactly one retry."""
+    first_sender, first_done = probe.signals()
+    first = spawn(() => capture_retry_failure(first_sender))
+    probe.await_retry_started()
+    sender, announced = probe.signals()
+    second_sender, second_done = probe.signals()
+    second = spawn(() => announced_retry(sender, second_sender))
+    probe.await_signal(announced, "second retry request")
+    probe.release_retry()
+    probe.await_signal(first_done, "first failing request completion")
+    probe.await_signal(second_done, "second retry request completion")
+    match first.join():
+        Ok(Some(message)) =>
+            assert message == "ValueError: first concurrent initialization failed"
+        Ok(None) =>
+            assert false, "the first concurrent initializer unexpectedly succeeded"
+        Err(_payload) =>
+            assert false, "the failure observer itself panicked"
+    assert joined_text(second) == "Nested"
+    assert probe.retry_count() == 2
+    assert concurrent_retry() == "Nested"
+    assert probe.retry_count() == 2
+
+
+def announced_success(sender: Sender[bool], completed: Sender[bool]) -> str:
+    """Announce a competing successful request before entering its decorated binding."""
+    probe.send_signal(sender, "second successful request")
+    return completed_success(completed)
+
+
+def completed_success(completed: Sender[bool]) -> str:
+    """Signal a completed call before the controller joins, bounding a stalled cache request."""
+    value = concurrent_success()
+    probe.send_signal(completed, "successful request completion")
+    return value
+
+
+def announced_retry(sender: Sender[bool], completed: Sender[bool]) -> str:
+    """Announce a competing retry request before entering its decorated binding."""
+    probe.send_signal(sender, "second retry request")
+    value = concurrent_retry()
+    probe.send_signal(completed, "retry request completion")
+    return value
+
+
+def capture_retry_failure(completed: Sender[bool]) -> Option[str]:
+    """Capture the first caller's original panic payload after cache cleanup resumes unwinding."""
+    failure = panic_text(request_retry)
+    probe.send_signal(completed, "failing request completion")
+    return failure
+
+
+def request_retry() -> None:
+    """Invoke the retrying declaration with the unit-returning shape required by panic observation."""
+    _ = concurrent_retry()
+
+
+def joined_text(handle: JoinHandle[str]) -> str:
+    """Require successful worker termination rather than accepting an unobserved thread result."""
+    match handle.join():
+        Ok(value) => return value
+        Err(payload) => resume_unwind(payload)

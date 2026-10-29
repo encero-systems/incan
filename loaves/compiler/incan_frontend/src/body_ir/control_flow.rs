@@ -77,11 +77,29 @@ fn inline_range_parts(
     }
 }
 
+/// Recognize only zero-based, unit-step builtin argument layouts before any argument is evaluated.
+/// Canonical builtin identity is checked separately; computed starts and steps retain ordinary iteration.
+fn zero_based_unit_arguments(arguments: &[ast::CallArg]) -> bool {
+    let integer = |argument: &ast::CallArg, expected| {
+        matches!(argument, ast::CallArg::Positional(value)
+            if matches!(&value.node, ast::Expr::Literal(ast::Literal::Int(number))
+                if number.value == expected && number.suffix.is_none()))
+    };
+    match arguments {
+        [ast::CallArg::Positional(end)] => inline_range_parts(end).is_none(),
+        [start, ast::CallArg::Positional(_)] => integer(start, 0),
+        [start, ast::CallArg::Positional(_), step] => integer(start, 0) && integer(step, 1),
+        _ => false,
+    }
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower `if`/`elif`/`else` into a [`bir::StatementKind::If`] chain. Evaluate ownership facts in written order,
     /// then fold the already lowered `elif` branches into nested `else { if ... }` wrappers from the last branch
     /// inward. Reversing the ownership visit would move an owner in an earlier condition before a later condition
     /// reads it. Pattern conditions use the dedicated `if let` boundary.
+    /// An elif condition is itself conditional, so its enclosing owners remain live when an earlier arm wins.
+    /// Its temporary owners drop at the wrapper's exit, before an earlier enclosing owner is released.
     pub(super) fn lower_if(
         &mut self,
         if_stmt: &ast::IfStmt,
@@ -106,9 +124,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         for (elif_cond, elif_body) in &if_stmt.elif_branches {
             self.materialized_range_locals = range_layouts_before.clone();
             let mut wrapper = Vec::new();
-            let cond_operand = self.lower_expr_to_operand(elif_cond, scope, &mut wrapper);
-            let then_block = self.lower_branch_block(elif_body, scope, span);
-            lowered_branches.push((wrapper, cond_operand, then_block));
+            let wrapper_scope = self.new_scope(Some(scope), span);
+            self.conditional_scopes.push(wrapper_scope);
+            let cond_operand = self.lower_expr_to_operand(elif_cond, wrapper_scope, &mut wrapper);
+            self.conditional_scopes.pop();
+            let then_block = self.lower_branch_block(elif_body, wrapper_scope, span);
+            lowered_branches.push((wrapper_scope, wrapper, cond_operand, then_block));
             range_layouts_after_branches.push(self.materialized_range_locals.clone());
         }
 
@@ -120,7 +141,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         range_layouts_after_branches.push(self.materialized_range_locals.clone());
 
         // Only assembly runs backward; every read's ownership fact is already fixed in written order.
-        for (mut wrapper, cond_operand, then_block) in lowered_branches.into_iter().rev() {
+        for (wrapper_scope, mut wrapper, cond_operand, then_block) in lowered_branches.into_iter().rev() {
             wrapper.push(bir::Statement {
                 kind: bir::StatementKind::If {
                     cond: cond_operand,
@@ -129,7 +150,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 span,
             });
-            else_block = Some(bir::Block { scope, stmts: wrapper });
+            self.insert_scope_drops(&mut wrapper, wrapper_scope);
+            else_block = Some(bir::Block {
+                scope: wrapper_scope,
+                stmts: wrapper,
+            });
         }
 
         self.materialized_range_locals = intersect_range_layouts(range_layouts_after_branches);
@@ -147,6 +172,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower one `if`/`elif`/`else` branch body into its own scoped [`bir::Block`]: allocate a child scope, lower
     /// the statements into it, then insert scope-exit drops. Shared by [`Self::lower_if`]'s then/else/elif bodies
     /// and [`Self::lower_if_expr`]'s then/else bodies, since both need exactly this shape.
+    /// Enclosing owners stay live across the conditional path; branch-local owners can still transfer.
     pub(super) fn lower_branch_block(
         &mut self,
         body: &[ast::Spanned<ast::Statement>],
@@ -159,7 +185,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let enclosing_bindings = self.bindings.clone();
         let branch_scope = self.new_scope(Some(parent_scope), span);
         let mut stmts = Vec::new();
+        self.conditional_scopes.push(branch_scope);
         self.lower_block_into(body, branch_scope, &mut stmts);
+        self.conditional_scopes.pop();
         self.insert_scope_drops(&mut stmts, branch_scope);
         self.bindings = enclosing_bindings;
         bir::Block {
@@ -605,13 +633,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// The item type a `for` loop's pattern binds, falling back to a range value's own element type.
     ///
-    /// Normally this is just the typechecker's recorded type for the pattern span. The generic `Range[T]` spelling
-    /// carries its item type, so it supplies the recovery fallback only when the checker has no fact. That type
-    /// fallback never grants aggregate-layout authority; [`Self::range_loop_source`] separately requires local
-    /// materialization provenance before field projection.
+    /// A builtin list's retained closed element type supplies its declaring owner's identity even when that owner
+    /// is not imported in this module. An open element keeps the checker's contextual pattern type. The generic
+    /// `Range[T]` spelling carries its item type, so it supplies the recovery fallback only when the checker has no
+    /// fact. That type fallback never grants aggregate-layout authority; [`Self::range_loop_source`] separately
+    /// requires local materialization provenance before field projection.
     pub(super) fn for_item_type(&self, pattern: &ast::Spanned<ast::Pattern>, iter_ty: &IncanType) -> IncanType {
         let checked = self.resolve_ty(pattern.span);
         if let Some([element]) = collection_member_types(iter_ty, CollectionTypeId::List) {
+            if !self.leaves_type_open(element) {
+                return element.clone();
+            }
             return self.refine_task_storage(&checked, element);
         }
         if !matches!(checked, IncanType::Unknown) {
@@ -797,6 +829,67 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             end,
             step,
         }))))
+    }
+
+    /// Retain the exact count of a canonical zero-based unit-step range, evaluating its bound once.
+    /// Other range shapes remain on their existing iteration path. The count is clamped before a list fill so a
+    /// negative upper bound constructs an empty list rather than requesting a negative repetition count.
+    pub(super) fn zero_based_unit_range_count(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<Option<bir::Operand>, String> {
+        if let ast::Expr::Paren(inner) = &expr.node {
+            return self.zero_based_unit_range_count(inner, scope, out);
+        }
+        let ast::Expr::Call(_, _, args) = &expr.node else {
+            return Ok(None);
+        };
+        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Range)
+            || !zero_based_unit_arguments(args)
+        {
+            return Ok(None);
+        }
+        let Some(RangeLoopSource::Builtin(bounds)) = self.builtin_range_loop_source(expr, scope, out)? else {
+            return Err("exact comprehension count lacks checked scalar range bounds".into());
+        };
+        let span = hir_span(expr.span);
+        let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
+        let count = self.new_temp(int_ty, scope, span);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(count),
+                rvalue: bir::Rvalue::Use(bounds.end),
+            },
+            span,
+        });
+        let zero = bir::Operand::Constant(bir::Constant::Int(0));
+        let negative = self.push_assign_temp(
+            bir::Rvalue::BinaryOp(bir::BinOp::Lt, index_read(count), zero.clone()),
+            IncanType::Primitive(IncanPrimitiveType::Bool),
+            scope,
+            span,
+            out,
+        );
+        out.push(bir::Statement {
+            kind: bir::StatementKind::If {
+                cond: negative,
+                then_block: bir::Block {
+                    scope: self.new_scope(Some(scope), span),
+                    stmts: vec![bir::Statement {
+                        kind: bir::StatementKind::Assign {
+                            place: bir::Place::from_local(count),
+                            rvalue: bir::Rvalue::Use(zero),
+                        },
+                        span,
+                    }],
+                },
+                else_block: None,
+            },
+            span,
+        });
+        Ok(Some(index_read(count)))
     }
 
     /// Select positive-step or negative-step exhaustion from the retained scalar builtin arguments.
@@ -1360,17 +1453,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let protocol = self.type_info.protocol_iteration(iter_expr.span).cloned();
         let fallible = protocol.as_ref().is_some_and(|p| p.fallible_error_type.is_some());
         // The private hook table also covers opaque SDK Iterator returns whose legacy view stays builtin.
-        let custom = self
-            .type_info
-            .rust
-            .iteration_hooks
-            .contains_key(&(iter_expr.span.start, iter_expr.span.end))
+        let custom = self.type_info.rust.iteration_hooks.contains_key(&iter_expr.span)
             || protocol.is_some()
             || self
                 .type_info
                 .protocols
                 .body_ir_iterations
-                .contains_key(&(iter_expr.span.start, iter_expr.span.end));
+                .contains_key(&iter_expr.span);
         let effective_iter_expr: &ast::Spanned<ast::Expr> = match (&iter_expr.node, fallible) {
             (ast::Expr::Try(inner), true) => inner,
             _ => iter_expr,
@@ -1506,12 +1595,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let [ast::CallArg::Positional(source)] = args.as_slice() else {
             return None;
         };
-        if !self
-            .type_info
-            .rust
-            .iteration_hooks
-            .contains_key(&(source.span.start, source.span.end))
-        {
+        if !self.type_info.rust.iteration_hooks.contains_key(&source.span) {
             collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
         }
         Some(source)
@@ -1572,11 +1656,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
     ) {
         // ---- Source storage and enumeration state ----
-        let native = self
-            .type_info
-            .rust
-            .iteration_hooks
-            .contains_key(&(source.span.start, source.span.end));
+        let native = self.type_info.rust.iteration_hooks.contains_key(&source.span);
         let (iterator, initializer) = match self.initialize_enumeration_source(source, native, outer_scope, span, out) {
             Ok(initialized) => initialized,
             Err(reason) => {
@@ -2035,6 +2115,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Retain exclusive reads for changed non-Copy pattern bindings only. Ordinary aliases declared in the body
     /// keep their existing value-copy semantics; the pattern's own source spans identify its generated bindings.
+    /// Projected writes retain their own operand facts: changing a field does not reinitialize its owner binding.
     fn retain_in_place_iteration_bindings(&self, stmts: &mut [bir::Statement], item: bir::LocalId) {
         let pattern_span = self.locals[item.index()].span;
         let changed: Vec<_> = stmts
@@ -2065,6 +2146,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 place,
                 rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
             } = &mut statement.kind
+                && place.projection.is_empty()
                 && place.local_id().is_some_and(|local| changed.contains(&local))
             {
                 read.fact = bir::OwnershipFact::MutBorrow;
@@ -2121,10 +2203,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return false;
         };
         read.place.local_id() == Some(item)
-            && (read.fact == bir::OwnershipFact::MutBorrow
-                || self
-                    .type_info
-                    .method_call_takes_mutable_receiver(ast::Span::new(span.start, span.end)))
+            && (read.fact == bir::OwnershipFact::MutBorrow || self.type_info.method_call_takes_mutable_receiver(span))
     }
 
     /// Report whether an assigned value borrows `item` exclusively (a nested loop iterating it in place), or is a

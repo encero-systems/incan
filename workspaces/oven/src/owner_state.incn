@@ -7,29 +7,31 @@ derived from still has the identity it had (`Watched`); otherwise it is derived 
 line uses. Sources, artifacts and outputs are reconciled on every request, exactly as they are without an owner: the
 owner saves the startup and the preparation, never the check that an input changed.
 
-The owner serves a unit only when its Loaves are all standard packages and its manifest declares no Rust crate; anything
-else is answered `fallback`, and the command prepares it in its own process.
+The owner serves a unit only when its Loaves are all standard packages and its manifest declares neither a Rust facet
+nor vocabulary. Other units are answered `fallback`, and the command prepares them in its own process.
 """
 
 from std.fs import Path
 from std.environ import get_or
 from features import FeatureRequest
+from compiler_worker import generation_for
 from files import discard_file
 from home import owners_dir, standard_packages, unit_ledger
 from incan_units import compile_executable, program_binary
-from intake import intake
+from intake import intake, ManifestReader
 from loaf_local_graph import unique
-from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds
+from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds, trace_boundary
+from jec import begin, record
 from owner_protocol import Reply, Request, prepares_executable
-from rust_units import rust_facet
+from rust_units import registry_record_path, rust_facet
 from testing import tests_binary
 from toolchain import Toolchain, load_toolchain, toolchain_file
 from unit import UnitDescription, describe
 from unit_freshness import Key, artifact_identity, compiler_fingerprint, description_digest, ledger_name, reconciled_key
+from apple_sdk import sdk_paths
 from unit_rust import prepare_native
 
-
-const FALLBACK_REASON: str = "the owner serves only projects whose Loaves are standard packages"
+const FALLBACK_REASON: str = "the owner serves standard-only projects without Rust facets or vocabulary entries"
 
 
 pub model Watched:
@@ -127,12 +129,15 @@ pub model Owner:
 
     def prepare(mut self, request: Request) -> Reply:
         """Make the executable a run, build or test request needs, and say how that went."""
+        clock = begin()
         reset_trace()
+        trace_boundary("owner_received")
         mut reply = self.respond("refused")
         match self.try_prepare(request):
             Ok(found) => reply = found
             Err(reason) => reply.reason = reason
         reply.trace = taken_trace()
+        record("owner_request", f"{request.command}|{request.path}|{request.profile}", clock)
         return reply
 
     def try_prepare(mut self, request: Request) -> Result[Reply, str]:
@@ -151,6 +156,7 @@ pub model Owner:
             return Err(f"{request.path}: no such source file")
         # 2. The toolchain is the one installed now, and a changed one has dropped every retained entry.
         toolchain = self.current_toolchain()?
+        trace_boundary("toolchain_current")
         id = entry_id(request)
         # 3. An entry the owner does not serve is answered `fallback`, and the command prepares it itself.
         match self.held_entry(id, request, toolchain)?:
@@ -158,20 +164,31 @@ pub model Owner:
             Some(found) =>
                 # 4. The executable is kept or built for the key its inputs reconcile to, as without an owner.
                 mut held = found
+                trace_boundary("unit_prepared")
                 key = held.key(self.compiler)?
+                trace_boundary("source_key")
                 self.held[id] = held
                 return built(held.unit, toolchain, key, request, self.generation)
 
     def current_toolchain(mut self) -> Result[Toolchain, str]:
-        """The toolchain, loaded again when it or anything it names changed. A new toolchain drops every entry."""
+        """
+        The toolchain and worker selection, held while their complete observations match. Derivation must see
+        stable inputs; a changed toolchain drops every entry and a racing update refuses this request.
+        """
         match self.toolchain:
             Some(loaded) =>
                 if unchanged(self.toolchain_watched):
                     return Ok(loaded)
             None => pass
-        loaded = load_toolchain()?
-        self.compiler = compiler_fingerprint(loaded)?
-        self.toolchain_watched = watch(toolchain_paths(loaded)?)
+        manifest = watch([toolchain_file()?.0])
+        mut loaded = load_toolchain()?
+        watched = watch(toolchain_paths(loaded)?)
+        compiler = compiler_fingerprint(loaded)?
+        loaded.worker_generation = generation_for(compiler)?
+        if not unchanged(manifest) or not unchanged(watched):
+            return Err("toolchain inputs changed while selecting the compiler worker")
+        self.compiler = compiler
+        self.toolchain_watched = watched
         self.toolchain = Some(loaded)
         self.held = {}
         self.unsupported = {}
@@ -193,12 +210,19 @@ pub model Owner:
         if id in self.unsupported and unchanged(self.unsupported[id]):
             return Ok(None)
         # 2. The unit is prepared exactly as the command line prepares it, and the files it depends on are watched.
-        unit = prepare_native(describe(Path(request.path), request.profile, requested_features(request))?, toolchain)?
-        watched = watch(guard_paths(unit)?)
+        described = describe(
+            Path(request.path),
+            request.profile,
+            requested_features(request),
+            ManifestReader(),
+            Some(toolchain),
+        )?
         # 3. The owner's verdict that it does not serve this entry is itself retained, so it is not worked out again.
-        if not supported(unit)?:
-            self.unsupported[id] = watched
+        if not supported(described)?:
+            self.unsupported[id] = watch(guard_paths(described)?)
             return Ok(None)
+        unit = prepare_native(described, toolchain)?
+        watched = watch(guard_paths(unit)?)
         # 4. The preparation is kept with the digest of its description and the ledger of what requests observed.
         held = retain(unit, request.command, watched)?
         self.held[id] = held
@@ -234,11 +258,13 @@ def entry_id(request: Request) -> str:
 
 
 def supported(unit: UnitDescription) -> Result[bool, str]:
-    """Whether the owner serves this unit: standard Loaves only, and no Rust crate of its own."""
+    """Whether retained preparation can serve this unit without producer registration or a Rust facet."""
+    if unit.vocab_entry != None:
+        return Ok(false)
     if len(unit.rust_crates) > 0:
         return Ok(false)
     for loaf in unit.loaves:
-        if not loaf.standard:
+        if loaf.is_dependency():
             return Ok(false)
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
         return Ok(rust_facet(unit.project_root, false)?.kind == "")
@@ -252,7 +278,11 @@ def toolchain_paths(toolchain: Toolchain) -> Result[list[str], str]:
         paths.append(native.path)
     for cache in toolchain.rust_abi:
         paths.append(cache)
-    return Ok(paths)
+    if toolchain.registry_units != "":
+        paths.append(toolchain.registry_units)
+    if toolchain.registry_lock != "":
+        paths.append(toolchain.registry_lock)
+    return Ok(paths + sdk_paths(toolchain.sysroot)?)
 
 
 def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
@@ -260,26 +290,29 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
     The files a prepared unit depends on.
 
     1. The manifests of its project graph.
-    2. Its lock.
+    2. Its lock and any explicit registry producer record.
     3. The standard library directory with its packages' manifests.
-    4. The libraries of the standard packages it links.
+    4. The libraries of the standard providers and compiler facades it links.
     """
     root = Path(unit.project_root)
     mut paths: list[str] = []
     # 1. An edit to any manifest of the project graph ends the retained preparation.
     if root.joinpath("loaf.toml").is_file():
-        graph = intake(root).map_err((error) => error.message())?
+        graph = intake(root, unit.manifests).map_err((error) => error.message())?
         for project in graph.projects:
             paths.append(Path(project.root).joinpath("loaf.toml").0)
-    # 2. So does a change of the lock.
+    # 2. So does a change of the lock or its explicit producer selection.
     paths.append(root.joinpath("oven.lock").0)
+    registry_lock = registry_record_path(root.0, unit.manifests)?
+    if registry_lock != "":
+        paths.append(registry_lock)
     # 3. So does a change to the set of standard packages, or to the manifest of any of them.
     paths.append(get_or("INCAN_STDLIB", ""))
-    for package in standard_packages()?:
+    for package in standard_packages(unit.manifests)?:
         paths.append(Path(package.root).joinpath("loaf.toml").0)
-    # 4. So does a rebuilt library of a standard package the unit links.
+    # 4. So does a rebuilt standard provider or compiler facade the unit links.
     for loaf in unit.loaves:
-        paths.append(Path(loaf.dir).joinpath(f"lib{loaf.name.replace('-', '_')}.rlib").0)
+        paths.append(Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib").0)
     return Ok(unique(paths))
 
 
@@ -309,7 +342,8 @@ def built(
     mut capturing = toolchain
     capturing.console = prefix
     # 3. An executable whose key is unchanged is kept, and a changed one is compiled.
-    code = compile_executable(unit, capturing, output, key)?
+    development = request.command == "run" or request.command == "test"
+    code = compile_executable(unit, capturing, output, key, development)?
     # 4. The client learns how the compile ended, where the executable is, and everything the compiler printed.
     return Ok(
         Reply(

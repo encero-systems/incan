@@ -26,27 +26,40 @@ mod checked_json;
 mod cloneable_closures;
 mod closures;
 mod codegraph;
+mod command_diagnostics;
+mod command_format;
 mod comparison_bridges;
 mod coroutines;
 mod declarations;
+mod derived_display;
 mod error;
 mod fallible_bridges;
 mod field_metadata;
+mod foreign;
+mod formatting;
 mod frontend;
 mod frozen_values;
 mod futures;
 mod generic_layouts;
+mod generic_loans;
 mod identity;
 mod library_exports;
 mod native_attributes;
 mod native_crates;
+mod native_loans;
+mod native_search;
+mod native_shared;
+mod native_timing;
+mod panic_hooks;
 mod plan;
 mod program_entries;
 mod rust_codegraph;
 mod rust_facts;
 mod rust_graph_bodies;
 mod rust_graph_records;
+mod rust_imports;
 mod shared_callables;
+mod signature_lifetimes;
 mod spans;
 mod statics;
 mod terminators;
@@ -56,33 +69,55 @@ mod union_debug;
 mod validation;
 mod value_enum_serde;
 mod values;
+#[cfg(unix)]
+mod worker;
+mod zip_carriers;
 
 use std::path::Path;
 
-use incan_cli::commands::DiagnosticOutputFormat;
+use command_diagnostics::DiagnosticOutputFormat;
 use incan_driver::unit::UnitDescription;
 
-const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT SYSROOT [--format \
-                     text|json] [OPTIONS] | --fmt UNIT PATH [--check] | --codegraph UNIT SYSROOT OUTPUT | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --identity SYSROOT\n\
-                     OPTIONS: --rustc-arg ARG, --library (native artifacts and ABI caches come from UNIT)";
+/// The receipt `--check --certify PATH` writes when unchanged inputs reproduce the check's exact report.
+const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
-/// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote, or write the
-/// ABI cache of Rust crates (`--rust-abi`), format source with the unit's vocabulary (`--fmt`), or export checked
-/// graphs (`--codegraph` and `--rust-codegraph`).
+const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
+                     --source-interface UNIT SYSROOT DIRECTORY | \
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY IDLE_SECONDS | --identity SYSROOT\n\
+                     OPTIONS: --rustc-arg ARG, --library, --shared-native DIR (native artifacts and ABI caches come from UNIT)";
+
+/// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
+/// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), or write the ABI cache
+/// of Rust crates (`--rust-abi`), format source with the unit's vocabulary (`--fmt`), discover authored files
+/// (`--source-files`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--rust-codegraph` and
+/// `--rust-compile-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        #[cfg(unix)]
+        Some("--resident") => worker::serve(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
-        Some("--check") => check(&args[1..]),
-        Some("--fmt") => format(&args[1..]),
+        Some("--source-interface") => frontend::source_interface(&args[1..]),
+        Some("--check") => exit_with(check(&args[1..])?),
+        Some("--fmt") => exit_with(format(&args[1..])?),
+        Some("--source-files") => {
+            let [path] = &args[1..] else {
+                return Err(USAGE.into());
+            };
+            let path = std::path::absolute(path)?;
+            let files = command_format::source_files(&path).map_err(|error| error.message)?;
+            println!("{}", serde_json::to_string(&files)?);
+            Ok(())
+        }
         Some("--codegraph") => codegraph::incan(&args[1..]),
         Some("--read-codegraph") => codegraph::read(&args[1..]),
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
         Some("--rust-compile-codegraph") => rust_codegraph::compile(&args[1..]),
         Some("--rust-abi") => rust_abi(&args[1..]),
+        Some("--rust-imports") => rust_imports::export(&args[1..]),
         Some("--identity") => verify_sysroot(&args[1..]),
         _ => Err(USAGE.into()),
     }
@@ -99,8 +134,30 @@ fn verify_sysroot(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-/// Format a source through the compiler's command function using the unit vocabulary supplied by Oven.
-fn format(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+/// End the process with a command's nonzero status; status zero returns, so `main` completes normally.
+fn exit_with(code: i32) -> Result<(), Box<dyn std::error::Error>> {
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
+/// Print a failed command's message to stderr and return its status; a command that succeeded has status zero.
+fn status_of<T>(result: incan_driver::error::CliResult<T>) -> i32 {
+    match result {
+        Ok(_) => 0,
+        Err(error) => {
+            if !error.message.is_empty() {
+                eprintln!("{}", error.message);
+            }
+            error.exit_code.0
+        }
+    }
+}
+
+/// Format a source through the compiler's command function using the unit vocabulary supplied by Oven, and return
+/// the command's status. A short-lived process and the resident worker share this exact path.
+pub(crate) fn format(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
     let [unit_path, source, options @ ..] = arguments else {
         return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into());
     };
@@ -110,13 +167,8 @@ fn format(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into()),
     };
     let unit = UnitDescription::read(Path::new(unit_path)).map_err(|error| error.message)?;
-    if let Err(error) = incan_cli::commands::format_files(source, &unit, check, false) {
-        if !error.message.is_empty() {
-            eprintln!("{}", error.message);
-        }
-        std::process::exit(error.exit_code.0);
-    }
-    Ok(())
+    let formatted = command_format::format_files(source, &unit, check);
+    Ok(status_of(formatted))
 }
 
 /// Write the ABI cache of the named Rust crates: every public item, described from rustc's crate metadata.
@@ -151,27 +203,42 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Check one unit and exit with the check's status; the report goes to stdout, a refusal's message to stderr. The
-/// unit's crates and their ABI caches supply its Rust facts, as for `--unit`.
-fn check(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+/// Check one unit and return the check's status; the report goes to stdout, a refusal's message to stderr. The
+/// unit's crates and their ABI caches supply its Rust facts, as for `--unit`. A short-lived process and the resident
+/// worker share this exact path.
+///
+/// With `--certify PATH`, a report that unchanged inputs reproduce exactly (a pass, or a refusal by source
+/// diagnostics) also writes the check receipt there, which lets Oven replay it; any other outcome writes none.
+pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
     let [path, sysroot, rest @ ..] = arguments else {
         return Err(USAGE.into());
     };
-    let (format, options) = match rest {
-        [flag, format, options @ ..] if flag == "--format" => match format.as_str() {
-            "text" => (DiagnosticOutputFormat::Text, options),
-            "json" => (DiagnosticOutputFormat::Json, options),
+    let (format, rest) = match rest {
+        [flag, format, rest @ ..] if flag == "--format" => match format.as_str() {
+            "text" => (DiagnosticOutputFormat::Text, rest),
+            "json" => (DiagnosticOutputFormat::Json, rest),
             _ => return Err(USAGE.into()),
         },
-        options => (DiagnosticOutputFormat::Text, options),
+        rest => (DiagnosticOutputFormat::Text, rest),
     };
+    let (certificate, options) = certified_options(rest);
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
     let rust = frontend::dependencies(&unit, options)?.rust_facts(&unit, Path::new(sysroot));
-    if let Err(error) = incan_cli::commands::check(&unit, &rust, format) {
-        if !error.message.is_empty() {
-            eprintln!("{}", error.message);
-        }
-        std::process::exit(error.exit_code.0);
+    let checked = incan_driver::check::check_unit(&unit, &rust);
+    let reproducible = checked.as_ref().is_ok_and(|report| report.reproducible);
+    let status = status_of(checked.and_then(|report| command_diagnostics::render_check_report(report, format)));
+    if reproducible && let Some(certificate) = certificate {
+        // A receipt that cannot be written only means the next unchanged check runs again.
+        let _ = std::fs::write(certificate, CHECK_CERTIFICATE);
     }
-    Ok(())
+    Ok(status)
+}
+
+/// Split a leading `--certify PATH` from a command's native options. The path is where `--check` and `--unit` write
+/// their receipt when unchanged inputs reproduce the outcome exactly; the remaining options are returned as they are.
+pub(crate) fn certified_options(options: &[String]) -> (Option<&Path>, &[String]) {
+    match options {
+        [flag, certificate, options @ ..] if flag == "--certify" => (Some(Path::new(certificate)), options),
+        options => (None, options),
+    }
 }

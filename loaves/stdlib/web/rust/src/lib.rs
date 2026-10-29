@@ -23,8 +23,6 @@ use tokio::runtime::Runtime;
 // generated-code targets for the current host runtime.
 pub use axum::Json;
 
-pub type AxumJson<T> = axum::Json<T>;
-
 /// An HTML response body: the text is served with `Content-Type: text/html`.
 ///
 /// `std.web` writes this type without a type argument (`-> Html`, `Html("<p>ok</p>")`), so the facet closes axum's

@@ -1,13 +1,11 @@
 # Incan feature inventory
 
 !!! warning "Generated file"
-    Do not edit this page by hand. If it looks wrong/outdated, update `loaves/stdlib/core/src/features.incn` and regenerate it.
+    Do not edit this page by hand. Update `loaves/stdlib/core/src/features.incn` and regenerate it.
 
-    Regenerate with: `cargo run -p incan-cli --bin generate_feature_inventory`
+    Regenerate with: `incan run scripts/generate_feature_inventory.incn`
 
-This page is a generated, present-tense atlas of user-facing Incan capabilities. It is intentionally higher-level than the generated language vocabulary tables: one feature can span syntax, type checking, stdlib source, manifests, tooling, and examples.
-
-Use it when deciding whether code should use an existing Incan surface before adding wrappers, Rust fallbacks, or project-local conventions.
+This inventory describes the source-authored public features in the compiler's checked catalog.
 
 ## Contents
 
@@ -21,7 +19,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Namespaced stdlib imports and decorators | Stdlib | 0.2 | Import the relevant `std.*` module. | `from std.testing import assert_eq`<br>`from std.web.routing import route`<br>`@route("/hello")` | Standard-library APIs and compiler-owned decorators resolve through explicit `std.*` module paths. | Bare pre-0.2 stdlib names and ambient decorator magic. | [Imports and modules](imports_and_modules.md), [Standard library](stdlib/index.md), [Release 0.2](../../release_notes/0_2.md) |
 | Rust interop boundary | Interop | 0.2 | Declare Rust dependencies in `loaf.toml`; import through `rust` / `rust::` paths. | `from rust::uuid import Uuid`<br>`from rust::std::time import Instant`<br>`type UserId = rusttype i64` | Incan can import Rust crates, bind Rust paths, declare `rusttype` wrappers, and model explicit interop edges. | Custom Rust backend modules used when ordinary Rust imports or wrappers are sufficient. | [Rust interop](../how-to/rust_interop.md), [Rust types for Python developers](../how-to/rust_types_for_python_devs.md), [Release 0.2](../../release_notes/0_2.md) |
 | Checked C binding foundation | Interop | 0.5 | Import `c` from `std.interop`, then declare a `binding` in the importing module. | `from std.interop import c`<br>`binding LibC:`<br>`text = c.cstr(value)?`<br>`unsafe:     LibC.absolute(-7)` | Explicit C headers, exact scalar signatures (`i8`–`i128`, `u8`–`u128`, `usize`, `f32`, `f64`), opaque resources, output positions, paired byte or `f32` spans, bounded C-string text bridges, enum carriers, and plain layouts are verified before private generated C ABI calls. | Unverified Rust wrappers, ambient header discovery, string-based dynamic symbol lookup, or general raw-pointer access. | [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md), [Release 0.5](../../release_notes/0_5.md) |
-| Locked Oven interop requirements | Interop | 0.5 | Declare target-specific `[interop.c]` requirements in `loaf.toml`, then run `incan lock`. | `[interop.c]`<br>`[[interop.c.targets]]`<br>`incan lock` | Package-owned headers, artifacts, system capabilities, and C/C++ shim sources are declared explicitly alongside toolchain and SDK compatibility requirements, then frozen in the semantic lock. | Ambient host discovery, untracked interop source trees, or package manifests that claim a concrete local compiler or SDK has already been selected. | [Project configuration](../../tooling/reference/project_configuration.md#interopc), [Checked C bindings](../how-to/checked_c_bindings.md), [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md) |
+| Declared Oven interop requirements | Interop | 0.5 | Declare `[interop.c]` headers in `loaf.toml`, then check or build the source. | `[interop.c]`<br>`incan check src/main.incn`<br>`incan describe-unit src/main.incn` | Oven supplies declared C headers to the compiler; checked bindings verify symbols and layouts with Clang for the supported host target. | Ambient host discovery, untracked interop source trees, or package manifests that claim a concrete local compiler or SDK has already been selected. | [Project configuration](../../tooling/reference/project_configuration.md#interopc), [Checked C bindings](../how-to/checked_c_bindings.md), [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md) |
 | Incan libraries and `pub::` imports | Libraries | 0.2 | Build libraries with `incan build --lib`; consume dependencies through `pub::` imports. | `from pub::mylib import my_module`<br>`from pub::mylib.my_module import my_function`<br>`pub from session import Session` | Projects publish checked APIs through explicit root facades and source-derived module namespaces. | Copying source files between projects or relying on private module paths. | [Imports and modules](imports_and_modules.md), [Release 0.2](../../release_notes/0_2.md), [Release 0.5](../../release_notes/0_5.md) |
 | Module static storage | Syntax | 0.2 | None. | `static hits: int = 0`<br>`pub static registry: dict[str, int] = {}` | `static` declares live module-owned runtime storage, distinct from deeply immutable `const` values. | Module-level mutable state hidden behind ad hoc helper functions. | [Static storage](static_storage.md), [Module state](../how-to/module_state.md), [Release 0.2](../../release_notes/0_2.md) |
 | First-class function references | TypeSystem | 0.2 | None. | `handler: Callable[int, str] = label`<br>`callbacks = [on_success, on_error]`<br>`Mapper with Callable1[int, str]` | Named functions and closures can be passed, stored, typed, and accepted through `CallableN` bounds. | Closures or wrappers whose only job is to pass through an existing named function. | [Functions and calls](functions.md), [Callable objects](stdlib_traits/callable.md), [Release 0.2](../../release_notes/0_2.md), [Release 0.5](../../release_notes/0_5.md) |
@@ -49,9 +47,9 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `Result[T, E]` combinators | Stdlib | 0.3 | Use `Result[T, E]` values. | `result.map(transform)`<br>`result.and_then(validate)`<br>`result.inspect(log_success)` | `Result` values support branch-local transforms, fallible chaining, recovery, and inspection taps. | Nested matches that only rewrap `Ok` / `Err` around one transformed branch. | [std.result](stdlib/result.md), [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md), [Release 0.3](../../release_notes/0_3.md) |
 | Protocol hooks for core syntax | TypeSystem | 0.3 | Define compatible dunder hooks and adopt/document the corresponding trait vocabulary where useful. | `def __len__(self) -> int:`<br>`def __iter__(self) -> Iterator[T]:`<br>`def __call__(self, value: T) -> U:` | User-defined types can participate in truthiness, length, membership, iteration, indexing, assignment, and calls. | Special-casing custom types in caller code instead of giving the type the expected protocol. | [Traits as language hooks](../explanation/traits_as_language_hooks.md), [Collection protocols](stdlib_traits/collection_protocols.md), [Operators](stdlib_traits/operators.md) |
 | Rust trait adoption from Incan | Interop | 0.3 | Import the Rust trait metadata and adopt with `with TraitName`. | `type UserId = rusttype i64 with Display:`<br>`def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:`<br>`type Output for Add[int] = UserId` | Newtype and rusttype declarations can author Rust trait impls with Incan adoption syntax. | Writing Rust-shaped `impl Trait for Type` concepts in comments or custom backend code. | [Rust interop](../how-to/rust_interop.md), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
-| Targeted generated-Rust lint suppression | Interop | 0.3 | Use `@rust.allow(...)` on supported declarations. | `@rust.allow("dead_code")`<br>`def helper() -> None:` | Generated Rust can receive narrow lint suppressions on individual items when source semantics require them. | Project-wide lint disables or broad generated-Rust allowance groups. | [Rust interop](../how-to/rust_interop.md#targeted-generated-rust-lint-suppression), [Release 0.3](../../release_notes/0_3.md) |
+| Checked Rust lint annotations | Interop | 0.3 | Use `@rust.allow(...)` on supported declarations. | `@rust.allow("dead_code")`<br>`def helper() -> None:` | The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy. | Broad lint groups or annotations used to hide a source type error. | [Rust interop](../how-to/rust_interop.md#targeted-generated-rust-lint-suppression), [Release 0.3](../../release_notes/0_3.md) |
 | Scoped DSL surfaces | Syntax | 0.3 | Import a vocab package that publishes scoped surface descriptors. | `query:`<br>`.field`<br>`\|>`<br>`sum(value)` | Library vocab crates can activate declaration, clause, glyph, leading-dot, and scoped symbol syntax inside their own DSL blocks. | Global parser changes for syntax that only belongs to one imported DSL. | [Authoring vocab crates](../../contributing/how-to/authoring_vocab_crates.md), [Release 0.3](../../release_notes/0_3.md) |
-| `std.web` hosted web framework | Stdlib | 0.2 | Import from `std.web` or submodules such as `std.web.routing`. | `from std.web.routing import route`<br>`from std.web.response import Json`<br>`@route("/health")` | `std.web` provides hosted web app, routing, request, response, and macro surfaces with compiler-activated web runtime dependencies. The 0.5 toolchain ships the checked web closure in its full-standard-library Loaf, so normal builds and runs can reuse it without invoking Cargo on the consumer path. | Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps. | [Imports and modules](imports_and_modules.md), [Web framework tutorial](../tutorials/web_framework.md), [Release 0.2](../../release_notes/0_2.md) |
+| `std.web` hosted web framework | Stdlib | 0.2 | Import from `std.web` or submodules such as `std.web.routing`. | `from std.web.routing import route`<br>`from std.web.response import Json`<br>`@route("/health")` | `std.web` provides hosted web app, routing, request, response and macro surfaces through compiled standard packages and their checked native dependencies. | Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps. | [Imports and modules](imports_and_modules.md), [Web framework tutorial](../tutorials/web_framework.md), [Release 0.2](../../release_notes/0_2.md) |
 | `std.math` numeric helpers | Stdlib | 0.2 | Import `std.math`. | `import std.math`<br>`math.sqrt(9.0)`<br>`math.gcd(12, 18)`<br>`math.is_float_like("1.25e3")` | `std.math` provides mathematical constants, integer gcd/lcm helpers, floating-point functions, and numeric-string shape checks. | Direct Rust math imports or project-local numeric string probes for ordinary numeric helper calls. | [std.math](stdlib/math.md), [Release 0.2](../../release_notes/0_2.md) |
 | `std.collections` specialized containers | Stdlib | 0.3 | Import from `std.collections`. | `from std.collections import Deque, Counter, PriorityQueue`<br>`queue = Deque[int]()` | Specialized containers cover deque, counter, default dict, ordered/sorted maps and sets, chain maps, and priority queues. | Encoding specialized container behavior in plain `list`, `dict`, or `set` plus ad hoc helpers. | [std.collections](stdlib/collections.md), [Choosing collections](../how-to/choosing_collections.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.graph` directed graph types | Stdlib | 0.3 | Import from `std.graph`. | `from std.graph import DiGraph, Dag`<br>`graph = DiGraph[Task]()` | Graph types provide stable node/edge ids, DAG invariants, adjacency queries, traversal, and topological ordering. | Hand-rolled adjacency maps for ordinary dependency, plan, or workflow graphs. | [std.graph](stdlib/graph.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -72,19 +70,19 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `std.checksum` CRC32 helpers | Stdlib | 0.5 | Import from `std.checksum`. | `from std.checksum import crc32`<br>`crc32.value(b"abc")`<br>`crc32.digest(b"abc")`<br>`h = crc32.new()` | `std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts. | Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics. | [std.checksum](stdlib/checksum.md), [Hashing data](../how-to/hashing_data.md), [RFC 065 checksum boundary](../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary), [Release 0.5](../../release_notes/0_5.md) |
 | Testing assertions and markers | Testing | 0.3 | Use `assert` directly; import marker/helper APIs from `std.testing`. | `assert value == expected`<br>`assert call() raises ValueError`<br>`@parametrize("case", cases)` | Tests can use language assertions, raises checks, helper assertions, fixtures, parametrization, and marker decorators. | Ad hoc panic helpers or external test metadata formats for ordinary Incan tests. | [std.testing](stdlib/testing.md), [Testing how-to](../how-to/testing_stdlib.md), [Release 0.3](../../release_notes/0_3.md) |
 | `incan test` runner | Testing | 0.3 | Run `incan test`. | `module tests:`<br>`incan test --list`<br>`incan test --format json --junit report.xml` | The runner owns discovery, inline test modules, stable ids, selection, fixtures, parametrization, reporting, shuffling, and scheduling. | Project-local scripts that duplicate core test discovery and reporting behavior. | [Tooling: testing](../../tooling/how-to/testing.md), [std.testing](stdlib/testing.md), [Release 0.3](../../release_notes/0_3.md) |
-| Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft-keyword surfaces backed by `std.async` modules. The 0.5 toolchain ships the checked async closure in its full-standard-library Loaf, so task, timeout, and supported runtime paths can build and run without invoking Cargo on the consumer path. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
+| Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft keywords backed by compiled `std.async` modules, with native task, timeout and runtime support. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
 | Async race and awaitability | Async | 0.3 | Import `std.async.race` or the relevant async prelude helpers. | `race for value:`<br>`arm(task)`<br>`race(arms)` | `Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows. | Legacy `std.async.select` or hand-rolled polling loops. | [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md) |
-| Project lifecycle tooling | Tooling | 0.3 | Use `incan init`, `incan new`, `incan version`, or `incan env`. | `incan new greeter --yes`<br>`incan version patch`<br>`incan env run dev test` | Project commands create scaffolds, manage versions, and run configured environments from `loaf.toml`. | One-off project scaffolding scripts or manual version-file edits. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
-| Workspace and multi-package projects | Tooling | 0.5 | Declare `[workspace]` in the repository root and inspect or select members through the CLI. | `incan workspace inspect --format json`<br>`incan test --workspace`<br>`incan build --member packages/api --report json` | Workspaces supply explicit rooted/virtual member topology, deterministic scope selection, explicit shared dependency and environment inheritance, one durable root lock, and member-scoped command reports. | Ad hoc directory conventions, member-local locks, or implicit cross-project dependency activation. | [Project lifecycle](project_lifecycle.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md) |
-| Toolchain installer and release manifest | Tooling | 0.4 | Use the GitHub Release installer, Homebrew formula, npm package, pipx package, or versioned toolchain manifest. | `curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh \| bash`<br>`brew tap encero-systems/tap && brew install incan`<br>`npm install -g @incan/toolchain`<br>`pipx install incan` | The toolchain install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` from the same release archives across direct and package-manager channels. Direct and pipx installation can provision pinned Rust 1.98.0 and `wasm32-wasip1`; npm and Homebrew install prebuilt command binaries and leave Rust management to the user. | Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth. | [Install and run](../../tooling/how-to/install_and_run.md), [Release 0.4](../../release_notes/0_4.md) |
-| Zero-clone starter project flow | Tooling | 0.4 | Use `incan new`, then run project commands from the generated directory. | `incan new hello --yes`<br>`cd hello`<br>`incan run`<br>`incan test`<br>`incan build --release` | `incan new` creates a runnable, testable project with a manifest, entrypoint, starter test, README, `.gitignore`, and release-line toolchain constraint. | Cloning the compiler repository or copying examples manually before a first run. | [Getting started](../../tooling/tutorials/getting_started.md), [Project lifecycle](project_lifecycle.md), [Release 0.4](../../release_notes/0_4.md) |
-| Stable diagnostics commands | Tooling | 0.4 | Use `incan check` or `incan explain`. | `incan check src/main.incn --format json`<br>`incan explain INCAN-T0001` | Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations. | Scraping terminal diagnostics or building tool-specific error-code maps. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
-| Build reports and generated Rust inspection | Tooling | 0.4 | Use `incan build --report json` or `incan inspect rust`. | `incan build src/main.incn --report json`<br>`incan build --lib --report json --report-output build.json`<br>`incan inspect rust src/main.incn --format json` | Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available. | Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
-| Build and test Oven observability | Tooling | 0.5 | Use a JSON build report, verbose test output, or `incan oven store inspect --format json` to inspect the documented Oven Alpha envelope. | `incan build --report json`<br>`incan test -v tests`<br>`incan oven store inspect --format json` | Oven Alpha build and test paths report receipt selection, preparation or reuse, and direct-rustc execution timing. Store inspection reports separate logical artifact bytes, physical allocation, reclaimability, and active lease use without reading a generated Cargo target directory. | Silent long-running preparation or inspecting generated Cargo target directories instead of the bounded Oven store. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md) |
-| Compiler-backed codegraph inspection | Tooling | 0.4 | Use `incan inspect codegraph`. | `incan inspect codegraph src/main.incn --format jsonl`<br>`incan inspect codegraph src --format jsonl --allow-errors` | Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records. | Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure. | [Codegraph inspection](../../tooling/reference/codegraph_inspection.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
-| Checked API metadata | Tooling | 0.3 | Use `incan tools metadata api` or LSP metadata commands. | `incan tools metadata api src/lib.incn`<br>`incan tools metadata model emit` | Typechecked public APIs can emit structured metadata for docs, manifests, hovers, and model bundle tooling. | Scraping source text or generated Rust when tooling needs API contracts. | [Release 0.3](../../release_notes/0_3.md), [Project lifecycle](project_lifecycle.md) |
-| Compiled providers, SDK components, and package features | Libraries | 0.5 | Select SDK components in `[sdk]`; select additive package features in manifests or with Incan feature flags. | `[sdk] profile = "minimal" components = ["stdlib-data"]`<br>`incan build --features json --sdk-profile minimal`<br>`when feature("json"):     pub from json_support import JsonReport`<br>`incan inspect providers --format json` | Checked libraries and official SDK components resolve through one provider plan, while package-owned features project additive source and dependency facts without exposing Cargo features as Incan API. | Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics. | [SDK components and package features](../../tooling/reference/sdk_components_and_package_features.md), [Conditional compilation](conditional_compilation.md), [Project configuration](../../tooling/reference/project_configuration.md), [Release 0.5](../../release_notes/0_5.md) |
-| Formatter spacing and wrapping contract | Tooling | 0.3 | Run `incan fmt`. | `incan fmt src/main.incn`<br>`incan fmt --check` | Formatter output has explicit vertical-spacing buckets, docstring normalization, comment attachment, and common wrapping rules. | Hand-maintained whitespace conventions that drift from the formatter. | [Code style](code_style.md), [Formatting how-to](../../tooling/how-to/formatting.md), [Release 0.3](../../release_notes/0_3.md) |
+| Project lifecycle tooling | Tooling | 0.3 | Declare the project and scripts in `loaf.toml`, then pass an explicit source path to Oven. | `loaf.toml`<br>`incan describe-unit src/main.incn`<br>`incan build src/main.incn` | Oven reads project manifests, selects compilation inputs and prepares declared dependencies before checking, building, running or testing source. | Duplicated project resolution in compiler and editor tools. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
+| Path-linked multi-package projects | Tooling | 0.5 | Declare path dependencies and select a package's source explicitly. | `[dependencies]`<br>`helper = { path = "../helper" }`<br>`incan build src/main.incn` | Oven prepares the selected package's active path dependency graph, with checked public aliases and unified package features. | Implicit cross-project dependency activation or copying a dependency's source into its consumer. | [Project lifecycle](project_lifecycle.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md) |
+| Toolchain installer and release manifest | Tooling | 0.4 | Pack an installed toolchain and install the resulting native archive. | `incan toolchain pack toolchain.tar.zst`<br>`incan toolchain install toolchain.tar.zst` | Oven verifies a staged archive's portable manifest, binds the local Rust sysroot and checks the compiler identity before publishing an installation. | Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth. | [Install and run](../../tooling/how-to/install_and_run.md), [Release 0.4](../../release_notes/0_4.md) |
+| Installed-toolchain starter project flow | Tooling | 0.4 | Create a manifest, source entry and test file, then run the installed commands. | `loaf.toml`<br>`src/main.incn`<br>`incan run src/main.incn`<br>`incan test tests/test_main.incn`<br>`incan build src/main.incn --profile release` | A project with a declared script can run, test and build through an installed toolchain without cloning the compiler repository. | Cloning the compiler repository or copying examples manually before a first run. | [Getting started](../../tooling/tutorials/getting_started.md), [Project lifecycle](project_lifecycle.md), [Release 0.4](../../release_notes/0_4.md) |
+| Stable diagnostic reports | Tooling | 0.4 | Use `incan check PATH --format json`. | `incan check src/main.incn --format json` | Check reports publish stable diagnostic codes, source spans, notes, hints and explanation command strings in versioned JSON. | Scraping terminal diagnostics or building tool-specific error-code maps. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
+| Unit descriptions and checked graph inspection | Tooling | 0.4 | Use `incan describe-unit` or `incan inspect codegraph` with an explicit source path. | `incan describe-unit src/main.incn`<br>`incan inspect codegraph src/main.incn --format jsonl` | Unit descriptions publish selected compilation inputs; checked graphs expose declarations, Rust interop facts, source ranges and provenance. | Scraping terminal progress output for source or dependency facts. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
+| Build and test Oven observability | Tooling | 0.5 | Set `OVEN_TRACE=-` for preparation traces or request a unit description. | `OVEN_TRACE=- incan run src/main.incn`<br>`incan describe-unit src/main.incn` | Oven traces distinguish compilation, executable reuse and replayed refusals, with the reason for preparing a changed unit. | Inferring compilation or reuse from timestamps and elapsed time alone. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md) |
+| Compiler-backed codegraph inspection | Tooling | 0.4 | Use `incan inspect codegraph`. | `incan inspect codegraph src/main.incn --format jsonl`<br>`incan inspect codegraph src/main.incn --query defs main` | Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records. | Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure. | [Codegraph inspection](../../tooling/reference/codegraph_inspection.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
+| Checked API metadata | Tooling | 0.3 | Build a library; consumers and LSP read its published `.incnlib` metadata. | `incan build src/lib.incn`<br>`from pub::library import Item` | Checked libraries publish structured API metadata with public declarations, signatures, documentation and namespace members. | Scraping source text when tooling needs checked API contracts. | [Release 0.3](../../release_notes/0_3.md), [Checked API metadata](../../tooling/reference/checked_api_metadata.md) |
+| Compiled libraries, standard packages, and package features | Libraries | 0.5 | Use installed standard packages and declared dependencies; select package features in manifests or unit options. | `[project.features] default = ["json"] json = []`<br>`incan build src/main.incn --features json`<br>`when feature("json"):     pub from json_support import JsonReport`<br>`incan describe-unit src/main.incn` | Standard packages are compiled Loaves. Package features select additive source and dependency facts, with the selected features recorded in the unit description. | Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics. | [Standard packages and package features](../../tooling/reference/sdk_components_and_package_features.md), [Conditional compilation](conditional_compilation.md), [Project configuration](../../tooling/reference/project_configuration.md), [Release 0.5](../../release_notes/0_5.md) |
+| Formatter spacing and wrapping contract | Tooling | 0.3 | Run `incan fmt`. | `incan fmt src/main.incn`<br>`incan fmt --check src/main.incn` | Formatter output has explicit vertical-spacing buckets, docstring normalization, comment attachment, and common wrapping rules. | Hand-maintained whitespace conventions that drift from the formatter. | [Code style](code_style.md), [Formatting how-to](../../tooling/how-to/formatting.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.registry` typed declaration catalogs | Stdlib | 0.5 | Import from `std.registry` and define a typed static registry. | `from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind`<br>`@describe(functions, FunctionId("normalize"), FunctionDescriptor(...))`<br>`pub static capability: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(key=FeatureId("std.logging"), subject=RegistrySubject.current_unit(), descriptor=FeatureDescriptor(...))` | Typed registries associate checked structural descriptors with declarations, compilation units, or packages while keeping complete inspection distinct from loaded runtime entries. | Comment metadata blocks, source scanners, global registration side effects, or Rust-authored catalog facades. | [std.registry](stdlib/registry.md), [RFC 113](../../RFCs/closed/implemented/113_std_registry_and_declaration_descriptors.md), [Release 0.5](../../release_notes/0_5.md) |
 
 ## Feature details
@@ -148,24 +146,24 @@ Canonical forms:
 - `unsafe:
     LibC.absolute(-7)`
 
-### Locked Oven interop requirements
+### Declared Oven interop requirements
 
 - **Id:** `OvenInteropRequirements`
 - **Category:** `Interop`
 - **Since:** `0.5`
 - **RFC:** `RFC 116`
 - **Stability:** `Experimental`
-- **Activation:** Declare target-specific `[interop.c]` requirements in `loaf.toml`, then run `incan lock`.
+- **Activation:** Declare `[interop.c]` headers in `loaf.toml`, then check or build the source.
 - **Use instead of:** Ambient host discovery, untracked interop source trees, or package manifests that claim a concrete local compiler or SDK has already been selected.
 - **References:** [Project configuration](../../tooling/reference/project_configuration.md#interopc), [Checked C bindings](../how-to/checked_c_bindings.md), [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md)
 
-Package-owned headers, artifacts, system capabilities, and C/C++ shim sources are declared explicitly alongside toolchain and SDK compatibility requirements, then frozen in the semantic lock.
+Oven supplies declared C headers to the compiler; checked bindings verify symbols and layouts with Clang for the supported host target.
 
 Canonical forms:
 
 - `[interop.c]`
-- `[[interop.c.targets]]`
-- `incan lock`
+- `incan check src/main.incn`
+- `incan describe-unit src/main.incn`
 
 ### Incan libraries and `pub::` imports
 
@@ -672,7 +670,7 @@ Canonical forms:
 - `def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:`
 - `type Output for Add[int] = UserId`
 
-### Targeted generated-Rust lint suppression
+### Checked Rust lint annotations
 
 - **Id:** `RustAllow`
 - **Category:** `Interop`
@@ -680,10 +678,10 @@ Canonical forms:
 - **RFC:** `RFC 057`
 - **Stability:** `Stable`
 - **Activation:** Use `@rust.allow(...)` on supported declarations.
-- **Use instead of:** Project-wide lint disables or broad generated-Rust allowance groups.
+- **Use instead of:** Broad lint groups or annotations used to hide a source type error.
 - **References:** [Rust interop](../how-to/rust_interop.md#targeted-generated-rust-lint-suppression), [Release 0.3](../../release_notes/0_3.md)
 
-Generated Rust can receive narrow lint suppressions on individual items when source semantics require them.
+The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy.
 
 Canonical forms:
 
@@ -721,7 +719,7 @@ Canonical forms:
 - **Use instead of:** Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps.
 - **References:** [Imports and modules](imports_and_modules.md), [Web framework tutorial](../tutorials/web_framework.md), [Release 0.2](../../release_notes/0_2.md)
 
-`std.web` provides hosted web app, routing, request, response, and macro surfaces with compiler-activated web runtime dependencies. The 0.5 toolchain ships the checked web closure in its full-standard-library Loaf, so normal builds and runs can reuse it without invoking Cargo on the consumer path.
+`std.web` provides hosted web app, routing, request, response and macro surfaces through compiled standard packages and their checked native dependencies.
 
 Canonical forms:
 
@@ -1126,7 +1124,7 @@ Canonical forms:
 - **Use instead of:** Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax.
 - **References:** [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md)
 
-`async` and `await` are import-activated soft-keyword surfaces backed by `std.async` modules. The 0.5 toolchain ships the checked async closure in its full-standard-library Loaf, so task, timeout, and supported runtime paths can build and run without invoking Cargo on the consumer path.
+`async` and `await` are import-activated soft keywords backed by compiled `std.async` modules, with native task, timeout and runtime support.
 
 Canonical forms:
 
@@ -1160,36 +1158,36 @@ Canonical forms:
 - **Since:** `0.3`
 - **RFC:** `RFC 015`
 - **Stability:** `Stable`
-- **Activation:** Use `incan init`, `incan new`, `incan version`, or `incan env`.
-- **Use instead of:** One-off project scaffolding scripts or manual version-file edits.
+- **Activation:** Declare the project and scripts in `loaf.toml`, then pass an explicit source path to Oven.
+- **Use instead of:** Duplicated project resolution in compiler and editor tools.
 - **References:** [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md)
 
-Project commands create scaffolds, manage versions, and run configured environments from `loaf.toml`.
+Oven reads project manifests, selects compilation inputs and prepares declared dependencies before checking, building, running or testing source.
 
 Canonical forms:
 
-- `incan new greeter --yes`
-- `incan version patch`
-- `incan env run dev test`
+- `loaf.toml`
+- `incan describe-unit src/main.incn`
+- `incan build src/main.incn`
 
-### Workspace and multi-package projects
+### Path-linked multi-package projects
 
 - **Id:** `WorkspaceMultiPackageProjects`
 - **Category:** `Tooling`
 - **Since:** `0.5`
 - **RFC:** `RFC 077`
 - **Stability:** `Stable`
-- **Activation:** Declare `[workspace]` in the repository root and inspect or select members through the CLI.
-- **Use instead of:** Ad hoc directory conventions, member-local locks, or implicit cross-project dependency activation.
+- **Activation:** Declare path dependencies and select a package's source explicitly.
+- **Use instead of:** Implicit cross-project dependency activation or copying a dependency's source into its consumer.
 - **References:** [Project lifecycle](project_lifecycle.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md)
 
-Workspaces supply explicit rooted/virtual member topology, deterministic scope selection, explicit shared dependency and environment inheritance, one durable root lock, and member-scoped command reports.
+Oven prepares the selected package's active path dependency graph, with checked public aliases and unified package features.
 
 Canonical forms:
 
-- `incan workspace inspect --format json`
-- `incan test --workspace`
-- `incan build --member packages/api --report json`
+- `[dependencies]`
+- `helper = { path = "../helper" }`
+- `incan build src/main.incn`
 
 ### Toolchain installer and release manifest
 
@@ -1198,76 +1196,72 @@ Canonical forms:
 - **Since:** `0.4`
 - **RFC:** `RFC 015`
 - **Stability:** `Stable`
-- **Activation:** Use the GitHub Release installer, Homebrew formula, npm package, pipx package, or versioned toolchain manifest.
+- **Activation:** Pack an installed toolchain and install the resulting native archive.
 - **Use instead of:** Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth.
 - **References:** [Install and run](../../tooling/how-to/install_and_run.md), [Release 0.4](../../release_notes/0_4.md)
 
-The toolchain install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` from the same release archives across direct and package-manager channels. Direct and pipx installation can provision pinned Rust 1.98.0 and `wasm32-wasip1`; npm and Homebrew install prebuilt command binaries and leave Rust management to the user.
+Oven verifies a staged archive's portable manifest, binds the local Rust sysroot and checks the compiler identity before publishing an installation.
 
 Canonical forms:
 
-- `curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash`
-- `brew tap encero-systems/tap && brew install incan`
-- `npm install -g @incan/toolchain`
-- `pipx install incan`
+- `incan toolchain pack toolchain.tar.zst`
+- `incan toolchain install toolchain.tar.zst`
 
-### Zero-clone starter project flow
+### Installed-toolchain starter project flow
 
 - **Id:** `ZeroCloneStarterFlow`
 - **Category:** `Tooling`
 - **Since:** `0.4`
 - **RFC:** `RFC 015`
 - **Stability:** `Stable`
-- **Activation:** Use `incan new`, then run project commands from the generated directory.
+- **Activation:** Create a manifest, source entry and test file, then run the installed commands.
 - **Use instead of:** Cloning the compiler repository or copying examples manually before a first run.
 - **References:** [Getting started](../../tooling/tutorials/getting_started.md), [Project lifecycle](project_lifecycle.md), [Release 0.4](../../release_notes/0_4.md)
 
-`incan new` creates a runnable, testable project with a manifest, entrypoint, starter test, README, `.gitignore`, and release-line toolchain constraint.
+A project with a declared script can run, test and build through an installed toolchain without cloning the compiler repository.
 
 Canonical forms:
 
-- `incan new hello --yes`
-- `cd hello`
-- `incan run`
-- `incan test`
-- `incan build --release`
+- `loaf.toml`
+- `src/main.incn`
+- `incan run src/main.incn`
+- `incan test tests/test_main.incn`
+- `incan build src/main.incn --profile release`
 
-### Stable diagnostics commands
+### Stable diagnostic reports
 
 - **Id:** `StableDiagnostics`
 - **Category:** `Tooling`
 - **Since:** `0.4`
 - **RFC:** `RFC 015`
 - **Stability:** `Stable`
-- **Activation:** Use `incan check` or `incan explain`.
+- **Activation:** Use `incan check PATH --format json`.
 - **Use instead of:** Scraping terminal diagnostics or building tool-specific error-code maps.
 - **References:** [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md)
 
-Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations.
+Check reports publish stable diagnostic codes, source spans, notes, hints and explanation command strings in versioned JSON.
 
 Canonical forms:
 
 - `incan check src/main.incn --format json`
-- `incan explain INCAN-T0001`
 
-### Build reports and generated Rust inspection
+### Unit descriptions and checked graph inspection
 
 - **Id:** `BuildReportsAndRustInspection`
 - **Category:** `Tooling`
 - **Since:** `0.4`
 - **RFC:** `RFC 015`
 - **Stability:** `Stable`
-- **Activation:** Use `incan build --report json` or `incan inspect rust`.
-- **Use instead of:** Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract.
+- **Activation:** Use `incan describe-unit` or `incan inspect codegraph` with an explicit source path.
+- **Use instead of:** Scraping terminal progress output for source or dependency facts.
 - **References:** [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md)
 
-Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available.
+Unit descriptions publish selected compilation inputs; checked graphs expose declarations, Rust interop facts, source ranges and provenance.
 
 Canonical forms:
 
-- `incan build src/main.incn --report json`
-- `incan build --lib --report json --report-output build.json`
-- `incan inspect rust src/main.incn --format json`
+- `incan describe-unit src/main.incn`
+- `incan inspect codegraph src/main.incn --format jsonl`
 
 ### Build and test Oven observability
 
@@ -1276,17 +1270,16 @@ Canonical forms:
 - **Since:** `0.5`
 - **RFC:** `RFC 015`
 - **Stability:** `Experimental`
-- **Activation:** Use a JSON build report, verbose test output, or `incan oven store inspect --format json` to inspect the documented Oven Alpha envelope.
-- **Use instead of:** Silent long-running preparation or inspecting generated Cargo target directories instead of the bounded Oven store.
+- **Activation:** Set `OVEN_TRACE=-` for preparation traces or request a unit description.
+- **Use instead of:** Inferring compilation or reuse from timestamps and elapsed time alone.
 - **References:** [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md)
 
-Oven Alpha build and test paths report receipt selection, preparation or reuse, and direct-rustc execution timing. Store inspection reports separate logical artifact bytes, physical allocation, reclaimability, and active lease use without reading a generated Cargo target directory.
+Oven traces distinguish compilation, executable reuse and replayed refusals, with the reason for preparing a changed unit.
 
 Canonical forms:
 
-- `incan build --report json`
-- `incan test -v tests`
-- `incan oven store inspect --format json`
+- `OVEN_TRACE=- incan run src/main.incn`
+- `incan describe-unit src/main.incn`
 
 ### Compiler-backed codegraph inspection
 
@@ -1304,7 +1297,7 @@ Incan-language source files, modules, declarations, imports, exports, body-level
 Canonical forms:
 
 - `incan inspect codegraph src/main.incn --format jsonl`
-- `incan inspect codegraph src --format jsonl --allow-errors`
+- `incan inspect codegraph src/main.incn --query defs main`
 
 ### Checked API metadata
 
@@ -1313,39 +1306,39 @@ Canonical forms:
 - **Since:** `0.3`
 - **RFC:** `RFC 048`
 - **Stability:** `Stable`
-- **Activation:** Use `incan tools metadata api` or LSP metadata commands.
-- **Use instead of:** Scraping source text or generated Rust when tooling needs API contracts.
-- **References:** [Release 0.3](../../release_notes/0_3.md), [Project lifecycle](project_lifecycle.md)
+- **Activation:** Build a library; consumers and LSP read its published `.incnlib` metadata.
+- **Use instead of:** Scraping source text when tooling needs checked API contracts.
+- **References:** [Release 0.3](../../release_notes/0_3.md), [Checked API metadata](../../tooling/reference/checked_api_metadata.md)
 
-Typechecked public APIs can emit structured metadata for docs, manifests, hovers, and model bundle tooling.
+Checked libraries publish structured API metadata with public declarations, signatures, documentation and namespace members.
 
 Canonical forms:
 
-- `incan tools metadata api src/lib.incn`
-- `incan tools metadata model emit`
+- `incan build src/lib.incn`
+- `from pub::library import Item`
 
-### Compiled providers, SDK components, and package features
+### Compiled libraries, standard packages, and package features
 
 - **Id:** `CompiledProvidersSdkComponentsPackageFeatures`
 - **Category:** `Libraries`
 - **Since:** `0.5`
 - **RFC:** `RFC 114`
 - **Stability:** `Stable`
-- **Activation:** Select SDK components in `[sdk]`; select additive package features in manifests or with Incan feature flags.
+- **Activation:** Use installed standard packages and declared dependencies; select package features in manifests or unit options.
 - **Use instead of:** Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics.
-- **References:** [SDK components and package features](../../tooling/reference/sdk_components_and_package_features.md), [Conditional compilation](conditional_compilation.md), [Project configuration](../../tooling/reference/project_configuration.md), [Release 0.5](../../release_notes/0_5.md)
+- **References:** [Standard packages and package features](../../tooling/reference/sdk_components_and_package_features.md), [Conditional compilation](conditional_compilation.md), [Project configuration](../../tooling/reference/project_configuration.md), [Release 0.5](../../release_notes/0_5.md)
 
-Checked libraries and official SDK components resolve through one provider plan, while package-owned features project additive source and dependency facts without exposing Cargo features as Incan API.
+Standard packages are compiled Loaves. Package features select additive source and dependency facts, with the selected features recorded in the unit description.
 
 Canonical forms:
 
-- `[sdk]
-profile = "minimal"
-components = ["stdlib-data"]`
-- `incan build --features json --sdk-profile minimal`
+- `[project.features]
+default = ["json"]
+json = []`
+- `incan build src/main.incn --features json`
 - `when feature("json"):
     pub from json_support import JsonReport`
-- `incan inspect providers --format json`
+- `incan describe-unit src/main.incn`
 
 ### Formatter spacing and wrapping contract
 
@@ -1363,7 +1356,7 @@ Formatter output has explicit vertical-spacing buckets, docstring normalization,
 Canonical forms:
 
 - `incan fmt src/main.incn`
-- `incan fmt --check`
+- `incan fmt --check src/main.incn`
 
 ### `std.registry` typed declaration catalogs
 

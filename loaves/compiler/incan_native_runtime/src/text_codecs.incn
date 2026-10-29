@@ -2,8 +2,9 @@
 
 from rust::std::string import String as RustString
 from rust::std::vec import Vec as RustVec
+from rust::std::convert import Into as RustInto
 from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozenStr, FrozenBytes as RuntimeFrozenBytes
-from rust::incan_std_core::strings import utf8_error_message
+from rust::std::str import from_utf8
 from rust::incan_lang::lang::text_codecs import normalize_encoding_label, is_utf8_encoding_label
 from rust::incan_std_core::validation import ValidationError as RuntimeError
 from rust::incan_std_core::errors import raise_value_error
@@ -23,17 +24,22 @@ pub def text_codec_errors_valid(errors: &RustString) -> bool:
 
 pub def encode_text(value: &RustString, encoding: &RustString) -> bytes:
     """Copy shared UTF-8 text, reporting unsupported dynamic labels through legacy's ValueError primitive."""
-    label = normalize_encoding_label(encoding.as_str())
-    if not is_utf8_encoding_label(label):
-        raise_value_error(f"str.encode() supports only utf-8 in this release, got encoding '{label}'")
+    validate_encoder_label(encoding)
     copy: RustString = value.clone()
     return copy.into_bytes()
 
 
 pub def encode_frozen_text(value: RuntimeFrozenStr, encoding: &RustString) -> bytes:
-    """Materialize the frozen carrier's text and reuse the owned encoder without invoking this boundary recursively."""
-    owned: RustString = str(value)
-    return encode_text(owned, encoding)
+    """Validate the encoding and copy frozen UTF-8 bytes directly into the result allocation."""
+    validate_encoder_label(encoding)
+    return RustInto.into(value.as_str())
+
+
+def validate_encoder_label(encoding: &RustString) -> None:
+    """Preserve the encoder's normalized label diagnostic without copying its UTF-8 receiver."""
+    label = normalize_encoding_label(encoding.as_str())
+    if not is_utf8_encoding_label(label):
+        raise_value_error(f"str.encode() supports only utf-8 in this release, got encoding '{label}'")
 
 
 pub def decode_bytes(value: &RustVec[u8], encoding: &RustString, errors: &RustString) -> Result[str, RuntimeError]:
@@ -55,11 +61,11 @@ pub def decode_bytes(value: &RustVec[u8], encoding: &RustString, errors: &RustSt
                 "unknown-errors-policy",
             ),
         )
-    # The core facet reports Rust's own UTF-8 error text; valid bytes decode losslessly.
-    match utf8_error_message(value.as_slice()):
-        Some(error) =>
+    # Strict decoding validates once and owns only successfully validated borrowed text.
+    match from_utf8(value.as_slice()):
+        Err(error) =>
             return Err(make_coded_validation_error(f"'utf-8' codec can't decode bytes: {error}", "invalid-utf8"))
-        None => return Ok(RustString.from_utf8_lossy(value.as_slice()).into_owned())
+        Ok(text) => return Ok(RustString.from(text))
 
 
 pub def decode_frozen_bytes(

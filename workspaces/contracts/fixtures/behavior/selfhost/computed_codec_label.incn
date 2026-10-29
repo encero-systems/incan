@@ -1,10 +1,11 @@
-# behavior: a frozen text encoder accepts a computed borrowed native encoding label
+# behavior: a frozen text encoder accepts a computed borrowed native encoding label and preserves multibyte UTF-8
 # expect-stdout:
 #   3
 
 from rust::std::string import String as RustString
 
 const TEXT: FrozenStr = "abc"
+const UNICODE: FrozenStr = "hé🦀"
 
 
 def encode(value: FrozenStr, encoding: &RustString) -> bytes:
@@ -13,5 +14,8 @@ def encode(value: FrozenStr, encoding: &RustString) -> bytes:
 
 
 def main() -> None:
-    """Execute the encoder with a borrowed native label."""
+    """Execute the encoder with a borrowed native label and observe every multibyte UTF-8 byte."""
     println(len(encode(TEXT, "utf-8")))
+    encoded = encode(UNICODE, "utf-8")
+    assert encoded == b"h\xc3\xa9\xf0\x9f\xa6\x80"
+    assert len(encoded) == 7

@@ -35,20 +35,13 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
         Some(local) =>
             root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
             match root:
-                PlanType.Model(_owner, _name) =>
-                    ty = root
-                PlanType.Enum(_owner, _name) =>
-                    ty = root
-                PlanType.Tuple(_elements) =>
-                    ty = root
-                PlanType.TupleMutRef(elements) =>
-                    ty = PlanType.Tuple(elements)
-                PlanType.TupleRef(elements) =>
-                    ty = PlanType.Tuple(elements)
-                PlanType.ModelRef(owner, name) =>
-                    ty = PlanType.Model(owner, name)
-                PlanType.ModelMutRef(owner, name) =>
-                    ty = PlanType.Model(owner, name)
+                PlanType.Model(_owner, _name) => ty = root
+                PlanType.Enum(_owner, _name) => ty = root
+                PlanType.Tuple(_elements) => ty = root
+                PlanType.TupleMutRef(elements) => ty = PlanType.Tuple(elements)
+                PlanType.TupleRef(elements) => ty = PlanType.Tuple(elements)
+                PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
+                PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
                 _ => return Ok(None)
     mut count = 0
     for projection in source.projection:
@@ -62,15 +55,29 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
                 if not is_tuple_type(ty):
                     break
             _ => break
-        ty = field_projection(builder.nominals, ty, projection, builder.enums, builder.unions, builder.intrinsics)?.ty
+        ty = field_projection(
+            builder.constructors,
+            builder.nominals,
+            ty,
+            projection,
+            builder.enums,
+            builder.unions,
+            builder.intrinsics,
+        )?.ty
         count += 1
     return Ok(Some((count, through_tuple)))
 
 
-pub def prefix_place(mut builder: Builder, source: &RustPlace, count: int, span: SourceSpan) -> Result[OperandPlace, str]:
+pub def prefix_place(
+    mut builder: Builder,
+    source: &RustPlace,
+    count: int,
+    span: SourceSpan,
+) -> Result[OperandPlace, str]:
     """Project the first `count` structural steps of a place without reading or copying anything."""
     mut frame_locals = builder.locals[builder.local_offset:]
     mut place = model_prefix(
+        builder.constructors,
         builder.nominals,
         frame_locals,
         source,

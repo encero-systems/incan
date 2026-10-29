@@ -1,4 +1,4 @@
-# behavior: named functions pass as first-class values through arrow-typed and Callable-typed parameters, with zero, one and two arguments (RFC 035)
+# behavior: function references pass through typed parameters and optional fields (RFC 035, #2256)
 # expect-stdout:
 #   10 9
 #   7 12
@@ -6,6 +6,19 @@
 #   2 4 6 2 4 6
 
 # RFC 035: First-class named function references
+
+
+model Transform:
+    """Keep an optional function pointer without owning a captured environment."""
+
+    callback: Option[Callable[int, int]]
+
+
+def call_stored(transform: Transform, value: int) -> int:
+    """Copy the stored pointer from a borrowed field and invoke it."""
+    match transform.callback:
+        Some(apply) => return apply(value)
+        None => return 0
 
 
 def double(x: int) -> int:
@@ -21,6 +34,8 @@ def apply_transform(func: (int) -> int, value: int) -> int:
 
 
 def test_function_references() -> (int, int):
+    """Exercise direct parameters and a function pointer stored in an optional field."""
+    assert call_stored(Transform(callback=Some(double)), 5) == 10
     doubled = apply_transform(double, 5)
     squared = apply_transform(square, 3)
     return (doubled, squared)

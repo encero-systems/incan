@@ -8,6 +8,7 @@
 mod checked_replay;
 mod model;
 pub mod public_identities;
+mod retained;
 mod type_projection;
 mod type_refs;
 mod validation;
@@ -25,9 +26,13 @@ pub use type_projection::{
 };
 pub use type_refs::resolved_type_from_manifest_type_ref;
 pub use type_refs::type_ref_from_resolved;
+pub(crate) use validation::sha256_digest;
 
 /// Stable on-disk format version for `.incnlib` manifests.
-pub const LIBRARY_MANIFEST_FORMAT: u32 = 5;
+///
+/// Format 6 dropped the vocabulary helper bindings, Cargo dependency and stdlib feature lists, the desugarer
+/// artifact's target, profile and entry point, and provider implementation facets.
+pub const LIBRARY_MANIFEST_FORMAT: u32 = 6;
 
 /// Stable schema version for generic provider metadata embedded in `.incnlib` manifests.
 pub const COMPILED_PROVIDER_METADATA_SCHEMA_VERSION: u32 = 1;

@@ -9,11 +9,12 @@
 //! planned method call. The storage and accessors keep rustc's own MIR; only initializers and selected methods are
 //! planned bodies.
 
+use crate::ast_build::{RUST_CLONE_SYMBOL, ident};
 use crate::plan::{CalleeKind, Function, ListLeaf, PlanType, StaticCell, TerminatorKind, tuple_element_type};
 use crate::{declarations, error::PlanError, plan::Plan};
 use rustc_ast as ast;
 use rustc_middle::ty::{self, Ty, TyCtxt};
-use rustc_span::{Ident, Span, Symbol};
+use rustc_span::{Span, Symbol};
 use std::collections::BTreeSet;
 use thin_vec::{ThinVec, thin_vec};
 
@@ -352,6 +353,90 @@ pub(crate) fn cell(plan: &Plan, slot: i64) -> Result<&StaticCell, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(format!("static slot {slot}")))
 }
 
+/// Name the completion probe for the module keyed by its first computed cell.
+pub(crate) fn initialized_name(slot: i64) -> String {
+    format!("__incan_module_initialized_{slot}")
+}
+
+/// Name the publication operation used after declaration-order initialization succeeds.
+pub(crate) fn complete_name(slot: i64) -> String {
+    format!("__incan_module_complete_{slot}")
+}
+
+/// Declare a monotonic completion flag and its acquire/release accessors. The flag never claims initialization;
+/// incomplete and reentrant calls still use the runtime's original claim protocol.
+fn completion_items(slot: i64, span: Span) -> Vec<Box<ast::Item>> {
+    let name = format!("__INCAN_MODULE_COMPLETE_{slot}");
+    let atomic_type = Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path(&["std", "sync", "atomic", "AtomicBool"], true, span)),
+        span,
+        tokens: None,
+    });
+    let boolean = |value| {
+        expression(
+            ast::ExprKind::Lit(ast::token::Lit::new(
+                ast::token::LitKind::Bool,
+                Symbol::intern(if value { "true" } else { "false" }),
+                None,
+            )),
+            span,
+        )
+    };
+    let flag = || {
+        expression(
+            ast::ExprKind::AddrOf(
+                ast::BorrowKind::Ref,
+                ast::Mutability::Not,
+                path_expr(&[&name], false, span),
+            ),
+            span,
+        )
+    };
+    let storage = declarations::item(
+        ast::ItemKind::Static(Box::new(ast::StaticItem {
+            ident: ident(&name, span),
+            ty: atomic_type,
+            safety: ast::Safety::Default,
+            mutability: ast::Mutability::Not,
+            expr: Some(call(
+                &["std", "sync", "atomic", "AtomicBool", "new"],
+                vec![boolean(false)],
+                span,
+            )),
+            define_opaque: None,
+            eii_impls: ThinVec::new(),
+        })),
+        span,
+    );
+    let load = call(
+        &["std", "sync", "atomic", "AtomicBool", "load"],
+        vec![
+            flag(),
+            path_expr(&["std", "sync", "atomic", "Ordering", "Acquire"], true, span),
+        ],
+        span,
+    );
+    let probe = function(
+        &initialized_name(slot),
+        Vec::new(),
+        Some(declarations::ty(&PlanType::Bool, span)),
+        vec![tail(load, span)],
+        span,
+    );
+    let store = call(
+        &["std", "sync", "atomic", "AtomicBool", "store"],
+        vec![
+            flag(),
+            boolean(true),
+            path_expr(&["std", "sync", "atomic", "Ordering", "Release"], true, span),
+        ],
+        span,
+    );
+    let complete = function(&complete_name(slot), Vec::new(), None, vec![semi(store, span)], span);
+    vec![storage, probe, complete]
+}
+
 /// Declare one computed static's storage and its accessors.
 pub fn items(cell: &StaticCell, span: Span) -> Vec<Box<ast::Item>> {
     let value_ty = || declarations::ty(&cell.ty, span);
@@ -417,7 +502,7 @@ pub fn items(cell: &StaticCell, span: Span) -> Vec<Box<ast::Item>> {
         Vec::new(),
         Some(value_ty()),
         vec![tail(
-            call(&["std", "clone", "Clone", "clone"], vec![current], span),
+            call(&["std", "clone", RUST_CLONE_SYMBOL, "clone"], vec![current], span),
             span,
         )],
         span,
@@ -448,12 +533,11 @@ pub fn items(cell: &StaticCell, span: Span) -> Vec<Box<ast::Item>> {
     );
     let force_item = function(&force_name(cell.slot), Vec::new(), None, vec![semi(forced, span)], span);
 
-    vec![storage_item, cell_item, load_item, store_item, force_item]
-}
-
-/// Create an identifier from a name the plan admitted.
-fn ident(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
+    let mut items = vec![storage_item, cell_item, load_item, store_item, force_item];
+    if cell.module_completion {
+        items.extend(completion_items(cell.slot, span));
+    }
+    items
 }
 
 /// Build an AST expression with identities left for rustc's node allocation.

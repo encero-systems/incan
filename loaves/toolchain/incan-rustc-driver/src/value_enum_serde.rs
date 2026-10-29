@@ -5,13 +5,22 @@
 //! legacy's generated impls fail. A serde derive would write and read variant names instead.
 
 use crate::ast_build::{
-    binding, block, expression, expression_statement, global_path, ident, inherited, local, path_ty, self_value,
-    trait_bound,
+    RUST_RESULT_ERR_SYMBOL, RUST_RESULT_OK_SYMBOL, binding, block, expression, expression_statement, global_path,
+    ident, inherited, local, path_ty, self_value, trait_bound,
 };
 use crate::plan::EnumDeclaration;
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol, kw, respan};
 use thin_vec::{ThinVec, thin_vec};
+
+/// Associated success type of serde::Serializer, independent of Incan's Result constructors.
+const RUST_SERDE_SERIALIZER_OK_SYMBOL: &str = "Ok";
+/// Associated error type of serde::Serializer.
+const RUST_SERDE_SERIALIZER_ERROR_SYMBOL: &str = "Error";
+/// Associated error type of serde::Deserializer.
+const RUST_SERDE_DESERIALIZER_ERROR_SYMBOL: &str = "Error";
+/// Physical serde::de::Error trait used to construct a decoding error.
+const RUST_SERDE_DE_ERROR_SYMBOL: &str = "Error";
 
 /// Build legacy's `Serialize`: `match self { Self::V => ::serde::Serializer::serialize_str(serializer, "raw"), .. }`.
 ///
@@ -40,7 +49,11 @@ pub fn serialize_impl(value: &EnumDeclaration, span: Span) -> Box<ast::Item> {
         ast::ExprKind::Match(self_value(span), arms, ast::MatchKind::Prefix),
         span,
     );
-    let output = result_type(projection("__S", "Ok", span), projection("__S", "Error", span), span);
+    let output = result_type(
+        projection("__S", RUST_SERDE_SERIALIZER_OK_SYMBOL, span),
+        projection("__S", RUST_SERDE_SERIALIZER_ERROR_SYMBOL, span),
+        span,
+    );
     let signature = signature(
         thin_vec![
             receiver(span),
@@ -119,7 +132,7 @@ pub fn deserialize_impl(value: &EnumDeclaration, span: Span) -> Box<ast::Item> {
         .zip(&value.raw_values)
         .map(|(variant, raw)| {
             let selected = call(
-                global_path(&["core", "result", "Result", "Ok"], span),
+                global_path(&["core", "result", "Result", RUST_RESULT_OK_SYMBOL], span),
                 thin_vec![expression(
                     ast::ExprKind::Path(None, self_variant(&variant.name, span)),
                     span
@@ -157,7 +170,7 @@ pub fn deserialize_impl(value: &EnumDeclaration, span: Span) -> Box<ast::Item> {
     ];
     let output = result_type(
         path_ty(ast::Path::from_ident(Ident::new(kw::SelfUpper, span)), span),
-        projection("__D", "Error", span),
+        projection("__D", RUST_SERDE_DESERIALIZER_ERROR_SYMBOL, span),
         span,
     );
     let signature = signature(
@@ -214,9 +227,9 @@ fn rejection(value: &EnumDeclaration, integer: bool, span: Span) -> Box<ast::Exp
         span,
     );
     call(
-        global_path(&["core", "result", "Result", "Err"], span),
+        global_path(&["core", "result", "Result", RUST_RESULT_ERR_SYMBOL], span),
         thin_vec![call(
-            global_path(&["serde", "de", "Error", "custom"], span),
+            global_path(&["serde", "de", RUST_SERDE_DE_ERROR_SYMBOL, "custom"], span),
             thin_vec![message],
             span
         )],

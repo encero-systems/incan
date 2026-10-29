@@ -55,7 +55,7 @@ struct ScanTarget<'a> {
 
 impl TypeChecker {
     /// Infer the hashed type parameters of every generic function and method in `declarations` and record them by
-    /// declaration identity in `hash_key_type_params`.
+    /// declaration identity in the checker's hash-key inference state.
     ///
     /// `local` marks the module being checked: its requirements are also kept by name so they can be written into the
     /// exported signatures once checking is done. Runs to a fixed point, because a callable that passes its parameter
@@ -88,13 +88,14 @@ impl TypeChecker {
         ordered.sort();
         for (callable, type_params) in ordered {
             if let Some(identity) = self.hash_key_callable_identity(&callable) {
-                self.hash_key_type_params
+                self.hash_key_inference
+                    .type_params
                     .entry(identity)
                     .or_default()
                     .extend(type_params.iter().cloned());
             }
             if local {
-                self.local_hash_key_requirements.push((callable, type_params));
+                self.hash_key_inference.local_requirements.push((callable, type_params));
             }
         }
     }
@@ -366,7 +367,7 @@ impl TypeChecker {
                 return;
             };
             let (Some(required), Some(SymbolKind::Function(info))) = (
-                self.hash_key_type_params.get(identity),
+                self.hash_key_inference.type_params.get(identity),
                 self.symbols.get(symbol_id).map(|symbol| &symbol.kind),
             ) else {
                 return;
@@ -653,7 +654,7 @@ impl TypeChecker {
     /// is written only while its bare name reaches the builtin trait: a module that imports another `Eq` or `Hash`
     /// would otherwise publish a requirement on that unrelated trait.
     pub(in crate::typechecker) fn export_inferred_hash_key_bounds(&mut self) {
-        let requirements = std::mem::take(&mut self.local_hash_key_requirements);
+        let requirements = std::mem::take(&mut self.hash_key_inference.local_requirements);
         if requirements.is_empty() {
             return;
         }
@@ -690,7 +691,7 @@ impl TypeChecker {
                             &type_params,
                             &bounds,
                         );
-                        self.inferred_function_bounds.insert(name.clone(), added);
+                        self.hash_key_inference.function_bounds.insert(name.clone(), added);
                     }
                 }
                 HashKeyCallable::Method { owner, method } => {
@@ -762,7 +763,8 @@ impl TypeChecker {
     /// A function's library export reads its declared bounds from source, so it adds these to publish the whole
     /// requirement; a method's export already reads them from its checked signature.
     pub(crate) fn inferred_type_param_bounds(&self, function: &str, type_param: &str) -> &[TypeBoundInfo] {
-        self.inferred_function_bounds
+        self.hash_key_inference
+            .function_bounds
             .get(function)
             .and_then(|by_param| by_param.get(type_param))
             .map_or(&[], Vec::as_slice)

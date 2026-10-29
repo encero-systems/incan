@@ -5,20 +5,40 @@ use super::*;
 
 use incan_driver::diagnostics::CliDiagnostic;
 use incan_driver::modules::collect_document_modules;
-use incan_driver::rust_abi::cached_rust_facts;
 use incan_driver::unit::UnitDescription;
 use incan_frontend::module::logical_module_segments_from_file;
 
 impl IncanLanguageServer {
     /// Analyze a document off the async workers and publish only while this request is still the latest one.
-    pub(super) async fn analyze_document(&self, uri: &Url, source: &str, version: i32) {
+    pub(super) async fn analyze_document(&self, uri: &Url, source: &str, version: i32, debounce: bool) {
         let ticket = Arc::new(());
         self.analysis_tickets
             .write()
             .await
             .insert(uri.clone(), Arc::clone(&ticket));
+        self.pending_sources
+            .write()
+            .await
+            .insert(uri.clone(), source.to_owned());
+        {
+            let mut documents = self.documents.write().await;
+            super::graph_navigation::invalidate(uri, &mut documents);
+        }
+        if debounce {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            if !self
+                .analysis_tickets
+                .read()
+                .await
+                .get(uri)
+                .is_some_and(|current| Arc::ptr_eq(current, &ticket))
+            {
+                return;
+            }
+        }
         let open_sources = self.open_sources(uri, source).await;
         let analysis_uri = uri.clone();
+        let sessions = Arc::clone(&self.analysis_sessions);
         let source = source.to_owned();
         let result = tokio::task::spawn_blocking(move || match analysis_uri.to_file_path() {
             Ok(path) => analyze(
@@ -27,6 +47,7 @@ impl IncanLanguageServer {
                 &source,
                 version,
                 &open_sources,
+                &sessions,
             ),
             Err(()) => (
                 vec![lsp_root_error_diagnostic(
@@ -73,6 +94,11 @@ impl IncanLanguageServer {
                 Some((path.canonicalize().unwrap_or(path), document.source.clone()))
             })
             .collect::<HashMap<_, _>>();
+        for (open, text) in self.pending_sources.read().await.iter() {
+            if let Ok(path) = open.to_file_path() {
+                sources.insert(path.canonicalize().unwrap_or(path), text.clone());
+            }
+        }
         if let Ok(path) = uri.to_file_path() {
             sources.insert(path.canonicalize().unwrap_or(path), source.to_string());
         }
@@ -160,34 +186,24 @@ fn analyze(
     source: &str,
     version: i32,
     open_sources: &HashMap<PathBuf, String>,
+    sessions: &std::sync::Mutex<super::analysis_cache::Sessions>,
 ) -> (Vec<Diagnostic>, Option<DocumentState>) {
     let mut diagnostics = Vec::new();
+    trace_graph("describe unit");
     let session = match unit_description(path).and_then(|unit| {
-        let setup = cached_rust_facts(&unit)?;
-        CompilationSession::new(&unit)?.with_rust_facts(&setup)
+        sessions
+            .lock()
+            .map_err(|_| incan_driver::error::CliError::failure("analysis session cache lock is poisoned"))?
+            .session(&unit)
     }) {
         Ok(session) => session,
         Err(error) => return (vec![lsp_root_error_diagnostic(error.to_string())], None),
     };
 
     // ---- The authored program, inactive feature declarations included: what navigation walks ----
-    let source_ast =
-        match session.parse_source_unprojected(path, source, false) {
-            Ok(ast) => {
-                diagnostics.extend(ast.warnings.iter().map(|warning| {
-                    compile_error_to_diagnostic_with_phase(warning, source, uri, DiagnosticPhase::Parse)
-                }));
-                ast
-            }
-            Err(errors) => {
-                diagnostics.extend(
-                    errors.iter().map(|error| {
-                        compile_error_to_diagnostic_with_phase(error, source, uri, DiagnosticPhase::Parse)
-                    }),
-                );
-                return (diagnostics, None);
-            }
-        };
+    let Some(source_ast) = parse_navigation_source(&session, path, source, uri, &mut diagnostics) else {
+        return (diagnostics, None);
+    };
 
     // ---- One collection and one checking pass, as `incan check` runs them ----
     let segments =
@@ -208,16 +224,18 @@ fn analyze(
         }
     };
     let mut facts = None;
+    trace_graph("check collected modules");
     let analysis = session.analyze_unit(&modules, None, &mut |module, checker| {
         if module.file_path == path {
             facts = Some(DocumentFacts::read(module, checker));
         }
     });
+    trace_graph("checking completed");
     let (Some(facts), Some(document)) = (facts, modules.iter().find(|module| module.file_path == path)) else {
         return (diagnostics, None);
     };
     let mut related = related_declaration_sources(uri, source, &segments, &modules, path);
-    extend_package_declaration_sources(&mut related, session.loaves());
+    extend_package_declaration_sources(&mut related, session.loaves(), session.unit());
 
     // ---- Diagnostics: the document's own, and a note per imported module with errors ----
     let failures = analysis
@@ -235,35 +253,23 @@ fn analyze(
         &related,
     );
     let checked = !failures.iter().any(|failure| Path::new(&failure.file_path) == path);
-    for warning in &facts.warnings {
-        diagnostics.push(compile_error_to_diagnostic_with_rust_context(
-            warning,
-            source,
-            uri,
-            phase_for_typecheck_span(&document.ast, warning.span),
-            &facts.rust_origin_symbols,
-            &related,
-        ));
-    }
-    let api_metadata_previews = if checked {
-        for diagnostic in validate_checked_api_docstrings(std::slice::from_ref(&facts.api_metadata)) {
-            diagnostics.push(compile_error_to_diagnostic_with_phase_and_sources(
-                &diagnostic.error,
-                source,
-                uri,
-                DiagnosticPhase::Typecheck,
-                &related,
-            ));
-        }
-        api_metadata_previews(&document.ast, &facts.api_metadata)
-    } else {
-        Vec::new()
-    };
+    let api_metadata_previews = document_previews(&facts, document, uri, source, &related, checked, &mut diagnostics);
 
+    trace_graph("project live graph");
+    let graph_navigation =
+        match super::graph_navigation::GraphSnapshot::from_analysis(&session, &modules, analysis.as_ref(), version) {
+            Ok(graph) => Some(graph),
+            Err(error) => {
+                diagnostics.push(lsp_root_error_diagnostic(format!("graph projection failed: {error}")));
+                None
+            }
+        };
+    trace_graph("live graph ready");
     let state = DocumentState {
         source: source.to_string(),
         ast: Some(source_ast),
         version,
+        graph_navigation,
         checked_identities: CheckedIdentitySnapshot {
             type_info: facts.type_info,
             declaration_sources: related,
@@ -280,6 +286,77 @@ fn analyze(
         active_features: session.active_features.clone(),
     };
     (diagnostics, Some(state))
+}
+
+/// Parse the authored navigation tree once, including inactive declarations. Preserve parse warnings or failures in
+/// their existing order before the separate collected-module checking pass; failures publish no document state.
+fn parse_navigation_source(
+    session: &CompilationSession,
+    path: &Path,
+    source: &str,
+    uri: &Url,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Program> {
+    match session.parse_source_unprojected(path, source, false) {
+        Ok(ast) => {
+            diagnostics.extend(
+                ast.warnings.iter().map(|warning| {
+                    compile_error_to_diagnostic_with_phase(warning, source, uri, DiagnosticPhase::Parse)
+                }),
+            );
+            Some(ast)
+        }
+        Err(errors) => {
+            diagnostics.extend(
+                errors
+                    .iter()
+                    .map(|error| compile_error_to_diagnostic_with_phase(error, source, uri, DiagnosticPhase::Parse)),
+            );
+            None
+        }
+    }
+}
+
+/// Trace editor analysis boundaries only when explicitly requested, keeping normal protocol diagnostics quiet.
+fn trace_graph(phase: &str) {
+    if std::env::var_os("INCAN_TRACE_GRAPH").is_some() {
+        eprintln!("LSP graph: {phase}");
+    }
+}
+
+/// Render nonfatal checker warnings and validated API previews without promoting unchecked declarations.
+fn document_previews(
+    facts: &DocumentFacts,
+    document: &ParsedModule,
+    uri: &Url,
+    source: &str,
+    related: &RelatedDeclarationSources,
+    checked: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<ApiMetadataPreview> {
+    for warning in &facts.warnings {
+        diagnostics.push(compile_error_to_diagnostic_with_rust_context(
+            warning,
+            source,
+            uri,
+            phase_for_typecheck_span(&document.ast, warning.span),
+            &facts.rust_origin_symbols,
+            related,
+        ));
+    }
+    if !checked {
+        return Vec::new();
+    }
+    for diagnostic in validate_checked_api_docstrings(std::slice::from_ref(&facts.api_metadata)) {
+        diagnostics.push(compile_error_to_diagnostic_with_phase_and_sources(
+            &diagnostic.error,
+            source,
+            uri,
+            DiagnosticPhase::Typecheck,
+            related,
+        ));
+    }
+    api_metadata_previews(&document.ast, &facts.api_metadata)
 }
 
 /// Report collection and checking failures: the document's own with their Rust context, and one note per other
@@ -350,9 +427,18 @@ fn related_declaration_sources(
 ///
 /// A Loaf's artifact directory is `<root>/target/incan/loaf/<profile>` (DD-0007). A Loaf without its sources adds
 /// nothing: a declaration span from its manifest is no offset into any file the editor could open.
-fn extend_package_declaration_sources(sources: &mut RelatedDeclarationSources, loaves: &LoafIndex) {
+fn extend_package_declaration_sources(
+    sources: &mut RelatedDeclarationSources,
+    loaves: &LoafIndex,
+    unit: &UnitDescription,
+) {
     for entry in loaves.entries() {
-        let Some(root) = entry.artifact.dir.ancestors().nth(4) else {
+        let Some(root) = unit
+            .loaves
+            .iter()
+            .find(|loaf| loaf.key == entry.key && loaf.name == entry.artifact.name)
+            .and_then(|loaf| loaf.source_root.as_deref())
+        else {
             continue;
         };
         let manifest = &entry.artifact.manifest;
@@ -377,11 +463,14 @@ fn extend_package_declaration_sources(sources: &mut RelatedDeclarationSources, l
     }
 }
 
-/// The source file of one Loaf module below its project root, when it is present.
+/// The source file of a published module below Oven's explicit source root, when source is available.
 fn package_source_path(root: &Path, module_path: &[String]) -> Option<PathBuf> {
+    if module_path == ["main"] && root.join("lib.incn").is_file() {
+        return root.join("lib.incn").canonicalize().ok();
+    }
     let joined = module_path
         .iter()
-        .fold(root.join("src"), |path, segment| path.join(segment));
+        .fold(root.to_path_buf(), |path, segment| path.join(segment));
     [
         joined.with_extension("incn"),
         joined.join("mod.incn"),
@@ -392,8 +481,8 @@ fn package_source_path(root: &Path, module_path: &[String]) -> Option<PathBuf> {
     .map(|path| path.canonicalize().unwrap_or(path))
 }
 
-/// The description of the unit that owns `path`, from the Oven (`incan describe-unit PATH`), which is the only reader
-/// of project manifests (DD-0008). The `incan` beside this server answers it.
+/// The description of the unit that owns `path`, from Oven (`incan describe-unit PATH`), which is the only reader
+/// of project manifests (DD-0008). The `incan` beside this server answers it; the search index it names is merged.
 pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<UnitDescription> {
     use incan_driver::error::CliError;
     let incan = std::env::current_exe()
@@ -409,6 +498,5 @@ pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<Un
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
     }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| CliError::failure(format!("`incan describe-unit` printed no unit description: {error}")))
+    UnitDescription::parse(&output.stdout, path)
 }

@@ -9,14 +9,17 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule
 from pub::incan_mir_plan import PlanType, EnumDeclaration
-from classes import frame_type, function_name
-from unions import native_source_type, collect_unions
+from classes import frame_type, function_name, parameter_local_index
+from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
+from unions import collect_unions
 from native_arguments import uses_native_argument
 from decls import library_item
 from trait_links import contains
 
 
 pub def callable_methods(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
     mut intrinsics: list[EnumDeclaration],
@@ -38,9 +41,12 @@ pub def callable_methods(
                 if len(methods) != 1:
                     return Err("unsupported Body IR native Callable1 slot count")
                 slot = methods[0]
-                if slot.kind != SemanticSourceTargetKind.Method or slot.namespace != SymbolNamespace.Member or slot.declaration_name != "__call__" or slot.origin != adoption.trait_identity.origin or not contains(
-                    adoption.trait_identity,
-                    slot,
+                if (
+                    slot.kind != SemanticSourceTargetKind.Method
+                    or slot.namespace != SymbolNamespace.Member
+                    or slot.declaration_name != "__call__"
+                    or slot.origin != adoption.trait_identity.origin
+                    or not contains(adoption.trait_identity, slot)
                 ):
                     return Err("unsupported Body IR native Callable1 slot identity")
                 selected = Some(slot.clone())
@@ -55,6 +61,7 @@ pub def callable_methods(
             for argument in arguments:
                 signature.append(
                     native_source_type(
+                        constructors,
                         list(module.nominal_declarations),
                         list(module.enum_declarations),
                         collect_unions(module),
@@ -63,27 +70,40 @@ pub def callable_methods(
                     )?,
                 )
             for implementation in module.trait_implementations:
-                if implementation.owner != declaration.canonical or implementation.method != slot or implementation.implementation == slot:
+                if (
+                    implementation.owner != declaration.canonical
+                    or implementation.method != slot
+                    or implementation.implementation == slot
+                ):
                     continue
                 for body in module.bodies:
-                    if body.canonical != Some(implementation.implementation.clone()) or len(body.type_parameters) != 0 or len(
-                        body.params,
-                    ) != 2:
+                    if (
+                        body.canonical != Some(implementation.implementation.clone())
+                        or len(body.type_parameters) != 0
+                        or len(body.params) != 2
+                    ):
                         continue
-                    receiver = body.locals[int(body.params[0].local.index())]
-                    value = body.locals[int(body.params[1].local.index())]
+                    receiver = body.locals[parameter_local_index(body, 0)]
+                    value = body.locals[parameter_local_index(body, 1)]
                     mut nominals = module.nominal_declarations
                     mut enums = module.enum_declarations
-                    if frame_type(nominals, enums, receiver, intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
+                    if frame_type(constructors, nominals, enums, receiver, intrinsics)? != PlanType.ModelRef(
+                        owner,
+                        str(declaration.name),
+                    ):
                         continue
                     result = native_source_type(
+                        constructors,
                         list(module.nominal_declarations),
                         list(module.enum_declarations),
                         collect_unions(module),
                         body.return_type,
                         intrinsics,
                     )?
-                    if frame_type(nominals, enums, value, intrinsics)? != signature[0] or result != signature[1]:
+                    if (
+                        frame_type(constructors, nominals, enums, value, intrinsics)? != signature[0]
+                        or result != signature[1]
+                    ):
                         return Err("unsupported Body IR native Callable1 source signature")
                     return Ok((function_name(module, body), signature))
     return Err("unsupported Body IR unavailable native Callable1 source body")
@@ -91,7 +111,11 @@ pub def callable_methods(
 
 def standard_callable(identity: &CanonicalSymbolId) -> bool:
     """Only the artifact-backed standard declaration grants this native protocol, including through aliases."""
-    if identity.kind != SemanticSourceTargetKind.Trait or identity.namespace != SymbolNamespace.OrdinaryLexical or identity.declaration_name != "Callable1":
+    if (
+        identity.kind != SemanticSourceTargetKind.Trait
+        or identity.namespace != SymbolNamespace.OrdinaryLexical
+        or identity.declaration_name != "Callable1"
+    ):
         return false
     return standard_callable_origin(identity.origin)
 

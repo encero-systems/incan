@@ -1,20 +1,114 @@
+"""Reflect schemas and retain declaration names across cached, module-bound and plain callable values."""
+
 from substrait.schema import reflected_schema_marker
+import initialization_probe as probe
+
+static names: list[str] = []
+static nested_initialized: bool = false
+static nested_schema: str = ""
+static recurse_once: bool = true
+
+
+@derive(Clone)
+model Nested:
+    """Supply a distinct closed instance requested by another instance's decorator."""
+
+    value: int
 
 
 def registered_application(parts: list[str]) -> str:
+    """Read the reflected schema component."""
     return parts[0]
 
 
-def register[F]() -> ((F) -> F):
+def register[F]() -> (F) -> F:
+    """Return the decorator without choosing a callable signature or cache policy."""
     return (func) => remember[F](func)
 
 
 def remember[F](func: F) -> F:
-    if func.__name__ == "":
-        return func
+    """Observe names, nest a distinct closed instance, and exercise recoverable same-instance recursion."""
+    names.append(func.__name__)
+    if func.__name__ == "from_csv" and not nested_initialized:
+        nested_initialized = true
+        nested_schema = from_csv[Nested]()
+    if func.__name__ == "recursive" and recurse_once:
+        recurse_once = false
+        _ = recursive[Nested]()
+    if func.__name__ == "concurrent_binding":
+        probe.initialize_success()
+    if func.__name__ == "retry_binding":
+        probe.initialize_retry()
     return func
 
 
 @register()
 pub def from_csv[T]() -> str:
+    """Reflect the closed schema with the existing per-instantiation decorator lifetime."""
     return registered_application([reflected_schema_marker[T]()])
+
+
+@register()
+pub def recursive[T]() -> str:
+    """Return the closed schema name once the decorator's recursive first attempt has failed."""
+    return T.__class_name__()
+
+
+pub def nested_result() -> str:
+    """Expose the distinct instance initialized while another declaration instance was still initializing."""
+    return nested_schema
+
+
+pub def trigger_recursive() -> str:
+    """Read the same closed decorated binding, permitting a retry after failed initialization."""
+    return recursive[Nested]()
+
+
+@register()
+def concurrent_binding[T]() -> str:
+    """Return the closed schema after successful concurrent initialization."""
+    return T.__class_name__()
+
+
+@register()
+def retry_binding[T]() -> str:
+    """Return the closed schema after the first initializer has failed and a later one retries."""
+    return T.__class_name__()
+
+
+pub def concurrent_success() -> str:
+    """Request the same closed binding from each successful worker."""
+    return concurrent_binding[Nested]()
+
+
+pub def concurrent_retry() -> str:
+    """Request the same closed binding from the failing and retrying workers."""
+    return retry_binding[Nested]()
+
+
+@register()
+pub def request(path: str) -> str:
+    """Register a callable that has an ordinary argument."""
+    return path
+
+
+@register()
+pub def positive(value: int) -> bool:
+    """Register a callable with an argument and a non-string return type."""
+    return value > 0
+
+
+def double(value: int) -> int:
+    """Provide a plain declaration whose name is observed through a generic callable argument."""
+    return value * 2
+
+
+pub def plain_result() -> int:
+    """Read and invoke a named function value without a decorator."""
+    held = remember(double)
+    return held(4)
+
+
+pub def recorded_names() -> str:
+    """Expose registration order independently of the functions' argument and result signatures."""
+    return ",".join(names)

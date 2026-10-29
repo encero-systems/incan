@@ -1,24 +1,7 @@
 //! Core AST types: spans, spanned nodes, identifiers, programs, and top-level declarations.
 
-/// Source location span (byte offsets)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-}
-
-impl Span {
-    pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
-    }
-
-    pub fn merge(self, other: Span) -> Span {
-        Span {
-            start: self.start.min(other.start),
-            end: self.end.max(other.end),
-        }
-    }
-}
+/// Shared source range and expansion identity, retained unchanged from syntax through checked Body IR.
+pub use incan_semantics_core::HirSourceSpan as Span;
 
 /// A node with source location
 #[derive(Debug, Clone, PartialEq)]

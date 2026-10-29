@@ -329,6 +329,16 @@ pub fn native_attribute_argument_unsupported(macro_path: &str, span: Span) -> Co
     )
 }
 
+/// Report a decorator argument naming a value that has no scalar literal form for an attribute macro.
+pub fn native_attribute_argument_not_scalar(macro_path: &str, name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Argument `{name}` of the attribute macro `{macro_path}` has no literal form"),
+        span,
+    )
+    .with_note("An attribute macro receives literals, scalar constants, bare names or lists of them")
+    .with_hint("Write the list or value literally in the decorator")
+}
+
 /// Report a user-defined decorator on a declaration kind that keeps decorators compiler-owned.
 pub fn user_defined_decorator_unsupported_target(path: &str, kind: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -1143,6 +1153,17 @@ pub fn capturing_callable_in_function_slot(what: &str, slot: &str, span: Span) -
         .with_note(
             "A function type holds a named function or a closure that captures nothing. A closure that captures local values is held by a new local, by a function-typed parameter of a function of this module that only calls the parameter and is only called by name, and by the one 'return' of such a function",
         )
+}
+
+/// Refuse native callback storage when one named capture lacks the callee's required auto-trait evidence.
+/// Missing metadata is an admission gap rather than a claim that the captured Rust type has a negative impl.
+pub fn rust_callback_capture_missing_auto_trait(name: &str, ty: &str, marker: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Captured value '{name}' of type '{ty}' lacks retained `{marker}` evidence for this Rust callback"),
+        span,
+    )
+    .with_note("The callback owns its captures; every captured value must satisfy the Rust callee's storage bounds")
+    .with_hint(format!("Use captured values with a retained `{marker}` implementation"))
 }
 
 /// Refuse a method of a value as a local partial's target (RFC 084): an overloaded method, a generic method, or one
@@ -2374,15 +2395,25 @@ pub fn rust_item_shape_not_supported(path: &str, description: &str, span: Span) 
     .with_note("RFC 041 intentionally limits which Rust item shapes are typechecked directly")
 }
 
-/// A borrowed source signature names a lifetime-bearing Rust owner without a retained lifetime contract.
+/// Unsafe Rust calls have no author-facing safety contract, including inside checked C acknowledgment blocks.
+pub fn rust_unsafe_call_not_supported(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Unsafe Rust call `rust::{path}` is unsupported: unsafe interop is out of scope"),
+        span,
+    )
+    .with_note("RFC 005 excludes unsafe Rust calls; `unsafe:` acknowledges checked C bindings only")
+    .with_hint("Use a safe Rust API whose signature the compiler can validate")
+}
+
+/// A source return or field type names a lifetime-bearing Rust type, whose lifetime contract no source type can state.
 pub fn rust_borrow_without_lifetime_contract(path: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        format!("Borrowed Rust type `rust::{path}` in a source signature requires a retained lifetime contract"),
+        format!("Rust type `rust::{path}` borrows data, so a source return or field type cannot name it"),
         span,
     )
     .with_stable_code("INCAN-T0120")
-    .with_note("DD-0006 excludes borrowed Rust signatures whose lifetime relationships are not retained")
-    .with_hint("Keep the borrowed value inside the function that creates it, or pass an owned value")
+    .with_note("DD-0006 excludes returned and stored Rust values whose lifetime relationships are not retained")
+    .with_hint("Keep the borrowed value inside the function that creates it, or return data that owns its contents")
 }
 
 /// A Rust associated call tries to specialize a receiver whose turbofish contains const-generic slots.
@@ -2477,6 +2508,16 @@ pub fn rust_constructor_metadata_unavailable(path: &str, span: Span) -> CompileE
     .with_note("Named-field Rust structs require field metadata so Incan can emit a Rust struct literal")
 }
 
+/// A Rust type's admitted metadata names no associated item, variant or field of the written name.
+pub fn rust_associated_item_metadata_unavailable(path: &str, item: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Rust type `rust::{path}` has no admitted associated item `{item}`"),
+        span,
+    )
+    .with_hint("Check the item's spelling, or call the associated function or method that provides the value")
+    .with_note("Rust associated items are read only from the type's admitted metadata")
+}
+
 /// `type X = rusttype Y` requires `Y` to resolve to a Rust-origin imported item.
 pub fn rusttype_requires_rust_backing(type_name: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -2513,7 +2554,7 @@ pub fn rusttype_forwarding_requires_metadata(type_name: &str, trait_name: &str, 
         format!("Cannot forward Rust trait `{trait_name}` for rusttype `{type_name}` without metadata proof"),
         span,
     )
-    .with_hint("Enable rust-inspect metadata for the backing type or provide a local newtype wrapper instead")
+    .with_hint("Provide Rust ABI metadata for the backing type or use a local newtype wrapper instead")
 }
 
 /// Metadata proves the backing type does not satisfy a body-less rusttype trait adoption.
@@ -2538,7 +2579,7 @@ pub fn rusttype_forwarding_generic_trait_blocked(type_name: &str, trait_name: &s
         format!("Cannot safely forward generic Rust trait `{trait_name}` for rusttype `{type_name}` yet"),
         span,
     )
-    .with_hint("Use a local newtype wrapper for a handwritten impl until rust-inspect records trait type arguments")
+    .with_hint("Use a local newtype wrapper for a handwritten impl when Rust metadata omits trait type arguments")
 }
 
 /// Awaitable-to-Future rusttype bridging is intentionally gated until pin/projection metadata exists.

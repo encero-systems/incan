@@ -1,0 +1,15 @@
+"""Borrow checked tables and entries without materializing owned iteration snapshots."""
+
+from rust::std::ops import Index
+from rust::std::primitive import usize
+
+
+pub def borrowed_table[T](values: &list[T]) -> &list[T]:
+    """Create an explicit shared table view; callers keep the original owner alive for every use of the view."""
+    return values
+
+
+pub def borrowed_at[T](values: &list[T], position: int) -> &T:
+    """Borrow one entry; the caller must select its position within this table's bounds and keep the table alive."""
+    slot: usize = position.wrapping_resize()
+    return Index.index(values, slot)

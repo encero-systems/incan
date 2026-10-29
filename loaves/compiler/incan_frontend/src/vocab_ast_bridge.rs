@@ -8,74 +8,56 @@
 //! - provide explicit, typed failures for shapes that are currently unsupported
 //! - keep mapping rules centralized so parser/desugarer/runtime evolution stays coherent
 
+use sha2::{Digest, Sha256};
+
 use crate::ast;
 
 const CURRENT_FIELD_SENTINEL_IDENT: &str = "__incan_vocab_current_row";
-const SYNTHETIC_SPAN_BASE: usize = 1usize << 48;
 
 /// Return whether `span` marks an AST node the compiler synthesized rather than one the source spelled.
 ///
-/// Desugared vocabulary output carries spans from `SyntheticSpanAllocator`, which start at a base no source file
-/// reaches, and the hidden helper imports a desugarer receives carry the empty default span. A parsed node always
-/// covers at least one source byte below that base. Source-spelling checks, such as the reserved `__incan_` name
-/// prefix (#1769), use this to leave compiler-authored nodes alone.
+/// Generated syntax retains its original source coordinates and carries an expansion context. Hidden helper imports
+/// retain the empty default span. Source-spelling checks use this fact to leave compiler-authored names alone.
 pub(crate) fn is_synthetic_span(span: ast::Span) -> bool {
-    span == ast::Span::default() || span.start >= SYNTHETIC_SPAN_BASE
+    span == ast::Span::default() || span.expansion.is_some()
 }
 
-/// Return the synthetic span that stands in for `source` on a declaration a tool generates from source it rewrites.
-///
-/// A generated declaration needs a span of its own, because declarations are keyed by span, yet its generated name
-/// must not read as a source spelling to checks such as the reserved `__incan_` prefix (#1769). The result lies above
-/// the synthetic base, one span per source span. Spans from `SyntheticSpanAllocator` start at an even offset from that
-/// base and these start at an odd one, so the two never coincide.
-pub fn synthetic_span_anchored_at(source: ast::Span) -> ast::Span {
-    let synthetic_offset = |position: usize| {
-        SYNTHETIC_SPAN_BASE
-            .saturating_add(position.saturating_mul(2))
-            .saturating_add(1)
-    };
-    ast::Span::new(synthetic_offset(source.start), synthetic_offset(source.end))
+/// Seed compiler-generated syntax from its genuine source coordinates and any enclosing expansion context.
+fn expansion_anchor(source: ast::Span) -> ast::Span {
+    let mut identity = Sha256::new();
+    identity.update(b"incan.compiler.syntax/1\0");
+    identity.update(source.start.to_le_bytes());
+    identity.update(source.end.to_le_bytes());
+    if let Some(parent) = source.expansion {
+        identity.update(parent);
+    }
+    source.with_expansion(Some(identity.finalize().into()))
 }
 
 /// Allocates unique spans for AST nodes synthesized from desugarer output.
 ///
-/// The public vocab AST intentionally does not assign source offsets to every helper-produced expression, but later
-/// compiler phases use spans as stable keys for typechecker metadata such as call-planning decisions. Giving every
-/// generated node a distinct synthetic span avoids collapsing nested helper calls into one `Span::default()` entry.
+/// Builtin vocabulary conversion assigns a deterministic context to each decoding position while retaining the
+/// source anchor. Native providers use their unit, request and structured output path at the worker boundary.
 #[derive(Debug, Clone)]
 struct SyntheticSpanAllocator {
-    next_start: usize,
-    preserve_default: bool,
+    anchor: ast::Span,
+    next_node: usize,
 }
 
 impl SyntheticSpanAllocator {
     /// Create an allocator whose synthetic span range is anchored by the original vocab surface span.
     fn new(anchor: ast::Span) -> Self {
-        if anchor == ast::Span::default() {
-            return Self {
-                next_start: 0,
-                preserve_default: true,
-            };
-        }
-        let seed = anchor
-            .start
-            .saturating_mul(257)
-            .saturating_add(anchor.end.saturating_mul(17));
         Self {
-            next_start: SYNTHETIC_SPAN_BASE.saturating_add(seed.saturating_mul(4)),
-            preserve_default: false,
+            anchor: expansion_anchor(anchor),
+            next_node: 0,
         }
     }
 
     /// Return the next unique synthetic span for one internal AST node generated from public vocab output.
     fn next(&mut self) -> ast::Span {
-        if self.preserve_default {
-            return ast::Span::default();
-        }
-        let start = self.next_start;
-        self.next_start = self.next_start.saturating_add(2);
-        ast::Span::new(start, start.saturating_add(1))
+        let span = self.anchor.expansion_child(&format!("public-node:{}", self.next_node));
+        self.next_node += 1;
+        span
     }
 }
 
@@ -488,19 +470,6 @@ pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab
     }
 }
 
-/// Convert a slice of public statements into internal spanned statements.
-///
-/// Spans are synthesized as defaults here; the bridge preserves structure, not source provenance.
-///
-/// # Errors
-///
-/// Returns the first conversion error from [`public_statement_to_internal`].
-pub fn public_statements_to_internal(
-    stmts: &[incan_vocab::IncanStatement],
-) -> Result<Vec<ast::Spanned<ast::Statement>>, VocabAstBridgeError> {
-    public_statements_to_internal_with_anchor(stmts, ast::Span::default())
-}
-
 /// Convert public vocabulary declarations into internal compilation-unit declarations under one source anchor.
 pub fn public_declarations_to_internal_with_anchor(
     declarations: &[incan_vocab::IncanDeclaration],
@@ -653,15 +622,7 @@ fn public_decorator_span_or_synthetic(
         return spans.next();
     }
     ast::Span::new(decorator.span.start, decorator.span.end.max(decorator.span.start))
-}
-
-/// Convert public statements into internal statements while assigning unique synthetic spans under `anchor`.
-pub fn public_statements_to_internal_with_anchor(
-    stmts: &[incan_vocab::IncanStatement],
-    anchor: ast::Span,
-) -> Result<Vec<ast::Spanned<ast::Statement>>, VocabAstBridgeError> {
-    let mut spans = SyntheticSpanAllocator::new(anchor);
-    public_statements_to_internal_with_spans(stmts, &mut spans)
+        .with_expansion(spans.next().expansion)
 }
 
 /// Convert public statements while sharing one synthetic span allocator across the whole generated subtree.
@@ -676,17 +637,6 @@ fn public_statements_to_internal_with_spans(
             Ok(ast::Spanned::new(internal, spans.next()))
         })
         .collect()
-}
-
-/// Convert one public `incan_vocab::IncanStatement` into internal compiler AST.
-///
-/// # Errors
-///
-/// Returns [`VocabAstBridgeError`] when the public statement (or any contained expression) does not currently have a
-/// supported internal mapping.
-pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Result<ast::Statement, VocabAstBridgeError> {
-    let mut spans = SyntheticSpanAllocator::new(ast::Span::default());
-    public_statement_to_internal_with_spans(stmt, &mut spans)
 }
 
 /// Convert one public statement with a caller-owned synthetic span allocator.
@@ -1638,43 +1588,6 @@ mod tests {
     }
 
     #[test]
-    fn anchored_synthetic_spans_are_synthetic_distinct_and_apart_from_allocated_spans() {
-        let first = synthetic_span_anchored_at(ast::Span::new(10, 20));
-        let second = synthetic_span_anchored_at(ast::Span::new(30, 40));
-
-        assert!(
-            is_synthetic_span(first),
-            "an anchored span must read as compiler-authored"
-        );
-        assert!(
-            is_synthetic_span(second),
-            "an anchored span must read as compiler-authored"
-        );
-        assert_ne!(first, second, "two source spans must keep two generated spans");
-        assert_eq!(first, synthetic_span_anchored_at(ast::Span::new(10, 20)));
-
-        let mut allocator = SyntheticSpanAllocator::new(ast::Span::new(1, 2));
-        for _ in 0..64 {
-            let allocated = allocator.next();
-            assert_eq!(
-                (allocated.start - SYNTHETIC_SPAN_BASE) % 2,
-                0,
-                "allocated spans start at an even offset"
-            );
-        }
-        assert_eq!(
-            (first.start - SYNTHETIC_SPAN_BASE) % 2,
-            1,
-            "anchored spans start at an odd offset"
-        );
-        assert_eq!(
-            (second.start - SYNTHETIC_SPAN_BASE) % 2,
-            1,
-            "anchored spans start at an odd offset"
-        );
-    }
-
-    #[test]
     fn bridges_expression_list_clause_alias_items() -> Result<(), Box<dyn std::error::Error>> {
         let clause_block = ast::VocabBlockStmt {
             keyword: "SELECT".to_string(),
@@ -1798,6 +1711,7 @@ mod tests {
         Ok(())
     }
 
+    /// Operators retain public structure while generated operands receive stable, distinct provenance.
     #[test]
     fn bridges_rfc028_operator_enums_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let left = ast::Spanned::new(ast::Expr::Ident("left".to_string()), ast::Span::default());
@@ -1823,7 +1737,15 @@ mod tests {
                 matches!(&public, incan_vocab::IncanExpr::Binary(_, op, _) if *op == public_op),
                 "expected public operator {public_op:?}, got {public:?}"
             );
-            assert_eq!(public_expression_to_internal(&public)?, internal);
+            let round_trip = public_expression_to_internal(&public)?;
+            assert_eq!(internal_expr_to_public(&round_trip)?, public);
+            assert_eq!(round_trip, public_expression_to_internal(&public)?);
+            assert!(matches!(
+                &round_trip,
+                ast::Expr::Binary(left, _, right)
+                    if left.span.expansion.is_some() && right.span.expansion.is_some()
+                        && left.span.expansion != right.span.expansion
+            ));
         }
 
         let internal = ast::Expr::Unary(
@@ -1838,10 +1760,13 @@ mod tests {
             &public,
             incan_vocab::IncanExpr::Unary(incan_vocab::IncanUnaryOp::Invert, _)
         ));
-        assert_eq!(public_expression_to_internal(&public)?, internal);
+        let round_trip = public_expression_to_internal(&public)?;
+        assert_eq!(internal_expr_to_public(&round_trip)?, public);
+        assert!(matches!(&round_trip, ast::Expr::Unary(_, value) if value.span.expansion.is_some()));
         Ok(())
     }
 
+    /// Scoped expressions retain their public structure and generated call arguments gain stable provenance.
     #[test]
     fn bridges_scoped_surface_expression_artifacts_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let scoped = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
@@ -1873,8 +1798,7 @@ mod tests {
                                 && owner.declaration == "query"
                     )
         ));
-        let round_trip = public_expression_to_internal(&public)?;
-        assert_eq!(round_trip, scoped);
+        assert_public_expression_round_trip(&public)?;
 
         let scoped_symbol = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
             key: incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
@@ -1907,10 +1831,19 @@ mod tests {
                     && call.owner.clause.as_deref() == Some("SELECT")
         ));
         let round_trip = public_expression_to_internal(&public)?;
-        assert_eq!(round_trip, scoped_symbol);
+        assert_eq!(internal_expr_to_public(&round_trip)?, public);
+        assert_eq!(round_trip, public_expression_to_internal(&public)?);
+        assert!(matches!(
+            &round_trip,
+            ast::Expr::Surface(surface)
+                if matches!(&surface.payload, ast::SurfaceExprPayload::ScopedSymbolCall { args, .. }
+                    if args.iter().all(|argument| matches!(argument,
+                        ast::CallArg::Positional(value) if value.span.expansion.is_some())))
+        ));
         Ok(())
     }
 
+    /// Async surface structure survives bridging and each generated binding retains expansion provenance.
     #[test]
     fn bridges_race_for_expression_artifacts_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let race = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
@@ -1951,7 +1884,24 @@ mod tests {
                     && matches!(&race.arms[0].body, incan_vocab::IncanRaceForBody::Expr(_))
                     && matches!(&race.arms[1].body, incan_vocab::IncanRaceForBody::Block(_))
         ));
-        assert_eq!(public_expression_to_internal(&public)?, race);
+        let round_trip = public_expression_to_internal(&public)?;
+        assert_eq!(internal_expr_to_public(&round_trip)?, public);
+        assert_eq!(round_trip, public_expression_to_internal(&public)?);
+        assert!(matches!(
+            &round_trip,
+            ast::Expr::Surface(surface)
+                if matches!(&surface.payload, ast::SurfaceExprPayload::RaceFor(race)
+                    if race.binding.span.expansion.is_some()
+                        && race.arms.iter().all(|arm| arm.awaitable.span.expansion.is_some()))
+        ));
+        Ok(())
+    }
+
+    /// Public DTOs omit spans; import assigns deterministic expansion identities rather than restoring empty spans.
+    fn assert_public_expression_round_trip(public: &incan_vocab::IncanExpr) -> Result<(), Box<dyn std::error::Error>> {
+        let restored = public_expression_to_internal(public)?;
+        assert_eq!(&internal_expr_to_public(&restored)?, public);
+        assert_eq!(restored, public_expression_to_internal(public)?);
         Ok(())
     }
 }

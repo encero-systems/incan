@@ -1,4 +1,4 @@
-# behavior: forwarded generic methods and functions compare closed string carriers through shared equality and inequality, retain their input strings, and preserve numeric and boolean comparisons
+# behavior: generic equality and inequality preserve scalar, text, and nested tuple operands, including tuple fields with owned lists (#1442)
 # expect-stdout:
 #   true
 #   true
@@ -12,6 +12,14 @@
 #   true
 #   true
 #   false
+#   true
+#   true
+#   false
+#   true
+#   猫
+#   2
+
+from std.testing import assert_eq
 
 model Comparator:
     def same[T](self, left: T, right: T) -> bool:
@@ -38,6 +46,7 @@ def method_different[T](comparator: Comparator, left: T, right: T) -> bool:
 
 
 def main() -> None:
+    """Compare each closed carrier and read its owned fields again after comparison."""
     left = "猫"
     right = "猫"
     comparator = Comparator()
@@ -53,3 +62,12 @@ def main() -> None:
     println(different(3, 4))
     println(same(true, true))
     println(method_different(comparator, false, false))
+    pair = (1, "猫")
+    assert_eq(pair, (1, "猫"))
+    println(same(pair, (1, "猫")))
+    println(method_different(comparator, pair, (2, "猫")))
+    println(different(pair, (1, "猫")))
+    nested = ((true, "猫"), [1, 2])
+    println(method_same(comparator, nested, ((true, "猫"), [1, 2])))
+    println(pair.1)
+    println(len(nested.1))

@@ -2,6 +2,10 @@
 # expect-exit: 1
 # expect-stderr-contains:
 #   `engine`
+# cli-commands:
+#   describe-unit src/main.incn
+#   build src/main.incn
+#   build rust_consumer
 
 def main() -> None:
     println("unreachable")

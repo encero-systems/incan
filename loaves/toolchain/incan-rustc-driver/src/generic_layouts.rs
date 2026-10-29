@@ -2,16 +2,23 @@
 //! consumers alias its instantiations. A private zero-sized marker retains unused source type parameters.
 
 use crate::ast_build::{
-    block, expression, expression_statement, global_path, ident, inherited, local, path_ty, self_value, trait_bound,
+    RUST_CLONE_SYMBOL, RUST_FMT_DEBUG_SYMBOL, block, expression, expression_statement, global_path, ident, inherited,
+    local, path_ty, self_value, trait_bound,
 };
 use crate::plan::{GenericLayoutType, GenericModelDeclaration};
 use crate::{declarations, union_debug};
+use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Ident, Span, Symbol, kw, respan};
 use thin_vec::{ThinVec, thin_vec};
 
-/// Declare the generic ADT and its source-shaped Debug implementation, excluding its private marker from output.
+/// Name prefix of the private zero-sized marker field; the declaration and the layout reader must agree on it.
+const MARKER_PREFIX: &str = "__incan_phantom";
+
+/// Declare the generic ADT and its checked derived implementations, excluding its private marker from output.
+/// Derive choices use the shared registry, while emitted Rust trait bounds name their physical owners. The compiled ABI
+/// exposes every retained layout; the checked manifest governs source visibility separately.
 pub(crate) fn items(
     model: &GenericModelDeclaration,
     generator: &ast::attr::AttrIdGenerator,
@@ -50,22 +57,42 @@ pub(crate) fn items(
         ),
         span,
     );
-    for derive in model
-        .derives
-        .iter()
-        .filter(|derive| !matches!(derive.as_str(), "Debug" | "Clone"))
-    {
+    for derive in model.derives.iter().filter(|derive| {
+        !matches!(
+            derives::from_str(derive),
+            Some(DeriveId::Debug | DeriveId::Clone | DeriveId::Display)
+        )
+    }) {
         declaration
             .attrs
             .push(declarations::derive_attribute(generator, derive, span));
     }
     declaration.tokens = tokens;
     let mut items = vec![declaration];
-    if model.derives.iter().any(|derive| derive == "Debug") {
+    if model
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Debug))
+    {
         items.push(debug_impl(model, span));
     }
-    if model.derives.iter().any(|derive| derive == "Clone") {
+    if model
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+    {
         items.push(clone_impl(model, span));
+    }
+    if model
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Display))
+    {
+        items.push(crate::derived_display::implementation(
+            self_type(model, span),
+            parameters_of(model, Some(&["core", "fmt", RUST_FMT_DEBUG_SYMBOL]), span),
+            span,
+        ));
     }
     items
 }
@@ -172,7 +199,7 @@ fn field_definition(name: &str, ty: Box<ast::Ty>, public: bool, span: Span) -> a
 
 /// Choose a private marker name outside the authored field set.
 fn marker_name(model: &GenericModelDeclaration) -> String {
-    let mut name = "__incan_phantom".to_owned();
+    let mut name = MARKER_PREFIX.to_owned();
     while model.fields.iter().any(|field| field.name == name) {
         name.push('_');
     }
@@ -212,9 +239,7 @@ fn parameters_of(model: &GenericModelDeclaration, bound: Option<&[&str]>, span: 
 fn uses_parameter(ty: &GenericLayoutType, parameter: &str) -> bool {
     match ty {
         GenericLayoutType::Parameter(name) => name == parameter,
-        GenericLayoutType::Applied(_, arguments)
-        | GenericLayoutType::Tuple(arguments)
-        | GenericLayoutType::FunctionPointer(arguments) => {
+        GenericLayoutType::Applied(_, arguments) | GenericLayoutType::Tuple(arguments) => {
             arguments.iter().any(|argument| uses_parameter(argument, parameter))
         }
         GenericLayoutType::Concrete(_) | GenericLayoutType::FunctionPointer(_) => false,
@@ -289,7 +314,7 @@ fn debug_impl(model: &GenericModelDeclaration, span: Span) -> Box<ast::Item> {
         span,
     );
     let method = trait_method("fmt", union_debug::fmt_signature(span), body, span);
-    trait_impl(model, &["core", "fmt", "Debug"], method, span)
+    trait_impl(model, &["core", "fmt", RUST_FMT_DEBUG_SYMBOL], method, span)
 }
 
 /// Clone authored fields and recreate the zero-sized marker without requiring unused parameters to implement Clone.
@@ -335,7 +360,7 @@ fn clone_impl(model: &GenericModelDeclaration, span: Span) -> Box<ast::Item> {
     let body = block(thin_vec![expression_statement(value, span)], span);
     trait_impl(
         model,
-        &["core", "clone", "Clone"],
+        &["core", "clone", RUST_CLONE_SYMBOL],
         trait_method("clone", signature, body, span),
         span,
     )
@@ -355,7 +380,7 @@ fn initialized_field(name: &str, expr: Box<ast::Expr>, span: Span) -> ast::ExprF
 }
 
 /// Declare one method in a native trait implementation without authored source tokens.
-fn trait_method(name: &str, sig: ast::FnSig, body: Box<ast::Block>, span: Span) -> Box<ast::AssocItem> {
+pub(crate) fn trait_method(name: &str, sig: ast::FnSig, body: Box<ast::Block>, span: Span) -> Box<ast::AssocItem> {
     Box::new(ast::AssocItem {
         attrs: ThinVec::new(),
         id: ast::DUMMY_NODE_ID,
@@ -382,11 +407,6 @@ fn trait_impl(
     method: Box<ast::AssocItem>,
     span: Span,
 ) -> Box<ast::Item> {
-    let arguments = model
-        .parameters
-        .iter()
-        .map(|name| GenericLayoutType::Parameter(name.clone()))
-        .collect();
     let mut implementation = declarations::item(
         ast::ItemKind::Impl(ast::Impl {
             generics: parameters_of(model, Some(path), span),
@@ -400,13 +420,23 @@ fn trait_impl(
                     ref_id: ast::DUMMY_NODE_ID,
                 },
             })),
-            self_ty: layout_type(&GenericLayoutType::Applied(model.name.clone(), arguments), span),
+            self_ty: self_type(model, span),
             items: thin_vec![method],
         }),
         span,
     );
     implementation.vis = inherited(span);
     implementation
+}
+
+/// Apply a provider's declared type parameters in their original order for every native trait implementation.
+fn self_type(model: &GenericModelDeclaration, span: Span) -> Box<ast::Ty> {
+    let arguments = model
+        .parameters
+        .iter()
+        .map(|name| GenericLayoutType::Parameter(name.clone()))
+        .collect();
+    layout_type(&GenericLayoutType::Applied(model.name.clone(), arguments), span)
 }
 
 /// A source string literal used only by the injected Debug implementation.
@@ -450,7 +480,7 @@ pub(crate) fn marker_type<'tcx>(
         return None;
     }
     let field = fields.iter().next_back()?;
-    if !field.name.as_str().starts_with("__incan_phantom") || tcx.visibility(field.did).is_public() {
+    if !field.name.as_str().starts_with(MARKER_PREFIX) || tcx.visibility(field.did).is_public() {
         return None;
     }
     let ty = field.ty(tcx, args).skip_normalization();

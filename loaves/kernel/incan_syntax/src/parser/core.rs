@@ -239,6 +239,9 @@ impl<'a> Parser<'a> {
         let mut seen_non_doc_decl = false;
         let mut seen_test_module = false;
 
+        // Every loaded provider's `Always` vocabulary is active from the module's first line.
+        self.activate_imported_keywords_for_import_path(&[]);
+
         // Skip leading newlines
         self.skip_newlines();
         // Stray top-level DEDENT can appear after error recovery (e.g. unexpected indentation).
@@ -276,15 +279,7 @@ impl<'a> Parser<'a> {
                 match self.feature_conditioned_declarations(&[]) {
                     Ok(conditioned) => {
                         for decl in conditioned {
-                            if matches!(decl.node, Declaration::TestModule(_)) {
-                                if seen_test_module {
-                                    self.errors.push(CompileError::syntax(
-                                        "Only one `module tests:` block is allowed per file".to_string(),
-                                        decl.span,
-                                    ));
-                                }
-                                seen_test_module = true;
-                            }
+                            self.note_test_module_declaration(&decl, &mut seen_test_module);
                             if !matches!(decl.node, Declaration::Docstring(_)) {
                                 seen_non_doc_decl = true;
                             }
@@ -304,15 +299,7 @@ impl<'a> Parser<'a> {
             // ---- Context: normal declarations ----
             match self.declaration() {
                 Ok(decl) => {
-                    if matches!(decl.node, Declaration::TestModule(_)) {
-                        if seen_test_module {
-                            self.errors.push(CompileError::syntax(
-                                "Only one `module tests:` block is allowed per file".to_string(),
-                                decl.span,
-                            ));
-                        }
-                        seen_test_module = true;
-                    }
+                    self.note_test_module_declaration(&decl, &mut seen_test_module);
                     self.activate_soft_keywords_for_declaration(&decl.node);
                     if !matches!(decl.node, Declaration::Docstring(_)) {
                         seen_non_doc_decl = true;
@@ -330,20 +317,7 @@ impl<'a> Parser<'a> {
             self.skip_dedents();
         }
 
-        // ---- Reconcile tolerant-lex errors against claimed embedded fragments (RFC 081, #1023) ----
-        // Any `pending_lex_errors` entry whose span falls inside a fragment this parse actually claimed is
-        // expected noise: that byte range was re-tokenized independently by the fragment's own submode grammar,
-        // so the ordinary lexer's confusion about it never reflects a real user mistake. Everything else is real
-        // and must still reach the user, exactly as if the strict lexer had produced it directly.
-        for lex_error in self.pending_lex_errors.drain(..) {
-            let is_expected_fragment_noise = self
-                .claimed_embedded_fragment_spans
-                .iter()
-                .any(|fragment_span| span_contains(*fragment_span, lex_error.span));
-            if !is_expected_fragment_noise {
-                self.errors.push(lex_error);
-            }
-        }
+        self.retain_unclaimed_lex_errors();
 
         if self.errors.is_empty() {
             Ok(Program {
@@ -358,6 +332,36 @@ impl<'a> Parser<'a> {
             // needed.
             self.errors.append(&mut self.warnings);
             Err(self.errors)
+        }
+    }
+
+    /// Enforce one test module per file across ordinary and feature-conditioned declarations.
+    fn note_test_module_declaration(&mut self, declaration: &Spanned<Declaration>, seen: &mut bool) {
+        if !matches!(declaration.node, Declaration::TestModule(_)) {
+            return;
+        }
+        if *seen {
+            self.errors.push(CompileError::syntax(
+                "Only one `module tests:` block is allowed per file".to_string(),
+                declaration.span,
+            ));
+        }
+        *seen = true;
+    }
+
+    /// Retain tolerant-lex errors outside claimed embedded fragments (RFC 081, #1023).
+    ///
+    /// A claimed fragment was re-tokenized by its own submode grammar, so ordinary lexer errors within its span are
+    /// expected noise. Errors elsewhere must reach the user exactly as if the strict lexer had emitted them.
+    fn retain_unclaimed_lex_errors(&mut self) {
+        for lex_error in self.pending_lex_errors.drain(..) {
+            let is_expected_fragment_noise = self
+                .claimed_embedded_fragment_spans
+                .iter()
+                .any(|fragment_span| span_contains(*fragment_span, lex_error.span));
+            if !is_expected_fragment_noise {
+                self.errors.push(lex_error);
+            }
         }
     }
 
@@ -453,6 +457,9 @@ impl<'a> Parser<'a> {
 
     /// Activate keyword registrations contributed by an imported namespace.
     ///
+    /// An empty path is module start, which activates every loaded provider's `Always` registrations and surfaces; an
+    /// import path activates only the `OnImport` ones its namespace matches, so each activation happens once.
+    ///
     /// This bridges serialized vocab metadata into parser state by:
     /// - recording compatible soft-keyword ids in `active_soft_keywords` (for existing parser flows), and
     /// - recording imported keyword surface specs in `active_imported_keyword_specs` (for surface-kind checks driven by
@@ -462,7 +469,6 @@ impl<'a> Parser<'a> {
             .library_imported_vocab
             .keys()
             .chain(self.library_imported_dsl_surfaces.keys())
-            .filter(|key| import_path_activates_namespace(import_path, key))
             .cloned()
             .collect::<Vec<_>>();
         provider_keys.sort();
@@ -473,11 +479,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Activate one provider's registered vocabulary after its import namespace matched.
+    /// Activate one provider's registered vocabulary at module start (empty path) or after its import namespace
+    /// matched.
     fn activate_imported_keywords_for_provider(&mut self, provider_key: &str, import_path: &[String]) {
         if let Some(surfaces) = self.library_imported_dsl_surfaces.get(provider_key) {
             for surface in surfaces {
-                if !dsl_surface_applies_to_import_path(surface, import_path) {
+                if !activation_applies(&surface.activation, import_path) {
                     continue;
                 }
                 self.active_scoped_surface_descriptors
@@ -517,7 +524,7 @@ impl<'a> Parser<'a> {
         };
 
         for registration in registrations {
-            if !registration_applies_to_import_path(registration, import_path) {
+            if !activation_applies(&registration.activation, import_path) {
                 continue;
             }
 
@@ -656,7 +663,8 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Return `true` when a DSL surface should activate for an imported namespace.
+/// Return `true` when a DSL surface's descriptors are in scope for a namespace: an `Always` surface is in scope at
+/// module start and at every import.
 fn dsl_surface_applies_to_import_path(surface: &incan_vocab::DslSurface, import_path: &[String]) -> bool {
     match &surface.activation {
         incan_vocab::KeywordActivation::Always => true,
@@ -667,15 +675,13 @@ fn dsl_surface_applies_to_import_path(surface: &incan_vocab::DslSurface, import_
     }
 }
 
-/// Return `true` when a registration should be activated for an imported namespace.
-fn registration_applies_to_import_path(
-    registration: &incan_vocab::KeywordRegistration,
-    import_path: &[String],
-) -> bool {
-    match &registration.activation {
-        incan_vocab::KeywordActivation::Always => true,
+/// Return `true` when an activation rule fires here: `Always` at module start (an empty path), `OnImport` at an
+/// import of its namespace or of a namespace that encloses it.
+fn activation_applies(activation: &incan_vocab::KeywordActivation, import_path: &[String]) -> bool {
+    match activation {
+        incan_vocab::KeywordActivation::Always => import_path.is_empty(),
         incan_vocab::KeywordActivation::OnImport { namespace } => {
-            import_path_activates_namespace(import_path, namespace)
+            !import_path.is_empty() && import_path_activates_namespace(import_path, namespace)
         }
         _ => false,
     }

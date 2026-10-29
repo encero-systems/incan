@@ -27,16 +27,6 @@ fn parse_collection_program(path: &Path, source: &str, session: &CompilationSess
         .map_err(|e| format!("Parser error: {:?}", e))
 }
 
-/// Build a lightweight [`Program`] wrapper around a declaration slice so existing import-alias collection stays shared.
-fn program_for_decls(declarations: Vec<Spanned<Declaration>>) -> Program {
-    Program {
-        declarations,
-        source_path: None,
-        rust_module_path: None,
-        warnings: Vec::new(),
-    }
-}
-
 /// Return whether declarations use any decorator supplied by `std.testing`.
 fn declarations_use_testing_markers(
     declarations: &[Spanned<Declaration>],
@@ -100,22 +90,19 @@ pub fn discover_tests_and_fixtures_with_context(
         return Err("RFC 018 test files must not contain `module tests:`; put inline tests in production source files or use top-level test functions in test files".to_string());
     }
 
-    let declarations: Vec<Spanned<Declaration>> = if is_named_test_file || is_conftest_file {
-        ast.declarations.clone()
+    let declarations = if is_named_test_file || is_conftest_file {
+        ast.declarations.as_slice()
     } else if let Some(test_module) = test_module {
-        test_module.body.clone()
+        test_module.body.as_slice()
     } else {
-        Vec::new()
+        &[]
     };
 
     let mut import_aliases = incan_frontend::decorator_resolution::collect_import_aliases(&ast);
     if !is_named_test_file {
-        let inline_program = program_for_decls(declarations.clone());
-        import_aliases.extend(incan_frontend::decorator_resolution::collect_import_aliases(
-            &inline_program,
-        ));
+        import_aliases.extend(incan_frontend::decorator_resolution::collect_declaration_import_aliases(declarations));
     }
-    let semantics = if declarations_use_testing_markers(&declarations, &import_aliases) {
+    let semantics = if declarations_use_testing_markers(declarations, &import_aliases) {
         compilation_session
             .require_testing_marker_semantics()
             .map_err(|error| format!("Failed to load std.testing marker semantics: {}", error.message))?
@@ -125,31 +112,12 @@ pub fn discover_tests_and_fixtures_with_context(
 
     let mut tests = Vec::new();
     let mut fixtures = Vec::new();
-    let mut default_marks = inherited_marks.to_vec();
-    let mut known_markers = inherited_known_markers.to_vec();
+    let (mut default_marks, mut known_markers) =
+        collect_module_marks(declarations, inherited_marks, inherited_known_markers);
 
-    for decl in &declarations {
-        if let Declaration::Const(konst) = &decl.node {
-            if konst.name == "TEST_MARKS" {
-                default_marks.extend(extract_string_list(&konst.value.node));
-            } else if konst.name == "TEST_MARKERS" {
-                known_markers.extend(extract_string_list(&konst.value.node));
-            }
-        }
-    }
+    let fixture_names = collect_fixture_names(visible_fixture_names, declarations, &import_aliases, &semantics);
 
-    let mut fixture_names: Vec<String> = Vec::new();
-    fixture_names.extend(visible_fixture_names.iter().cloned());
-    fixture_names.extend(BUILTIN_FIXTURES.iter().map(|name| (*name).to_string()));
-    for decl in &declarations {
-        if let Declaration::Function(func) = &decl.node
-            && has_fixture_decorator(&func.decorators, &import_aliases, &semantics)
-        {
-            fixture_names.push(func.name.clone());
-        }
-    }
-
-    for decl in &declarations {
+    for decl in declarations {
         if let Declaration::Function(func) = &decl.node {
             if has_fixture_decorator(&func.decorators, &import_aliases, &semantics) {
                 let (scope, autouse) = extract_fixture_args(&func.decorators, &import_aliases, &semantics);
@@ -212,6 +180,48 @@ pub fn discover_tests_and_fixtures_with_context(
     })
 }
 
+/// Extend inherited marks and known markers from module constants in declaration order. Duplicates remain visible
+/// to test marker construction until the caller's existing final sort/dedup publication step.
+fn collect_module_marks(
+    declarations: &[Spanned<Declaration>],
+    inherited_marks: &[String],
+    inherited_known_markers: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut marks = inherited_marks.to_vec();
+    let mut known = inherited_known_markers.to_vec();
+    for declaration in declarations {
+        if let Declaration::Const(konst) = &declaration.node {
+            if konst.name == "TEST_MARKS" {
+                marks.extend(extract_string_list(&konst.value.node));
+            } else if konst.name == "TEST_MARKERS" {
+                known.extend(extract_string_list(&konst.value.node));
+            }
+        }
+    }
+    (marks, known)
+}
+
+/// Collect inherited, builtin and source fixture names in their existing order before validating dependencies.
+/// Marker semantics and import aliases select source fixtures; this inventory introduces no new marker authority.
+fn collect_fixture_names(
+    visible: &[String],
+    declarations: &[Spanned<Declaration>],
+    aliases: &HashMap<String, Vec<String>>,
+    semantics: &TestingMarkerSemantics,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    names.extend(visible.iter().cloned());
+    names.extend(BUILTIN_FIXTURES.iter().map(|name| (*name).to_string()));
+    for declaration in declarations {
+        if let Declaration::Function(function) = &declaration.node
+            && has_fixture_decorator(&function.decorators, aliases, semantics)
+        {
+            names.push(function.name.clone());
+        }
+    }
+    names
+}
+
 /// Reject fixture parameters that cannot be resolved as other fixtures.
 fn validate_fixture_parameters(
     fixture_name: &str,
@@ -257,14 +267,14 @@ fn validate_parametrize_case_arity(test_name: &str, markers: &[TestMarker]) -> R
         };
         let argument_names = split_parametrize_argument_names(names);
         for case in cases {
-            if case.rust_arguments.len() != argument_names.len() {
+            if case.parameters.len() != argument_names.len() {
                 return Err(format!(
                     "parametrize case `{}` for test `{}` expected {} value(s) for `{}`, got {}",
                     case.display_id,
                     test_name,
                     argument_names.len(),
                     names,
-                    case.rust_arguments.len()
+                    case.parameters.len()
                 ));
             }
         }
@@ -408,15 +418,6 @@ fn validate_yield_fixture(name: &str, body: &[Spanned<Statement>], scope: Fixtur
     }
 
     Ok(true)
-}
-
-/// Get autouse fixtures for a given scope.
-pub fn get_autouse_fixtures(fixtures: &HashMap<String, FixtureInfo>, scope: FixtureScope) -> Vec<String> {
-    fixtures
-        .values()
-        .filter(|f| f.autouse && f.scope == scope)
-        .map(|f| f.name.clone())
-        .collect()
 }
 
 /// Extract test markers from the decorators.
@@ -740,11 +741,9 @@ fn build_parametrize_case(expr: &Spanned<Expr>, explicit_id: Option<String>) -> 
                 .collect::<Vec<_>>()
                 .join("-");
             let display_id = explicit_id.unwrap_or(derived_display_id);
-            let rust_arguments = elements.iter().map(|e| render_rust_arg(&e.node)).collect();
             let parameters = elements.iter().map(|e| render_display(&e.node)).collect();
             ParametrizeCase {
                 display_id,
-                rust_arguments,
                 parameters,
                 markers: Vec::new(),
             }
@@ -752,10 +751,8 @@ fn build_parametrize_case(expr: &Spanned<Expr>, explicit_id: Option<String>) -> 
         other => {
             let rendered = render_display(other);
             let display_id = explicit_id.unwrap_or_else(|| rendered.clone());
-            let rust_args = render_rust_arg(other);
             ParametrizeCase {
                 display_id,
-                rust_arguments: vec![rust_args],
                 parameters: vec![rendered],
                 markers: Vec::new(),
             }
@@ -857,28 +854,5 @@ fn render_display(expr: &Expr) -> String {
         }
         Expr::Paren(inner) => render_display(&inner.node),
         _ => "?".to_string(),
-    }
-}
-
-/// Render an expression as a Rust literal suitable for injection into generated code.
-///
-/// - Integers: `42`
-/// - Floats: `1.5`
-/// - Strings: `"hello".to_string()`
-/// - Booleans: `true` / `false`
-/// - Negative: `-42`
-fn render_rust_arg(expr: &Expr) -> String {
-    match expr {
-        Expr::Literal(Literal::Int(il)) => il.value.to_string(),
-        Expr::Literal(Literal::Float(f)) => f.value.to_string(),
-        Expr::Literal(Literal::String(s)) => {
-            format!("\"{}\".to_string()", s.replace('\\', "\\\\").replace('"', "\\\""))
-        }
-        Expr::Literal(Literal::Bool(b)) => b.to_string(),
-        Expr::Unary(incan_frontend::ast::UnaryOp::Neg, operand) => {
-            format!("-{}", render_rust_arg(&operand.node))
-        }
-        Expr::Paren(inner) => render_rust_arg(&inner.node),
-        _ => "todo!(\"unsupported parametrize value\")".to_string(),
     }
 }

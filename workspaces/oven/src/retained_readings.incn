@@ -1,0 +1,133 @@
+"""
+What a command learns from an installed or published file, retained once per file generation.
+
+A Loaf's published manifest can be megabytes of JSON of which every command reads a few fields, and the pinned rustc is
+asked for its host and target configuration by every command that prepares a local dependency graph. A reading is retained in the home's cache beside the file's filesystem identity (see `observation`),
+so a command whose inputs are unchanged parses no such JSON and starts no such process. A replaced or rewritten file has
+another identity and is read again; a reading is retained only when the file kept one settled identity meanwhile.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue, parse
+from files import json_text, read_json
+from graph_queries import nested, text
+from home import home
+from json_fields import required_text
+from observation import SETTLE_SECONDS, Observation, now_seconds, observe
+from publication import publish
+from jec import begin, record, text_size
+
+const SCHEMA: str = "incan.oven.retained-reading/2"
+
+
+pub model Reading:
+    """The selected fields a file has, by dotted path (an absent field is absent), and the SHA-256 of its bytes."""
+
+    pub fields: JsonValue
+    pub digest: str
+
+
+pub def retained_reading(source: Path, selected: list[str]) -> Result[Reading, str]:
+    """
+    The `selected` fields of the JSON file `source`, each a dotted path, read from the file only when it changed.
+
+    1. A retained reading of the file's current identity and of this selection answers without reading the file.
+    2. Otherwise read, digest and parse the file, keeping only the selected fields it has.
+    3. Retain that reading for the file's identity.
+    """
+    # 1. The identity covers replacement, in-place rewrites and restored modification times.
+    observed = observe(source)?
+    selection = ",".join(selected)
+    if let Some(value) = recall(source, selection, observed.stamp):
+        return Ok(Reading(fields=nested(value, "fields"), digest=text(value, "digest")))
+    # 2. The digest covers the exact bytes the JSON reading parsed.
+    mut clock = begin()
+    content = source.read_text("utf-8", "strict").map_err((error) => f"{source.0}: {error.message()}")?
+    record("file_read", source.0, clock, text_size(content, clock))
+    clock = begin()
+    document = parse(content).map_err((error) => f"{source.0}: {error.message()}")?
+    record("json_decode", source.0, clock, text_size(content, clock))
+    clock = begin()
+    digest = hexlify(sha256.digest(content.encode("utf-8")))
+    record("file_hash", source.0, clock, text_size(content, clock))
+    reading = Reading(fields=selected_fields(document, selected), digest=digest)
+    # 3. The fields and the digest are retained together.
+    mut value: Dict[str, JsonValue] = {}
+    value["fields"] = reading.fields
+    value["digest"] = JsonValue.string(reading.digest)
+    retain(source, selection, observed, JsonValue.object(value))
+    return Ok(reading)
+
+
+pub def recall(source: Path, selection: str, stamp: str) -> Option[JsonValue]:
+    """The value retained for exactly this file, selection and file identity; any other record is a cache miss."""
+    match reading_record(source, selection):
+        None => return None
+        Some(record) =>
+            if not record.is_file():
+                return None
+            match retained_value(record, source, selection, stamp):
+                Ok(found) => return found
+                Err(_) => return None
+
+
+pub def retain(source: Path, selection: str, observed: Observation, value: JsonValue) -> None:
+    """
+    Retain `value` for the identity `source` had when the work began, if that identity had settled and is still the
+    file's. A cache that cannot be written only costs the next command the same work.
+    """
+    if now_seconds() < observed.newest + SETTLE_SECONDS:
+        return
+    match observe(source):
+        Err(_) => return
+        Ok(current) =>
+            if current.stamp != observed.stamp:
+                return
+    match reading_record(source, selection):
+        None => return
+        Some(record) => _ = remember(record, source, selection, observed.stamp, value)
+
+
+def selected_fields(document: JsonValue, selected: list[str]) -> JsonValue:
+    """The fields of `document` at the selected dotted paths, keyed by those paths; a path it lacks is left out."""
+    mut fields: Dict[str, JsonValue] = {}
+    for path in selected:
+        mut value = document
+        for name in path.split("."):
+            value = nested(value, name)
+        if not value.is_null():
+            fields[path] = value
+    return JsonValue.object(fields)
+
+
+def reading_record(source: Path, selection: str) -> Option[Path]:
+    """Where the reading of `source` for one selection is retained; `None` without a home."""
+    match home():
+        Err(_) => return None
+        Ok(root) =>
+            name = hexlify(sha256.digest(f"{source.0}\n{selection}".encode("utf-8")))[:32]
+            return Some(root.joinpath("cache").joinpath("retained-readings").joinpath(f"{name}.json"))
+
+
+def retained_value(record: Path, source: Path, selection: str, stamp: str) -> Result[Option[JsonValue], str]:
+    """Read a record and admit it only for the same schema, file path, selection and file identity."""
+    document = read_json(record)?
+    if required_text(document, "schema")? != SCHEMA or required_text(document, "source")? != source.0:
+        return Ok(None)
+    if required_text(document, "selection")? != selection or required_text(document, "stamp")? != stamp:
+        return Ok(None)
+    return Ok(Some(nested(document, "value")))
+
+
+def remember(record: Path, source: Path, selection: str, stamp: str, value: JsonValue) -> Result[None, str]:
+    """Publish one complete record atomically; a racing command publishes the same reading of the same identity."""
+    record.parent().mkdir(true, true).map_err((error) => error.message())?
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(SCHEMA)
+    fields["source"] = JsonValue.string(source.0)
+    fields["selection"] = JsonValue.string(selection)
+    fields["stamp"] = JsonValue.string(stamp)
+    fields["value"] = value
+    return publish(record, json_text(JsonValue.object(fields))?)

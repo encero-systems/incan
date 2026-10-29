@@ -1,0 +1,78 @@
+"""Retain the linking fields of published native closures within one selected toolchain preparation."""
+
+from rust::std::cell import RefCell
+from rust::std::ops import DerefMut
+from rust::std::rc import Rc
+from std.fs import Path
+from std.json import JsonValue
+from files import read_json
+from observation import observe
+
+
+model Reading:
+    """The linking projection of one unchanged native closure generation."""
+
+    pub stamp: str
+    pub fields: JsonValue
+
+
+model Readings:
+    """Caller-owned mutable readings, shared without copying every retained closure."""
+
+    pub files: Dict[str, Reading] = {}
+
+
+pub model NativeClosureInput:
+    """One preparation's published closure inputs, excluding source intent and mutable compiler outcomes."""
+
+    pub state: Rc[RefCell[Readings]] = Rc.new(RefCell.new(Readings()))
+
+    def read(self, path: Path) -> Result[JsonValue, str]:
+        """
+        Read each unchanged closure once and retain only fields consumed during linking.
+
+        1. Reconcile the file's filesystem generation before recalling its fields.
+        2. Read a new generation and project search directories, native externs and macro externs.
+        3. Retain it only if the file did not change during the read.
+        """
+        mut held = self.state.as_ref().borrow_mut()
+        return reading(path, held.deref_mut())
+
+
+pub def native_bindings(path: Path, readings: NativeClosureInput) -> Result[list[Tuple[str, str]], str]:
+    """Read a published Loaf's exact native aliases and paths, refusing malformed pairs before linking."""
+    document = readings.read(path)?
+    match document.get("externs"):
+        None => return Ok([])
+        Some(value) =>
+            mut result: list[Tuple[str, str]] = []
+            for item in value.expect_array().map_err((error) => error.message())?:
+                binding = item.expect_array().map_err((error) => error.message())?
+                if len(binding) != 2:
+                    return Err(f"{path.0}: native extern must contain a name and artifact")
+                name = binding[0].expect_str().map_err((error) => error.message())?
+                artifact = binding[1].expect_str().map_err((error) => error.message())?
+                result.append((name, artifact))
+            return Ok(result)
+
+
+def reading(path: Path, mut store: &mut Readings) -> Result[JsonValue, str]:
+    """Keep validation at each existing consumer while sharing the exact published input it validates."""
+    # 1. Replacement and in-place edits both change the observed generation.
+    observed = observe(path)?
+    if path.0 in store.files:
+        previous = store.files[path.0]
+        if previous.stamp == observed.stamp:
+            return Ok(previous.fields)
+    # 2. Registry receipts and other payloads are irrelevant to these linking consumers.
+    document = read_json(path)?
+    mut fields: Dict[str, JsonValue] = {}
+    for name in ["search", "externs", "macro_externs"]:
+        match document.get(name):
+            Some(value) => fields[name] = value
+            None => pass
+    selected = JsonValue.object(fields)
+    # 3. No partial or concurrently replaced generation enters the shared readings.
+    if observe(path)?.stamp == observed.stamp:
+        store.files[path.0] = Reading(stamp=observed.stamp, fields=selected)
+    return Ok(selected)

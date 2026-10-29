@@ -4,12 +4,12 @@ use std::collections::{BTreeMap, HashMap};
 
 use incan_lang::interop::rust_display_is_owned_string;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::{CanonicalSymbolId, IncanType, body_ir};
+use incan_semantics_core::{CanonicalSymbolId, IncanType, RuntimeCarrier, body_ir};
 use quote::ToTokens;
 
 use super::TypeChecker;
 use super::type_info::{FunctionBindingInfo, RustCheckedCall, RustCheckedSignature, semantic_type_from_resolved};
-use crate::ast::{Declaration, Program};
+use crate::ast::{Declaration, MethodDecl, Program, Spanned, TypeParam};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{ResolvedType, TypeInfo};
 
@@ -32,6 +32,8 @@ impl TypeChecker {
         let mut calls = std::mem::take(&mut self.type_info.rust.checked_calls);
         let mut awaits = std::mem::take(&mut self.type_info.rust.await_conversions);
         let mut arguments = std::mem::take(&mut self.type_info.rust.argument_adjustments);
+        let mut conversions = std::mem::take(&mut self.type_info.rust.declared_conversions);
+        let mut elements = std::mem::take(&mut self.type_info.rust.element_adjustments);
         let mut fields = std::mem::take(&mut self.type_info.rust.field_adjustments);
         let mut function_values = std::mem::take(&mut self.type_info.rust.checked_function_values);
         let mut hooks = std::mem::take(&mut self.type_info.rust.iteration_hooks);
@@ -40,6 +42,8 @@ impl TypeChecker {
             .values_mut()
             .chain(awaits.values_mut())
             .chain(arguments.values_mut().flatten())
+            .chain(elements.values_mut())
+            .chain(conversions.iter_mut().map(|edge| &mut edge.call))
             .chain(fields.values_mut().flatten())
             .chain(function_values.values_mut())
         {
@@ -50,38 +54,7 @@ impl TypeChecker {
             self.freeze_rust_call(&mut hook.next, &mut storage);
         }
         // ---- Checked values and declarations ----
-        let expressions = &self.type_info.expressions;
-        let declarations = &self.type_info.declarations;
-        for ty in expressions
-            .expr_types
-            .values()
-            .chain(expressions.body_ir_expr_types.values())
-            .chain(expressions.body_ir_binding_types.values())
-            .chain(expressions.assignment_binding_types.values())
-            .chain(expressions.value_destination_types.values())
-            .chain(self.type_info.references.resolved_write_types.values())
-            .chain(declarations.type_alias_targets.values())
-            .chain(self.type_info.rust.value_native_types.values())
-            .chain(self.type_info.calls.inferred_call_result_types.values())
-            .chain(self.type_info.calls.body_ir_constructor_types.values())
-        {
-            self.rust_storage_type(ty, &mut storage, &mut BTreeMap::new());
-        }
-        for binding in declarations
-            .function_bindings
-            .values()
-            .chain(declarations.function_bindings_by_span.values())
-            .chain(declarations.method_bindings_by_span.values())
-        {
-            for ty in binding
-                .params
-                .iter()
-                .map(|parameter| &parameter.ty)
-                .chain([&binding.return_type])
-            {
-                self.rust_storage_type(ty, &mut storage, &mut BTreeMap::new());
-            }
-        }
+        self.freeze_value_storage(program, &mut storage);
         self.freeze_source_storage(program, &mut storage);
         // ---- Native layout and default templates ----
         for layout in self.type_info.rust.checked_layouts.values() {
@@ -105,9 +78,42 @@ impl TypeChecker {
         self.type_info.rust.checked_calls = calls;
         self.type_info.rust.await_conversions = awaits;
         self.type_info.rust.argument_adjustments = arguments;
+        self.type_info.rust.declared_conversions = conversions;
+        self.type_info.rust.element_adjustments = elements;
         self.type_info.rust.field_adjustments = fields;
         self.type_info.rust.checked_function_values = function_values;
         self.type_info.rust.iteration_hooks = hooks;
+    }
+
+    /// Publish accepted value types in their lexical source binder frame. Dropping the frame turns a parameter
+    /// embedded in a native display into a nominal name and can contradict the same call's checked signature.
+    fn freeze_value_storage(&self, program: &Program, storage: &mut HashMap<IncanType, IncanType>) {
+        let frames = StorageFrames::new(program);
+        let expressions = &self.type_info.expressions;
+        for (span, ty) in expressions
+            .expr_types
+            .iter()
+            .chain(&expressions.body_ir_expr_types)
+            .chain(&expressions.assignment_binding_types)
+            .chain(&expressions.value_destination_types)
+            .chain(&self.type_info.calls.inferred_call_result_types)
+            .chain(&self.type_info.calls.body_ir_constructor_types)
+        {
+            let parameters = frames.parameters(*span);
+            self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
+        }
+        for ((span, _), ty) in &self.type_info.references.resolved_write_types {
+            let parameters = frames.parameters(*span);
+            self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
+        }
+        for (identity, ty) in expressions
+            .body_ir_binding_types
+            .iter()
+            .chain(&self.type_info.rust.value_native_types)
+        {
+            let parameters = frames.parameters(identity.declaration_span);
+            self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
+        }
     }
 
     /// Freeze declared native storage in its source binder frame, including unread fields and inherited layouts.
@@ -122,12 +128,18 @@ impl TypeChecker {
                 Declaration::Trait(owner) => (&owner.type_params, owner.methods.as_slice()),
                 Declaration::Newtype(owner) => (&owner.type_params, owner.methods.as_slice()),
                 Declaration::Function(owner) => (&owner.type_params, &[][..]),
+                Declaration::TypeAlias(owner) => (&owner.type_params, &[][..]),
                 _ => continue,
             };
             let parameters = parameters
                 .iter()
                 .map(|parameter| parameter.name.clone())
                 .collect::<Vec<_>>();
+            if let Declaration::TypeAlias(owner) = &declaration.node
+                && let Some(target) = facts.type_alias_targets.get(&owner.name)
+            {
+                self.rust_call_storage_type(target, &parameters, storage, &mut BTreeMap::new());
+            }
             if let Declaration::Newtype(owner) = &declaration.node
                 && owner.is_rusttype
             {
@@ -141,19 +153,16 @@ impl TypeChecker {
                 };
                 self.rust_call_storage_type(&alias, &parameters, storage, &mut BTreeMap::new());
             }
-            for ((start, end), ty) in facts.model_field_types.iter().chain(&facts.enum_payload_types) {
-                if *start >= declaration.span.start && *end <= declaration.span.end {
+            for (span, ty) in facts.model_field_types.iter().chain(&facts.enum_payload_types) {
+                if span.start >= declaration.span.start && span.end <= declaration.span.end {
                     self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
                 }
             }
-            if let Some(binding) = facts
-                .function_bindings_by_span
-                .get(&(declaration.span.start, declaration.span.end))
-            {
+            if let Some(binding) = facts.function_bindings_by_span.get(&declaration.span) {
                 self.freeze_source_signature(binding, &parameters, storage);
             }
             for method in methods {
-                let Some(binding) = facts.method_bindings_by_span.get(&(method.span.start, method.span.end)) else {
+                let Some(binding) = facts.method_bindings_by_span.get(&method.span) else {
                     continue;
                 };
                 let mut frame = parameters.clone();
@@ -259,7 +268,7 @@ impl TypeChecker {
     /// A transparent alias already selects its native owner; freeze that owner before diagnostic runtime projection
     /// can translate it back into the same source alias. Rust's owned text keeps the primitive String carrier even
     /// when a lexical import contributes another public path for that same definition.
-    fn rust_storage_resolved(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
+    pub(super) fn rust_storage_resolved(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             if let Some(binder) = source_binder(leaf, parameters) {
                 return Some(binder);
@@ -288,6 +297,11 @@ impl TypeChecker {
             };
             if rust_display_is_owned_string(display) {
                 return Some(ResolvedType::Str);
+            }
+            // Unsized text already has structural native storage. A public primitive re-export names the same
+            // referent; its import identity must not turn `&str` into a reference to an opaque nominal.
+            if display == "str" {
+                return Some(leaf.clone());
             }
             // An admitted definition path has a native owner even when its final segment also names a source type.
             // Apply its public import identity before the display parser can consult that source declaration.
@@ -353,7 +367,8 @@ impl TypeChecker {
 
     /// Complete native owner defaults from the admitted item before retaining each structural argument. Standard
     /// collections use the existing carrier only after metadata proves every hidden argument equals its default;
-    /// other crates and nondefault allocators or hashers retain exact native storage.
+    /// other crates and nondefault allocators or hashers retain exact native storage. Rust aliases recursively freeze
+    /// their retained targets so value storage and method parameters cannot invent separate native owners.
     fn rust_storage_constructor(
         &self,
         base: &str,
@@ -361,6 +376,32 @@ impl TypeChecker {
         parameters: &[String],
     ) -> ResolvedType {
         let base = self.rust_public_type_path(base);
+        // These internal constructors retain exact native element storage. Source frozen views additionally freeze
+        // text and bytes, so reusing those public constructor names would change FrozenList<String> into a list of
+        // static text. The lowering reads this storage decision rather than resolving a native owner again.
+        let frozen = match (base.as_str(), arguments.len()) {
+            ("incan_std_core::frozen::FrozenList", 1) => Some("$FrozenList"),
+            ("incan_std_core::frozen::FrozenSet", 1) => Some("$FrozenSet"),
+            ("incan_std_core::frozen::FrozenDict", 2) => Some("$FrozenDict"),
+            _ => None,
+        };
+        if let Some(constructor) = frozen {
+            return ResolvedType::Generic(
+                constructor.into(),
+                arguments
+                    .iter()
+                    .map(|argument| self.rust_storage_resolved(argument, parameters))
+                    .collect(),
+            );
+        }
+        if base == RuntimeCarrier::Decimal.path() && arguments.is_empty() {
+            // Decimal precision and scale constrain source expressions; all such expressions and this native
+            // definition share the runtime's Decimal128 storage. Do not invent a separate nominal MIR carrier.
+            return ResolvedType::Generic(
+                "decimal".into(),
+                vec![ResolvedType::TypeVar("38".into()), ResolvedType::TypeVar("0".into())],
+            );
+        }
         if body_ir::rust_item_identity(&base).is_some()
             && let Some(incan_lang::interop::RustItemMetadata {
                 kind: incan_lang::interop::RustItemKind::Type(info),
@@ -368,6 +409,17 @@ impl TypeChecker {
             }) = self.lookup_rust_item_metadata_for_path(&base).as_deref()
         {
             self.complete_rust_owner_arguments(info, &mut arguments);
+            if info.alias_target.is_some() {
+                let displays = arguments
+                    .iter()
+                    .map(super::helpers::render_resolved_type_as_rust_arg)
+                    .collect::<Vec<_>>();
+                let arguments = displays.iter().map(String::as_str).collect::<Vec<_>>();
+                if let Some(target) = self.rust_alias_expansion(&base, &arguments) {
+                    let resolved = self.native_rust_signature_type(&target, "");
+                    return self.rust_storage_resolved(&resolved, parameters);
+                }
+            }
             if base.starts_with("std::") || base.starts_with("alloc::") {
                 let projected = self.rust_inference_constructor(&base, &arguments, parameters);
                 if matches!(&projected, ResolvedType::Generic(name, _)
@@ -398,6 +450,10 @@ impl TypeChecker {
     ) {
         match ty {
             IncanType::RustInteropPath(path) => {
+                if let Some(object) = self.native_bounded_rust_object_storage(path) {
+                    *ty = object;
+                    return;
+                }
                 if let Some(array) = self.rust_array_storage(path, parameters, identities) {
                     *ty = array;
                 }
@@ -549,6 +605,121 @@ impl TypeChecker {
     }
 }
 
+/// The binder frames of one program's top-level declarations, in source order, collected once per publication.
+///
+/// A checked fact's provenance span selects its declaration's source binders. Syntax contributes only binder roles;
+/// native types and declaration identities still come from the accepting checker's retained facts.
+struct StorageFrames<'a> {
+    /// Each binder-owning declaration's span, type parameters and methods; top-level declarations do not overlap.
+    declarations: Vec<(crate::ast::Span, &'a [TypeParam], &'a [Spanned<MethodDecl>])>,
+}
+
+impl<'a> StorageFrames<'a> {
+    /// Collect the binder-owning declarations of `program` in source order.
+    fn new(program: &'a Program) -> Self {
+        let declarations = program
+            .declarations
+            .iter()
+            .filter_map(|declaration| {
+                let (parameters, methods) = match &declaration.node {
+                    Declaration::Model(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Class(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Enum(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Trait(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Newtype(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Function(owner) => (owner.type_params.as_slice(), &[][..]),
+                    Declaration::TypeAlias(owner) => (owner.type_params.as_slice(), &[][..]),
+                    _ => return None,
+                };
+                Some((declaration.span, parameters, methods))
+            })
+            .collect();
+        Self { declarations }
+    }
+
+    /// The type parameter names in scope at `span`: its declaration's, then its method's.
+    fn parameters(&self, span: crate::ast::Span) -> Vec<String> {
+        let index = self
+            .declarations
+            .partition_point(|(declaration, _, _)| declaration.start <= span.start);
+        let Some((declaration, parameters, methods)) =
+            index.checked_sub(1).and_then(|index| self.declarations.get(index))
+        else {
+            return Vec::new();
+        };
+        if span.end > declaration.end {
+            return Vec::new();
+        }
+        let mut names = parameters
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
+        if let Some(method) = methods
+            .iter()
+            .find(|method| span.start >= method.span.start && span.end <= method.span.end)
+        {
+            names.extend(method.node.type_params.iter().map(|parameter| parameter.name.clone()));
+        }
+        names
+    }
+}
+
+impl TypeChecker {
+    /// Freeze a nongeneric dyn principal and its explicit auto traits while native metadata still owns resolution.
+    /// Associated equalities and lifetime-bearing objects require a richer storage contract and stay refused.
+    fn native_bounded_rust_object_storage(&self, display: &str) -> Option<IncanType> {
+        let syn::Type::TraitObject(object) = syn::parse_str::<syn::Type>(display).ok()? else {
+            return None;
+        };
+        let mut principal = None;
+        let mut send = false;
+        let mut sync = false;
+        for bound in object.bounds {
+            let bound = match bound {
+                syn::TypeParamBound::Trait(bound) => bound,
+                syn::TypeParamBound::Lifetime(lifetime) if lifetime.ident == "static" => continue,
+                _ => return None,
+            };
+            if bound
+                .path
+                .segments
+                .iter()
+                .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+            {
+                return None;
+            }
+            let path = bound.path.to_token_stream().to_string().replace(' ', "");
+            match path.as_str() {
+                "std::marker::Send" | "core::marker::Send" => send = true,
+                "std::marker::Sync" | "core::marker::Sync" => sync = true,
+                _ if principal.is_none() => principal = Some(path),
+                _ => return None,
+            }
+        }
+        if !send && !sync {
+            return None;
+        }
+        let path = principal?;
+        let metadata = self.rust_item_metadata_for_path(&path)?;
+        let incan_lang::interop::RustItemKind::Trait(info) = &metadata.kind else {
+            return None;
+        };
+        if !info.type_params.is_empty()
+            || info
+                .items
+                .iter()
+                .any(|item| matches!(item, incan_lang::interop::RustTraitAssoc::TypeAlias { .. }))
+        {
+            return None;
+        }
+        Some(IncanType::NativeTraitObject {
+            path: metadata.canonical_path.clone(),
+            send,
+            sync,
+        })
+    }
+}
+
 /// Recognize only the source frame's declared binders before any nominal or native storage projection.
 fn source_binder(ty: &ResolvedType, parameters: &[String]) -> Option<ResolvedType> {
     match ty {
@@ -562,7 +733,7 @@ fn source_binder(ty: &ResolvedType, parameters: &[String]) -> Option<ResolvedTyp
 /// Select types containing native storage; source binders and declarations keep their own lexical facts.
 fn has_native_storage(ty: &IncanType) -> bool {
     match ty {
-        IncanType::RustInteropPath(_) => true,
+        IncanType::RustInteropPath(_) | IncanType::NativeTraitObject { .. } => true,
         IncanType::Named(name) => body_ir::rust_item_identity(name).is_some(),
         IncanType::Generic { base, args } => {
             body_ir::rust_item_identity(base).is_some() || args.iter().any(has_native_storage)

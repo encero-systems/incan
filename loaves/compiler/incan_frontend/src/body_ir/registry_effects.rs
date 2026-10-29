@@ -64,10 +64,10 @@ fn function_attachment<'a>(
     info.registry.descriptions.iter().find(|entry| {
         entry.subject_kind == SemanticRegistrySubjectKind::Function
             && entry.declaration_name == function.name
-            && entry.declaration_span == (declaration.span.start, declaration.span.end)
-            && entry.decorator_span == (decorator.span.start, decorator.span.end)
-            && entry.key_span == (key.span.start, key.span.end)
-            && entry.descriptor_span == (descriptor.span.start, descriptor.span.end)
+            && entry.declaration_span == declaration.span
+            && entry.decorator_span == decorator.span
+            && entry.key_span == key.span
+            && entry.descriptor_span == descriptor.span
             && matches!(&entry.registry, RegistryDescriptionRegistry::Local { binding } if binding == &entry.registry_name)
             && matches!(&registry.node, ast::Expr::Ident(name) if name == &entry.registry_name)
             && info.declarations.declaration_identities.values().any(|identity| {
@@ -109,7 +109,7 @@ pub(super) fn refuse_unretained_functions(program: &ast::Program, info: &TypeChe
                     kind: bir::StatementKind::Unsupported {
                         description: "function registry description without exact local attachment facts".to_owned(),
                     },
-                    span: HirSourceSpan::new(entry.decorator_span.0, entry.decorator_span.1),
+                    span: entry.decorator_span,
                 },
             );
         }
@@ -132,7 +132,7 @@ pub(super) fn collect(
         return;
     };
     // The effect has its own declaration identity but needs a real source character for native diagnostics.
-    let span = ast::Span::new(last.span.end.saturating_sub(1), last.span.end);
+    let span = ast::Span::new(last.span.end.saturating_sub(1), last.span.end).with_expansion(last.span.expansion);
     let scope = builder.new_scope(None, hir_span(span));
     let mut stmts = Vec::new();
     for declaration in &program.declarations {
@@ -218,12 +218,7 @@ fn append_description(
     else {
         return;
     };
-    let Some(identity) = builder
-        .type_info
-        .declarations
-        .declaration_identities
-        .get(&(storage.1.start, storage.1.end))
-    else {
+    let Some(identity) = builder.type_info.declarations.declaration_identities.get(&storage.1) else {
         return;
     };
     let Some(ty) = registry_descriptions::initialization_type(storage.0, builder.type_info) else {
@@ -261,6 +256,7 @@ fn append_description(
             intrinsic_carrier: None,
             reflection: None,
             loaf_trait: None,
+            trait_arguments: None,
             native_trait_delegation: None,
             type_args: Vec::new(),
             binding: positional_binding(3),
@@ -303,7 +299,7 @@ fn entry_for_call<'a>(
             && matches!(&receiver.node, ast::Expr::Ident(name) if name == &entry.registry_name)
             && args.iter().all(|argument| match argument {
                 ast::CallArg::Named(name, value) => {
-                    let span = (value.span.start, value.span.end);
+                    let span = value.span;
                     match name.node.as_str() {
                         "key" => span == entry.key_span,
                         "subject" => span == entry.subject_span,
@@ -353,7 +349,7 @@ pub(super) fn entry(
     }
     let key = parameter_types::checked_semantic_type(&definition.key_type, info);
     let descriptor = parameter_types::checked_semantic_type(&definition.descriptor_type, info);
-    let subject = builder.resolve_ty(ast::Span::new(entry.subject_span.0, entry.subject_span.1));
+    let subject = builder.resolve_ty(entry.subject_span);
     let ty = IncanType::Generic {
         base: owner_identity.declaration_name,
         args: vec![key.clone(), descriptor.clone()],
@@ -390,6 +386,7 @@ pub(super) fn entry(
             intrinsic_carrier: None,
             reflection: None,
             loaf_trait: None,
+            trait_arguments: None,
             native_trait_delegation: None,
             type_args: Vec::new(),
             binding,
@@ -409,7 +406,7 @@ pub(super) fn entry_type(storage: &ast::StaticDecl, span: ast::Span, info: &Type
         .registry
         .explicit_entries
         .iter()
-        .find(|entry| entry.entry_name == storage.name && entry.declaration_span == (span.start, span.end))?;
+        .find(|entry| entry.entry_name == storage.name && entry.declaration_span == span)?;
     if info.resolved_identity(storage.value.span) != Some(&entry.entry_method_identity) {
         return None;
     }
@@ -436,7 +433,7 @@ pub(super) fn subject(
         .registry
         .explicit_entries
         .iter()
-        .find(|entry| entry.subject_span == (expression.span.start, expression.span.end))?;
+        .find(|entry| entry.subject_span == expression.span)?;
     if builder.type_info.resolved_identity(expression.span) != Some(&entry.subject_constructor_identity) {
         return Some(builder.unsupported_operand(
             "checked registry subject constructor identity differs".to_owned(),

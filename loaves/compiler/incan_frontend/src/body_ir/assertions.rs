@@ -61,6 +61,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// The successful path must neither evaluate the message nor initialize its temporaries. Existing Body-IR blocks
     /// express this deferred execution, so consumers need no source-expression reconstruction or extra vocabulary.
+    /// An owner read only by the message remains live on the successful path that skips it.
     fn lower_condition_message(
         &mut self,
         cond: bir::Operand,
@@ -71,7 +72,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) {
         let failure_scope = self.new_scope(Some(scope), span);
         let mut failure = Vec::new();
+        self.conditional_scopes.push(failure_scope);
         let message = self.lower_expr_to_operand(message, failure_scope, &mut failure);
+        self.conditional_scopes.pop();
         failure.push(bir::Statement {
             kind: bir::StatementKind::Assert {
                 kind: bir::AssertionKind::Condition {
@@ -208,7 +211,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .resolved_identity(callee.span)
                 .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
         {
-            let key = (callee.span.start, callee.span.end);
+            let key = callee.span;
             let signature = IncanType::Function {
                 params: Vec::new(),
                 return_type: Box::new(self.resolve_ty(call.span)),

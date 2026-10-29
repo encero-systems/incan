@@ -24,7 +24,8 @@ use incan_frontend::module::{
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{diagnostics, typechecker};
 
-/// Collect one source graph through an already-resolved compilation session.
+/// Collect one source graph through an already-resolved compilation session, preserving the entry's logical module
+/// identity. A test or alternate entry must not claim `main` and collide with an imported sibling `main.incn`.
 pub fn collect_modules_detailed_with_session(
     path: PathBuf,
     session: &CompilationSession,
@@ -32,7 +33,9 @@ pub fn collect_modules_detailed_with_session(
     let _invocation =
         tracing::trace_span!(target: "incan::invocation", "incan_driver::collect_modules", input = %path.display())
             .entered();
-    collect_modules_detailed_with_session_at_path(path, session, vec!["main".to_string()])
+    let path_segments =
+        logical_module_segments_from_file(&session.source_root, &path).unwrap_or_else(|| vec!["main".to_string()]);
+    collect_modules_detailed_with_session_at_path(path, session, path_segments)
 }
 
 /// Collect one source graph while preserving the caller-proven logical identity of its entry module.
@@ -407,116 +410,6 @@ pub fn imported_module_deps_for<'m>(
     }
 
     // ---- Context: walk the transitive local source-module import closure ----
-    /// Collect immediate local source dependencies for one module from both bare and absolute `crate.*` imports.
-    fn direct_local_dep_indexes(
-        modules: &[ParsedModule],
-        module_index: usize,
-        module_idx_by_key: &HashMap<String, usize>,
-        own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
-    ) -> BTreeSet<usize> {
-        /// Resolve one import path to the exact collected source module, including a safe nested-entry fallback.
-        fn resolve_local_dep_index(
-            current_module_path: &[String],
-            path: &ImportPath,
-            module_idx_by_key: &HashMap<String, usize>,
-            own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
-        ) -> Option<usize> {
-            let exact = logical_source_import_candidates(current_module_path, path)
-                .into_iter()
-                .find_map(|candidate| {
-                    let key = canonicalize_source_module_segments(&candidate).join("_");
-                    module_idx_by_key.get(&key).copied()
-                });
-            if exact.is_some() {
-                return exact;
-            }
-
-            // A standard package writes its public spelling (`std.registry`) for its own physical source module
-            // (`registry`); only a root its policy assigns it makes this a source-graph edge.
-            if path.parent_levels == 0
-                && !path.is_absolute
-                && path.segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
-                && own_standard_package.is_some_and(|policy| {
-                    path.segments
-                        .get(1)
-                        .is_some_and(|root| policy.namespace_roots.contains(&root.as_str()))
-                })
-            {
-                let physical_key = canonicalize_source_module_segments(&path.segments[1..]).join("_");
-                if let Some(index) = module_idx_by_key.get(&physical_key).copied() {
-                    return Some(index);
-                }
-            }
-            if path.is_absolute || path.parent_levels > 0 {
-                return None;
-            }
-
-            // CLI entrypoints retain the synthetic logical name `main` even when their file lives in a nested source
-            // directory. The on-disk resolver has already admitted the sibling into this module set; recover that
-            // canonical identity only when the bare import suffix identifies exactly one collected module.
-            let suffix = canonicalize_source_module_segments(&path.segments).join("_");
-            if suffix.is_empty() {
-                return None;
-            }
-            let suffix = format!("_{suffix}");
-            let mut matches = module_idx_by_key
-                .iter()
-                .filter_map(|(key, index)| key.ends_with(&suffix).then_some(*index))
-                .collect::<Vec<_>>();
-            matches.sort_unstable();
-            matches.dedup();
-            match matches.as_slice() {
-                [index] => Some(*index),
-                _ => None,
-            }
-        }
-
-        let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
-        for decl in &modules[module_index].ast.declarations {
-            let incan_frontend::ast::Declaration::Import(import) = &decl.node else {
-                continue;
-            };
-            match &import.kind {
-                ImportKind::From { module, .. } => {
-                    if let Some(dep_idx) = resolve_local_dep_index(
-                        &modules[module_index].path_segments,
-                        module,
-                        module_idx_by_key,
-                        own_standard_package,
-                    ) && dep_idx != module_index
-                    {
-                        dep_indexes.insert(dep_idx);
-                    }
-                }
-                ImportKind::Module(path) => {
-                    let dep_idx = resolve_local_dep_index(
-                        &modules[module_index].path_segments,
-                        path,
-                        module_idx_by_key,
-                        own_standard_package,
-                    )
-                    .or_else(|| {
-                        let mut parent_path = path.clone();
-                        parent_path.segments.pop();
-                        resolve_local_dep_index(
-                            &modules[module_index].path_segments,
-                            &parent_path,
-                            module_idx_by_key,
-                            own_standard_package,
-                        )
-                    });
-                    if let Some(dep_idx) = dep_idx
-                        && dep_idx != module_index
-                    {
-                        dep_indexes.insert(dep_idx);
-                    }
-                }
-                _ => {}
-            }
-        }
-        dep_indexes
-    }
-
     let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
     let mut pending: Vec<usize> =
         direct_local_dep_indexes(modules, module_index, module_idx_by_key, own_standard_package)
@@ -539,6 +432,117 @@ pub fn imported_module_deps_for<'m>(
         .into_iter()
         .map(|idx| (modules[idx].name.as_str(), &modules[idx].ast))
         .collect()
+}
+
+/// Collect immediate local source dependencies for one collected module from bare and absolute `crate.*` imports.
+/// The owning closure walk supplies the same collected-module index and filters its own back edges.
+fn direct_local_dep_indexes(
+    modules: &[ParsedModule],
+    module_index: usize,
+    module_idx_by_key: &HashMap<String, usize>,
+    own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
+) -> BTreeSet<usize> {
+    let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
+    for decl in &modules[module_index].ast.declarations {
+        let incan_frontend::ast::Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        match &import.kind {
+            ImportKind::From { module, .. } => {
+                if let Some(dep_idx) = resolve_local_dep_index(
+                    &modules[module_index].path_segments,
+                    module,
+                    module_idx_by_key,
+                    own_standard_package,
+                ) && dep_idx != module_index
+                {
+                    dep_indexes.insert(dep_idx);
+                }
+            }
+            ImportKind::Module(path) => {
+                let dep_idx = resolve_local_dep_index(
+                    &modules[module_index].path_segments,
+                    path,
+                    module_idx_by_key,
+                    own_standard_package,
+                )
+                .or_else(|| {
+                    let mut parent_path = path.clone();
+                    parent_path.segments.pop();
+                    resolve_local_dep_index(
+                        &modules[module_index].path_segments,
+                        &parent_path,
+                        module_idx_by_key,
+                        own_standard_package,
+                    )
+                });
+                if let Some(dep_idx) = dep_idx
+                    && dep_idx != module_index
+                {
+                    dep_indexes.insert(dep_idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    dep_indexes
+}
+
+/// Resolve one import path to the exact collected source module, including a safe nested-entry fallback.
+fn resolve_local_dep_index(
+    current_module_path: &[String],
+    path: &ImportPath,
+    module_idx_by_key: &HashMap<String, usize>,
+    own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
+) -> Option<usize> {
+    let exact = logical_source_import_candidates(current_module_path, path)
+        .into_iter()
+        .find_map(|candidate| {
+            let key = canonicalize_source_module_segments(&candidate).join("_");
+            module_idx_by_key.get(&key).copied()
+        });
+    if exact.is_some() {
+        return exact;
+    }
+
+    // A standard package writes its public spelling (`std.registry`) for its own physical source module
+    // (`registry`); only a root its policy assigns it makes this a source-graph edge.
+    if path.parent_levels == 0
+        && !path.is_absolute
+        && path.segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+        && own_standard_package.is_some_and(|policy| {
+            path.segments
+                .get(1)
+                .is_some_and(|root| policy.namespace_roots.contains(&root.as_str()))
+        })
+    {
+        let physical_key = canonicalize_source_module_segments(&path.segments[1..]).join("_");
+        if let Some(index) = module_idx_by_key.get(&physical_key).copied() {
+            return Some(index);
+        }
+    }
+    if path.is_absolute || path.parent_levels > 0 {
+        return None;
+    }
+
+    // CLI entrypoints retain the synthetic logical name `main` even when their file lives in a nested source
+    // directory. The on-disk resolver has already admitted the sibling into this module set; recover that
+    // canonical identity only when the bare import suffix identifies exactly one collected module.
+    let suffix = canonicalize_source_module_segments(&path.segments).join("_");
+    if suffix.is_empty() {
+        return None;
+    }
+    let suffix = format!("_{suffix}");
+    let mut matches = module_idx_by_key
+        .iter()
+        .filter_map(|(key, index)| key.ends_with(&suffix).then_some(*index))
+        .collect::<Vec<_>>();
+    matches.sort_unstable();
+    matches.dedup();
+    match matches.as_slice() {
+        [index] => Some(*index),
+        _ => None,
+    }
 }
 
 /// Register every collected module's real path segments with a checker before typechecking.

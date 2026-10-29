@@ -1,0 +1,52 @@
+"""Share source-location, text, and subprocess operations across repository checks."""
+
+from rust::std::env import current_exe
+from rust::std::io import Write, stderr
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.regex import Regex
+
+
+pub def repository_root() -> Result[Path, str]:
+    """Find the repository above the scripts project's Oven output directory."""
+    binary = current_exe().map_err((error) => error.to_string())?
+    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    while directory.name() != "target" and directory.parent().0 != directory.0:
+        directory = directory.parent()
+    return Ok(directory.parent().parent())
+
+
+pub def read(path: Path) -> Result[str, str]:
+    """Read a repository file as strict UTF-8."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+
+
+pub def git(root: Path, arguments: list[str]) -> Result[str, str]:
+    """Capture a Git command in the selected repository and propagate command failures."""
+    mut command = Command.new("git")
+    command.current_dir(root.0)
+    for argument in arguments:
+        command.arg(argument)
+    output = command.output().map_err((error) => error.to_string())?
+    if not output.status.success():
+        return Err(RustString.from_utf8(output.stderr).map_err((error) => error.to_string())?)
+    return RustString.from_utf8(output.stdout).map_err((error) => error.to_string())
+
+
+pub def write_stderr(message: str) -> None:
+    """Write a complete diagnostic, ignoring a closed diagnostic stream."""
+    mut err = stderr()
+    _ = err.write_all(RustString.from(message).into_bytes())
+
+
+pub def source_lines(source: str) -> Result[list[str], str]:
+    """Split Python-compatible Unicode line boundaries without an artificial final empty line."""
+    if source == "":
+        return Ok([])
+    separator = Regex("\\r\\n|[\\n\\r\\x0b\\x0c\\x1c-\\x1e\\u0085\\u2028\\u2029]")
+        .map_err((error) => error.message())?
+    mut lines: list[str] = [line for line in separator.split(source)]
+    if len(lines) > 0 and lines[len(lines) - 1] == "":
+        lines = lines[:-1]
+    return Ok(lines)

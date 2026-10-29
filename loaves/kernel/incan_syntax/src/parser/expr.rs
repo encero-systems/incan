@@ -109,13 +109,7 @@ impl<'a> Parser<'a> {
                 BinaryOp::GtEq => Some(">="),
                 _ => None,
             };
-            left = if let Some(glyph) = glyph
-                && let Some(surface) = self.scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
-            {
-                surface
-            } else {
-                Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span)
-            };
+            left = self.scoped_or_builtin_binary(glyph, op, left, right, span);
         }
 
         Ok(left)
@@ -252,9 +246,7 @@ impl<'a> Parser<'a> {
                 BinaryOp::Sub => "-",
                 _ => unreachable!("additive parser only emits additive operators"),
             };
-            left = self
-                .scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
-                .unwrap_or_else(|| Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span));
+            left = self.scoped_or_builtin_binary(Some(glyph), op, left, right, span);
         }
 
         Ok(left)
@@ -293,24 +285,28 @@ impl<'a> Parser<'a> {
                 BinaryOp::Mod => "%",
                 _ => unreachable!("multiplicative parser only emits multiplicative operators"),
             };
-            left = self
-                .scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
-                .unwrap_or_else(|| Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span));
+            left = self.scoped_or_builtin_binary(Some(glyph), op, left, right, span);
         }
 
         Ok(left)
     }
 
-    /// Build a scoped-surface binary glyph expression when an active descriptor owns the glyph.
-    fn scoped_glyph_binary(
+    /// Select the active glyph owner before moving either operand. Both scoped and ordinary binary expressions
+    /// consume the parsed trees once; probing an inactive vocabulary must not clone every accumulated left subtree.
+    fn scoped_or_builtin_binary(
         &self,
-        glyph: &str,
+        glyph: Option<&str>,
+        op: BinaryOp,
         left: Spanned<Expr>,
         right: Spanned<Expr>,
         span: Span,
-    ) -> Option<Spanned<Expr>> {
-        let active = self.active_scoped_glyph_surface_descriptor(glyph)?;
-        Some(self.scoped_glyph_binary_from_active(active, glyph, left, right, span))
+    ) -> Spanned<Expr> {
+        if let Some(glyph) = glyph
+            && let Some(active) = self.active_scoped_glyph_surface_descriptor(glyph)
+        {
+            return self.scoped_glyph_binary_from_active(active, glyph, left, right, span);
+        }
+        Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span)
     }
 
     /// Build a scoped-surface binary glyph expression from a descriptor that has already matched the current context.
@@ -1822,15 +1818,7 @@ impl<'a> Parser<'a> {
             }
             Expr::Slice(base, slice) => {
                 self.shift_spanned_expr(base, offset);
-                if let Some(start) = &mut slice.start {
-                    self.shift_spanned_expr(start, offset);
-                }
-                if let Some(end) = &mut slice.end {
-                    self.shift_spanned_expr(end, offset);
-                }
-                if let Some(step) = &mut slice.step {
-                    self.shift_spanned_expr(step, offset);
-                }
+                self.shift_slice_spans(slice, offset);
             }
             Expr::Field(base, _) => {
                 self.shift_spanned_expr(base, offset);
@@ -1841,27 +1829,11 @@ impl<'a> Parser<'a> {
                     self.shift_call_arg(arg, offset);
                 }
             }
-            Expr::Partial(partial) => {
-                self.shift_spanned_expr(&mut partial.target, offset);
-                for arg in &mut partial.type_args {
-                    arg.span = Span::new(arg.span.start + offset, arg.span.end + offset);
-                }
-                for arg in &mut partial.args {
-                    self.shift_spanned_expr(&mut arg.value, offset);
-                }
-            }
+            Expr::Partial(partial) => self.shift_partial_spans(partial, offset),
             Expr::Match(subject, arms) => {
                 self.shift_spanned_expr(subject, offset);
                 for arm in arms {
-                    arm.span = Span::new(arm.span.start + offset, arm.span.end + offset);
-                    self.shift_spanned_pattern(&mut arm.node.pattern, offset);
-                    if let Some(guard) = &mut arm.node.guard {
-                        self.shift_spanned_expr(guard, offset);
-                    }
-                    match &mut arm.node.body {
-                        MatchBody::Expr(value) => self.shift_spanned_expr(value, offset),
-                        MatchBody::Block(_) => {}
-                    }
+                    self.shift_match_arm_spans(arm, offset);
                 }
             }
             Expr::If(if_expr) => {
@@ -1874,27 +1846,8 @@ impl<'a> Parser<'a> {
                     self.shift_comprehension_clause(clause, offset);
                 }
             }
-            Expr::ListComp(comp) => {
-                self.shift_spanned_expr(&mut comp.expr, offset);
-                self.shift_spanned_expr(&mut comp.iter, offset);
-                if let Some(filter) = &mut comp.filter {
-                    self.shift_spanned_expr(filter, offset);
-                }
-                for clause in &mut comp.clauses {
-                    self.shift_comprehension_clause(clause, offset);
-                }
-            }
-            Expr::DictComp(comp) => {
-                self.shift_spanned_expr(&mut comp.key, offset);
-                self.shift_spanned_expr(&mut comp.value, offset);
-                self.shift_spanned_expr(&mut comp.iter, offset);
-                if let Some(filter) = &mut comp.filter {
-                    self.shift_spanned_expr(filter, offset);
-                }
-                for clause in &mut comp.clauses {
-                    self.shift_comprehension_clause(clause, offset);
-                }
-            }
+            Expr::ListComp(comp) => self.shift_list_comprehension_spans(comp, offset),
+            Expr::DictComp(comp) => self.shift_dict_comprehension_spans(comp, offset),
             Expr::Closure(params, body) => {
                 for param in params {
                     param.span = Span::new(param.span.start + offset, param.span.end + offset);
@@ -1953,32 +1906,99 @@ impl<'a> Parser<'a> {
                 self.shift_spanned_expr(start, offset);
                 self.shift_spanned_expr(end, offset);
             }
-            Expr::Surface(surface_expr) => match &mut surface_expr.payload {
-                SurfaceExprPayload::PrefixUnary(value) => self.shift_spanned_expr(value, offset),
-                SurfaceExprPayload::RaceFor(race) => {
-                    race.binding.span = Span::new(race.binding.span.start + offset, race.binding.span.end + offset);
-                    for arm in &mut race.arms {
-                        self.shift_spanned_expr(&mut arm.awaitable, offset);
-                        if let RaceForBody::Expr(value) = &mut arm.body {
-                            self.shift_spanned_expr(value, offset);
-                        }
-                    }
-                }
-                SurfaceExprPayload::LeadingDotPath { .. } => {}
-                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                    self.shift_spanned_expr(left, offset);
-                    self.shift_spanned_expr(right, offset);
-                }
-                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-                    for arg in args {
-                        self.shift_call_arg(arg, offset);
-                    }
-                }
-            },
+            Expr::Surface(surface_expr) => self.shift_surface_expr_spans(&mut surface_expr.payload, offset),
             Expr::VocabBlock(_) => {}
             Expr::Embedded(fragment) => {
                 for node in &mut fragment.nodes {
                     self.shift_embedded_node_spans(node, offset);
+                }
+            }
+        }
+    }
+
+    /// Rebase the optional bounds of a slice parsed inside an interpolation.
+    fn shift_slice_spans(&self, slice: &mut SliceExpr, offset: usize) {
+        if let Some(start) = &mut slice.start {
+            self.shift_spanned_expr(start, offset);
+        }
+        if let Some(end) = &mut slice.end {
+            self.shift_spanned_expr(end, offset);
+        }
+        if let Some(step) = &mut slice.step {
+            self.shift_spanned_expr(step, offset);
+        }
+    }
+
+    /// Rebase a partial callable's target, explicit type-argument spans and preset values.
+    fn shift_partial_spans(&self, partial: &mut PartialExpr, offset: usize) {
+        self.shift_spanned_expr(&mut partial.target, offset);
+        for arg in &mut partial.type_args {
+            arg.span = Span::new(arg.span.start + offset, arg.span.end + offset);
+        }
+        for arg in &mut partial.args {
+            self.shift_spanned_expr(&mut arg.value, offset);
+        }
+    }
+
+    /// Rebase a match arm's pattern, guard and expression body; block bodies retain their existing coordinates.
+    fn shift_match_arm_spans(&self, arm: &mut Spanned<MatchArm>, offset: usize) {
+        arm.span = Span::new(arm.span.start + offset, arm.span.end + offset);
+        self.shift_spanned_pattern(&mut arm.node.pattern, offset);
+        if let Some(guard) = &mut arm.node.guard {
+            self.shift_spanned_expr(guard, offset);
+        }
+        match &mut arm.node.body {
+            MatchBody::Expr(value) => self.shift_spanned_expr(value, offset),
+            MatchBody::Block(_) => {}
+        }
+    }
+
+    /// Rebase the expressions and clauses carried by a list comprehension.
+    fn shift_list_comprehension_spans(&self, comp: &mut ListComp, offset: usize) {
+        self.shift_spanned_expr(&mut comp.expr, offset);
+        self.shift_spanned_expr(&mut comp.iter, offset);
+        if let Some(filter) = &mut comp.filter {
+            self.shift_spanned_expr(filter, offset);
+        }
+        for clause in &mut comp.clauses {
+            self.shift_comprehension_clause(clause, offset);
+        }
+    }
+
+    /// Rebase the key, value, iterator, filter and clauses carried by a dictionary comprehension.
+    fn shift_dict_comprehension_spans(&self, comp: &mut DictComp, offset: usize) {
+        self.shift_spanned_expr(&mut comp.key, offset);
+        self.shift_spanned_expr(&mut comp.value, offset);
+        self.shift_spanned_expr(&mut comp.iter, offset);
+        if let Some(filter) = &mut comp.filter {
+            self.shift_spanned_expr(filter, offset);
+        }
+        for clause in &mut comp.clauses {
+            self.shift_comprehension_clause(clause, offset);
+        }
+    }
+
+    /// Rebase the expression spans owned by a surface payload without changing its feature identity.
+    fn shift_surface_expr_spans(&self, payload: &mut SurfaceExprPayload, offset: usize) {
+        match payload {
+            SurfaceExprPayload::PrefixUnary(value) => self.shift_spanned_expr(value, offset),
+            SurfaceExprPayload::RaceFor(race) => {
+                race.binding.span = Span::new(race.binding.span.start + offset, race.binding.span.end + offset);
+                for arm in &mut race.arms {
+                    self.shift_spanned_expr(&mut arm.awaitable, offset);
+                    if let RaceForBody::Expr(value) = &mut arm.body {
+                        self.shift_spanned_expr(value, offset);
+                    }
+                }
+            }
+            SurfaceExprPayload::LeadingDotPath { .. } => {}
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                self.shift_spanned_expr(left, offset);
+                self.shift_spanned_expr(right, offset);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                for arg in args {
+                    self.shift_call_arg(arg, offset);
                 }
             }
         }
@@ -2203,38 +2223,7 @@ impl<'a> Parser<'a> {
 
         // Tuple pattern
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
-            if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
-                self.advance();
-                let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(Pattern::Tuple(Vec::new()), Span::new(start, end)));
-            }
-
-            let first = self.pattern()?;
-            if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-                self.expect(
-                    &TokenKind::Punctuation(PunctuationId::RParen),
-                    "Expected ')' after grouped pattern",
-                )?;
-                let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(Pattern::Group(Box::new(first)), Span::new(start, end)));
-            }
-
-            let mut patterns = Vec::new();
-            patterns.push(first);
-            if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
-                loop {
-                    patterns.push(self.pattern()?);
-                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-                        break;
-                    }
-                }
-            }
-            self.expect(
-                &TokenKind::Punctuation(PunctuationId::RParen),
-                "Expected ')' after tuple pattern",
-            )?;
-            let end = self.tokens[self.pos - 1].span.end;
-            return Ok(Spanned::new(Pattern::Tuple(patterns), Span::new(start, end)));
+            return self.parenthesized_pattern(start);
         }
 
         // Identifier (binding) or constructor pattern
@@ -2317,6 +2306,41 @@ impl<'a> Parser<'a> {
             &format!("{:?}", self.peek().kind),
             self.current_span(),
         ))
+    }
+
+    /// Parse a tuple or grouped pattern after consuming `(`, keeping alternation inside a group intact.
+    fn parenthesized_pattern(&mut self, start: usize) -> Result<Spanned<Pattern>, CompileError> {
+        if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+            self.advance();
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(Pattern::Tuple(Vec::new()), Span::new(start, end)));
+        }
+
+        let first = self.pattern()?;
+        if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+            self.expect(
+                &TokenKind::Punctuation(PunctuationId::RParen),
+                "Expected ')' after grouped pattern",
+            )?;
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(Pattern::Group(Box::new(first)), Span::new(start, end)));
+        }
+
+        let mut patterns = vec![first];
+        if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+            loop {
+                patterns.push(self.pattern()?);
+                if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    break;
+                }
+            }
+        }
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::RParen),
+            "Expected ')' after tuple pattern",
+        )?;
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(Pattern::Tuple(patterns), Span::new(start, end)))
     }
 
     /// Parse an `if` expression.

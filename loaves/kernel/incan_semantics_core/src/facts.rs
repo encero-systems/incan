@@ -51,6 +51,45 @@ pub struct CompilerNodeId {
 }
 
 impl CompilerNodeId {
+    /// Distinguish generated nodes sharing a source range while preserving authored identities byte for byte.
+    pub fn with_expansion(mut self, expansion: Option<[u8; 32]>) -> Self {
+        if let Some(expansion) = expansion {
+            self.path.push_str("/expansion.");
+            self.path.push_str(&hex::encode(expansion));
+        }
+        self
+    }
+
+    /// Address a declaration using its complete checked span rather than its diagnostic range alone.
+    pub fn declaration_at(module: &str, span: crate::HirSourceSpan) -> Self {
+        Self::declaration_span(module, span.start, span.end).with_expansion(span.expansion)
+    }
+
+    /// Address one binding of a generated or authored declaration without losing its expansion context.
+    pub fn declaration_binding_at(module: &str, span: crate::HirSourceSpan, ordinal: usize) -> Self {
+        Self::declaration_binding_span(module, span.start, span.end, ordinal).with_expansion(span.expansion)
+    }
+
+    /// Address an expression using the same full span as the checker's expression facts.
+    pub fn expression_at(module: &str, span: crate::HirSourceSpan) -> Self {
+        Self::expression_span(module, span.start, span.end).with_expansion(span.expansion)
+    }
+
+    /// Address a selected protocol hook within its receiver's complete expansion context.
+    pub fn protocol_call_at(module: &str, span: crate::HirSourceSpan, role: &str) -> Self {
+        Self::protocol_call_span(module, span.start, span.end, role).with_expansion(span.expansion)
+    }
+
+    /// Address a checked type component within the expression that owns it.
+    pub fn expression_type_component_at(module: &str, span: crate::HirSourceSpan, indices: &[usize]) -> Self {
+        Self::expression_type_component(module, span.start, span.end, indices).with_expansion(span.expansion)
+    }
+
+    /// Address a statement while retaining its generated-node identity and original diagnostic range.
+    pub fn statement_at(module: &str, span: crate::HirSourceSpan) -> Self {
+        Self::statement_span(module, span.start, span.end).with_expansion(span.expansion)
+    }
+
     /// Build an identity from an explicit kind and semantic path.
     pub fn new(kind: CompilerNodeKind, path: impl Into<String>) -> Self {
         Self {
@@ -766,11 +805,16 @@ fn render_authority_grant(grant: &CanonicalSymbolId) -> String {
         SymbolOrigin::Builtin => "builtin".to_string(),
     };
     format!(
-        "{origin}:{}:{}@{}..{}",
+        "{origin}:{}:{}@{}..{}{}",
         grant.kind.as_str(),
         grant.declaration_name,
         grant.declaration_span.start,
-        grant.declaration_span.end
+        grant.declaration_span.end,
+        grant
+            .declaration_span
+            .expansion
+            .map(|value| format!("/expansion.{}", hex::encode(value)))
+            .unwrap_or_default()
     )
 }
 
@@ -912,9 +956,10 @@ impl CanonicalSymbolId {
 
     /// Render a deterministic, compact single-line spelling for maintainer-facing snapshots.
     ///
-    /// This is a projection of the identity for humans; nothing may compare or dispatch on it. The shape is
+    /// This retains expansion identity for snapshots and internal cycle guards. The shape is
     /// `<kind>:<origin>::<name>[#<scope>]@<start>..<end>`, with member- and path-namespace identities prefixed by
-    /// their namespace so a member and a lexical binding sharing a spelling render visibly differently.
+    /// their namespace so a member and a lexical binding sharing a spelling render visibly differently. Generated
+    /// identities append `/expansion.<hex>`.
     pub fn render_compact(&self) -> String {
         let origin = match &self.origin {
             SymbolOrigin::Module(path) => module_identity_for_path(path),
@@ -936,11 +981,15 @@ impl CanonicalSymbolId {
             .map(|ScopeDiscriminant(scope)| format!("#{scope}"))
             .unwrap_or_default();
         format!(
-            "{namespace}{}:{origin}::{}{scope}@{}..{}",
+            "{namespace}{}:{origin}::{}{scope}@{}..{}{}",
             self.kind.as_str(),
             self.declaration_name,
             self.declaration_span.start,
-            self.declaration_span.end
+            self.declaration_span.end,
+            self.declaration_span
+                .expansion
+                .map(|value| format!("/expansion.{}", hex::encode(value)))
+                .unwrap_or_default()
         )
     }
 }

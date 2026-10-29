@@ -1,6 +1,8 @@
 # Docs site workspace Makefile
 # ============================
 
+INCAN ?= incan
+
 .PHONY: docs  ## docs - Build and serve the documentation site locally
 docs:
 	@python -m mkdocs --version >/dev/null 2>&1 || $(MAKE) docs-install
@@ -13,18 +15,21 @@ docs-install:
 	@python -m pip install -r requirements-docs.txt
 	@echo "\033[32m✓ Docs dependencies installed\033[0m"
 
+.PHONY: docs-generate-rfcs  ## docs - Generate RFC index and reference snippets
+docs-generate-rfcs:
+	@$(INCAN) run utils/gen_rfc_index_snippet.incn >/dev/null
+
 .PHONY: docs-check-components  ## docs - Validate Incapunk component and asset contracts
-docs-check-components:
+docs-check-components: docs-generate-rfcs
 	@echo "\033[1mChecking Incapunk component contracts...\033[0m"
-	@python utils/gen_rfc_index_snippet.py >/dev/null
-	@python scripts/check_incapunk_components.py
+	@$(INCAN) run scripts/check_incapunk_components.incn
 	@node scripts/check_incan_mermaid_runtime.mjs
 	@echo "\033[32m✓ Incapunk component contracts passed\033[0m"
 
 .PHONY: docs-check-learning  ## docs - Validate learning routes and canonical tutorial contracts
 docs-check-learning:
 	@echo "\033[1mChecking learning journey contracts...\033[0m"
-	@python scripts/check_learning_journey.py
+	@$(INCAN) run scripts/check_learning_journey.incn
 	@echo "\033[32m✓ Learning journey contracts passed\033[0m"
 
 .PHONY: docs-check-v06-roadmap  ## docs - Validate the v0.6 roadmap renderer contract
@@ -53,7 +58,7 @@ docs-build: docs-check
 	@echo "\033[32m✓ Docs site built\033[0m"
 
 .PHONY: docs-serve  ## docs - Serve docs site locally (MkDocs)
-docs-serve:
+docs-serve: docs-generate-rfcs
 	@echo "\033[1mServing docs site at http://127.0.0.1:8000 ...\033[0m"
 	@python -m mkdocs serve -a 127.0.0.1:8000
 

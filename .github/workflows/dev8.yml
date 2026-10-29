@@ -1,0 +1,73 @@
+name: dev.8 installed toolchain
+
+# Set BUILD_TOOLCHAIN only after the real release passes its self-hosting gate.
+# Its JSON maps each target triple to a GHCR tag@sha256:digest (publisher output).
+on:
+  push:
+    branches: [main, '*.*.*-dev.*', release/**]
+  pull_request:
+    branches: [main, '*.*.*-dev.*', release/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: dev8-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Contracts (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install and verify dev.8
+        uses: ./.github/actions/install-build-toolchain
+        with:
+          reference: ${{ fromJSON(vars.BUILD_TOOLCHAIN || '{}')[matrix.target] }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          verify: 'true'
+      - name: Retain installation and contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev8-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/dev8/run.*/*.txt
+            ${{ runner.temp }}/dev8/run.*/*.log
+            ${{ runner.temp }}/dev8/run.*/*.sha256
+            ${{ runner.temp }}/dev8/run.*/*.json
+          if-no-files-found: warn
+
+  docs:
+    name: US English and strict docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dev.8
+        uses: ./.github/actions/install-build-toolchain
+        with:
+          reference: ${{ fromJSON(vars.BUILD_TOOLCHAIN || '{}')['x86_64-unknown-linux-gnu'] }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check US English
+        run: make us-english-check
+      - name: Install docs dependencies
+        run: python -m pip install -r workspaces/docs-site/requirements-docs.txt
+      - name: Build strict docs
+        run: make docs-build

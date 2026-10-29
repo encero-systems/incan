@@ -352,12 +352,6 @@ impl TypeChecker {
             if self.symbols.lookup(alias).is_none() {
                 self.validate_root_namespace(alias, span);
                 self.record_source_import_target(module, item, alias, &imported_kind);
-                if matches!(imported_kind, SymbolKind::Static(_)) {
-                    self.type_info.declarations.static_bindings.insert(
-                        alias.clone(),
-                        crate::typechecker::StaticBindingInfo { is_imported: true },
-                    );
-                }
                 // RFC 120: the alias is a second binding to the already-materialized symbol, so it carries that
                 // symbol's identity rather than minting one of its own.
                 let target_identity = self
@@ -526,10 +520,6 @@ impl TypeChecker {
                 .declarations
                 .resolved_import_identities
                 .insert(local_name.clone(), member.identity);
-            self.type_info
-                .declarations
-                .resolved_import_declared_names
-                .insert(local_name.clone(), member.declared_name);
         }
 
         if matches!(kind, SymbolKind::Type(TypeInfo::TypeAlias))
@@ -550,10 +540,6 @@ impl TypeChecker {
         }
         self.record_imported_function_binding(&local_name, &kind);
         if matches!(kind, SymbolKind::Static(_)) {
-            self.type_info.declarations.static_bindings.insert(
-                local_name.clone(),
-                crate::typechecker::StaticBindingInfo { is_imported: true },
-            );
             if let Some((definition, owner_module_path)) =
                 self.dependency_registry_definition_for_path(resolved_module, &item.name)
             {
@@ -734,18 +720,10 @@ impl TypeChecker {
         let Some(id) = self.symbols.lookup(name) else {
             return;
         };
-        let mut touched_static = false;
         if let Some(sym) = self.symbols.get_mut(id)
             && let SymbolKind::Static(info) = &mut sym.kind
         {
             info.is_imported = true;
-            touched_static = true;
-        }
-        if touched_static {
-            self.type_info.declarations.static_bindings.insert(
-                name.to_string(),
-                crate::typechecker::StaticBindingInfo { is_imported: true },
-            );
         }
     }
 }

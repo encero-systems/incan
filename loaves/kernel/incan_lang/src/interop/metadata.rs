@@ -197,10 +197,9 @@ pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] 
     },
 ];
 
-/// Metadata-free Rust free-function signatures used when rust-inspect cannot inspect a stable Rust surface.
+/// Metadata-free Rust free-function signatures for stable APIs absent from the selected fact cache.
 ///
-/// rust-inspect intentionally indexes Cargo workspace crates and path/registry dependencies; sysroot crates such as
-/// `std` are not always available as ordinary metadata roots. Keep this table to stable APIs whose signatures are part
+/// A partial cache may omit individual sysroot functions. Keep this table to stable APIs whose signatures are part
 /// of Rust's public contract and whose result shapes matter for Incan source typing.
 pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
     RustFunctionSignatureRule {
@@ -286,7 +285,7 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] =
 ];
 
 /// Return conservative callable metadata for Rust free functions whose signatures are stable but unavailable through
-/// rust-inspect's Cargo-workspace view.
+/// the selected Rust fact cache.
 #[must_use]
 pub fn metadata_free_function_signature(rust_path: &str) -> Option<RustFunctionSig> {
     let rule = METADATA_FREE_FUNCTION_SIGNATURE_RULES
@@ -298,7 +297,7 @@ pub fn metadata_free_function_signature(rust_path: &str) -> Option<RustFunctionS
 /// Return the authoritative callable contract for a compiler-owned Rust runtime helper.
 ///
 /// These helpers are part of the compiler/runtime ABI, so their source typing must not vary with the availability or
-/// freshness of optional rust-inspect metadata. Keep this set deliberately narrow: ordinary Rust dependencies remain
+/// freshness of extracted Rust metadata. Keep this set deliberately narrow: ordinary Rust dependencies remain
 /// owned by their extracted metadata.
 #[must_use]
 pub fn compiler_owned_function_signature(rust_path: &str) -> Option<RustFunctionSig> {
@@ -384,7 +383,7 @@ pub struct RustMethodSig {
     pub impl_self_type: Option<String>,
 }
 
-/// One trait implementation rust-inspect can associate with a concrete Rust type.
+/// One trait implementation extracted Rust metadata associates with a concrete type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustImplementedTrait {
     /// Canonical Rust trait path, for example `std::fmt::Display`.
@@ -744,7 +743,7 @@ pub fn strip_rust_borrow_lifetimes(text: &str) -> String {
 }
 
 /// Split a comma-separated Rust generic/tuple argument list without splitting inside nested generic, tuple, or slice
-/// delimiters.
+/// delimiters. A function return arrow does not close an enclosing generic argument list.
 #[must_use]
 pub fn split_top_level_rust_args(text: &str) -> Vec<&str> {
     let mut args = Vec::new();
@@ -755,7 +754,7 @@ pub fn split_top_level_rust_args(text: &str) -> Vec<&str> {
     for (idx, ch) in text.char_indices() {
         match ch {
             '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
+            '>' if !text[..idx].ends_with('-') => angle = angle.saturating_sub(1),
             '(' => paren += 1,
             ')' => paren = paren.saturating_sub(1),
             '[' => bracket += 1,
@@ -1068,7 +1067,7 @@ fn split_top_level_rust_bounds(text: &str) -> Vec<&str> {
     for (idx, ch) in text.char_indices() {
         match ch {
             '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
+            '>' if !text[..idx].ends_with('-') => angle = angle.saturating_sub(1),
             '(' => paren += 1,
             ')' => paren = paren.saturating_sub(1),
             '[' => bracket += 1,
@@ -1380,40 +1379,62 @@ pub struct RustTypeInfo {
     pub metadata_completeness: RustTypeMetadataCompleteness,
     /// Public inherent methods and associated functions.
     pub methods: Vec<RustMethodSig>,
-    /// Trait implementations rust-inspect can prove for this Rust type.
+    /// Trait implementations extracted metadata proves for this Rust type.
     #[serde(default)]
     pub implemented_traits: Vec<RustImplementedTrait>,
-    /// Public fields for struct/union-like types.
+    /// Native fields for struct-like types. The completeness record restricts source reads of private slots;
+    /// their retained types and order exist only to verify native field projections.
     pub fields: Vec<RustFieldInfo>,
     /// Enum variants when the type is an enum; empty for non-enums.
     pub variants: Vec<RustVariantInfo>,
 }
 
-/// Whether Rust type metadata came from a full HIR extraction or from a partial syntax fallback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Which operations an extracted Rust type surface proves independently of readable fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RustTypeMetadataCompleteness {
-    /// Full rust-inspect HIR metadata, including methods and proven trait impls when available.
+    /// Extracted Rust metadata, including methods and proven trait impls when available.
     #[default]
     Complete,
     /// Syntax-only metadata from generated source, limited to public fields and enum variants.
     FieldsAndVariantsOnly,
+    /// Complete signatures and readable fields, without authority to construct a struct layout.
+    /// Includes cross-crate non-exhaustive structs and items that are not structs.
+    CompleteWithoutConstruction,
+    /// Complete native layout and signatures with the named fields unavailable to source reads or construction.
+    CompleteWithPrivateFields(Vec<String>),
 }
 
 impl RustTypeMetadataCompleteness {
-    /// Return whether this metadata can be treated as a full rust-inspect type surface.
+    /// Return whether this metadata supplies the complete extracted Rust type surface.
     pub const fn is_complete(&self) -> bool {
-        matches!(self, Self::Complete)
+        matches!(
+            self,
+            Self::Complete | Self::CompleteWithoutConstruction | Self::CompleteWithPrivateFields(_)
+        )
     }
 
     /// Return whether this metadata can prove inherent methods.
-    pub const fn has_methods(self) -> bool {
-        matches!(self, Self::Complete)
+    pub const fn has_methods(&self) -> bool {
+        self.is_complete()
     }
 
     /// Return whether this metadata can prove trait implementations.
-    pub const fn has_trait_impls(self) -> bool {
-        matches!(self, Self::Complete)
+    pub const fn has_trait_impls(&self) -> bool {
+        self.is_complete()
+    }
+
+    /// Return whether the field list proves an externally constructible native layout.
+    pub const fn has_constructible_layout(&self) -> bool {
+        matches!(self, Self::Complete | Self::FieldsAndVariantsOnly)
+    }
+
+    /// Return whether a retained native field is visible to a source read or assignment.
+    pub fn field_is_public(&self, name: &str) -> bool {
+        match self {
+            Self::CompleteWithPrivateFields(private) => !private.iter().any(|field| field == name),
+            _ => true,
+        }
     }
 }
 
@@ -1476,6 +1497,7 @@ pub struct RustTraitInfo {
 mod tests {
     use super::*;
 
+    /// Construct a nongeneric, lifetime-free type fixture for metadata shape classification tests.
     fn dummy_type_metadata(path: &str) -> RustItemMetadata {
         RustItemMetadata {
             canonical_path: path.to_string(),
@@ -1487,6 +1509,7 @@ mod tests {
                 mutable_reference_type_params: Vec::new(),
                 expanded_derive_traits: Vec::new(),
                 has_const_params: false,
+                has_lifetime_params: false,
                 alias_target: None,
                 metadata_completeness: Default::default(),
                 methods: Vec::new(),
@@ -1540,6 +1563,7 @@ mod tests {
         assert!(!RustCollectionFamily::HashSet.preserves_lookup_arg_shape("insert"));
     }
 
+    /// Preserve nested structural argument boundaries, including function pointers inside iterator storage.
     #[test]
     fn parse_rust_type_shape_text_classifies_shared_structural_shapes() {
         let shape = parse_rust_type_shape_text(
@@ -1557,6 +1581,15 @@ mod tests {
                     args: Vec::new(),
                 }),
             )))
+        );
+        assert_eq!(
+            split_top_level_rust_args(
+                "TakeWhile<Map<Repeat<i64>, fn(i64) -> Option<i64>>, fn(&Option<i64>) -> bool>, fn(Option<i64>) -> i64"
+            ),
+            vec![
+                "TakeWhile<Map<Repeat<i64>, fn(i64) -> Option<i64>>, fn(&Option<i64>) -> bool>",
+                "fn(Option<i64>) -> i64",
+            ],
         );
     }
 
@@ -1720,10 +1753,11 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
         assert!(!rust_display_is_callable_bound("implBuf"));
     }
 
+    /// Metadata-free standard signatures retain their named input and Result output without incidental metadata.
     #[test]
-    fn metadata_free_function_signature_describes_stable_std_result_surfaces() {
+    fn metadata_free_function_signature_describes_stable_std_result_surfaces() -> Result<(), String> {
         let signature = metadata_free_function_signature("std::fs::metadata")
-            .expect("std::fs::metadata should have a metadata-free signature");
+            .ok_or("std::fs::metadata should have a metadata-free signature")?;
 
         assert_eq!(signature.return_type, "std::io::Result<std::fs::Metadata>");
         assert_eq!(signature.params.len(), 1);
@@ -1732,6 +1766,7 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
         assert!(!signature.is_async);
         assert!(!signature.is_unsafe);
         assert!(metadata_free_function_signature("std::fs::remove_file").is_none());
+        Ok(())
     }
 
     #[test]
@@ -1794,10 +1829,10 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
 /// `std` re-exports of items that `core` and `alloc` define.
 ///
 /// Rust spells one item several ways: `std::boxed::Box`, `alloc::boxed::Box`, a prelude `Box`, and any crate that
-/// re-exports the standard library for `no_std` consumers (`prost::alloc::boxed::Box`). rust-analyzer resolves all of
-/// them to the defining crate, so metadata records the ancestral spelling; Incan source imports the `std` one. The two
+/// re-exports the standard library for `no_std` consumers (`prost::alloc::boxed::Box`). Rust metadata identifies the
+/// defining crate, so it records the ancestral spelling; Incan source imports the `std` one. The two
 /// can only unify if comparison happens in the ancestral namespace, and this table is the whole of that knowledge —
-/// facts about the standard library, not a list of downstream crates. It mirrors the lookup aliases rust-inspect keeps.
+/// facts about the standard library, not a list of downstream crates.
 const STD_REEXPORT_ROOTS: &[(&str, &str)] = &[
     ("std::option::", "core::option::"),
     ("std::result::", "core::result::"),

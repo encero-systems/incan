@@ -1,0 +1,35 @@
+"""Register styleforge's style and declaration-value fragment grammars without a rendering hook."""
+
+from std.vocab import DeclarationSurface, DslSurface, EmbeddedFragmentDescriptor, EmbeddedFragmentSubmode
+from std.vocab import VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """
+    Register the import-activated style and spacing blocks without executable CSS semantics.
+
+    1. Declare the blocks' statement positions.
+    2. Attach the full style and narrow declaration-value submodes.
+    """
+    # 1. Both blocks are owned by the imported library.
+    # Style introduces a statement block.
+    style_block = DeclarationSurface.named("style").with_statement_body()
+    # Spacing introduces a separate statement block.
+    spacing_block = DeclarationSurface.named("spacing").with_statement_body()
+    # 2. The descriptors preserve the two grammars' independent identities.
+    # Style rules are available only inside style blocks.
+    mut style = EmbeddedFragmentDescriptor.new("style.fragment", EmbeddedFragmentSubmode.Style, "style_rules")
+    style = style.in_declaration_body("style")
+    # Declaration values are available only inside spacing blocks.
+    mut spacing = EmbeddedFragmentDescriptor.new(
+        "spacing.fragment",
+        EmbeddedFragmentSubmode.SelectorDeclarationValue,
+        "spacing_value",
+    )
+    spacing = spacing.in_declaration_body("spacing")
+    surface = DslSurface
+        .on_import("styleforge")
+        .with_declarations([style_block, spacing_block])
+        .with_embedded_fragment(style)
+        .with_embedded_fragment(spacing)
+    return VocabRegistration.new().with_surface(surface)

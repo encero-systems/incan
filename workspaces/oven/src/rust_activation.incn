@@ -8,12 +8,12 @@ selected-child binding or its retained inactive reason before the semantic input
 
 # Explicit payload import until foreign None type qualification is fixed (#2010).
 from std.toml import TomlLocation
-
 from cfg_predicate import parse_selector, evaluate_cfg, Selector
 from semver_req import parse_version, parse_requirement, requirement_matches
 from std.collections import Deque, OrderedSet
 from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource
 from manifest_errors import IntakeError, IntakeErrorKind
+from jec import begin, record
 
 
 @derive(Eq)
@@ -78,6 +78,8 @@ pub model ActivationContext:
     pub requested_features: list[str]
     pub default_features: bool
     pub build_unit_present: bool
+    # Incan feature forwarding requires an explicitly selected optional edge (RFC 114).
+    pub explicit_optional_aliases: list[str] = []
 
 
 pub enum SlotActivation:
@@ -328,10 +330,27 @@ def expand_features(
                 FeatureSymbol.DependencyFeature(alias, child_feature, weak) =>
                     # Keep weak forwarding even before activation: a later feature can enable the same child.
                     forwarding.append(FeatureSymbol.DependencyFeature(alias, child_feature, weak))
-                    if not weak and eligible_alias(alias, catalog, restrictions):
+                    if (
+                        not weak
+                        and alias not in context.explicit_optional_aliases
+                        and eligible_alias(alias, catalog, restrictions)
+                    ):
                         activated.add(alias)
                         if alias in features.names:
                             pending.append(alias)
+    for symbol in forwarding:
+        match symbol:
+            FeatureSymbol.DependencyFeature(alias, _, false) =>
+                if alias in context.explicit_optional_aliases and alias not in activated:
+                    return Err(
+                        refusal(
+                            manifest,
+                            ["features"],
+                            IntakeErrorKind.Invalid,
+                            f"requests features of `{alias}`, an optional dependency no active feature selects",
+                        ),
+                    )
+            _ => pass
     return Ok(
         FeatureClosure(
             names=sorted(enabled.to_list()),
@@ -381,6 +400,7 @@ pub def activate_unit(
     selected dependency graph: Active slots require exact child
     source bindings before registration with the semantic projection. Inactive slots retain their original index.
     """
+    clock = begin()
     if context.host.triple == "" or context.target.triple == "":
         return Err(refusal(manifest, [], IntakeErrorKind.Missing, "original host and target identities"))
     restrictions = slot_restrictions(catalog, context, manifest)?
@@ -394,6 +414,12 @@ pub def activate_unit(
     mut slots: list[SlotDemand] = []
     for declaration in catalog.dependencies:
         slots.append(slot_demand(declaration, restrictions[declaration.index], closure, context.domain))
+    key = (
+        f"{manifest}|{context.domain.value()}|{context.purpose.value()}|{context.host.triple}|{context.target.triple}|" + f"{",".join(
+            sorted(context.requested_features),
+        )}|{context.default_features}"
+    )
+    record("feature_resolution", key, clock)
     return Ok(RustActivation(effective_features=closure.names, slots=slots))
 
 

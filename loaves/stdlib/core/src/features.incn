@@ -63,14 +63,16 @@ model FeatureDescriptor:
 
 
 static features: Registry[FeatureId, FeatureDescriptor] = Registry.define(subjects=[SubjectKind.CompilationUnit])
-const namespaced_stdlib_forms: FrozenList[str] = ["from std.testing import assert_eq", "from std.web.routing import route", "@route(\"/hello\")"]
-const namespaced_stdlib_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Imports and modules",
-    path="imports_and_modules.md",
-), CapabilityReference(label="Standard library", path="stdlib/index.md"), CapabilityReference(
-    label="Release 0.2",
-    path="../../release_notes/0_2.md",
-)]
+const namespaced_stdlib_forms: FrozenList[str] = [
+    "from std.testing import assert_eq",
+    "from std.web.routing import route",
+    "@route(\"/hello\")",
+]
+const namespaced_stdlib_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Imports and modules", path="imports_and_modules.md"),
+    CapabilityReference(label="Standard library", path="stdlib/index.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+]
 static namespaced_stdlib: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("NamespacedStdlib"),
     subject=RegistrySubject.current_unit(),
@@ -88,14 +90,16 @@ static namespaced_stdlib: RegistryEntry[FeatureId, FeatureDescriptor] = features
         references=namespaced_stdlib_references,
     ),
 )
-const rust_interop_boundary_forms: FrozenList[str] = ["from rust::uuid import Uuid", "from rust::std::time import Instant", "type UserId = rusttype i64"]
-const rust_interop_boundary_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Rust interop",
-    path="../how-to/rust_interop.md",
-), CapabilityReference(label="Rust types for Python developers", path="../how-to/rust_types_for_python_devs.md"), CapabilityReference(
-    label="Release 0.2",
-    path="../../release_notes/0_2.md",
-)]
+const rust_interop_boundary_forms: FrozenList[str] = [
+    "from rust::uuid import Uuid",
+    "from rust::std::time import Instant",
+    "type UserId = rusttype i64",
+]
+const rust_interop_boundary_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Rust interop", path="../how-to/rust_interop.md"),
+    CapabilityReference(label="Rust types for Python developers", path="../how-to/rust_types_for_python_devs.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+]
 static rust_interop_boundary: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("RustInteropBoundary"),
     subject=RegistrySubject.current_unit(),
@@ -113,14 +117,17 @@ static rust_interop_boundary: RegistryEntry[FeatureId, FeatureDescriptor] = feat
         references=rust_interop_boundary_references,
     ),
 )
-const checked_c_binding_forms: FrozenList[str] = ["from std.interop import c", "binding LibC:", "text = c.cstr(value)?", "unsafe:\n    LibC.absolute(-7)"]
-const checked_c_binding_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.interop",
-    path="stdlib/interop.md",
-), CapabilityReference(label="RFC 116", path="../../RFCs/closed/implemented/116_typed_c_abi_interop.md"), CapabilityReference(
-    label="Release 0.5",
-    path="../../release_notes/0_5.md",
-)]
+const checked_c_binding_forms: FrozenList[str] = [
+    "from std.interop import c",
+    "binding LibC:",
+    "text = c.cstr(value)?",
+    "unsafe:\n    LibC.absolute(-7)",
+]
+const checked_c_binding_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.interop", path="stdlib/interop.md"),
+    CapabilityReference(label="RFC 116", path="../../RFCs/closed/implemented/116_typed_c_abi_interop.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static checked_c_binding: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("CheckedCBindingFoundation"),
     subject=RegistrySubject.current_unit(),
@@ -138,39 +145,44 @@ static checked_c_binding: RegistryEntry[FeatureId, FeatureDescriptor] = features
         references=checked_c_binding_references,
     ),
 )
-const oven_interop_requirements_forms: FrozenList[str] = ["[interop.c]", "[[interop.c.targets]]", "incan lock"]
-const oven_interop_requirements_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Project configuration",
-    path="../../tooling/reference/project_configuration.md#interopc",
-), CapabilityReference(label="Checked C bindings", path="../how-to/checked_c_bindings.md"), CapabilityReference(
-    label="std.interop",
-    path="stdlib/interop.md",
-), CapabilityReference(label="RFC 116", path="../../RFCs/closed/implemented/116_typed_c_abi_interop.md")]
+const oven_interop_requirements_forms: FrozenList[str] = [
+    "[interop.c]",
+    "incan check src/main.incn",
+    "incan describe-unit src/main.incn",
+]
+const oven_interop_requirements_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Project configuration", path="../../tooling/reference/project_configuration.md#interopc"),
+    CapabilityReference(label="Checked C bindings", path="../how-to/checked_c_bindings.md"),
+    CapabilityReference(label="std.interop", path="stdlib/interop.md"),
+    CapabilityReference(label="RFC 116", path="../../RFCs/closed/implemented/116_typed_c_abi_interop.md"),
+]
 static oven_interop_requirements: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("OvenInteropRequirements"),
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("OvenInteropRequirements"),
-        name="Locked Oven interop requirements",
+        name="Declared Oven interop requirements",
         category=FeatureCategory.Interop,
         since="0.5",
         rfc="RFC 116",
         stability=FeatureStability.Experimental,
-        activation="Declare target-specific `[interop.c]` requirements in `loaf.toml`, then run `incan lock`.",
-        summary="Package-owned headers, artifacts, system capabilities, and C/C++ shim sources are declared explicitly alongside toolchain and SDK compatibility requirements, then frozen in the semantic lock.",
+        activation="Declare `[interop.c]` headers in `loaf.toml`, then check or build the source.",
+        summary="Oven supplies declared C headers to the compiler; checked bindings verify symbols and layouts with Clang for the supported host target.",
         canonical_forms=oven_interop_requirements_forms,
         prefer_over="Ambient host discovery, untracked interop source trees, or package manifests that claim a concrete local compiler or SDK has already been selected.",
         references=oven_interop_requirements_references,
     ),
 )
-const incan_libraries_forms: FrozenList[str] = ["from pub::mylib import my_module", "from pub::mylib.my_module import my_function", "pub from session import Session"]
-const incan_libraries_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Imports and modules",
-    path="imports_and_modules.md",
-), CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"), CapabilityReference(
-    label="Release 0.5",
-    path="../../release_notes/0_5.md",
-)]
+const incan_libraries_forms: FrozenList[str] = [
+    "from pub::mylib import my_module",
+    "from pub::mylib.my_module import my_function",
+    "pub from session import Session",
+]
+const incan_libraries_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Imports and modules", path="imports_and_modules.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static incan_libraries: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("IncanLibraries"),
     subject=RegistrySubject.current_unit(),
@@ -189,13 +201,11 @@ static incan_libraries: RegistryEntry[FeatureId, FeatureDescriptor] = features.e
     ),
 )
 const static_storage_forms: FrozenList[str] = ["static hits: int = 0", "pub static registry: dict[str, int] = {}"]
-const static_storage_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Static storage",
-    path="static_storage.md",
-), CapabilityReference(label="Module state", path="../how-to/module_state.md"), CapabilityReference(
-    label="Release 0.2",
-    path="../../release_notes/0_2.md",
-)]
+const static_storage_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Static storage", path="static_storage.md"),
+    CapabilityReference(label="Module state", path="../how-to/module_state.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+]
 static static_storage: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StaticStorage"),
     subject=RegistrySubject.current_unit(),
@@ -213,14 +223,17 @@ static static_storage: RegistryEntry[FeatureId, FeatureDescriptor] = features.en
         references=static_storage_references,
     ),
 )
-const first_class_functions_forms: FrozenList[str] = ["handler: Callable[int, str] = label", "callbacks = [on_success, on_error]", "Mapper with Callable1[int, str]"]
-const first_class_functions_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Functions and calls",
-    path="functions.md",
-), CapabilityReference(label="Callable objects", path="stdlib_traits/callable.md"), CapabilityReference(
-    label="Release 0.2",
-    path="../../release_notes/0_2.md",
-), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
+const first_class_functions_forms: FrozenList[str] = [
+    "handler: Callable[int, str] = label",
+    "callbacks = [on_success, on_error]",
+    "Mapper with Callable1[int, str]",
+]
+const first_class_functions_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Functions and calls", path="functions.md"),
+    CapabilityReference(label="Callable objects", path="stdlib_traits/callable.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static first_class_functions: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("FirstClassFunctions"),
     subject=RegistrySubject.current_unit(),
@@ -239,13 +252,11 @@ static first_class_functions: RegistryEntry[FeatureId, FeatureDescriptor] = feat
     ),
 )
 const call_site_generics_forms: FrozenList[str] = ["decode_rows[Order, _](path)", "session.read_csv[Order](path)"]
-const call_site_generics_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Derives and traits",
-    path="derives_and_traits.md#call-site-type-arguments",
-), CapabilityReference(label="Why call-site type arguments exist", path="../explanation/call_site_type_arguments.md"), CapabilityReference(
-    label="Release 0.2",
-    path="../../release_notes/0_2.md",
-)]
+const call_site_generics_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Derives and traits", path="derives_and_traits.md#call-site-type-arguments"),
+    CapabilityReference(label="Why call-site type arguments exist", path="../explanation/call_site_type_arguments.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+]
 static call_site_generics: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("CallSiteGenerics"),
     subject=RegistrySubject.current_unit(),
@@ -263,11 +274,14 @@ static call_site_generics: RegistryEntry[FeatureId, FeatureDescriptor] = feature
         references=call_site_generics_references,
     ),
 )
-const abstract_traits_forms: FrozenList[str] = ["trait OrderedCollection[T] with Collection[T]:", "def first(values: Collection[int]) -> int:"]
-const abstract_traits_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Derives and traits",
-    path="derives_and_traits.md#traits-authoring",
-), CapabilityReference(label="Derives and traits explained", path="../explanation/derives_and_traits.md")]
+const abstract_traits_forms: FrozenList[str] = [
+    "trait OrderedCollection[T] with Collection[T]:",
+    "def first(values: Collection[int]) -> int:",
+]
+const abstract_traits_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Derives and traits", path="derives_and_traits.md#traits-authoring"),
+    CapabilityReference(label="Derives and traits explained", path="../explanation/derives_and_traits.md"),
+]
 static abstract_traits: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("AbstractTraits"),
     subject=RegistrySubject.current_unit(),
@@ -285,14 +299,16 @@ static abstract_traits: RegistryEntry[FeatureId, FeatureDescriptor] = features.e
         references=abstract_traits_references,
     ),
 )
-const source_defined_derives_traits_forms: FrozenList[str] = ["@derive(json)", "model Row with Serialize:", "T with Clone"]
-const source_defined_derives_traits_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Derives and traits",
-    path="derives_and_traits.md",
-), CapabilityReference(label="std.derives", path="stdlib/derives.md"), CapabilityReference(
-    label="std.traits",
-    path="stdlib/traits.md",
-)]
+const source_defined_derives_traits_forms: FrozenList[str] = [
+    "@derive(json)",
+    "model Row with Serialize:",
+    "T with Clone",
+]
+const source_defined_derives_traits_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Derives and traits", path="derives_and_traits.md"),
+    CapabilityReference(label="std.derives", path="stdlib/derives.md"),
+    CapabilityReference(label="std.traits", path="stdlib/traits.md"),
+]
 static source_defined_derives_traits: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("SourceDefinedDerivesTraits"),
     subject=RegistrySubject.current_unit(),
@@ -311,13 +327,11 @@ static source_defined_derives_traits: RegistryEntry[FeatureId, FeatureDescriptor
     ),
 )
 const model_field_metadata_forms: FrozenList[str] = ["name as \"wire_name\": str", "user.__fields__()"]
-const model_field_metadata_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Reflection",
-    path="reflection.md",
-), CapabilityReference(label="std.reflection", path="stdlib/reflection.md"), CapabilityReference(
-    label="Release 0.2",
-    path="../../release_notes/0_2.md",
-)]
+const model_field_metadata_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Reflection", path="reflection.md"),
+    CapabilityReference(label="std.reflection", path="stdlib/reflection.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+]
 static model_field_metadata: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ModelFieldMetadata"),
     subject=RegistrySubject.current_unit(),
@@ -335,14 +349,18 @@ static model_field_metadata: RegistryEntry[FeatureId, FeatureDescriptor] = featu
         references=model_field_metadata_references,
     ),
 )
-const type_tokens_reflection_forms: FrozenList[str] = ["T.__class_name__()", "def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:", "def accepts_schema(value: Type[MySchema]) -> str:", "cast(col(\"amount\"), int)"]
-const type_tokens_reflection_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Reflection",
-    path="reflection.md",
-), CapabilityReference(label="std.reflection", path="stdlib/reflection.md"), CapabilityReference(
-    label="RFC 107 north star",
-    path="../../RFCs/107_type_directed_library_apis.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const type_tokens_reflection_forms: FrozenList[str] = [
+    "T.__class_name__()",
+    "def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:",
+    "def accepts_schema(value: Type[MySchema]) -> str:",
+    "cast(col(\"amount\"), int)",
+]
+const type_tokens_reflection_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Reflection", path="reflection.md"),
+    CapabilityReference(label="std.reflection", path="stdlib/reflection.md"),
+    CapabilityReference(label="RFC 107 north star", path="../../RFCs/107_type_directed_library_apis.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static type_tokens_reflection: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("TypeTokensReflection"),
     subject=RegistrySubject.current_unit(),
@@ -361,13 +379,11 @@ static type_tokens_reflection: RegistryEntry[FeatureId, FeatureDescriptor] = fea
     ),
 )
 const value_enums_forms: FrozenList[str] = ["enum Level(str):", "WARN = \"WARN\"", "Level.from_value(raw)"]
-const value_enums_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Enums explained",
-    path="../explanation/enums.md",
-), CapabilityReference(label="Modeling with enums", path="../how-to/modeling_with_enums.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const value_enums_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Enums explained", path="../explanation/enums.md"),
+    CapabilityReference(label="Modeling with enums", path="../how-to/modeling_with_enums.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static value_enums: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ValueEnums"),
     subject=RegistrySubject.current_unit(),
@@ -386,10 +402,10 @@ static value_enums: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry
     ),
 )
 const union_types_forms: FrozenList[str] = ["value: int | str", "if isinstance(value, int):", "match value:"]
-const union_types_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Union types",
-    path="union_types.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const union_types_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Union types", path="union_types.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static union_types: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("UnionTypes"),
     subject=RegistrySubject.current_unit(),
@@ -407,14 +423,16 @@ static union_types: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry
         references=union_types_references,
     ),
 )
-const validated_newtypes_forms: FrozenList[str] = ["type UserId = newtype int[ge=0]:", "Email.new(value)", "@no_implicit_coercion"]
-const validated_newtypes_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Newtypes",
-    path="newtypes.md",
-), CapabilityReference(label="Book: newtypes", path="../tutorials/book/12_newtypes.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const validated_newtypes_forms: FrozenList[str] = [
+    "type UserId = newtype int[ge=0]:",
+    "Email.new(value)",
+    "@no_implicit_coercion",
+]
+const validated_newtypes_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Newtypes", path="newtypes.md"),
+    CapabilityReference(label="Book: newtypes", path="../tutorials/book/12_newtypes.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static validated_newtypes: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ValidatedNewtypes"),
     subject=RegistrySubject.current_unit(),
@@ -432,14 +450,16 @@ static validated_newtypes: RegistryEntry[FeatureId, FeatureDescriptor] = feature
         references=validated_newtypes_references,
     ),
 )
-const numeric_type_system_forms: FrozenList[str] = ["count: u32 = 1", "price: decimal[12, 2] = 19.99d", "small = value.try_resize()"]
-const numeric_type_system_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Numeric semantics",
-    path="numeric_semantics.md",
-), CapabilityReference(label="Choosing numeric types", path="../how-to/choosing_numeric_types.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const numeric_type_system_forms: FrozenList[str] = [
+    "count: u32 = 1",
+    "price: decimal[12, 2] = 19.99d",
+    "small = value.try_resize()",
+]
+const numeric_type_system_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Numeric semantics", path="numeric_semantics.md"),
+    CapabilityReference(label="Choosing numeric types", path="../how-to/choosing_numeric_types.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static numeric_type_system: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("NumericTypeSystem"),
     subject=RegistrySubject.current_unit(),
@@ -458,13 +478,11 @@ static numeric_type_system: RegistryEntry[FeatureId, FeatureDescriptor] = featur
     ),
 )
 const loop_expressions_forms: FrozenList[str] = ["result = loop:", "break value"]
-const loop_expressions_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Control flow",
-    path="../explanation/control_flow.md",
-), CapabilityReference(label="Book: control flow", path="../tutorials/book/04_control_flow.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const loop_expressions_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Control flow", path="../explanation/control_flow.md"),
+    CapabilityReference(label="Book: control flow", path="../tutorials/book/04_control_flow.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static loop_expressions: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("LoopExpressions"),
     subject=RegistrySubject.current_unit(),
@@ -483,10 +501,10 @@ static loop_expressions: RegistryEntry[FeatureId, FeatureDescriptor] = features.
     ),
 )
 const if_while_let_forms: FrozenList[str] = ["if let Some(value) = maybe:", "while let Some(item) = iterator.next():"]
-const if_while_let_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Control flow",
-    path="../explanation/control_flow.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const if_while_let_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Control flow", path="../explanation/control_flow.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static if_while_let: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("IfWhileLet"),
     subject=RegistrySubject.current_unit(),
@@ -505,10 +523,10 @@ static if_while_let: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
     ),
 )
 const pattern_alternation_forms: FrozenList[str] = ["Status.Pending | Status.Retrying => handle_waiting()"]
-const pattern_alternation_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Control flow",
-    path="../explanation/control_flow.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const pattern_alternation_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Control flow", path="../explanation/control_flow.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static pattern_alternation: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("PatternAlternation"),
     subject=RegistrySubject.current_unit(),
@@ -527,13 +545,11 @@ static pattern_alternation: RegistryEntry[FeatureId, FeatureDescriptor] = featur
     ),
 )
 const enum_methods_traits_forms: FrozenList[str] = ["enum Direction with Display:", "def opposite(self) -> Direction:"]
-const enum_methods_traits_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Enums explained",
-    path="../explanation/enums.md",
-), CapabilityReference(label="Derives and traits", path="derives_and_traits.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const enum_methods_traits_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Enums explained", path="../explanation/enums.md"),
+    CapabilityReference(label="Derives and traits", path="derives_and_traits.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static enum_methods_traits: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("EnumMethodsTraits"),
     subject=RegistrySubject.current_unit(),
@@ -551,14 +567,15 @@ static enum_methods_traits: RegistryEntry[FeatureId, FeatureDescriptor] = featur
         references=enum_methods_traits_references,
     ),
 )
-const computed_properties_forms: FrozenList[str] = ["property display_name -> str:", "return self.first + \" \" + self.last"]
-const computed_properties_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Computed properties",
-    path="computed_properties.md",
-), CapabilityReference(label="Models", path="../explanation/models_and_classes/models.md"), CapabilityReference(
-    label="Classes",
-    path="../explanation/models_and_classes/classes.md",
-)]
+const computed_properties_forms: FrozenList[str] = [
+    "property display_name -> str:",
+    "return self.first + \" \" + self.last",
+]
+const computed_properties_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Computed properties", path="computed_properties.md"),
+    CapabilityReference(label="Models", path="../explanation/models_and_classes/models.md"),
+    CapabilityReference(label="Classes", path="../explanation/models_and_classes/classes.md"),
+]
 static computed_properties: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ComputedProperties"),
     subject=RegistrySubject.current_unit(),
@@ -577,13 +594,11 @@ static computed_properties: RegistryEntry[FeatureId, FeatureDescriptor] = featur
     ),
 )
 const symbol_aliases_forms: FrozenList[str] = ["pub average = alias avg", "mean = avg", "WARNING = alias WARN"]
-const symbol_aliases_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Symbol aliases",
-    path="symbol_aliases.md",
-), CapabilityReference(label="Imports and modules", path="imports_and_modules.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const symbol_aliases_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Symbol aliases", path="symbol_aliases.md"),
+    CapabilityReference(label="Imports and modules", path="imports_and_modules.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static symbol_aliases: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("SymbolAliases"),
     subject=RegistrySubject.current_unit(),
@@ -601,14 +616,15 @@ static symbol_aliases: RegistryEntry[FeatureId, FeatureDescriptor] = features.en
         references=symbol_aliases_references,
     ),
 )
-const callable_presets_forms: FrozenList[str] = ["pub get = partial route(method=\"GET\")", "set_alive = partial set_state(state=true)"]
-const callable_presets_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Callable presets",
-    path="callable_presets.md",
-), CapabilityReference(label="Callable presets explained", path="../explanation/callable_presets.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const callable_presets_forms: FrozenList[str] = [
+    "pub get = partial route(method=\"GET\")",
+    "set_alive = partial set_state(state=true)",
+]
+const callable_presets_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Callable presets", path="callable_presets.md"),
+    CapabilityReference(label="Callable presets explained", path="../explanation/callable_presets.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static callable_presets: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("CallablePresets"),
     subject=RegistrySubject.current_unit(),
@@ -626,11 +642,16 @@ static callable_presets: RegistryEntry[FeatureId, FeatureDescriptor] = features.
         references=callable_presets_references,
     ),
 )
-const variadic_and_spread_calls_forms: FrozenList[str] = ["def log(*items: str, **fields: str) -> None:", "f(*xs, **kw)", "[*prefix, item]", "{**base, \"x\": 1}"]
-const variadic_and_spread_calls_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Functions and calls",
-    path="functions.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const variadic_and_spread_calls_forms: FrozenList[str] = [
+    "def log(*items: str, **fields: str) -> None:",
+    "f(*xs, **kw)",
+    "[*prefix, item]",
+    "{**base, \"x\": 1}",
+]
+const variadic_and_spread_calls_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Functions and calls", path="functions.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static variadic_and_spread_calls: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("VariadicAndSpreadCalls"),
     subject=RegistrySubject.current_unit(),
@@ -648,14 +669,17 @@ static variadic_and_spread_calls: RegistryEntry[FeatureId, FeatureDescriptor] = 
         references=variadic_and_spread_calls_references,
     ),
 )
-const user_defined_decorators_forms: FrozenList[str] = ["@logged", "@registered(\"catalog.ref\")", "func.__name__", "@registered[(str) -> ColumnExpr](\"catalog.ref\")"]
-const user_defined_decorators_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Language reference",
-    path="language.md#decorators",
-), CapabilityReference(label="Derives and traits", path="derives_and_traits.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const user_defined_decorators_forms: FrozenList[str] = [
+    "@logged",
+    "@registered(\"catalog.ref\")",
+    "func.__name__",
+    "@registered[(str) -> ColumnExpr](\"catalog.ref\")",
+]
+const user_defined_decorators_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Language reference", path="language.md#decorators"),
+    CapabilityReference(label="Derives and traits", path="derives_and_traits.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static user_defined_decorators: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("UserDefinedDecorators"),
     subject=RegistrySubject.current_unit(),
@@ -674,13 +698,11 @@ static user_defined_decorators: RegistryEntry[FeatureId, FeatureDescriptor] = fe
     ),
 )
 const generators_forms: FrozenList[str] = ["def numbers() -> Generator[int]:", "yield value", "(x * 2 for x in values)"]
-const generators_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Generators",
-    path="generators.md",
-), CapabilityReference(label="Generators how-to", path="../how-to/generators.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const generators_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Generators", path="generators.md"),
+    CapabilityReference(label="Generators how-to", path="../how-to/generators.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static generators: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("Generators"),
     subject=RegistrySubject.current_unit(),
@@ -698,11 +720,15 @@ static generators: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=generators_references,
     ),
 )
-const iterator_adapters_forms: FrozenList[str] = ["values.iter().map(parse).filter(valid).collect()", "items.enumerate().take(10)", "numbers.fold(0, add)"]
-const iterator_adapters_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Collection protocols",
-    path="stdlib_traits/collection_protocols.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const iterator_adapters_forms: FrozenList[str] = [
+    "values.iter().map(parse).filter(valid).collect()",
+    "items.enumerate().take(10)",
+    "numbers.fold(0, add)",
+]
+const iterator_adapters_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Collection protocols", path="stdlib_traits/collection_protocols.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static iterator_adapters: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("IteratorAdapters"),
     subject=RegistrySubject.current_unit(),
@@ -720,14 +746,17 @@ static iterator_adapters: RegistryEntry[FeatureId, FeatureDescriptor] = features
         references=iterator_adapters_references,
     ),
 )
-const fallible_iteration_forms: FrozenList[str] = ["for item in stream?:", "stream.map(transform).map_err(to_domain_error)", "stream.collect()?"]
-const fallible_iteration_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Collection protocols",
-    path="stdlib_traits/collection_protocols.md",
-), CapabilityReference(label="std.io", path="stdlib/io.md"), CapabilityReference(
-    label="Fallible and infallible paths",
-    path="../tutorials/fallible_and_infallible_paths.md",
-), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
+const fallible_iteration_forms: FrozenList[str] = [
+    "for item in stream?:",
+    "stream.map(transform).map_err(to_domain_error)",
+    "stream.collect()?",
+]
+const fallible_iteration_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Collection protocols", path="stdlib_traits/collection_protocols.md"),
+    CapabilityReference(label="std.io", path="stdlib/io.md"),
+    CapabilityReference(label="Fallible and infallible paths", path="../tutorials/fallible_and_infallible_paths.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static fallible_iteration: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("FallibleIteration"),
     subject=RegistrySubject.current_unit(),
@@ -745,14 +774,16 @@ static fallible_iteration: RegistryEntry[FeatureId, FeatureDescriptor] = feature
         references=fallible_iteration_references,
     ),
 )
-const result_combinators_forms: FrozenList[str] = ["result.map(transform)", "result.and_then(validate)", "result.inspect(log_success)"]
-const result_combinators_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.result",
-    path="stdlib/result.md",
-), CapabilityReference(label="Fallible and infallible paths", path="../tutorials/fallible_and_infallible_paths.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const result_combinators_forms: FrozenList[str] = [
+    "result.map(transform)",
+    "result.and_then(validate)",
+    "result.inspect(log_success)",
+]
+const result_combinators_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.result", path="stdlib/result.md"),
+    CapabilityReference(label="Fallible and infallible paths", path="../tutorials/fallible_and_infallible_paths.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static result_combinators: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ResultCombinators"),
     subject=RegistrySubject.current_unit(),
@@ -770,14 +801,16 @@ static result_combinators: RegistryEntry[FeatureId, FeatureDescriptor] = feature
         references=result_combinators_references,
     ),
 )
-const protocol_hooks_forms: FrozenList[str] = ["def __len__(self) -> int:", "def __iter__(self) -> Iterator[T]:", "def __call__(self, value: T) -> U:"]
-const protocol_hooks_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Traits as language hooks",
-    path="../explanation/traits_as_language_hooks.md",
-), CapabilityReference(label="Collection protocols", path="stdlib_traits/collection_protocols.md"), CapabilityReference(
-    label="Operators",
-    path="stdlib_traits/operators.md",
-)]
+const protocol_hooks_forms: FrozenList[str] = [
+    "def __len__(self) -> int:",
+    "def __iter__(self) -> Iterator[T]:",
+    "def __call__(self, value: T) -> U:",
+]
+const protocol_hooks_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Traits as language hooks", path="../explanation/traits_as_language_hooks.md"),
+    CapabilityReference(label="Collection protocols", path="stdlib_traits/collection_protocols.md"),
+    CapabilityReference(label="Operators", path="stdlib_traits/operators.md"),
+]
 static protocol_hooks: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ProtocolHooks"),
     subject=RegistrySubject.current_unit(),
@@ -795,14 +828,16 @@ static protocol_hooks: RegistryEntry[FeatureId, FeatureDescriptor] = features.en
         references=protocol_hooks_references,
     ),
 )
-const rust_trait_adoption_forms: FrozenList[str] = ["type UserId = rusttype i64 with Display:", "def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:", "type Output for Add[int] = UserId"]
-const rust_trait_adoption_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Rust interop",
-    path="../how-to/rust_interop.md",
-), CapabilityReference(label="Derives and traits", path="derives_and_traits.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const rust_trait_adoption_forms: FrozenList[str] = [
+    "type UserId = rusttype i64 with Display:",
+    "def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:",
+    "type Output for Add[int] = UserId",
+]
+const rust_trait_adoption_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Rust interop", path="../how-to/rust_interop.md"),
+    CapabilityReference(label="Derives and traits", path="derives_and_traits.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static rust_trait_adoption: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("RustTraitAdoption"),
     subject=RegistrySubject.current_unit(),
@@ -821,32 +856,32 @@ static rust_trait_adoption: RegistryEntry[FeatureId, FeatureDescriptor] = featur
     ),
 )
 const rust_allow_forms: FrozenList[str] = ["@rust.allow(\"dead_code\")", "def helper() -> None:"]
-const rust_allow_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Rust interop",
-    path="../how-to/rust_interop.md#targeted-generated-rust-lint-suppression",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const rust_allow_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Rust interop", path="../how-to/rust_interop.md#targeted-generated-rust-lint-suppression"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static rust_allow: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("RustAllow"),
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("RustAllow"),
-        name="Targeted generated-Rust lint suppression",
+        name="Checked Rust lint annotations",
         category=FeatureCategory.Interop,
         since="0.3",
         rfc="RFC 057",
         stability=FeatureStability.Stable,
         activation="Use `@rust.allow(...)` on supported declarations.",
-        summary="Generated Rust can receive narrow lint suppressions on individual items when source semantics require them.",
+        summary="The checker validates declaration-local `@rust.allow` names and attachments. Native compilation does not generate Rust source attributes or run Clippy.",
         canonical_forms=rust_allow_forms,
-        prefer_over="Project-wide lint disables or broad generated-Rust allowance groups.",
+        prefer_over="Broad lint groups or annotations used to hide a source type error.",
         references=rust_allow_references,
     ),
 )
 const scoped_dsl_surfaces_forms: FrozenList[str] = ["query:", ".field", "|>", "sum(value)"]
-const scoped_dsl_surfaces_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Authoring vocab crates",
-    path="../../contributing/how-to/authoring_vocab_crates.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const scoped_dsl_surfaces_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Authoring vocab crates", path="../../contributing/how-to/authoring_vocab_crates.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static scoped_dsl_surfaces: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ScopedDslSurfaces"),
     subject=RegistrySubject.current_unit(),
@@ -864,14 +899,16 @@ static scoped_dsl_surfaces: RegistryEntry[FeatureId, FeatureDescriptor] = featur
         references=scoped_dsl_surfaces_references,
     ),
 )
-const std_web_forms: FrozenList[str] = ["from std.web.routing import route", "from std.web.response import Json", "@route(\"/health\")"]
-const std_web_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Imports and modules",
-    path="imports_and_modules.md",
-), CapabilityReference(label="Web framework tutorial", path="../tutorials/web_framework.md"), CapabilityReference(
-    label="Release 0.2",
-    path="../../release_notes/0_2.md",
-)]
+const std_web_forms: FrozenList[str] = [
+    "from std.web.routing import route",
+    "from std.web.response import Json",
+    "@route(\"/health\")",
+]
+const std_web_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Imports and modules", path="imports_and_modules.md"),
+    CapabilityReference(label="Web framework tutorial", path="../tutorials/web_framework.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+]
 static std_web: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdWeb"),
     subject=RegistrySubject.current_unit(),
@@ -883,17 +920,22 @@ static std_web: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         rfc="RFC 023",
         stability=FeatureStability.Stable,
         activation="Import from `std.web` or submodules such as `std.web.routing`.",
-        summary="`std.web` provides hosted web app, routing, request, response, and macro surfaces with compiler-activated web runtime dependencies. The 0.5 toolchain ships the checked web closure in its full-standard-library Loaf, so normal builds and runs can reuse it without invoking Cargo on the consumer path.",
+        summary="`std.web` provides hosted web app, routing, request, response and macro surfaces through compiled standard packages and their checked native dependencies.",
         canonical_forms=std_web_forms,
         prefer_over="Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps.",
         references=std_web_references,
     ),
 )
-const std_math_forms: FrozenList[str] = ["import std.math", "math.sqrt(9.0)", "math.gcd(12, 18)", "math.is_float_like(\"1.25e3\")"]
-const std_math_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.math",
-    path="stdlib/math.md",
-), CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md")]
+const std_math_forms: FrozenList[str] = [
+    "import std.math",
+    "math.sqrt(9.0)",
+    "math.gcd(12, 18)",
+    "math.is_float_like(\"1.25e3\")",
+]
+const std_math_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.math", path="stdlib/math.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+]
 static std_math: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdMath"),
     subject=RegistrySubject.current_unit(),
@@ -911,14 +953,15 @@ static std_math: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_math_references,
     ),
 )
-const std_collections_forms: FrozenList[str] = ["from std.collections import Deque, Counter, PriorityQueue", "queue = Deque[int]()"]
-const std_collections_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.collections",
-    path="stdlib/collections.md",
-), CapabilityReference(label="Choosing collections", path="../how-to/choosing_collections.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const std_collections_forms: FrozenList[str] = [
+    "from std.collections import Deque, Counter, PriorityQueue",
+    "queue = Deque[int]()",
+]
+const std_collections_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.collections", path="stdlib/collections.md"),
+    CapabilityReference(label="Choosing collections", path="../how-to/choosing_collections.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_collections: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdCollections"),
     subject=RegistrySubject.current_unit(),
@@ -937,10 +980,10 @@ static std_collections: RegistryEntry[FeatureId, FeatureDescriptor] = features.e
     ),
 )
 const std_graph_forms: FrozenList[str] = ["from std.graph import DiGraph, Dag", "graph = DiGraph[Task]()"]
-const std_graph_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.graph",
-    path="stdlib/graph.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const std_graph_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.graph", path="stdlib/graph.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_graph: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdGraph"),
     subject=RegistrySubject.current_unit(),
@@ -959,13 +1002,16 @@ static std_graph: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     ),
 )
 const std_fs_forms: FrozenList[str] = ["from std.fs import Path", "Path(\"data\").join(\"orders.csv\")"]
-const std_fs_references: FrozenList[CapabilityReference] = [CapabilityReference(label="std.fs", path="stdlib/fs.md"), CapabilityReference(
-    label="File IO",
-    path="../how-to/file_io.md",
-), CapabilityReference(label="RFC 055", path="../../RFCs/closed/implemented/055_std_fs.md"), CapabilityReference(
-    label="RFC 112",
-    path="../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination.md",
-), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
+const std_fs_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.fs", path="stdlib/fs.md"),
+    CapabilityReference(label="File IO", path="../how-to/file_io.md"),
+    CapabilityReference(label="RFC 055", path="../../RFCs/closed/implemented/055_std_fs.md"),
+    CapabilityReference(
+        label="RFC 112",
+        path="../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination.md",
+    ),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static std_fs: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdFs"),
     subject=RegistrySubject.current_unit(),
@@ -983,11 +1029,15 @@ static std_fs: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_fs_references,
     ),
 )
-const std_io_forms: FrozenList[str] = ["from std.io import BytesIO, Endian", "stream.write(value, Endian.Little)", "for chunk in stream.chunks(65536)?:"]
-const std_io_references: FrozenList[CapabilityReference] = [CapabilityReference(label="std.io", path="stdlib/io.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const std_io_forms: FrozenList[str] = [
+    "from std.io import BytesIO, Endian",
+    "stream.write(value, Endian.Little)",
+    "for chunk in stream.chunks(65536)?:",
+]
+const std_io_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.io", path="stdlib/io.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_io: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdIo"),
     subject=RegistrySubject.current_unit(),
@@ -1005,14 +1055,17 @@ static std_io: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_io_references,
     ),
 )
-const std_regex_forms: FrozenList[str] = ["from std.regex import Regex", "regex = Regex(r\"\\w+\")?", "regex.find_iter(text)"]
-const std_regex_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.regex",
-    path="stdlib/regex.md",
-), CapabilityReference(label="Regular expressions", path="../how-to/regular_expressions.md"), CapabilityReference(
-    label="RFC 059",
-    path="../../RFCs/closed/implemented/059_std_regex.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const std_regex_forms: FrozenList[str] = [
+    "from std.regex import Regex",
+    "regex = Regex(r\"\\w+\")?",
+    "regex.find_iter(text)",
+]
+const std_regex_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.regex", path="stdlib/regex.md"),
+    CapabilityReference(label="Regular expressions", path="../how-to/regular_expressions.md"),
+    CapabilityReference(label="RFC 059", path="../../RFCs/closed/implemented/059_std_regex.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_regex: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdRegex"),
     subject=RegistrySubject.current_unit(),
@@ -1030,14 +1083,17 @@ static std_regex: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_regex_references,
     ),
 )
-const std_uuid_forms: FrozenList[str] = ["from std.uuid import UUID", "UUID.parse(\"550e8400-e29b-41d4-a716-446655440000\")?", "UUID.v7()?"]
-const std_uuid_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.uuid",
-    path="stdlib/uuid.md",
-), CapabilityReference(label="Working with UUIDs", path="../how-to/working_with_uuids.md"), CapabilityReference(
-    label="RFC 060",
-    path="../../RFCs/closed/implemented/060_std_uuid.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const std_uuid_forms: FrozenList[str] = [
+    "from std.uuid import UUID",
+    "UUID.parse(\"550e8400-e29b-41d4-a716-446655440000\")?",
+    "UUID.v7()?",
+]
+const std_uuid_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.uuid", path="stdlib/uuid.md"),
+    CapabilityReference(label="Working with UUIDs", path="../how-to/working_with_uuids.md"),
+    CapabilityReference(label="RFC 060", path="../../RFCs/closed/implemented/060_std_uuid.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_uuid: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdUuid"),
     subject=RegistrySubject.current_unit(),
@@ -1055,14 +1111,17 @@ static std_uuid: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_uuid_references,
     ),
 )
-const std_compression_forms: FrozenList[str] = ["from std.compression import gzip, decompress_auto", "gzip.compress(payload)?", "zstd.decompress_stream(source, target)?"]
-const std_compression_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.compression",
-    path="stdlib/compression.md",
-), CapabilityReference(label="Compress and decompress data", path="../how-to/compression.md"), CapabilityReference(
-    label="RFC 061",
-    path="../../RFCs/closed/implemented/061_std_compression.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const std_compression_forms: FrozenList[str] = [
+    "from std.compression import gzip, decompress_auto",
+    "gzip.compress(payload)?",
+    "zstd.decompress_stream(source, target)?",
+]
+const std_compression_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.compression", path="stdlib/compression.md"),
+    CapabilityReference(label="Compress and decompress data", path="../how-to/compression.md"),
+    CapabilityReference(label="RFC 061", path="../../RFCs/closed/implemented/061_std_compression.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_compression: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdCompression"),
     subject=RegistrySubject.current_unit(),
@@ -1080,14 +1139,17 @@ static std_compression: RegistryEntry[FeatureId, FeatureDescriptor] = features.e
         references=std_compression_references,
     ),
 )
-const std_encoding_forms: FrozenList[str] = ["from std.encoding import base64, hex", "base64.urlsafe_b64encode(payload)", "hex.decode(text)?"]
-const std_encoding_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.encoding",
-    path="stdlib/encoding.md",
-), CapabilityReference(label="Binary-text encoding", path="../how-to/binary_text_encoding.md"), CapabilityReference(
-    label="RFC 064",
-    path="../../RFCs/closed/implemented/064_std_encoding.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const std_encoding_forms: FrozenList[str] = [
+    "from std.encoding import base64, hex",
+    "base64.urlsafe_b64encode(payload)",
+    "hex.decode(text)?",
+]
+const std_encoding_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.encoding", path="stdlib/encoding.md"),
+    CapabilityReference(label="Binary-text encoding", path="../how-to/binary_text_encoding.md"),
+    CapabilityReference(label="RFC 064", path="../../RFCs/closed/implemented/064_std_encoding.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_encoding: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdEncoding"),
     subject=RegistrySubject.current_unit(),
@@ -1105,17 +1167,22 @@ static std_encoding: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
         references=std_encoding_references,
     ),
 )
-const std_hash_forms: FrozenList[str] = ["from std.hash import Sha256Hasher, sha256, file_digest", "sink: Sha256Hasher = sha256.new()", "sha256.digest(payload)", "xxh3_64.new()", "from std.hash import hmac_sha256", "hmac_sha256.verify(key, payload, tag)"]
-const std_hash_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.hash",
-    path="stdlib/hash.md",
-), CapabilityReference(label="Hashing data", path="../how-to/hashing_data.md"), CapabilityReference(
-    label="RFC 065",
-    path="../../RFCs/closed/implemented/065_std_hash.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"), CapabilityReference(
-    label="Release 0.5",
-    path="../../release_notes/0_5.md",
-), CapabilityReference(label="Release 0.6", path="../../release_notes/0_6.md")]
+const std_hash_forms: FrozenList[str] = [
+    "from std.hash import Sha256Hasher, sha256, file_digest",
+    "sink: Sha256Hasher = sha256.new()",
+    "sha256.digest(payload)",
+    "xxh3_64.new()",
+    "from std.hash import hmac_sha256",
+    "hmac_sha256.verify(key, payload, tag)",
+]
+const std_hash_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.hash", path="stdlib/hash.md"),
+    CapabilityReference(label="Hashing data", path="../how-to/hashing_data.md"),
+    CapabilityReference(label="RFC 065", path="../../RFCs/closed/implemented/065_std_hash.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+    CapabilityReference(label="Release 0.6", path="../../release_notes/0_6.md"),
+]
 static std_hash: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdHash"),
     subject=RegistrySubject.current_unit(),
@@ -1133,14 +1200,16 @@ static std_hash: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_hash_references,
     ),
 )
-const std_environ_forms: FrozenList[str] = ["from std.environ import get, get_optional, get_or, get_as", "token = get(\"API_TOKEN\")?", "port = get_as[Port](\"PORT\", default=8080)?"]
-const std_environ_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.environ",
-    path="stdlib/environ.md",
-), CapabilityReference(label="RFC 089", path="../../RFCs/closed/implemented/089_std_environ.md"), CapabilityReference(
-    label="Release 0.5",
-    path="../../release_notes/0_5.md",
-)]
+const std_environ_forms: FrozenList[str] = [
+    "from std.environ import get, get_optional, get_or, get_as",
+    "token = get(\"API_TOKEN\")?",
+    "port = get_as[Port](\"PORT\", default=8080)?",
+]
+const std_environ_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.environ", path="stdlib/environ.md"),
+    CapabilityReference(label="RFC 089", path="../../RFCs/closed/implemented/089_std_environ.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static std_environ: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdEnviron"),
     subject=RegistrySubject.current_unit(),
@@ -1158,14 +1227,17 @@ static std_environ: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry
         references=std_environ_references,
     ),
 )
-const std_json_forms: FrozenList[str] = ["from std.json import JsonValue", "JsonValue.parse(source)", "value[\"key\"]", "value[0]"]
-const std_json_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.json",
-    path="stdlib/json.md",
-), CapabilityReference(label="Derives: Serialization", path="derives/serialization.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const std_json_forms: FrozenList[str] = [
+    "from std.json import JsonValue",
+    "JsonValue.parse(source)",
+    "value[\"key\"]",
+    "value[0]",
+]
+const std_json_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.json", path="stdlib/json.md"),
+    CapabilityReference(label="Derives: Serialization", path="derives/serialization.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_json: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdJson"),
     subject=RegistrySubject.current_unit(),
@@ -1183,11 +1255,18 @@ static std_json: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_json_references,
     ),
 )
-const std_toml_forms: FrozenList[str] = ["from std import toml", "document = toml.parse(source)?", "document.get[str](\"project.name\")?", "document.get_optional[str](\"project.version\")?", "toml.deserialize[Manifest](source)", "toml.serialize_pretty(lock)"]
-const std_toml_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.toml",
-    path="stdlib/toml.md",
-), CapabilityReference(label="API contract: issue #1409", path="https://github.com/encero-systems/incan/issues/1409")]
+const std_toml_forms: FrozenList[str] = [
+    "from std import toml",
+    "document = toml.parse(source)?",
+    "document.get[str](\"project.name\")?",
+    "document.get_optional[str](\"project.version\")?",
+    "toml.deserialize[Manifest](source)",
+    "toml.serialize_pretty(lock)",
+]
+const std_toml_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.toml", path="stdlib/toml.md"),
+    CapabilityReference(label="API contract: issue #1409", path="https://github.com/encero-systems/incan/issues/1409"),
+]
 static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdToml"),
     subject=RegistrySubject.current_unit(),
@@ -1205,11 +1284,15 @@ static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_toml_references,
     ),
 )
-const std_tempfile_forms: FrozenList[str] = ["NamedTemporaryFile.try_new()", "TemporaryDirectory.try_new()", "tmp.persist()"]
-const std_tempfile_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.tempfile",
-    path="stdlib/tempfile.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const std_tempfile_forms: FrozenList[str] = [
+    "NamedTemporaryFile.try_new()",
+    "TemporaryDirectory.try_new()",
+    "tmp.persist()",
+]
+const std_tempfile_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.tempfile", path="stdlib/tempfile.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_tempfile: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdTempfile"),
     subject=RegistrySubject.current_unit(),
@@ -1227,14 +1310,17 @@ static std_tempfile: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
         references=std_tempfile_references,
     ),
 )
-const std_datetime_forms: FrozenList[str] = ["from std.datetime import Date, DateTime, TimeDelta", "Date.utc_today()", "DateTime.utc_now()", "TimeDelta.days(1)"]
-const std_datetime_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.datetime",
-    path="stdlib/datetime.md",
-), CapabilityReference(label="Dates and times", path="../tutorials/dates_and_times.md"), CapabilityReference(
-    label="Dates and times how-to",
-    path="../how-to/dates_and_times.md",
-)]
+const std_datetime_forms: FrozenList[str] = [
+    "from std.datetime import Date, DateTime, TimeDelta",
+    "Date.utc_today()",
+    "DateTime.utc_now()",
+    "TimeDelta.days(1)",
+]
+const std_datetime_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.datetime", path="stdlib/datetime.md"),
+    CapabilityReference(label="Dates and times", path="../tutorials/dates_and_times.md"),
+    CapabilityReference(label="Dates and times how-to", path="../how-to/dates_and_times.md"),
+]
 static std_datetime: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdDatetime"),
     subject=RegistrySubject.current_unit(),
@@ -1252,11 +1338,15 @@ static std_datetime: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
         references=std_datetime_references,
     ),
 )
-const std_telemetry_core_forms: FrozenList[str] = ["from std.telemetry.core import TelemetryValue, Attributes", "TelemetryValue.string(\"ready\")", "Attributes.from_string_fields(fields)"]
-const std_telemetry_core_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.logging",
-    path="stdlib/logging.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const std_telemetry_core_forms: FrozenList[str] = [
+    "from std.telemetry.core import TelemetryValue, Attributes",
+    "TelemetryValue.string(\"ready\")",
+    "Attributes.from_string_fields(fields)",
+]
+const std_telemetry_core_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.logging", path="stdlib/logging.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_telemetry_core: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdTelemetryCore"),
     subject=RegistrySubject.current_unit(),
@@ -1274,11 +1364,14 @@ static std_telemetry_core: RegistryEntry[FeatureId, FeatureDescriptor] = feature
         references=std_telemetry_core_references,
     ),
 )
-const std_logging_forms: FrozenList[str] = ["from std.logging import Level, basic_config", "log.info(\"started\", fields={\"component\": \"worker\"})"]
-const std_logging_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.logging",
-    path="stdlib/logging.md",
-), CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md")]
+const std_logging_forms: FrozenList[str] = [
+    "from std.logging import Level, basic_config",
+    "log.info(\"started\", fields={\"component\": \"worker\"})",
+]
+const std_logging_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.logging", path="stdlib/logging.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static std_logging: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdLogging"),
     subject=RegistrySubject.current_unit(),
@@ -1296,14 +1389,21 @@ static std_logging: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry
         references=std_logging_references,
     ),
 )
-const std_checksum_forms: FrozenList[str] = ["from std.checksum import crc32", "crc32.value(b\"abc\")", "crc32.digest(b\"abc\")", "h = crc32.new()"]
-const std_checksum_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.checksum",
-    path="stdlib/checksum.md",
-), CapabilityReference(label="Hashing data", path="../how-to/hashing_data.md"), CapabilityReference(
-    label="RFC 065 checksum boundary",
-    path="../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary",
-), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
+const std_checksum_forms: FrozenList[str] = [
+    "from std.checksum import crc32",
+    "crc32.value(b\"abc\")",
+    "crc32.digest(b\"abc\")",
+    "h = crc32.new()",
+]
+const std_checksum_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.checksum", path="stdlib/checksum.md"),
+    CapabilityReference(label="Hashing data", path="../how-to/hashing_data.md"),
+    CapabilityReference(
+        label="RFC 065 checksum boundary",
+        path="../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary",
+    ),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static std_checksum: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdChecksum"),
     subject=RegistrySubject.current_unit(),
@@ -1321,14 +1421,16 @@ static std_checksum: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
         references=std_checksum_references,
     ),
 )
-const testing_assertions_forms: FrozenList[str] = ["assert value == expected", "assert call() raises ValueError", "@parametrize(\"case\", cases)"]
-const testing_assertions_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.testing",
-    path="stdlib/testing.md",
-), CapabilityReference(label="Testing how-to", path="../how-to/testing_stdlib.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const testing_assertions_forms: FrozenList[str] = [
+    "assert value == expected",
+    "assert call() raises ValueError",
+    "@parametrize(\"case\", cases)",
+]
+const testing_assertions_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.testing", path="stdlib/testing.md"),
+    CapabilityReference(label="Testing how-to", path="../how-to/testing_stdlib.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static testing_assertions: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("TestingAssertions"),
     subject=RegistrySubject.current_unit(),
@@ -1346,14 +1448,16 @@ static testing_assertions: RegistryEntry[FeatureId, FeatureDescriptor] = feature
         references=testing_assertions_references,
     ),
 )
-const test_runner_forms: FrozenList[str] = ["module tests:", "incan test --list", "incan test --format json --junit report.xml"]
-const test_runner_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Tooling: testing",
-    path="../../tooling/how-to/testing.md",
-), CapabilityReference(label="std.testing", path="stdlib/testing.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const test_runner_forms: FrozenList[str] = [
+    "module tests:",
+    "incan test --list",
+    "incan test --format json --junit report.xml",
+]
+const test_runner_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Tooling: testing", path="../../tooling/how-to/testing.md"),
+    CapabilityReference(label="std.testing", path="stdlib/testing.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static test_runner: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("TestRunner"),
     subject=RegistrySubject.current_unit(),
@@ -1371,14 +1475,16 @@ static test_runner: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry
         references=test_runner_references,
     ),
 )
-const async_await_forms: FrozenList[str] = ["from std.async.time import sleep", "async def main() -> None:", "await sleep(1)"]
-const async_await_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Async programming",
-    path="../how-to/async_programming.md",
-), CapabilityReference(label="std.async", path="stdlib/async.md"), CapabilityReference(
-    label="Release 0.2",
-    path="../../release_notes/0_2.md",
-)]
+const async_await_forms: FrozenList[str] = [
+    "from std.async.time import sleep",
+    "async def main() -> None:",
+    "await sleep(1)",
+]
+const async_await_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Async programming", path="../how-to/async_programming.md"),
+    CapabilityReference(label="std.async", path="stdlib/async.md"),
+    CapabilityReference(label="Release 0.2", path="../../release_notes/0_2.md"),
+]
 static async_await: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("AsyncAwait"),
     subject=RegistrySubject.current_unit(),
@@ -1390,20 +1496,18 @@ static async_await: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry
         rfc="RFC 023",
         stability=FeatureStability.Stable,
         activation="Import `std.async` or one of its submodules.",
-        summary="`async` and `await` are import-activated soft-keyword surfaces backed by `std.async` modules. The 0.5 toolchain ships the checked async closure in its full-standard-library Loaf, so task, timeout, and supported runtime paths can build and run without invoking Cargo on the consumer path.",
+        summary="`async` and `await` are import-activated soft keywords backed by compiled `std.async` modules, with native task, timeout and runtime support.",
         canonical_forms=async_await_forms,
         prefer_over="Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax.",
         references=async_await_references,
     ),
 )
 const async_race_forms: FrozenList[str] = ["race for value:", "arm(task)", "race(arms)"]
-const async_race_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Awaitable trait",
-    path="stdlib_traits/awaitable.md",
-), CapabilityReference(label="Async programming", path="../how-to/async_programming.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const async_race_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Awaitable trait", path="stdlib_traits/awaitable.md"),
+    CapabilityReference(label="Async programming", path="../how-to/async_programming.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static async_race: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("AsyncRace"),
     subject=RegistrySubject.current_unit(),
@@ -1421,14 +1525,16 @@ static async_race: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=async_race_references,
     ),
 )
-const project_lifecycle_forms: FrozenList[str] = ["incan new greeter --yes", "incan version patch", "incan env run dev test"]
-const project_lifecycle_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Project lifecycle",
-    path="project_lifecycle.md",
-), CapabilityReference(label="Project lifecycle how-to", path="../how-to/project_lifecycle.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const project_lifecycle_forms: FrozenList[str] = [
+    "loaf.toml",
+    "incan describe-unit src/main.incn",
+    "incan build src/main.incn",
+]
+const project_lifecycle_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Project lifecycle", path="project_lifecycle.md"),
+    CapabilityReference(label="Project lifecycle how-to", path="../how-to/project_lifecycle.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static project_lifecycle: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ProjectLifecycle"),
     subject=RegistrySubject.current_unit(),
@@ -1439,43 +1545,48 @@ static project_lifecycle: RegistryEntry[FeatureId, FeatureDescriptor] = features
         since="0.3",
         rfc="RFC 015",
         stability=FeatureStability.Stable,
-        activation="Use `incan init`, `incan new`, `incan version`, or `incan env`.",
-        summary="Project commands create scaffolds, manage versions, and run configured environments from `loaf.toml`.",
+        activation="Declare the project and scripts in `loaf.toml`, then pass an explicit source path to Oven.",
+        summary="Oven reads project manifests, selects compilation inputs and prepares declared dependencies before checking, building, running or testing source.",
         canonical_forms=project_lifecycle_forms,
-        prefer_over="One-off project scaffolding scripts or manual version-file edits.",
+        prefer_over="Duplicated project resolution in compiler and editor tools.",
         references=project_lifecycle_references,
     ),
 )
-const workspace_multi_package_projects_forms: FrozenList[str] = ["incan workspace inspect --format json", "incan test --workspace", "incan build --member packages/api --report json"]
-const workspace_multi_package_projects_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Project lifecycle",
-    path="project_lifecycle.md",
-), CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"), CapabilityReference(
-    label="Release 0.5",
-    path="../../release_notes/0_5.md",
-)]
+const workspace_multi_package_projects_forms: FrozenList[str] = [
+    "[dependencies]",
+    "helper = { path = \"../helper\" }",
+    "incan build src/main.incn",
+]
+const workspace_multi_package_projects_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Project lifecycle", path="project_lifecycle.md"),
+    CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static workspace_multi_package_projects: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("WorkspaceMultiPackageProjects"),
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("WorkspaceMultiPackageProjects"),
-        name="Workspace and multi-package projects",
+        name="Path-linked multi-package projects",
         category=FeatureCategory.Tooling,
         since="0.5",
         rfc="RFC 077",
         stability=FeatureStability.Stable,
-        activation="Declare `[workspace]` in the repository root and inspect or select members through the CLI.",
-        summary="Workspaces supply explicit rooted/virtual member topology, deterministic scope selection, explicit shared dependency and environment inheritance, one durable root lock, and member-scoped command reports.",
+        activation="Declare path dependencies and select a package's source explicitly.",
+        summary="Oven prepares the selected package's active path dependency graph, with checked public aliases and unified package features.",
         canonical_forms=workspace_multi_package_projects_forms,
-        prefer_over="Ad hoc directory conventions, member-local locks, or implicit cross-project dependency activation.",
+        prefer_over="Implicit cross-project dependency activation or copying a dependency's source into its consumer.",
         references=workspace_multi_package_projects_references,
     ),
 )
-const toolchain_installer_manifest_forms: FrozenList[str] = ["curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash", "brew tap encero-systems/tap && brew install incan", "npm install -g @incan/toolchain", "pipx install incan"]
-const toolchain_installer_manifest_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Install and run",
-    path="../../tooling/how-to/install_and_run.md",
-), CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md")]
+const toolchain_installer_manifest_forms: FrozenList[str] = [
+    "incan toolchain pack toolchain.tar.zst",
+    "incan toolchain install toolchain.tar.zst",
+]
+const toolchain_installer_manifest_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Install and run", path="../../tooling/how-to/install_and_run.md"),
+    CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md"),
+]
 static toolchain_installer_manifest: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ToolchainInstallerManifest"),
     subject=RegistrySubject.current_unit(),
@@ -1486,87 +1597,97 @@ static toolchain_installer_manifest: RegistryEntry[FeatureId, FeatureDescriptor]
         since="0.4",
         rfc="RFC 015",
         stability=FeatureStability.Stable,
-        activation="Use the GitHub Release installer, Homebrew formula, npm package, pipx package, or versioned toolchain manifest.",
-        summary="The toolchain install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` from the same release archives across direct and package-manager channels. Direct and pipx installation can provision pinned Rust 1.98.0 and `wasm32-wasip1`; npm and Homebrew install prebuilt command binaries and leave Rust management to the user.",
+        activation="Pack an installed toolchain and install the resulting native archive.",
+        summary="Oven verifies a staged archive's portable manifest, binds the local Rust sysroot and checks the compiler identity before publishing an installation.",
         canonical_forms=toolchain_installer_manifest_forms,
         prefer_over="Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth.",
         references=toolchain_installer_manifest_references,
     ),
 )
-const zero_clone_starter_flow_forms: FrozenList[str] = ["incan new hello --yes", "cd hello", "incan run", "incan test", "incan build --release"]
-const zero_clone_starter_flow_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Getting started",
-    path="../../tooling/tutorials/getting_started.md",
-), CapabilityReference(label="Project lifecycle", path="project_lifecycle.md"), CapabilityReference(
-    label="Release 0.4",
-    path="../../release_notes/0_4.md",
-)]
+const zero_clone_starter_flow_forms: FrozenList[str] = [
+    "loaf.toml",
+    "src/main.incn",
+    "incan run src/main.incn",
+    "incan test tests/test_main.incn",
+    "incan build src/main.incn --profile release",
+]
+const zero_clone_starter_flow_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Getting started", path="../../tooling/tutorials/getting_started.md"),
+    CapabilityReference(label="Project lifecycle", path="project_lifecycle.md"),
+    CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md"),
+]
 static zero_clone_starter_flow: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("ZeroCloneStarterFlow"),
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("ZeroCloneStarterFlow"),
-        name="Zero-clone starter project flow",
+        name="Installed-toolchain starter project flow",
         category=FeatureCategory.Tooling,
         since="0.4",
         rfc="RFC 015",
         stability=FeatureStability.Stable,
-        activation="Use `incan new`, then run project commands from the generated directory.",
-        summary="`incan new` creates a runnable, testable project with a manifest, entrypoint, starter test, README, `.gitignore`, and release-line toolchain constraint.",
+        activation="Create a manifest, source entry and test file, then run the installed commands.",
+        summary="A project with a declared script can run, test and build through an installed toolchain without cloning the compiler repository.",
         canonical_forms=zero_clone_starter_flow_forms,
         prefer_over="Cloning the compiler repository or copying examples manually before a first run.",
         references=zero_clone_starter_flow_references,
     ),
 )
-const stable_diagnostics_forms: FrozenList[str] = ["incan check src/main.incn --format json", "incan explain INCAN-T0001"]
-const stable_diagnostics_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="CLI reference",
-    path="../../tooling/reference/cli_reference.md",
-), CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md")]
+const stable_diagnostics_forms: FrozenList[str] = ["incan check src/main.incn --format json"]
+const stable_diagnostics_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"),
+    CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md"),
+]
 static stable_diagnostics: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StableDiagnostics"),
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("StableDiagnostics"),
-        name="Stable diagnostics commands",
+        name="Stable diagnostic reports",
         category=FeatureCategory.Tooling,
         since="0.4",
         rfc="RFC 015",
         stability=FeatureStability.Stable,
-        activation="Use `incan check` or `incan explain`.",
-        summary="Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations.",
+        activation="Use `incan check PATH --format json`.",
+        summary="Check reports publish stable diagnostic codes, source spans, notes, hints and explanation command strings in versioned JSON.",
         canonical_forms=stable_diagnostics_forms,
         prefer_over="Scraping terminal diagnostics or building tool-specific error-code maps.",
         references=stable_diagnostics_references,
     ),
 )
-const build_reports_and_rust_inspection_forms: FrozenList[str] = ["incan build src/main.incn --report json", "incan build --lib --report json --report-output build.json", "incan inspect rust src/main.incn --format json"]
-const build_reports_and_rust_inspection_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="CLI reference",
-    path="../../tooling/reference/cli_reference.md",
-), CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md")]
+const build_reports_and_rust_inspection_forms: FrozenList[str] = [
+    "incan describe-unit src/main.incn",
+    "incan inspect codegraph src/main.incn --format jsonl",
+]
+const build_reports_and_rust_inspection_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"),
+    CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md"),
+]
 static build_reports_and_rust_inspection: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("BuildReportsAndRustInspection"),
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("BuildReportsAndRustInspection"),
-        name="Build reports and generated Rust inspection",
+        name="Unit descriptions and checked graph inspection",
         category=FeatureCategory.Tooling,
         since="0.4",
         rfc="RFC 015",
         stability=FeatureStability.Stable,
-        activation="Use `incan build --report json` or `incan inspect rust`.",
-        summary="Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available.",
+        activation="Use `incan describe-unit` or `incan inspect codegraph` with an explicit source path.",
+        summary="Unit descriptions publish selected compilation inputs; checked graphs expose declarations, Rust interop facts, source ranges and provenance.",
         canonical_forms=build_reports_and_rust_inspection_forms,
-        prefer_over="Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract.",
+        prefer_over="Scraping terminal progress output for source or dependency facts.",
         references=build_reports_and_rust_inspection_references,
     ),
 )
-const build_test_oven_observability_forms: FrozenList[str] = ["incan build --report json", "incan test -v tests", "incan oven store inspect --format json"]
-const build_test_oven_observability_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="CLI reference",
-    path="../../tooling/reference/cli_reference.md",
-), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
+const build_test_oven_observability_forms: FrozenList[str] = [
+    "OVEN_TRACE=- incan run src/main.incn",
+    "incan describe-unit src/main.incn",
+]
+const build_test_oven_observability_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static build_test_oven_observability: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("BuildTestOvenObservability"),
     subject=RegistrySubject.current_unit(),
@@ -1577,21 +1698,22 @@ static build_test_oven_observability: RegistryEntry[FeatureId, FeatureDescriptor
         since="0.5",
         rfc="RFC 015",
         stability=FeatureStability.Experimental,
-        activation="Use a JSON build report, verbose test output, or `incan oven store inspect --format json` to inspect the documented Oven Alpha envelope.",
-        summary="Oven Alpha build and test paths report receipt selection, preparation or reuse, and direct-rustc execution timing. Store inspection reports separate logical artifact bytes, physical allocation, reclaimability, and active lease use without reading a generated Cargo target directory.",
+        activation="Set `OVEN_TRACE=-` for preparation traces or request a unit description.",
+        summary="Oven traces distinguish compilation, executable reuse and replayed refusals, with the reason for preparing a changed unit.",
         canonical_forms=build_test_oven_observability_forms,
-        prefer_over="Silent long-running preparation or inspecting generated Cargo target directories instead of the bounded Oven store.",
+        prefer_over="Inferring compilation or reuse from timestamps and elapsed time alone.",
         references=build_test_oven_observability_references,
     ),
 )
-const codegraph_inspection_forms: FrozenList[str] = ["incan inspect codegraph src/main.incn --format jsonl", "incan inspect codegraph src --format jsonl --allow-errors"]
-const codegraph_inspection_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Codegraph inspection",
-    path="../../tooling/reference/codegraph_inspection.md",
-), CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"), CapabilityReference(
-    label="Release 0.4",
-    path="../../release_notes/0_4.md",
-)]
+const codegraph_inspection_forms: FrozenList[str] = [
+    "incan inspect codegraph src/main.incn --format jsonl",
+    "incan inspect codegraph src/main.incn --query defs main",
+]
+const codegraph_inspection_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Codegraph inspection", path="../../tooling/reference/codegraph_inspection.md"),
+    CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"),
+    CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md"),
+]
 static codegraph_inspection: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("CodegraphInspection"),
     subject=RegistrySubject.current_unit(),
@@ -1609,11 +1731,11 @@ static codegraph_inspection: RegistryEntry[FeatureId, FeatureDescriptor] = featu
         references=codegraph_inspection_references,
     ),
 )
-const checked_api_metadata_forms: FrozenList[str] = ["incan tools metadata api src/lib.incn", "incan tools metadata model emit"]
-const checked_api_metadata_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-), CapabilityReference(label="Project lifecycle", path="project_lifecycle.md")]
+const checked_api_metadata_forms: FrozenList[str] = ["incan build src/lib.incn", "from pub::library import Item"]
+const checked_api_metadata_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+    CapabilityReference(label="Checked API metadata", path="../../tooling/reference/checked_api_metadata.md"),
+]
 static checked_api_metadata: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("CheckedApiMetadata"),
     subject=RegistrySubject.current_unit(),
@@ -1624,46 +1746,51 @@ static checked_api_metadata: RegistryEntry[FeatureId, FeatureDescriptor] = featu
         since="0.3",
         rfc="RFC 048",
         stability=FeatureStability.Stable,
-        activation="Use `incan tools metadata api` or LSP metadata commands.",
-        summary="Typechecked public APIs can emit structured metadata for docs, manifests, hovers, and model bundle tooling.",
+        activation="Build a library; consumers and LSP read its published `.incnlib` metadata.",
+        summary="Checked libraries publish structured API metadata with public declarations, signatures, documentation and namespace members.",
         canonical_forms=checked_api_metadata_forms,
-        prefer_over="Scraping source text or generated Rust when tooling needs API contracts.",
+        prefer_over="Scraping source text when tooling needs checked API contracts.",
         references=checked_api_metadata_references,
     ),
 )
-const compiled_providers_sdk_components_package_features_forms: FrozenList[str] = ["[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-data\"]", "incan build --features json --sdk-profile minimal", "when feature(\"json\"):\n    pub from json_support import JsonReport", "incan inspect providers --format json"]
-const compiled_providers_sdk_components_package_features_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="SDK components and package features",
-    path="../../tooling/reference/sdk_components_and_package_features.md",
-), CapabilityReference(label="Conditional compilation", path="conditional_compilation.md"), CapabilityReference(
-    label="Project configuration",
-    path="../../tooling/reference/project_configuration.md",
-), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
+const compiled_providers_sdk_components_package_features_forms: FrozenList[str] = [
+    "[project.features]\ndefault = [\"json\"]\njson = []",
+    "incan build src/main.incn --features json",
+    "when feature(\"json\"):\n    pub from json_support import JsonReport",
+    "incan describe-unit src/main.incn",
+]
+const compiled_providers_sdk_components_package_features_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(
+        label="Standard packages and package features",
+        path="../../tooling/reference/sdk_components_and_package_features.md",
+    ),
+    CapabilityReference(label="Conditional compilation", path="conditional_compilation.md"),
+    CapabilityReference(label="Project configuration", path="../../tooling/reference/project_configuration.md"),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static compiled_providers_sdk_components_package_features: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("CompiledProvidersSdkComponentsPackageFeatures"),
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("CompiledProvidersSdkComponentsPackageFeatures"),
-        name="Compiled providers, SDK components, and package features",
+        name="Compiled libraries, standard packages, and package features",
         category=FeatureCategory.Libraries,
         since="0.5",
         rfc="RFC 114",
         stability=FeatureStability.Stable,
-        activation="Select SDK components in `[sdk]`; select additive package features in manifests or with Incan feature flags.",
-        summary="Checked libraries and official SDK components resolve through one provider plan, while package-owned features project additive source and dependency facts without exposing Cargo features as Incan API.",
+        activation="Use installed standard packages and declared dependencies; select package features in manifests or unit options.",
+        summary="Standard packages are compiled Loaves. Package features select additive source and dependency facts, with the selected features recorded in the unit description.",
         canonical_forms=compiled_providers_sdk_components_package_features_forms,
         prefer_over="Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics.",
         references=compiled_providers_sdk_components_package_features_references,
     ),
 )
-const formatter_contract_forms: FrozenList[str] = ["incan fmt src/main.incn", "incan fmt --check"]
-const formatter_contract_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="Code style",
-    path="code_style.md",
-), CapabilityReference(label="Formatting how-to", path="../../tooling/how-to/formatting.md"), CapabilityReference(
-    label="Release 0.3",
-    path="../../release_notes/0_3.md",
-)]
+const formatter_contract_forms: FrozenList[str] = ["incan fmt src/main.incn", "incan fmt --check src/main.incn"]
+const formatter_contract_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="Code style", path="code_style.md"),
+    CapabilityReference(label="Formatting how-to", path="../../tooling/how-to/formatting.md"),
+    CapabilityReference(label="Release 0.3", path="../../release_notes/0_3.md"),
+]
 static formatter_contract: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("FormatterContract"),
     subject=RegistrySubject.current_unit(),
@@ -1681,14 +1808,19 @@ static formatter_contract: RegistryEntry[FeatureId, FeatureDescriptor] = feature
         references=formatter_contract_references,
     ),
 )
-const std_registry_forms: FrozenList[str] = ["from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind", "@describe(functions, FunctionId(\"normalize\"), FunctionDescriptor(...))", "pub static capability: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(key=FeatureId(\"std.logging\"), subject=RegistrySubject.current_unit(), descriptor=FeatureDescriptor(...))"]
-const std_registry_references: FrozenList[CapabilityReference] = [CapabilityReference(
-    label="std.registry",
-    path="stdlib/registry.md",
-), CapabilityReference(
-    label="RFC 113",
-    path="../../RFCs/closed/implemented/113_std_registry_and_declaration_descriptors.md",
-), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
+const std_registry_forms: FrozenList[str] = [
+    "from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind",
+    "@describe(functions, FunctionId(\"normalize\"), FunctionDescriptor(...))",
+    "pub static capability: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(key=FeatureId(\"std.logging\"), subject=RegistrySubject.current_unit(), descriptor=FeatureDescriptor(...))",
+]
+const std_registry_references: FrozenList[CapabilityReference] = [
+    CapabilityReference(label="std.registry", path="stdlib/registry.md"),
+    CapabilityReference(
+        label="RFC 113",
+        path="../../RFCs/closed/implemented/113_std_registry_and_declaration_descriptors.md",
+    ),
+    CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md"),
+]
 static std_registry: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdRegistry"),
     subject=RegistrySubject.current_unit(),

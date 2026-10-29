@@ -3,20 +3,62 @@
 use super::primitives::*;
 use super::refusals::*;
 use super::*;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::SymbolNamespace;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Keep a source call's producer-owned closed return carrier at inferred bindings and projected reads.
+    /// Keep a source call or stored field's producer-owned closed carrier at inferred bindings and projected reads.
     /// A bare call's selected identity belongs to its callee span, while a module-qualified call records it on the
     /// whole call. Function references do not enter this boundary and keep their callable types.
     pub(super) fn published_expression_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<IncanType> {
         let span = match &expr.node {
             ast::Expr::Call(callee, _, _) => callee.span,
             ast::Expr::MethodCall(_, _, _, _) => expr.span,
+            ast::Expr::Field(base, _) => return self.published_field_type(base, expr.span),
             _ => return None,
         };
         let identity = self.type_info.resolved_identity(span)?;
         self.published_callable_returns.get(identity).cloned()
+    }
+
+    /// Copy an already selected field's closed type from its exact retained owner layout. Provider-owned nominal
+    /// leaves keep that declaration's bindings; a consumer need not import them. Missing identities, generic owners
+    /// and unselected fields provide no type, so this never resolves an owner or field from its spelling.
+    fn published_field_type(&self, base: &ast::Spanned<ast::Expr>, span: ast::Span) -> Option<IncanType> {
+        let selected = self.type_info.resolved_identity(span).filter(|identity| {
+            identity.namespace == SymbolNamespace::Member && identity.kind == SemanticSourceTargetKind::Field
+        })?;
+        let receiver = self
+            .published_expression_type(base)
+            .or_else(|| {
+                let name = match &base.node {
+                    ast::Expr::Ident(name) => name.as_str(),
+                    ast::Expr::SelfExpr => "self",
+                    _ => return None,
+                };
+                self.bindings
+                    .get(name)
+                    .and_then(|local| self.locals.get(local.index()))
+                    .map(|local| local.ty.clone())
+            })
+            .unwrap_or_else(|| self.resolve_ty(base.span));
+        let mut receiver = &receiver;
+        while let IncanType::Ref(inner) | IncanType::RefMut(inner) = receiver {
+            receiver = inner;
+        }
+        let IncanType::Named(owner) = receiver else {
+            return None;
+        };
+        let owner = parameter_types::retained_nominal_identity(owner, self.type_info)?;
+        let declaration = self.local_nominal_declarations.get(&owner.render_compact())?;
+        if !declaration.type_parameters.is_empty() || declaration.type_parameter_count != 0 {
+            return None;
+        }
+        let slot = declaration
+            .field_identities
+            .iter()
+            .position(|identity| identity == selected)?;
+        declaration.field_types.get(slot).cloned()
     }
 
     /// Retain the checker's constant tuple index, including negative literals, before flattening ordinary expressions.
@@ -38,56 +80,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.retain_evaluated_value_read(index, value, scope, out)
     }
 
-    /// Retain a known web carrier's tuple payload before its checked source field. The runtime owner comes from the
-    /// independent native declaration whitelist, and the payload member keeps the checker's identity; a source model
-    /// with the same spelling follows the ordinary field path. Missing facts stay unresolved rather than selecting
-    /// storage from a field name.
+    /// Copy the accepting checker's physical field path, including native extractor forwarding.
+    /// Ordinary fields retain their existing checked projection; no wrapper is recognized from its name or shape.
     fn lower_checked_field_projections(
         &self,
         base: &ast::Spanned<ast::Expr>,
         name: &str,
         span: ast::Span,
     ) -> Vec<bir::PlaceElem> {
-        let ty = self
-            .published_expression_type(base)
-            .unwrap_or_else(|| self.resolve_ty(base.span));
-        let IncanType::Generic { base: owner, args } = &ty else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let [payload] = args.as_slice() else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let native = self.local_nominal_declarations.values().find(|declaration| {
-            declaration.name == *owner
-                && declaration.fields == ["0"]
-                && matches!(
-                    declaration.canonical.origin,
-                    incan_semantics_core::SymbolOrigin::RustCrate(_)
-                )
-                && bir::native_carrier_nominal(&declaration.canonical).as_ref() == Some(declaration)
-        });
-        let Some(declaration) = native else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let Some(slot) = declaration.field_identities.first() else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let tuple = bir::PlaceElem::field("0", Some(slot.clone()));
-        if name == "value" {
-            return vec![tuple];
-        }
-        let identity = self
-            .type_info
-            .resolved_identity(span)
-            .filter(|identity| {
-                identity.namespace == SymbolNamespace::Member && identity.kind == SemanticSourceTargetKind::Field
-            })
-            .cloned()
-            .or_else(|| self.retained_field_identity(payload, name));
-        let field_name = identity
-            .as_ref()
-            .map_or_else(|| name.to_owned(), |field| field.declaration_name.clone());
-        vec![tuple, bir::PlaceElem::field(field_name, identity)]
+        self.type_info.rust.field_projection_paths.get(&span).map_or_else(
+            || vec![self.lower_checked_field_projection(base, name, span)],
+            |path| {
+                path.iter()
+                    .map(|identity| bir::PlaceElem::field(&identity.declaration_name, Some(identity.clone())))
+                    .collect()
+            },
+        )
     }
 
     /// Classify tuple projections and retain the declaration name selected for a checked nominal field alias.
@@ -105,6 +113,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// but its own return binding and retained layout must agree; conflicting copies or bindings deny the projection.
     /// A checked nongeneric newtype identity also authenticates its wrapped slot before its declaring module's body
     /// is built. Final layout validation still requires that exact owner; module ordering supplies no second identity.
+    /// A checked wrapped-slot reference carries the newtype owner's identity directly, including after a method call.
     pub(super) fn lower_checked_field_projection(
         &self,
         base: &ast::Spanned<ast::Expr>,
@@ -126,6 +135,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ty
         };
         if name == "0"
+            && matches!(ty, IncanType::Named(_))
+            && let Some(identity) = self.type_info.resolved_identity(span).filter(|identity| {
+                identity.namespace == SymbolNamespace::OrdinaryLexical
+                    && identity.kind == SemanticSourceTargetKind::Newtype
+            })
+        {
+            return bir::PlaceElem::field(name, Some(identity.clone()));
+        }
+        if name == "0"
             && let IncanType::Generic { base: owner, args } = &ty
             && let Some(identity) = parameter_types::retained_nominal_identity(owner, self.type_info)
                 .filter(|identity| identity.kind == SemanticSourceTargetKind::Newtype)
@@ -136,6 +154,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     && declaration.type_parameters.len() == args.len()
                     && declaration.fields == ["0"]
             }) && (self.type_info.body_ir_newtypes.field_owner(span, self.type_info) == Some(identity)
+                || self.newtype_implementation.as_ref() == Some(identity)
+                    && self.type_info.resolved_identity(span) == Some(identity)
                 || checked_json::has_checked_string_payload(declaration, args, self.type_info, self.module_identity))
             {
                 return bir::PlaceElem::field(name, Some(declaration.canonical.clone()));
@@ -190,6 +210,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A checked provider method can return a source newtype the consumer never imports. Its own return binding and
     /// exact retained declaration authorize slot zero; missing layout or conflicting checked bindings deny it. The
     /// caller has already selected this record by the call's canonical method identity, never by source spelling.
+    /// Standard-package owners intentionally have no encoded carrier key; their checked identity and layout provide
+    /// the same authority without requiring one.
     fn published_newtype_field_owner<'declaration>(
         &'declaration self,
         owner: &str,
@@ -200,23 +222,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let IncanType::Named(returned_name) = &returned.ty else {
             return None;
         };
-        let carrier = bir::nominal_carrier_key(canonical)?;
+        let carrier = bir::nominal_carrier_key(canonical);
         if owner != returned_name
             && owner != canonical.declaration_name
-            && owner != carrier
+            && carrier.as_deref() != Some(owner)
             && parameter_types::retained_nominal_identity(owner, self.type_info) != Some(canonical)
         {
             return None;
         }
-        for name in [owner, returned_name.as_str(), carrier.as_str()] {
-            if self
-                .type_info
-                .declarations
-                .named_type_identities
-                .get(name)
+        for name in [owner, returned_name.as_str()].into_iter().chain(carrier.as_deref()) {
+            if parameter_types::retained_nominal_identity(name, self.type_info)
                 .is_some_and(|binding| binding != canonical)
-                || parameter_types::retained_nominal_identity(name, self.type_info)
-                    .is_some_and(|binding| binding != canonical)
             {
                 return None;
             }
@@ -342,16 +358,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         self.retain_result_scalar_context(expr);
         let span = hir_span(expr.span);
-        if let Some(value) = self.lower_checked_rust_function_value(expr, scope, out) {
+        if let Some(value) = self.lower_checked_expression_value(expr, scope, span, out) {
             return value;
         }
-        if let Some(path) = self
-            .type_info
-            .rust
-            .checked_constants
-            .get(&(expr.span.start, expr.span.end))
-        {
-            return self.push_assign_temp(
+        self.lower_expression_form(expr, scope, span, out)
+    }
+
+    /// Lower compiler-retained scalar, Rust, coercion and operator facts before interpreting an ordinary AST form.
+    fn lower_checked_expression_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        if let Some(value) = self.type_info.c_abi.enum_value_for_access(expr.span) {
+            return Some(bir::Operand::Constant(bir::Constant::Int(value)));
+        }
+        if let Some(value) = self.lower_checked_rust_function_value(expr, scope, out) {
+            return Some(value);
+        }
+        if let Some(path) = self.type_info.rust.checked_constants.get(&expr.span) {
+            return Some(self.push_assign_temp(
                 bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::RustItem(
                     path.clone(),
                     self.resolve_ty(expr.span),
@@ -360,75 +388,32 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 scope,
                 span,
                 out,
-            );
+            ));
         }
         // Checking can convert this value into a newtype where it is used. A conversion that only wraps the value in a
         // retained plain newtype is that newtype's construction; one that validates or constrains it has no Body IR
         // form yet, so it refuses rather than handing a consumer the unconverted underlying value.
         if let Some(coercion) = self.type_info.validated_newtype_coercion(expr.span)
-            && !self.coercions_in_progress.contains(&(expr.span.start, expr.span.end))
+            && !self.coercions_in_progress.contains(&expr.span)
         {
-            return self.lower_newtype_coercion(expr, coercion, scope, out);
+            return Some(self.lower_newtype_coercion(expr, coercion, scope, out));
         }
-        if let Some(lowered) = self.lower_operator_hook_expr(expr, scope, out) {
-            return lowered;
-        }
+        self.lower_operator_hook_expr(expr, scope, out)
+    }
+
+    /// Dispatch ordinary expression forms after higher-priority retained facts have declined the value.
+    fn lower_expression_form(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
         match &expr.node {
-            ast::Expr::Ident(name) => {
-                let ty = self.resolve_ty(expr.span);
-                if !self.bindings.contains_key(name)
-                    && let IncanType::TypeToken(represented) = &ty
-                    && matches!(
-                        **represented,
-                        IncanType::Primitive(
-                            IncanPrimitiveType::Int
-                                | IncanPrimitiveType::Float
-                                | IncanPrimitiveType::Bool
-                                | IncanPrimitiveType::Str
-                        )
-                    )
-                {
-                    return bir::Operand::Constant(bir::Constant::TypeToken(*represented.clone()));
-                }
-                // A function named as a value (`apply(square, 7)`) is a partial with no presets: a capture-free closure
-                // that forwards every argument to it, as a local partial is lowered.
-                if !self.bindings.contains_key(name)
-                    && self
-                        .type_info
-                        .resolved_identity(expr.span)
-                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
-                {
-                    let partial = ast::PartialExpr {
-                        target: Box::new(expr.clone()),
-                        type_args: Vec::new(),
-                        args: Vec::new(),
-                    };
-                    let value = self.lower_partial(&partial, expr.span, scope, out);
-                    self.retain_function_item(out);
-                    return value;
-                }
-                let Some(place) = self.place_for_name(name, expr.span, &ty) else {
-                    return self.unsupported_operand(
-                        format!("resolved reference `{name}` has no Body IR value representation"),
-                        scope,
-                        span,
-                        out,
-                    );
-                };
-                if let Some(constant) = self.checked_constant(&place, &ty) {
-                    return self.checked_constant_operand(constant, ty, scope, span, out);
-                }
-                if let Some(value) = self.model_constant_operand(&place, scope, span, out) {
-                    return value;
-                }
-                let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
-            }
+            ast::Expr::Ident(name) => self.lower_identifier_value(expr, name, scope, span, out),
             ast::Expr::SelfExpr => {
-                // Resolved exactly like `Ident("self")` — see `BodyBuilder::declare_receiver_local`, which binds
-                // the receiver under the name "self" so this shares `place_for_name`'s canonical lookup path. A
-                // top-level function body can never actually contain `SelfExpr` (the parser only accepts it inside
-                // a method), so this arm's unproven-reference fallback to an `External` local is purely defensive.
+                // Receiver locals share identifier lookup and ownership; a missing checked local stays an explicit
+                // refusal.
                 let ty = self.resolve_ty(expr.span);
                 let Some(place) = self.place_for_name("self", expr.span, &ty) else {
                     return self.unsupported_operand(
@@ -438,100 +423,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
-                let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
+                self.source_place_operand(place, &ty)
             }
             ast::Expr::Literal(lit) => bir::Operand::Constant(lower_checked_literal(lit, &self.resolve_ty(expr.span))),
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
-            ast::Expr::Field(base, name) => {
-                if self
-                    .type_info
-                    .expressions
-                    .body_ir_callable_name_reads
-                    .contains(&(expr.span.start, expr.span.end))
-                {
-                    let value = self.lower_expr_to_operand(base, scope, out);
-                    return self.push_call_temp(
-                        bir::Callee::Helper(bir::HelperOp::CallableName),
-                        vec![bir::ArgumentElement::One(value)],
-                        self.resolve_ty(expr.span),
-                        scope,
-                        span,
-                        false,
-                        out,
-                    );
-                }
-                if self
-                    .type_info
-                    .resolved_identity(base.span)
-                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
-                    && self
-                        .type_info
-                        .resolved_identity(expr.span)
-                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
-                {
-                    let partial = ast::PartialExpr {
-                        target: Box::new(expr.clone()),
-                        type_args: Vec::new(),
-                        args: Vec::new(),
-                    };
-                    let value = self.lower_partial(&partial, expr.span, scope, out);
-                    self.retain_function_item(out);
-                    return value;
-                }
-                if let Some(value) = self.lower_property_read(base, expr.span, scope, out) {
-                    return value;
-                }
-                if let Some(target) = self.local_fieldless_enum_variant_target(base, name, expr.span) {
-                    return self.push_assign_temp(
-                        bir::Rvalue::FieldlessEnumVariant(target),
-                        self.resolve_ty(expr.span),
-                        scope,
-                        span,
-                        out,
-                    );
-                }
-                if let Some(target) = self.local_value_enum_variant_target(base, expr.span) {
-                    return self.push_assign_temp(
-                        bir::Rvalue::ValueEnumVariant(target),
-                        self.resolve_ty(expr.span),
-                        scope,
-                        span,
-                        out,
-                    );
-                }
-                if let Some(target) = self.checked_enum_variant_target(base, name, expr.span) {
-                    return self.push_assign_temp(
-                        bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), Vec::new()),
-                        self.resolve_ty(expr.span),
-                        scope,
-                        span,
-                        out,
-                    );
-                }
-                if let Some(place) = self.module_member_place(base, expr.span) {
-                    let ty = self.resolve_ty(expr.span);
-                    if let Some(constant) = self.checked_constant(&place, &ty) {
-                        return self.checked_constant_operand(constant, ty, scope, span, out);
-                    }
-                    let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                    return bir::Operand::place(place, fact, last_use);
-                }
-                let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
-                place
-                    .projection
-                    .extend(self.lower_checked_field_projections(base, name, expr.span));
-                let ty = self.resolve_ty(expr.span);
-                let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
-            }
+            ast::Expr::Field(base, name) => self.lower_field_value(expr, base, name, scope, span, out),
             ast::Expr::Index(base, index) => {
                 let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
                 let ty = self.resolve_ty(expr.span);
-                let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
+                self.source_place_operand(place, &ty)
             }
             ast::Expr::Slice(base, slice) => self.lower_slice(base, slice, expr.span, scope, out),
             ast::Expr::Unary(ast::UnaryOp::Neg, inner) => {
@@ -585,6 +487,156 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
+    /// Lower a checked identifier value through type tokens, function items, constants and canonical place ownership.
+    fn lower_identifier_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        name: &str,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let ty = self.resolve_ty(expr.span);
+        if !self.bindings.contains_key(name)
+            && let IncanType::TypeToken(represented) = &ty
+            && matches!(
+                **represented,
+                IncanType::Primitive(
+                    IncanPrimitiveType::Int
+                        | IncanPrimitiveType::Float
+                        | IncanPrimitiveType::Bool
+                        | IncanPrimitiveType::Str
+                )
+            )
+        {
+            return bir::Operand::Constant(bir::Constant::TypeToken(*represented.clone()));
+        }
+        // A function item is a partial with no presets, forwarding the declaration's arguments without captures.
+        if !self.bindings.contains_key(name)
+            && self
+                .type_info
+                .resolved_identity(expr.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+        {
+            return self.lower_function_item_value(expr, scope, out);
+        }
+        let Some(place) = self.place_for_name(name, expr.span, &ty) else {
+            return self.unsupported_operand(
+                format!("resolved reference `{name}` has no Body IR value representation"),
+                scope,
+                span,
+                out,
+            );
+        };
+        if let Some(constant) = self.checked_constant(&place, &ty) {
+            return self.checked_constant_operand(constant, ty, scope, span, out);
+        }
+        if let Some(value) = self.model_constant_operand(&place, scope, span, out) {
+            return value;
+        }
+        self.source_place_operand(place, &ty)
+    }
+
+    /// Lower a field's checked callable, property, enum, module or projected value before retaining ownership facts.
+    fn lower_field_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        base: &ast::Spanned<ast::Expr>,
+        name: &str,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if self
+            .type_info
+            .expressions
+            .body_ir_callable_name_reads
+            .contains(&expr.span)
+        {
+            let value = self.lower_expr_to_operand(base, scope, out);
+            return self.push_call_temp(
+                bir::Callee::Helper(bir::HelperOp::CallableName),
+                vec![bir::ArgumentElement::One(value)],
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                false,
+                out,
+            );
+        }
+        if self
+            .type_info
+            .resolved_identity(base.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+            && self
+                .type_info
+                .resolved_identity(expr.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+        {
+            return self.lower_function_item_value(expr, scope, out);
+        }
+        if let Some(value) = self.lower_property_read(base, expr.span, scope, out) {
+            return value;
+        }
+        if let Some(target) = self.local_fieldless_enum_variant_target(base, name, expr.span) {
+            return self.push_assign_temp(
+                bir::Rvalue::FieldlessEnumVariant(target),
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                out,
+            );
+        }
+        if let Some(target) = self.local_value_enum_variant_target(base, expr.span) {
+            return self.push_assign_temp(
+                bir::Rvalue::ValueEnumVariant(target),
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                out,
+            );
+        }
+        if let Some(target) = self.checked_enum_variant_target(base, name, expr.span) {
+            return self.push_assign_temp(
+                bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), Vec::new()),
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                out,
+            );
+        }
+        if let Some(place) = self.module_member_place(base, expr.span) {
+            let ty = self.resolve_ty(expr.span);
+            if let Some(constant) = self.checked_constant(&place, &ty) {
+                return self.checked_constant_operand(constant, ty, scope, span, out);
+            }
+            return self.source_place_operand(place, &ty);
+        }
+        let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
+        place
+            .projection
+            .extend(self.lower_checked_field_projections(base, name, expr.span));
+        let ty = self.resolve_ty(expr.span);
+        self.source_place_operand(place, &ty)
+    }
+
+    /// Materialize an already selected function item as a capture-free partial and retain its callable storage.
+    fn lower_function_item_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let partial = ast::PartialExpr {
+            target: Box::new(expr.clone()),
+            type_args: Vec::new(),
+            args: Vec::new(),
+        };
+        let value = self.lower_partial(&partial, expr.span, scope, out);
+        self.retain_function_item(out);
+        value
+    }
+
     /// Lower an expression that is being used as a place base (the target of `.field`/`[index]` projection or a
     /// bare name), synthesizing a temporary to hold the value when the expression is not itself place-shaped.
     pub(super) fn lower_expr_to_place(
@@ -618,7 +670,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         if (ty == IncanType::Primitive(IncanPrimitiveType::FrozenStr)
             || ty == IncanType::Primitive(IncanPrimitiveType::FrozenBytes)
-            || matches!(&ty, IncanType::Generic { base, .. } if matches!(base.as_str(), "FrozenList" | "FrozenSet" | "FrozenDict")))
+            || matches!(&ty, IncanType::Generic { base, .. } if [
+                CollectionTypeId::FrozenList, CollectionTypeId::FrozenSet, CollectionTypeId::FrozenDict
+            ].iter().any(|id| base == collections::as_str(*id))))
             && matches!(expr.node, ast::Expr::Ident(_) | ast::Expr::Field(..))
         {
             // Const receivers need their retained value, just like argument reads; a global const has no mutable cell.

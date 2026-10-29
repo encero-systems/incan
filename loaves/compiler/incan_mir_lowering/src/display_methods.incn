@@ -1,21 +1,25 @@
 """Source-body symbols for checker-selected nominal display methods."""
 
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType
-from rust::incan_semantics_core::body_ir import BodyIrModule
+from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from pub::incan_mir_plan import PlanType, EnumDeclaration, CalleeKind
 from program_context import DisplayFunction
 from classes import frame_type, function_name
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
+from table_views import borrowed_table
 
 
 pub def display_functions(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[DisplayFunction], str]:
     """Resolve only the retained selected identity with its exact shared receiver and string-returning signature."""
     mut functions: list[DisplayFunction] = []
-    mut nominals = module.nominal_declarations
-    mut enums = module.enum_declarations
+    unions: list[RustType] = []
+    nominals: &list[NominalDeclaration] = borrowed_table(module.nominal_declarations)
+    enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
     for owner in range(len(module.nominal_declarations)):
         declaration = module.nominal_declarations[owner]
         match declaration.display_method:
@@ -28,7 +32,10 @@ pub def display_functions(
                         continue
                     if not string_result(body.return_type):
                         continue
-                    if frame_type(nominals, enums, body.locals[0], intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
+                    if frame_type(constructors, nominals, enums, body.locals[0], intrinsics)? != PlanType.ModelRef(
+                        owner,
+                        str(declaration.name),
+                    ):
                         continue
                     for retained in functions:
                         if retained.owner == owner:
@@ -45,16 +52,18 @@ pub def display_functions(
                     if len(delegation.parameters) != 1 or not string_result(delegation.return_type):
                         continue
                     receiver = native_source_type(
-                        list(module.nominal_declarations),
-                        list(module.enum_declarations),
-                        [],
+                        constructors,
+                        nominals,
+                        enums,
+                        unions,
                         delegation.parameters[0],
                         intrinsics,
                     )?
                     if receiver != PlanType.ModelRef(owner, str(declaration.name)):
                         continue
                     match delegation.rust_path():
-                        None => return Err("unsupported Body IR selected SDK display native identity")
+                        None =>
+                            return Err("the selected standard library display method has no checked native identity")
                         Some(path) =>
                             if native_display:
                                 return Err(f"unsupported Body IR ambiguous checked display body on {declaration.name}")

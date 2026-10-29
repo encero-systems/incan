@@ -4,13 +4,14 @@
 //! concrete environment, and `Box` implements `Clone` by dispatching through its pointee, so SDK `Clone + Callable1`
 //! bounds retain their ordinary native meaning. AST construction is structural; no Rust source is generated or parsed.
 
+use crate::ast_build::{RUST_CLONE_SYMBOL, ident};
 use crate::error::PlanError;
 use crate::plan::{Plan, PlanType};
 use crate::{callees, closures, declarations, types};
 use rustc_ast as ast;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
-use rustc_span::{Ident, Span, Symbol, kw, respan};
+use rustc_span::{Ident, Span, kw, respan};
 use thin_vec::{ThinVec, thin_vec};
 
 /// Encode the entire typed signature injectively as an identifier, never as native type-selection authority.
@@ -219,7 +220,7 @@ fn signature_items(signature: &[PlanType], span: Span) -> Vec<Box<ast::Item>> {
     let boxed = boxed(object.clone(), span);
     let mut bounds = vec![
         fn_bound(signature, span),
-        bound(path(&["std", "clone", "Clone"], span), span),
+        bound(path(&["std", "clone", RUST_CLONE_SYMBOL], span), span),
     ];
     bounds.push(ast::GenericBound::Outlives(ast::Lifetime {
         id: ast::DUMMY_NODE_ID,
@@ -278,7 +279,7 @@ fn signature_items(signature: &[PlanType], span: Span) -> Vec<Box<ast::Item>> {
             span,
         ),
         implementation(
-            path(&["std", "clone", "Clone"], span),
+            path(&["std", "clone", RUST_CLONE_SYMBOL], span),
             boxed.clone(),
             ast::Generics::default(),
             method("clone", boxed, Some(dispatched), span),
@@ -462,11 +463,6 @@ fn inherited(span: Span) -> ast::Visibility {
         span,
         tokens: None,
     }
-}
-
-/// Allocate a controlled private identifier or an absolute standard path segment.
-fn ident(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
 }
 
 /// Root standard names absolutely; private ABI and generic names stay in the generated crate's namespace.

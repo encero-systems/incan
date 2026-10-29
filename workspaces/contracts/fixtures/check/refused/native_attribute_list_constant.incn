@@ -1,0 +1,20 @@
+# behavior: an attribute macro argument bound to a list constant is refused instead of becoming the constant's name as text, while a bare method name such as `methods=[GET]` keeps its spelling (rust-20)
+# expect-diagnostic: INCAN-T0001
+
+"""An attribute macro receives literals, scalar constants or lists of them."""
+
+import std.async
+from std.web import route
+
+const ROUTES: FrozenList[str] = ["GET"]
+
+
+@route("/posts", methods=ROUTES)
+async def list_posts() -> str:
+    """Name a list constant where the macro expects a literal list."""
+    return "posts"
+
+
+def main() -> None:
+    """Never runs: the program is refused."""
+    pass

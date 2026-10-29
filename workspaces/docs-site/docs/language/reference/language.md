@@ -3,7 +3,7 @@
 !!! warning "Generated file"
     Do not edit this page by hand. If it looks wrong/outdated, regenerate it from source and commit the result.
 
-    Regenerate with: `cargo run -p incan_lang --bin generate_lang_reference`
+    Regenerate with: `incan build loaves/kernel/incan_lang`, then `loaves/kernel/incan_lang/target/incan/rust/debug/bin/generate_lang_reference`
 
 ## Contents
 
@@ -503,7 +503,7 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
-| Str | `str` |  | Builtin UTF-8 string type. | RFC 000 | 0.1 | Stable |
+| Str | `str` | `String` | Builtin UTF-8 string type. | RFC 000 | 0.1 | Stable |
 | Bytes | `bytes` |  | Builtin byte buffer type. | RFC 000 | 0.1 | Stable |
 | FrozenStr | `frozenstr` | `FrozenStr` | Immutable/const-friendly string type. | RFC 009 | 0.1 | Stable |
 | FrozenBytes | `frozenbytes` | `FrozenBytes` | Immutable/const-friendly bytes type. | RFC 009 | 0.1 | Stable |

@@ -1,0 +1,41 @@
+"""Render command help and recognize help flags without reading a project or installed toolchain."""
+
+pub const REFERENCE: str = "Reference: https://incan.io/latest/tooling/reference/cli_reference/"
+pub const HELP_HINT: str = "Run `incan --help` for usage."
+
+
+pub def overview(synopses: list[str]) -> str:
+    """List each public command's own synopsis and the full CLI reference."""
+    return "\n".join(["usage: incan COMMAND [OPTIONS]", ""] + synopses + ["", REFERENCE])
+
+
+pub def render(synopsis: str, options: list[str], example: str) -> str:
+    """Render one command's canonical usage, options, example and reference."""
+    lines = [f"usage: {synopsis}", "", "Options:"] + options
+    return "\n".join(lines + ["  --help, -h  Print this help.", "", "Example:", f"  {example}", "", REFERENCE])
+
+
+pub def requested(arguments: list[str], valued: list[str] = []) -> bool:
+    """Recognize a help flag before `--`, excluding values of the command's value-taking options."""
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            return false
+        if argument in ["--help", "-h"]:
+            return true
+        if argument in valued:
+            index += 2
+            if argument == "--query":
+                index += 1
+        else:
+            index += 1
+    return false
+
+
+pub def unknown_option(arguments: list[str]) -> Option[str]:
+    """Return the first option where a command accepts operands only."""
+    for argument in arguments:
+        if argument.startswith("-"):
+            return Some(f"unknown option `{argument}`")
+    return None

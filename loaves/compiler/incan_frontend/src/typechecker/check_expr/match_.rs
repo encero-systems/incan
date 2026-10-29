@@ -10,13 +10,10 @@ use crate::diagnostics::errors;
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use incan_lang::interop::RustItemKind;
-use incan_lang::lang::keywords::{self, KeywordId};
-use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics;
-use incan_semantics_core::SymbolOrigin;
 
 use super::TypeChecker;
 use super::match_coverage::{coverage_row_head_is_wild, expand_coverage_heads};
@@ -151,8 +148,12 @@ impl TypeChecker {
     /// type and the provider-qualified key a dependency signature carries when the signature was imported before the
     /// type, or two public paths of the type. Both carry the declaration's identity, so the pattern names the subject's
     /// type.
+    /// A retained storage key is compared through that same canonical declaration identity, never by parsing its
+    /// spelling.
     fn pattern_type_spelling_names_subject(&self, written: &str, subject_name: &str) -> bool {
         written == subject_name
+            || self.source_nominal_carrier_key(written).as_deref() == Some(subject_name)
+            || self.source_nominal_carrier_key(subject_name).as_deref() == Some(written)
             || matches!(
                 (
                     self.public_library_type_identities.get(written),
@@ -455,50 +456,6 @@ impl TypeChecker {
         }
     }
 
-    /// Record the canonical fields a model or class destructuring pattern leaves unnamed.
-    ///
-    /// `field_order` is the nominal's complete field list in declaration order and `provided` the canonical names
-    /// the pattern spelled (aliases already resolved). The difference is what a `..` would cover in Rust; lowering
-    /// spells it out as one wildcard per field (#1708). A pattern that names every field leaves no record, so a
-    /// consumer reads absence as "nothing to add".
-    ///
-    /// When the rest includes a field this pattern may not name (a private field of `type_name` matched outside its
-    /// owner's methods, by the same rule that refuses naming it), the pattern is also recorded as one whose rest must
-    /// stay unspelled, and lowering covers it with a rest marker instead (#1740). A field missing from `fields`
-    /// counts as unnameable: a rest marker covers any field, while a spelled one must exist and be visible.
-    fn record_pattern_rest_fields(
-        &mut self,
-        span: Span,
-        type_name: &str,
-        fields: &HashMap<String, FieldInfo>,
-        field_order: &[String],
-        provided: &HashSet<String>,
-    ) {
-        let rest: Vec<String> = field_order
-            .iter()
-            .filter(|field| !provided.contains(*field))
-            .cloned()
-            .collect();
-        if rest.is_empty() {
-            return;
-        }
-        let rest_has_private_field = rest.iter().any(|field| {
-            fields
-                .get(field)
-                .is_none_or(|info| self.private_field_is_inaccessible(type_name, info))
-        });
-        if rest_has_private_field {
-            self.type_info
-                .expressions
-                .pattern_rests_with_private_fields
-                .insert((span.start, span.end));
-        }
-        self.type_info
-            .expressions
-            .pattern_rest_fields
-            .insert((span.start, span.end), rest);
-    }
-
     /// Record a constructor pattern that resolved through the active lexical binding.
     pub(in crate::typechecker) fn record_pattern_lexical_identity(&mut self, name: &str, span: Span) {
         let identity = self
@@ -524,48 +481,6 @@ impl TypeChecker {
         if let Some(identity) = identity {
             self.type_info.record_resolved_identity(span, identity);
         }
-    }
-
-    /// Record the enum-qualified canonical variant a checked variant pattern over an Incan enum names.
-    ///
-    /// The subject's enum qualifies the variant, and a variant alias resolves to the variant it names, so a bare
-    /// `Filled(n)` and an aliased `Full(n)` or `Shape.Full(n)` are spelled `Shape::Filled` by lowering, as a qualified
-    /// pattern over the canonical variant is. A module that matches a value of an enum another project module declares
-    /// without binding the enum's name spells it from the crate root (`crate::shapes::Shape::Filled`), and a value of a
-    /// dependency's enum typed by its provider-qualified key (`pub::recall::Outcome`) spells it from the dependency's
-    /// crate, as lowering spells that type (`recall::Outcome::Found`).
-    fn record_incan_enum_pattern_path(&mut self, expected_ty: &ResolvedType, variant: &str, span: Span) {
-        let enum_name = match expected_ty {
-            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
-            _ => return,
-        };
-        let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name) else {
-            return;
-        };
-        let canonical = info.variant_aliases.get(variant).map_or(variant, String::as_str);
-        let enum_binds_here = self
-            .lookup_symbol(enum_name)
-            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::Enum(_))));
-        let owner = match info.variant_identities.get(canonical).map(|identity| &identity.origin) {
-            Some(SymbolOrigin::Module(module_path))
-                if !enum_binds_here && module_path.first().is_some_and(|root| root != stdlib::STDLIB_ROOT) =>
-            {
-                format!(
-                    "{}::{}::{enum_name}",
-                    keywords::as_str(KeywordId::Crate),
-                    module_path.join("::")
-                )
-            }
-            _ => match crate::typechecker::split_canonical_public_library_type_name(enum_name) {
-                Some((library, public_name)) => format!("{library}::{public_name}"),
-                None => enum_name.clone(),
-            },
-        };
-        let path = format!("{owner}::{canonical}");
-        self.type_info
-            .expressions
-            .pattern_variant_paths
-            .insert((span.start, span.end), path);
     }
 
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
@@ -604,287 +519,361 @@ impl TypeChecker {
             }
             Pattern::Literal(literal) => self.check_literal_pattern(literal, expected_ty, pattern.span),
             Pattern::Constructor(name, sub_patterns) => {
-                self.type_info
-                    .expressions
-                    .body_ir_nominal_pattern_owners
-                    .remove(&(name.span.start, name.span.end));
-                let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
-                let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
-                if enum_qualifier_opt.is_none()
-                    && let Some(member_ty) = self.union_pattern_target_type(expected_ty, ctor_name)
-                {
-                    self.record_pattern_lexical_identity(ctor_name, name.span);
-                    self.record_expr_type(name.span, member_ty.clone());
-                    let mut positional = None;
-                    for arg in sub_patterns {
-                        match arg {
-                            PatternArg::Positional(pat) => {
-                                positional = Some(pat);
-                                break;
-                            }
-                            PatternArg::Named(_, pat) => {
-                                self.errors
-                                    .push(errors::named_pattern_not_supported(&name.node, pat.span));
-                            }
-                        }
-                    }
-                    if let Some(pat) = positional {
-                        let written_ty = resolve_type(&Type::Simple(ctor_name.to_string()), &self.symbols);
-                        self.check_pattern(pat, &Self::narrowed_union_member_type(&member_ty, &written_ty));
-                    }
-                    return;
-                }
-
-                let qualifier_matches_expected = enum_qualifier_opt
-                    .is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(subject_ty, qualifier));
-
-                if qualifier_matches_expected && let Some(cid) = constructors::from_str(ctor_name) {
-                    match cid {
-                        ConstructorId::Ok => {
-                            if let ResolvedType::Generic(type_name, args) = subject_ty
-                                && type_name == collections::as_str(CollectionTypeId::Result)
-                                && !args.is_empty()
-                            {
-                                self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let payload_ty = borrowed_pattern_payload(args[0].clone(), borrow);
-                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
-                                return;
-                            }
-                        }
-                        ConstructorId::Err => {
-                            if let ResolvedType::Generic(type_name, args) = subject_ty
-                                && type_name == collections::as_str(CollectionTypeId::Result)
-                                && args.len() >= 2
-                            {
-                                self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let payload_ty = borrowed_pattern_payload(args[1].clone(), borrow);
-                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
-                                return;
-                            }
-                        }
-                        ConstructorId::Some => {
-                            if let ResolvedType::Generic(type_name, args) = subject_ty
-                                && type_name == collections::as_str(CollectionTypeId::Option)
-                                && !args.is_empty()
-                            {
-                                self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let payload_ty = borrowed_pattern_payload(args[0].clone(), borrow);
-                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
-                                return;
-                            }
-                        }
-                        ConstructorId::None => {
-                            // A qualified `Maybe.None` over a non-`Option` subject names that enum's own `None`
-                            // variant, which the enum path below resolves; only an `Option` takes the builtin.
-                            let option_subject = matches!(
-                                subject_ty,
-                                ResolvedType::Generic(type_name, _)
-                                    if type_name == collections::as_str(CollectionTypeId::Option)
-                            );
-                            if enum_qualifier_opt.is_none() || option_subject {
-                                self.record_pattern_lexical_identity(ctor_name, name.span);
-                                return;
-                            }
-                        }
-                    }
-                }
-
-                let ctor_name = if name.node.contains("::") {
-                    name.node.split("::").last().unwrap_or(&name.node)
-                } else {
-                    name.node.as_str()
-                };
-
-                // A record pattern names the subject's model or class, generic ones included: each field it names
-                // is checked against the field's type under the subject's type arguments.
-                let model_or_class_fields = match subject_ty {
-                    ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _)
-                        if self.pattern_type_spelling_names_subject(ctor_name, type_name) =>
-                    {
-                        let type_args = match subject_ty {
-                            ResolvedType::Generic(_, type_args) => type_args.as_slice(),
-                            _ => &[],
-                        };
-                        // A dependency's type the module reaches only through a signature has no lexical symbol.
-                        self.lookup_semantic_type_info(type_name)
-                            .and_then(|type_info| match type_info {
-                                TypeInfo::Model(model_info) => Some((
-                                    model_info.fields.clone(),
-                                    model_info.field_order.clone(),
-                                    type_param_subst_map(&model_info.type_params, type_args),
-                                )),
-                                TypeInfo::Class(class_info) => Some((
-                                    class_info.fields.clone(),
-                                    class_info.field_order.clone(),
-                                    type_param_subst_map(&class_info.type_params, type_args),
-                                )),
-                                _ => None,
-                            })
-                            .map(|(fields, field_order, substitutions)| (type_name, fields, field_order, substitutions))
-                    }
-                    _ => None,
-                };
-
-                if let Some((type_name, fields, field_order, substitutions)) = model_or_class_fields {
-                    let errors_before_pattern = self.errors.len();
-                    self.record_pattern_lexical_identity(type_name, name.span);
-                    let mut provided = HashSet::new();
-                    for arg in sub_patterns {
-                        match arg {
-                            PatternArg::Positional(pat) => {
-                                self.errors
-                                    .push(errors::positional_pattern_not_supported(type_name, pat.span));
-                            }
-                            PatternArg::Named(field_name, pat) => {
-                                let Some((canonical_name, info)) =
-                                    self.resolve_field_info(&fields, &field_name.node, true, true)
-                                else {
-                                    self.errors.push(errors::missing_field(
-                                        type_name,
-                                        &field_name.node,
-                                        field_name.span,
-                                    ));
-                                    continue;
-                                };
-
-                                if let Some(identity) = info.identity.clone() {
-                                    self.type_info.record_resolved_identity(field_name.span, identity);
-                                }
-
-                                if self.private_field_is_inaccessible(type_name, info) {
-                                    self.errors.push(errors::private_field(
-                                        type_name,
-                                        &field_name.node,
-                                        field_name.span,
-                                    ));
-                                    continue;
-                                }
-
-                                if !provided.insert(canonical_name.clone()) {
-                                    self.errors.push(errors::duplicate_pattern_field(
-                                        type_name,
-                                        canonical_name.as_str(),
-                                        pat.span,
-                                    ));
-                                    continue;
-                                }
-                                let field_ty = substitute_resolved_type(&info.ty, &substitutions);
-                                self.check_pattern(pat, &borrowed_pattern_payload(field_ty, borrow));
-                            }
-                        }
-                    }
-                    self.record_pattern_rest_fields(name.span, type_name, &fields, &field_order, &provided);
-                    if self.errors.len() == errors_before_pattern
-                        && self.type_info.resolved_identity(name.span).is_none()
-                        && let Some(identity) = self
-                            .symbols
-                            .lookup(ctor_name)
-                            .and_then(|symbol| self.symbols.identity_of(symbol))
-                            .cloned()
-                        && matches!(
-                            identity.kind,
-                            incan_semantics_core::SemanticSourceTargetKind::Model
-                                | incan_semantics_core::SemanticSourceTargetKind::Class
-                        )
-                    {
-                        self.type_info
-                            .expressions
-                            .body_ir_nominal_pattern_owners
-                            .insert((name.span.start, name.span.end), identity);
-                    }
-                    return;
-                }
-
-                let variant_name = ctor_name;
-
-                let positional_count = sub_patterns
-                    .iter()
-                    .filter(|a| matches!(a, PatternArg::Positional(_)))
-                    .count();
-
-                let incan_resolution =
-                    self.incan_enum_constructor_payload_types(expected_ty, variant_name, enum_qualifier_opt);
-                let rust_resolution =
-                    self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), name.span);
-                let field_types: Option<Vec<ResolvedType>> =
-                    incan_resolution.clone().or_else(|| match rust_resolution.as_ref() {
-                        Some(RustEnumPatternResolution::PayloadTypes { fields, .. }) => Some(fields.clone()),
-                        Some(RustEnumPatternResolution::QualifierMismatch) | None => None,
-                    });
-
-                match field_types {
-                    Some(fields) => {
-                        if incan_resolution.is_some() {
-                            self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
-                            self.record_incan_enum_pattern_path(expected_ty, variant_name, name.span);
-                        }
-                        if incan_resolution.is_some() || rust_resolution.is_some() {
-                            // One sub-pattern per payload value (#1561); a named sub-pattern is refused on its own.
-                            let all_positional =
-                                sub_patterns.iter().all(|arg| matches!(arg, PatternArg::Positional(_)));
-                            if all_positional && positional_count != fields.len() {
-                                self.errors.push(errors::pattern_arity_mismatch(
-                                    &format!("The pattern '{}'", name.node),
-                                    "payload value",
-                                    fields.len(),
-                                    positional_count,
-                                    pattern.span,
-                                ));
-                            }
-                        }
-                        self.check_constructor_subpatterns_enum_like(
-                            name.node.as_str(),
-                            sub_patterns,
-                            Some(fields.as_slice()),
-                            self.pattern_subject_is_rust_backed(expected_ty),
-                            rust_resolution.as_ref(),
-                        );
-                    }
-                    None => {
-                        let permissive = self.match_subject_allows_unknown_rust_enum_payloads(
-                            expected_ty,
-                            name.node.as_str(),
-                            rust_resolution.as_ref(),
-                        );
-                        if !permissive && !matches!(expected_ty, ResolvedType::Unknown) {
-                            self.errors.push(errors::unknown_match_constructor_pattern(
-                                name.node.as_str(),
-                                &expected_ty.to_string(),
-                                pattern.span,
-                            ));
-                        }
-                        self.check_constructor_subpatterns_enum_like(
-                            name.node.as_str(),
-                            sub_patterns,
-                            None,
-                            self.pattern_subject_is_rust_backed(expected_ty),
-                            rust_resolution.as_ref(),
-                        );
-                    }
-                }
+                self.check_constructor_pattern(name, sub_patterns, expected_ty, pattern.span);
             }
-            Pattern::Tuple(sub_patterns) => {
-                // A tuple subject arrives in two spellings: a tuple literal or a `(A, B)` annotation infers
-                // `ResolvedType::Tuple`, while a written `tuple[A, B]` resolves through the collection registry as
-                // `Generic("Tuple", …)`. Both destructure the same way, and the classification `for` and unpack
-                // already use is the one rule for it; matching only the first spelling left the sub-patterns of the
-                // second unvisited, so their names were never bound (#1714).
-                let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
-                if let TupleShape::Tuple(elem_types) = classify_tuple_shape(subject_ty) {
-                    // One sub-pattern per element (#1561).
-                    if sub_patterns.len() != elem_types.len() {
-                        self.errors.push(errors::pattern_arity_mismatch(
-                            "A tuple pattern",
-                            "element",
-                            elem_types.len(),
-                            sub_patterns.len(),
+            Pattern::Tuple(sub_patterns) => self.check_tuple_pattern(sub_patterns, expected_ty, pattern.span),
+        }
+    }
+
+    /// Resolve constructor patterns in union, builtin, nominal and enum order without changing payload borrowing.
+    fn check_constructor_pattern(
+        &mut self,
+        name: &Spanned<String>,
+        sub_patterns: &[PatternArg],
+        expected_ty: &ResolvedType,
+        pattern_span: Span,
+    ) {
+        self.type_info
+            .expressions
+            .body_ir_nominal_pattern_owners
+            .remove(&name.span);
+        let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
+        let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
+        if enum_qualifier_opt.is_none()
+            && self.check_union_constructor_pattern(name, ctor_name, sub_patterns, expected_ty)
+        {
+            return;
+        }
+
+        if self.check_builtin_constructor_pattern(name, ctor_name, sub_patterns, subject_ty, borrow, enum_qualifier_opt)
+        {
+            return;
+        }
+
+        let ctor_name = if name.node.contains("::") {
+            name.node.split("::").last().unwrap_or(&name.node)
+        } else {
+            name.node.as_str()
+        };
+
+        if self.check_nominal_constructor_pattern(name, ctor_name, sub_patterns, subject_ty, borrow) {
+            return;
+        }
+        self.check_enum_constructor_pattern(
+            name,
+            ctor_name,
+            enum_qualifier_opt,
+            sub_patterns,
+            expected_ty,
+            pattern_span,
+        );
+    }
+
+    /// Check a subject-selected model or class record pattern, retaining an owner only after successful checking.
+    fn check_nominal_constructor_pattern(
+        &mut self,
+        name: &Spanned<String>,
+        ctor_name: &str,
+        sub_patterns: &[PatternArg],
+        subject_ty: &ResolvedType,
+        borrow: Option<PatternBorrow>,
+    ) -> bool {
+        // A record pattern names the subject's model or class, generic ones included: each field it names
+        // is checked against the field's type under the subject's type arguments.
+        let model_or_class_fields = match subject_ty {
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _)
+                if self.pattern_type_spelling_names_subject(ctor_name, type_name) =>
+            {
+                let type_args = match subject_ty {
+                    ResolvedType::Generic(_, type_args) => type_args.as_slice(),
+                    _ => &[],
+                };
+                // A dependency's type the module reaches only through a signature has no lexical symbol.
+                self.lookup_semantic_type_info(type_name)
+                    .and_then(|type_info| match type_info {
+                        TypeInfo::Model(model_info) => Some((
+                            model_info.fields.clone(),
+                            type_param_subst_map(&model_info.type_params, type_args),
+                        )),
+                        TypeInfo::Class(class_info) => Some((
+                            class_info.fields.clone(),
+                            type_param_subst_map(&class_info.type_params, type_args),
+                        )),
+                        _ => None,
+                    })
+                    .map(|(fields, substitutions)| (type_name, fields, substitutions))
+            }
+            _ => None,
+        };
+
+        let Some((type_name, fields, substitutions)) = model_or_class_fields else {
+            return false;
+        };
+        let errors_before_pattern = self.errors.len();
+        self.record_pattern_lexical_identity(type_name, name.span);
+        self.check_nominal_pattern_fields(type_name, &fields, &substitutions, sub_patterns, borrow);
+        if self.errors.len() == errors_before_pattern
+            && self.type_info.resolved_identity(name.span).is_none()
+            && let Some(identity) = self
+                .symbols
+                .lookup(ctor_name)
+                .and_then(|symbol| self.symbols.identity_of(symbol))
+                .cloned()
+            && matches!(
+                identity.kind,
+                incan_semantics_core::SemanticSourceTargetKind::Model
+                    | incan_semantics_core::SemanticSourceTargetKind::Class
+            )
+        {
+            self.type_info
+                .expressions
+                .body_ir_nominal_pattern_owners
+                .insert(name.span, identity);
+        }
+        true
+    }
+
+    /// Check named record payloads in source order, recording field identity before visibility and duplicate checks.
+    fn check_nominal_pattern_fields(
+        &mut self,
+        type_name: &str,
+        fields: &HashMap<String, FieldInfo>,
+        substitutions: &HashMap<String, ResolvedType>,
+        patterns: &[PatternArg],
+        borrow: Option<PatternBorrow>,
+    ) {
+        let mut provided = HashSet::new();
+        for arg in patterns {
+            match arg {
+                PatternArg::Positional(pattern) => {
+                    self.errors
+                        .push(errors::positional_pattern_not_supported(type_name, pattern.span));
+                }
+                PatternArg::Named(field_name, pattern) => {
+                    let Some((canonical_name, info)) = self.resolve_field_info(fields, &field_name.node, true, true)
+                    else {
+                        self.errors
+                            .push(errors::missing_field(type_name, &field_name.node, field_name.span));
+                        continue;
+                    };
+                    if let Some(identity) = info.identity.clone() {
+                        self.type_info.record_resolved_identity(field_name.span, identity);
+                    }
+                    if self.private_field_is_inaccessible(type_name, info) {
+                        self.errors
+                            .push(errors::private_field(type_name, &field_name.node, field_name.span));
+                        continue;
+                    }
+                    if !provided.insert(canonical_name.clone()) {
+                        self.errors.push(errors::duplicate_pattern_field(
+                            type_name,
+                            canonical_name.as_str(),
                             pattern.span,
                         ));
+                        continue;
                     }
-                    for (pat, elem_ty) in sub_patterns.iter().zip(elem_types.iter()) {
-                        self.check_pattern(pat, &borrowed_pattern_payload(elem_ty.clone(), borrow));
+                    let field_ty = substitute_resolved_type(&info.ty, substitutions);
+                    self.check_pattern(pattern, &borrowed_pattern_payload(field_ty, borrow));
+                }
+            }
+        }
+    }
+
+    /// Resolve enum payloads and retain the existing arity, qualification and unknown-native-payload diagnostics.
+    fn check_enum_constructor_pattern(
+        &mut self,
+        name: &Spanned<String>,
+        ctor_name: &str,
+        enum_qualifier_opt: Option<&str>,
+        sub_patterns: &[PatternArg],
+        expected_ty: &ResolvedType,
+        pattern_span: Span,
+    ) {
+        let variant_name = ctor_name;
+
+        let positional_count = sub_patterns
+            .iter()
+            .filter(|a| matches!(a, PatternArg::Positional(_)))
+            .count();
+
+        let incan_resolution = self.incan_enum_constructor_payload_types(expected_ty, variant_name, enum_qualifier_opt);
+        let rust_resolution = self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), name.span);
+        let field_types: Option<Vec<ResolvedType>> =
+            incan_resolution.clone().or_else(|| match rust_resolution.as_ref() {
+                Some(RustEnumPatternResolution::PayloadTypes { fields, .. }) => Some(fields.clone()),
+                Some(RustEnumPatternResolution::QualifierMismatch) | None => None,
+            });
+
+        match field_types {
+            Some(fields) => {
+                if incan_resolution.is_some() {
+                    self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
+                }
+                if incan_resolution.is_some() || rust_resolution.is_some() {
+                    // One sub-pattern per payload value (#1561); a named sub-pattern is refused on its own.
+                    let all_positional = sub_patterns.iter().all(|arg| matches!(arg, PatternArg::Positional(_)));
+                    if all_positional && positional_count != fields.len() {
+                        self.errors.push(errors::pattern_arity_mismatch(
+                            &format!("The pattern '{}'", name.node),
+                            "payload value",
+                            fields.len(),
+                            positional_count,
+                            pattern_span,
+                        ));
                     }
                 }
+                self.check_constructor_subpatterns_enum_like(
+                    name.node.as_str(),
+                    sub_patterns,
+                    Some(fields.as_slice()),
+                    self.pattern_subject_is_rust_backed(expected_ty),
+                    rust_resolution.as_ref(),
+                );
+            }
+            None => {
+                let permissive = self.match_subject_allows_unknown_rust_enum_payloads(
+                    expected_ty,
+                    name.node.as_str(),
+                    rust_resolution.as_ref(),
+                );
+                if !permissive && !matches!(expected_ty, ResolvedType::Unknown) {
+                    self.errors.push(errors::unknown_match_constructor_pattern(
+                        name.node.as_str(),
+                        &expected_ty.to_string(),
+                        pattern_span,
+                    ));
+                }
+                self.check_constructor_subpatterns_enum_like(
+                    name.node.as_str(),
+                    sub_patterns,
+                    None,
+                    self.pattern_subject_is_rust_backed(expected_ty),
+                    rust_resolution.as_ref(),
+                );
+            }
+        }
+    }
+
+    /// Narrow a union member through its first positional payload, preserving preceding named-argument diagnostics.
+    fn check_union_constructor_pattern(
+        &mut self,
+        name: &Spanned<String>,
+        constructor: &str,
+        args: &[PatternArg],
+        expected: &ResolvedType,
+    ) -> bool {
+        let Some(member_ty) = self.union_pattern_target_type(expected, constructor) else {
+            return false;
+        };
+        self.record_pattern_lexical_identity(constructor, name.span);
+        self.record_expr_type(name.span, member_ty.clone());
+        let mut positional = None;
+        for arg in args {
+            match arg {
+                PatternArg::Positional(pattern) => {
+                    positional = Some(pattern);
+                    break;
+                }
+                PatternArg::Named(_, pattern) => {
+                    self.errors
+                        .push(errors::named_pattern_not_supported(&name.node, pattern.span));
+                }
+            }
+        }
+        if let Some(pattern) = positional {
+            let written = resolve_type(&Type::Simple(constructor.to_string()), &self.symbols);
+            self.check_pattern(pattern, &Self::narrowed_union_member_type(&member_ty, &written));
+        }
+        true
+    }
+
+    /// Check Result and Option payloads only when the written qualifier agrees with the checked subject.
+    ///
+    /// An unqualified None retains the existing builtin treatment. A qualified None over another enum is declined
+    /// so that enum's own variant can resolve through the ordinary enum path.
+    fn check_builtin_constructor_pattern(
+        &mut self,
+        name: &Spanned<String>,
+        constructor: &str,
+        patterns: &[PatternArg],
+        subject: &ResolvedType,
+        borrow: Option<PatternBorrow>,
+        qualifier: Option<&str>,
+    ) -> bool {
+        if !qualifier.is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(subject, qualifier)) {
+            return false;
+        }
+        let Some(id) = constructors::from_str(constructor) else {
+            return false;
+        };
+        match id {
+            ConstructorId::Ok => {
+                if let ResolvedType::Generic(type_name, args) = subject
+                    && type_name == collections::as_str(CollectionTypeId::Result)
+                    && !args.is_empty()
+                {
+                    self.record_pattern_lexical_identity(constructor, name.span);
+                    let payload = borrowed_pattern_payload(args[0].clone(), borrow);
+                    self.check_single_payload_constructor_pattern(name, patterns, &payload);
+                    return true;
+                }
+            }
+            ConstructorId::Err => {
+                if let ResolvedType::Generic(type_name, args) = subject
+                    && type_name == collections::as_str(CollectionTypeId::Result)
+                    && args.len() >= 2
+                {
+                    self.record_pattern_lexical_identity(constructor, name.span);
+                    let payload = borrowed_pattern_payload(args[1].clone(), borrow);
+                    self.check_single_payload_constructor_pattern(name, patterns, &payload);
+                    return true;
+                }
+            }
+            ConstructorId::Some => {
+                if let ResolvedType::Generic(type_name, args) = subject
+                    && type_name == collections::as_str(CollectionTypeId::Option)
+                    && !args.is_empty()
+                {
+                    self.record_pattern_lexical_identity(constructor, name.span);
+                    let payload = borrowed_pattern_payload(args[0].clone(), borrow);
+                    self.check_single_payload_constructor_pattern(name, patterns, &payload);
+                    return true;
+                }
+            }
+            ConstructorId::None => {
+                let option_subject = matches!(
+                    subject,
+                    ResolvedType::Generic(type_name, _)
+                        if type_name == collections::as_str(CollectionTypeId::Option)
+                );
+                if qualifier.is_none() || option_subject {
+                    self.record_pattern_lexical_identity(constructor, name.span);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Destructure either checked tuple spelling and retain the subject's borrow mode for every element.
+    fn check_tuple_pattern(&mut self, sub_patterns: &[Spanned<Pattern>], expected_ty: &ResolvedType, span: Span) {
+        // Tuple literals and `(A, B)` annotations infer ResolvedType::Tuple; `tuple[A, B]` uses the collection
+        // registry. Both use the same shape classification as iteration and unpacking, so every sub-pattern is
+        // visited (#1714).
+        let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
+        if let TupleShape::Tuple(elem_types) = classify_tuple_shape(subject_ty) {
+            // One sub-pattern per element (#1561).
+            if sub_patterns.len() != elem_types.len() {
+                self.errors.push(errors::pattern_arity_mismatch(
+                    "A tuple pattern",
+                    "element",
+                    elem_types.len(),
+                    sub_patterns.len(),
+                    span,
+                ));
+            }
+            for (pat, elem_ty) in sub_patterns.iter().zip(elem_types.iter()) {
+                self.check_pattern(pat, &borrowed_pattern_payload(elem_ty.clone(), borrow));
             }
         }
     }
@@ -1245,17 +1234,12 @@ impl TypeChecker {
             return None;
         };
         let layout = self.checked_rust_enum_layout(&path, &info)?;
-        let (_, fields, names) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
+        let (_, _, names) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
         let names = names.clone();
-        let mut arguments = self.rust_owner_type_args(expected_ty, &path)?;
-        if !self.complete_rust_owner_arguments(&info, &mut arguments) {
-            return None;
-        }
-        let substitution = type_param_subst_map(&info.type_params, &arguments);
-        let fields = fields
-            .iter()
+        let fields = self
+            .native_enum_payload_types(expected_ty, &path, variant)?
+            .into_iter()
             .map(|field| {
-                let field = substitute_resolved_type(field, &substitution);
                 if names.is_empty() {
                     borrowed_pattern_payload(field, borrow)
                 } else {
@@ -1278,6 +1262,36 @@ impl TypeChecker {
         self.type_info.record_resolved_identity(span, identity);
         self.type_info.rust.checked_enums.insert(public_path, layout);
         Some(RustEnumPatternResolution::PayloadTypes { fields, names })
+    }
+
+    /// Return the payload types of native enum `variant` instantiated with `column`'s owner arguments, completing
+    /// the arguments the column leaves out from their declared defaults.
+    ///
+    /// Pattern checking and coverage both read payload types here, so a defaulted owner parameter (`C` in
+    /// `ControlFlow[B, C = ()]`) closes the same way for both.
+    pub(in crate::typechecker::check_expr) fn native_enum_payload_types(
+        &self,
+        column: &ResolvedType,
+        path: &str,
+        variant: &str,
+    ) -> Option<Vec<ResolvedType>> {
+        let metadata = self.rust_item_metadata_for_complete_type(path)?;
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return None;
+        };
+        let layout = self.checked_rust_enum_layout(path, info)?;
+        let (_, fields, _) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
+        let mut arguments = self.rust_owner_type_args(column, path)?;
+        if !self.complete_rust_owner_arguments(info, &mut arguments) {
+            return None;
+        }
+        let substitution = type_param_subst_map(&info.type_params, &arguments);
+        Some(
+            fields
+                .iter()
+                .map(|field| substitute_resolved_type(field, &substitution))
+                .collect(),
+        )
     }
 
     /// Check that a match expression covers all possible cases.

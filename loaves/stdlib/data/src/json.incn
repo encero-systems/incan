@@ -11,10 +11,8 @@ known, or mixed-shape JSON.
 """
 
 from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
-from rust::incan_std_data::json import JsonError as RustJsonError
-from rust::incan_std_data::json import JsonValue as RustJsonValue
+from rust::incan_std_data::json import JsonError as RustJsonError, JsonValue as RustJsonValue
 from std.traits.indexing import Index
-
 
 const _MAX_INCAN_INT_DECIMAL_PREFIX: int = 922_337_203_685_477_580
 const _MAX_INCAN_INT_LAST_DIGIT: int = 7
@@ -443,29 +441,13 @@ pub type JsonValue = newtype RustJsonValue with Index[str, Option[JsonValue]], I
         return _map_optional_raw_result(self.0.remove_at(index))
 
     def pointer(self, path: str) -> Result[Option[JsonValue], JsonError]:
-        """Traverse a JSON Pointer path."""
+        """Traverse a JSON Pointer path, returning an independent snapshot of the selected value."""
         if path == "":
             return Ok(Some(self.clone()))
         if path[0:1] != "/":
             return Err(_key_error("JSON pointer must be empty or start with `/`"))
 
-        mut current = self.clone()
-        for raw_segment in _json_pointer_segments(path):
-            segment = _decode_json_pointer_segment(raw_segment)?
-            if current.is_object():
-                match current.get(segment):
-                    Some(next) => current = next
-                    None => return Ok(None)
-            elif current.is_array():
-                match _parse_json_pointer_index(segment):
-                    Some(index) =>
-                        match current.at(index):
-                            Some(next) => current = next
-                            None => return Ok(None)
-                    None => return Ok(None)
-            else:
-                return Ok(None)
-        return Ok(Some(current))
+        return _select_pointer(self.0, path)
 
     def require_pointer(self, path: str) -> Result[JsonValue, JsonError]:
         """Require a JSON Pointer path to exist."""
@@ -559,7 +541,9 @@ def _map_unit_result(result: Result[None, RustJsonError]) -> Result[None, JsonEr
         Err(error) => return Err(_json_error_from_raw(error))
 
 
-def _map_optional_raw_result(result: Result[Option[RustJsonValue], RustJsonError]) -> Result[Option[JsonValue], JsonError]:
+def _map_optional_raw_result(
+    result: Result[Option[RustJsonValue], RustJsonError],
+) -> Result[Option[JsonValue], JsonError]:
     """Convert a raw runtime optional JSON result into the source-level wrapper result."""
     match result:
         Ok(value) => return Ok(_wrap_raw_option(value))
@@ -633,6 +617,24 @@ def _key_error(detail: str) -> JsonError:
 def _index_error(detail: str) -> JsonError:
     """Build a source-level array-index error."""
     return JsonError(kind_value=JsonErrorKind.Index, detail_value=detail)
+
+
+def _select_pointer(root: &RustJsonValue, path: str) -> Result[Option[JsonValue], JsonError]:
+    """Walk borrowed nodes, preserving validation order, and copy only the final owned result."""
+    mut current = root.as_serde()
+    for raw_segment in _json_pointer_segments(path):
+        segment = _decode_json_pointer_segment(raw_segment)?
+        if current.is_array():
+            match _parse_json_pointer_index(segment):
+                Some(_) => pass
+                None => return Ok(None)
+        elif not current.is_object():
+            return Ok(None)
+        match current.pointer("/" + raw_segment):
+            Some(child) => current = child
+            None => return Ok(None)
+    selected = _wrap_raw_result(RustJsonValue.from_serde(current.clone()))?
+    return Ok(Some(selected))
 
 
 def _json_pointer_segments(path: str) -> list[str]:

@@ -1,0 +1,114 @@
+# behavior: list iterators and generator expressions retain flat and nested sources without whole-list copies (#2426)
+# expect-stdout:
+#   flat iteration memory bounded
+#   nested iteration memory bounded
+# pending: #2426: lowering still snapshots borrowed list sources because generators cannot retain a source loan
+
+"""Compare list iteration's peak memory with the same executable's list-only baseline."""
+
+from rust::std::env import current_exe, var
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from rust::memory_probe import peak_resident_bytes
+
+
+def main() -> Result[None, str]:
+    """
+    Check child diagnostics and compare iteration memory with its allocation baseline.
+
+    1. Run a selected child measurement or the deliberate diagnostic failure.
+    2. Require an unsuccessful child report to retain its status and stderr cause.
+    3. Compare flat and nested iteration with their allocation baseline.
+    """
+    # 1. A child builds its list once and performs the selected iteration.
+    match var("INCAN_LIST_MEMORY_CHILD"):
+        Ok(mode) =>
+            if mode == "diagnostic-failure":
+                return Err("controlled memory child failure")
+            run_child(mode)
+            println(peak_resident_bytes().map_err((error) => str(error))?)
+            return Ok(None)
+        Err(_) => pass
+
+    # 2. A child refusal must not hide the mechanism that failed before a memory comparison begins.
+    verify_child_diagnostic()
+
+    # 3. Each measurement runs in a fresh process, independent of allocator high-water marks.
+    for shape in ["flat", "nested"]:
+        baseline = measure(f"{shape}-baseline")?
+        for operation in ["iter", "expression"]:
+            measured = measure(f"{shape}-{operation}")?
+            message = f"{shape} {operation}: {measured} bytes for {baseline} bytes"
+            assert within_source_memory(baseline, measured), message
+        println(f"{shape} iteration memory bounded")
+    return Ok(None)
+
+
+def within_source_memory(baseline: int, measured: int) -> bool:
+    """Allow allocator variation and one yielded row, while excluding a complete copy of the large source."""
+    return measured <= baseline + baseline // 4 + 16 * 1024 * 1024
+
+
+def measure(mode: str) -> Result[int, str]:
+    """Read peak resident bytes from a successful fresh child process."""
+    executable = current_exe().map_err((error) => str(error))?
+    report = Command.new(executable).env("INCAN_LIST_MEMORY_CHILD", mode).output()
+    output = report.map_err((error) => str(error))?
+    if not output.status.success():
+        cause = RustString.from_utf8_lossy(output.stderr.as_slice()).into_owned()
+        status = output.status
+        return Err(f"memory measurement failed for {mode} ({status}): {cause.strip()}")
+    text = RustString.from_utf8(output.stdout).map_err((error) => str(error))?
+    return Ok(int(text.strip()))
+
+
+def verify_child_diagnostic() -> None:
+    """Observe a deliberate child failure without allocating a large source, requiring both exit status and cause."""
+    match measure("diagnostic-failure"):
+        Ok(_value) =>
+            assert false, "a deliberately unsuccessful child was accepted as a memory measurement"
+        Err(message) =>
+            assert "memory measurement failed for diagnostic-failure (exit status: 1):" in message
+            assert "controlled memory child failure" in message
+
+
+def run_child(mode: str) -> None:
+    """1. Allocate the selected source. 2. Read it directly or lazily. 3. Keep the original source readable."""
+    # 1. Give flat and nested sources the same total number of independently allocated strings.
+    if mode.startswith("nested"):
+        mut rows: list[list[str]] = []
+        for row in range(128):
+            mut values: list[str] = []
+            for column in range(16384):
+                values.append(f"item-{row}-{column}-padding-padding-padding")
+            rows.append(values)
+        # 2. An outer item may be materialized, but the whole nested source must never be copied.
+        mut total = 0
+        if mode.endswith("iter"):
+            for values in rows.iter():
+                total += len(values)
+        elif mode.endswith("expression"):
+            lengths = (len(values) for values in rows)
+            for length in lengths:
+                total += length
+        else:
+            for values in rows:
+                total += len(values)
+        # 3. The original list is still readable after the lazy consumer finishes.
+        assert total == 2097152 and len(rows) == 128
+        return
+    mut values: list[str] = []
+    for index in range(2097152):
+        values.append(f"item-{index}-padding-padding-padding")
+    mut total = 0
+    if mode.endswith("iter"):
+        for value in values.iter():
+            total += len(value)
+    elif mode.endswith("expression"):
+        lengths = (len(value) for value in values)
+        for length in lengths:
+            total += length
+    else:
+        for value in values:
+            total += len(value)
+    assert total == 74386362 and len(values) == 2097152

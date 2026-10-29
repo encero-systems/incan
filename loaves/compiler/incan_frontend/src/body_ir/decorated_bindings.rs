@@ -103,6 +103,8 @@ fn shared_callable_receiver(mut shape: IncanType) -> IncanType {
 /// Open signatures preserve their return type and use the invocation wrapper. The measured closed generic profile
 /// remains a synchronous zero-argument string callable with its own initializer template. Factories retain their
 /// validated closed applications; extern delegations cannot bypass the visible replacement.
+/// A nongeneric replacement may change required ordinary input types and passing modes; the wrapper retains the
+/// original as a separate callable and receives the replacement's checked signature.
 pub(super) fn supports_function(
     function: &ast::FunctionDecl,
     span: ast::Span,
@@ -112,7 +114,7 @@ pub(super) fn supports_function(
         .type_info
         .declarations
         .decorated_function_bindings_by_span
-        .get(&(span.start, span.end))
+        .get(&span)
     else {
         return false;
     };
@@ -133,12 +135,19 @@ pub(super) fn supports_function(
                 || matches!(&signature, IncanType::Function { params, return_type }
                     if params.is_empty()
                         && **return_type == IncanType::Primitive(IncanPrimitiveType::Str))));
-    profile
-        && original.len() == replacement.len()
+    let preserves_inputs = original
+        .iter()
+        .zip(replacement)
+        .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind);
+    let changes_closed_inputs = type_parameters.is_empty()
+        && function.params.iter().all(|parameter| parameter.node.default.is_none())
         && original
             .iter()
             .zip(replacement)
-            .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind)
+            .all(|(left, right)| left.kind == ast::ParamKind::Normal && right.kind == ast::ParamKind::Normal);
+    profile
+        && original.len() == replacement.len()
+        && (preserves_inputs || changes_closed_inputs)
         && !function.is_async()
         && function.decorators.iter().all(
             |decorator| match decorators::from_segments(&decorator.node.path.segments) {
@@ -150,7 +159,7 @@ pub(super) fn supports_function(
                             .type_info
                             .declarations
                             .body_ir_decorator_static_receivers
-                            .contains_key(&(decorator.span.start, decorator.span.end))
+                            .contains_key(&decorator.span)
                 }
             },
         )
@@ -207,7 +216,7 @@ pub(super) fn collect(
             .type_info
             .declarations
             .decorated_function_bindings_by_span
-            .get(&(declaration.span.start, declaration.span.end))
+            .get(&declaration.span)
         else {
             continue;
         };
@@ -338,6 +347,7 @@ fn initializer(
         }
         parameter.kind = ty.kind;
         parameter.mutable = ty.is_mut;
+        parameter.native_owned = ty.native_owned;
         parameter.local = builder.new_temp(parameter.ty.clone(), scope, hir_span(span));
     }
     let mut value = builder.push_assign_temp(
@@ -345,6 +355,7 @@ fn initializer(
             params: parameters,
             captured_operands: Vec::new(),
             body: Box::new(bir::ClosureBody {
+                native_storage: None,
                 original_callable: original.canonical.clone(),
                 function_item: true,
                 consumes_environment: false,
@@ -419,15 +430,13 @@ fn lower_application(
         .type_info
         .declarations
         .body_ir_decorator_applications
-        .get(&(decorator.span.start, decorator.span.end))
+        .get(&decorator.span)
     {
         let ty = crate::resolved_type_subst::substitute_resolved_type(
             &application.callable_type,
             &application.type_bindings,
         );
-        builder
-            .type_overrides
-            .insert((decorator.span.start, decorator.span.end), builder.checked_type(&ty));
+        builder.type_overrides.insert(decorator.span, builder.checked_type(&ty));
     }
     let callable = builder.lower_expr_to_operand(&path, scope, statements);
     let IncanType::Function { return_type, .. } = builder.resolve_ty(decorator.span) else {
@@ -598,6 +607,7 @@ fn wrapper(original: &bir::Body, replacement: &bir::StaticDeclaration) -> Option
         }
         parameter.kind = ty.kind;
         parameter.mutable = ty.is_mut;
+        parameter.native_owned = ty.native_owned;
         body.locals[parameter.local.index()].ty = parameter.ty.clone();
     }
     let scope = body.block.scope;

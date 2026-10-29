@@ -1,4 +1,4 @@
-# behavior: a dependency's callables cross the package boundary intact: a `Callable` value from a dependency is passed back across the `pub::` boundary into the dependency's own higher-order function and applied to every element, an imported partial called without its target's defaulted residual argument uses that declaration default from the package root and from a nested namespace alike while an explicit argument still overrides it, and a dependency's function whose parameter is `mut` changes the consumer's argument, called directly and passed as a value of a function type that marks the parameter `mut`
+# behavior: package callables retain mut inputs, partial defaults, and decorated native tuple-reference parameters
 # expect-stdout:
 #   2
 #   3
@@ -10,7 +10,10 @@
 #   6
 #   6
 
-from pub::callability import Counter, default_build, grow, hyperquant, map_owned, new_counter, plus_one
+"""Exercise package callables through values, defaults, source mutation, and decorated native references."""
+
+from pub::callability import Counter, default_build, grow, hyperquant, keep_refs, map_owned, new_counter, plus_one
+from rust::std::vec import Vec
 
 
 def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
@@ -37,6 +40,10 @@ def show_mut_parameters() -> None:
 
 
 def main() -> None:
+    """1. Bind a decorated native reference container. 2. Exercise callable values, defaults, and source mutation."""
+    # 1. Keep the owned vector ABI and its nested exclusive references across the package boundary.
+    keep_refs(Vec.new())
+    # 2. Retain the existing callable, default, and caller mutation observations.
     show_callable_values()
     show_partial_defaults()
     show_mut_parameters()

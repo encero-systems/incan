@@ -8,9 +8,9 @@
 //!
 //! The approach here is the one RFC 106 cites as prior art: normalize the structured value, then serialize.
 //! [`DigestSerializer`] walks a value through `serde` and feeds a hasher, dropping fields whose names are
-//! positional. Because it works field-by-field over the real value, a field added to Body IR later is included
-//! automatically — the drift that a hand-written visitor suffers, where a new field is silently omitted and the
-//! digest quietly under-invalidates, cannot happen here.
+//! positional, retaining expansion context from spans. Because it works field-by-field over the real value, a field
+//! added to Body IR later is included automatically — the drift that a hand-written visitor suffers, where a new field
+//! is silently omitted and the digest quietly under-invalidates, cannot happen here.
 //!
 //! Excluding a field is the *over*-invalidating direction when done wrong: a positional field left in makes an
 //! unrelated edit look like a change, which costs time. Omitting a meaningful field is the dangerous direction, and
@@ -19,8 +19,13 @@
 use serde::{Serialize, ser};
 use sha2::{Digest, Sha256};
 
-use crate::closure_digest::update_delimited;
 use std::fmt::Display;
+
+/// Length-delimit a semantic value so adjoining values cannot forge the same hash input by shifting a boundary.
+fn update_delimited(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value);
+}
 
 /// Node-identifier fields excluded from every semantic digest.
 ///
@@ -36,16 +41,13 @@ const POSITIONAL_ID_FIELDS: &[&str] = &["decl_id", "direct_call_id", "id", "modu
 
 /// Whether a struct field is positional and must not reach the digest.
 ///
-/// The span rule is written structurally — `span` or any `*_span` — rather than as a list of known names. A list
-/// was the first attempt and it missed `CanonicalSymbolId::declaration_span`, which sits several levels down inside
-/// `Body::canonical`: every declaration in a module appeared to change when a comment was added anywhere in it.
-/// Matching the shape means a span field added later is excluded without anyone remembering to add it.
+/// Span fields are handled separately: their coordinates are positional, but their expansion identity is meaningful.
 ///
 /// The failure directions are asymmetric. A positional field wrongly left in makes an unrelated edit look like a
 /// change, costing a rebuild. A meaningful field wrongly excluded makes a real change invisible, producing a wrong
-/// build. This rule can only ever over-match on names ending in `_span`, so it errs the safe way.
+/// build. This rule matches only the exact names in [`POSITIONAL_ID_FIELDS`], so it errs the safe way.
 fn is_positional_field(name: &str) -> bool {
-    name == "span" || name.ends_with("_span") || POSITIONAL_ID_FIELDS.contains(&name)
+    POSITIONAL_ID_FIELDS.contains(&name)
 }
 
 /// The error type for digest serialization.
@@ -78,7 +80,10 @@ impl ser::Error for DigestError {
 /// Returns [`DigestError`] only if the value's own `Serialize` implementation fails.
 pub fn semantic_digest<T: Serialize>(value: &T) -> Result<String, DigestError> {
     let mut hasher = Sha256::new();
-    value.serialize(DigestSerializer { hasher: &mut hasher })?;
+    value.serialize(DigestSerializer {
+        hasher: &mut hasher,
+        mode: DigestMode::Meaning,
+    })?;
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
@@ -89,17 +94,30 @@ pub fn semantic_digest<T: Serialize>(value: &T) -> Result<String, DigestError> {
 /// running together — without one, the single identifier `aIb` and the pair `a` `b` hash identically.
 pub struct DigestSerializer<'hasher> {
     hasher: &'hasher mut Sha256,
+    mode: DigestMode,
+}
+
+/// A span contributes expansion identity but never its diagnostic byte coordinates.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DigestMode {
+    Meaning,
+    Span(&'static str),
+    Expansion(&'static str),
 }
 
 impl DigestSerializer<'_> {
     /// Write a type tag, so values of different shapes cannot collide on identical payload bytes.
     fn tag(&mut self, tag: u8) {
-        self.hasher.update([tag]);
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update([tag]);
+        }
     }
 
     /// Write a length-delimited byte run, so adjacent values cannot run together.
     fn bytes(&mut self, value: &[u8]) {
-        update_delimited(self.hasher, value);
+        if self.mode == DigestMode::Meaning {
+            update_delimited(self.hasher, value);
+        }
     }
 }
 
@@ -112,7 +130,9 @@ macro_rules! digest_primitive {
     ($method:ident, $ty:ty, $tag:expr) => {
         fn $method(mut self, value: $ty) -> Result<(), DigestError> {
             self.tag($tag);
-            self.hasher.update(value.to_le_bytes());
+            if self.mode == DigestMode::Meaning {
+                self.hasher.update(value.to_le_bytes());
+            }
             Ok(())
         }
     };
@@ -132,7 +152,9 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     /// Tag a boolean and write its single byte.
     fn serialize_bool(mut self, value: bool) -> Result<(), DigestError> {
         self.tag(0x01);
-        self.hasher.update([u8::from(value)]);
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update([u8::from(value)]);
+        }
         Ok(())
     }
 
@@ -181,8 +203,16 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
 
     /// Tag a present optional, then hash the value it wraps.
     fn serialize_some<T: ?Sized + Serialize>(mut self, value: &T) -> Result<(), DigestError> {
+        if let DigestMode::Expansion(field) = self.mode {
+            self.mode = DigestMode::Meaning;
+            self.bytes(b"span.expansion");
+            self.bytes(field.as_bytes());
+        }
         self.tag(0x10);
-        value.serialize(DigestSerializer { hasher: self.hasher })
+        value.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: self.mode,
+        })
     }
 
     /// Tag the unit value.
@@ -227,13 +257,18 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     ) -> Result<(), DigestError> {
         self.tag(0x13);
         self.bytes(variant.as_bytes());
-        value.serialize(DigestSerializer { hasher: self.hasher })
+        value.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: self.mode,
+        })
     }
 
     /// Tag a sequence and write its length, so two sequences cannot concatenate into one.
     fn serialize_seq(mut self, length: Option<usize>) -> Result<Self, DigestError> {
         self.tag(0x14);
-        self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
+        }
         Ok(self)
     }
 
@@ -257,21 +292,28 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     ) -> Result<Self, DigestError> {
         self.tag(0x15);
         self.bytes(variant.as_bytes());
-        self.hasher.update((length as u64).to_le_bytes());
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update((length as u64).to_le_bytes());
+        }
         Ok(self)
     }
 
     /// Tag a map and write its length, then hash each key and value in turn.
     fn serialize_map(mut self, length: Option<usize>) -> Result<Self, DigestError> {
         self.tag(0x16);
-        self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
+        if self.mode == DigestMode::Meaning {
+            self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
+        }
         Ok(self)
     }
 
     /// Tag a struct; its fields are hashed by [`StructDigest`], which drops the positional ones.
     fn serialize_struct(mut self, _name: &'static str, _length: usize) -> Result<StructDigest<'hasher>, DigestError> {
         self.tag(0x17);
-        Ok(StructDigest { hasher: self.hasher })
+        Ok(StructDigest {
+            hasher: self.hasher,
+            mode: self.mode,
+        })
     }
 
     /// Tag a struct variant by name; its fields are hashed by [`StructDigest`].
@@ -284,7 +326,10 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     ) -> Result<StructDigest<'hasher>, DigestError> {
         self.tag(0x18);
         self.bytes(variant.as_bytes());
-        Ok(StructDigest { hasher: self.hasher })
+        Ok(StructDigest {
+            hasher: self.hasher,
+            mode: self.mode,
+        })
     }
 }
 
@@ -295,7 +340,10 @@ macro_rules! digest_sequence {
             type Error = DigestError;
 
             fn $method<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), DigestError> {
-                value.serialize(DigestSerializer { hasher: self.hasher })
+                value.serialize(DigestSerializer {
+                    hasher: self.hasher,
+                    mode: self.mode,
+                })
             }
 
             fn end(self) -> Result<(), DigestError> {
@@ -315,11 +363,17 @@ impl ser::SerializeMap for DigestSerializer<'_> {
     type Error = DigestError;
 
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), DigestError> {
-        key.serialize(DigestSerializer { hasher: self.hasher })
+        key.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: self.mode,
+        })
     }
 
     fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), DigestError> {
-        value.serialize(DigestSerializer { hasher: self.hasher })
+        value.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: self.mode,
+        })
     }
 
     fn end(self) -> Result<(), DigestError> {
@@ -333,6 +387,7 @@ impl ser::SerializeMap for DigestSerializer<'_> {
 /// rather than a coincidence.
 pub struct StructDigest<'hasher> {
     hasher: &'hasher mut Sha256,
+    mode: DigestMode,
 }
 
 impl ser::SerializeStruct for StructDigest<'_> {
@@ -340,11 +395,30 @@ impl ser::SerializeStruct for StructDigest<'_> {
     type Error = DigestError;
 
     fn serialize_field<T: ?Sized + Serialize>(&mut self, key: &'static str, value: &T) -> Result<(), DigestError> {
+        if let DigestMode::Span(field) = self.mode {
+            return if key == "expansion" {
+                value.serialize(DigestSerializer {
+                    hasher: self.hasher,
+                    mode: DigestMode::Expansion(field),
+                })
+            } else {
+                Ok(())
+            };
+        }
+        if key == "span" || key.ends_with("_span") {
+            return value.serialize(DigestSerializer {
+                hasher: self.hasher,
+                mode: DigestMode::Span(key),
+            });
+        }
         if is_positional_field(key) {
             return Ok(());
         }
         update_delimited(self.hasher, key.as_bytes());
-        value.serialize(DigestSerializer { hasher: self.hasher })
+        value.serialize(DigestSerializer {
+            hasher: self.hasher,
+            mode: self.mode,
+        })
     }
 
     fn end(self) -> Result<(), DigestError> {
@@ -467,6 +541,25 @@ mod tests {
         assert_ne!(semantic_digest(&Some("x"))?, semantic_digest(&"x")?);
         assert_ne!(semantic_digest(&1u32)?, semantic_digest(&1i32)?);
         assert_ne!(semantic_digest(&vec!["x"])?, semantic_digest(&"x")?);
+        #[derive(Serialize)]
+        struct Located {
+            span: crate::HirSourceSpan,
+        }
+        let authored = Located {
+            span: crate::HirSourceSpan::new(1, 2),
+        };
+        let moved = Located {
+            span: crate::HirSourceSpan::new(10, 20),
+        };
+        let generated = Located {
+            span: authored.span.with_expansion(Some([1; 32])),
+        };
+        let other = Located {
+            span: authored.span.with_expansion(Some([2; 32])),
+        };
+        assert_eq!(semantic_digest(&authored)?, semantic_digest(&moved)?);
+        assert_ne!(semantic_digest(&authored)?, semantic_digest(&generated)?);
+        assert_ne!(semantic_digest(&generated)?, semantic_digest(&other)?);
         Ok(())
     }
 

@@ -8,13 +8,15 @@
 //! - Vocabulary identity (keywords/operators/punctuation) comes from `incan_lang::lang` registries.
 //!
 //! ## Examples
-//! ```rust,no_run
+//! ```rust
 //! use incan_syntax::{lexer, parser};
-//! # fn main() {
+//! # fn main() -> Result<(), String> {
 //!
-//! let tokens = lexer::lex("pass\n").expect("source should lex");
-//! let program = parser::parse(&tokens).expect("tokens should parse");
+//! let tokens = lexer::lex("def main() -> None:\n    pass\n")
+//!     .map_err(|errors| format!("lex errors: {errors:?}"))?;
+//! let program = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
 //! assert_eq!(program.declarations.len(), 1);
+//! # Ok(())
 //! # }
 //! ```
 //!

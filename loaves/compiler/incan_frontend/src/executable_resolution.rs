@@ -13,7 +13,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -26,11 +26,17 @@ use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_ide
 
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::public_identities::public_executable_identities;
-use crate::loaf_index::LoafIndex;
+use crate::loaf_index::{LoafIndex, LoafIndexError};
+
+/// Bound temporary storage while verifying the selected executable artifact's content digest.
+const CONTENT_DIGEST_BUFFER_BYTES: usize = 64 * 1024;
 
 /// A package requirement that cannot be satisfied before execution. No variant authorizes a fallback route.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExecutableResolutionError {
+    /// A demanded manifest could not be read or changed since its inventory was admitted.
+    #[error(transparent)]
+    Artifact(#[from] LoafIndexError),
     /// Local declarations execute from the current compilation, never from a synthesized package representation.
     #[error("`{declaration}` is not a package declaration")]
     NotAPackageDeclaration { declaration: String },
@@ -93,9 +99,6 @@ pub struct ResolvedExecutableModules {
 
 /// One indexed Loaf's manifest and governed-body file.
 struct PackageArtifact {
-    /// The Loaf's name, version, content digest and feature projection; a package name alone cannot select an
-    /// instance.
-    provider_key: String,
     manifest: Arc<LibraryManifest>,
     /// The Loaf's `.incnbody`.
     bodies: PathBuf,
@@ -126,66 +129,74 @@ impl PackageArtifact {
 ///
 /// Every requested root and its published closure is read from the declaring Loaf's `.incnbody`, decoded once even
 /// when recursion or facades reach it again. An explicitly uncovered root contributes no facts; malformed artifacts,
-/// missing public membership and digest mismatches are errors. Nothing executes and no source is consulted.
+/// missing public membership and digest mismatches are errors. Exact public identities already supplied by the
+/// checked producer satisfy returning dependency edges without demanding an older artifact of the same package.
+/// Nothing executes and no additional source is consulted.
 pub fn resolve_loaf_declarations(
     loaves: &LoafIndex,
     requested: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     if requested.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    let resolved = resolve_from_catalog(&catalog(loaves)?, requested, true)?;
-    for package in resolved.package_versions.keys() {
-        loaves.note_resolved_package(package);
-    }
+    let resolved = resolve_from_catalog(loaves, &catalog(loaves)?, requested, checked_local, true)?;
+    loaves.validate_demands()?;
     Ok(resolved)
 }
 
 /// One artifact per package name across the index; two instances of one package refuse rather than replacing each
 /// other.
-fn catalog(loaves: &LoafIndex) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
+fn catalog(loaves: &LoafIndex) -> Result<BTreeMap<String, String>, ExecutableResolutionError> {
     let mut catalog = BTreeMap::new();
-    for entry in loaves.entries() {
-        insert_artifact(
-            &mut catalog,
-            PackageArtifact {
-                provider_key: entry.artifact.identity.stable_key(),
-                manifest: Arc::clone(&entry.artifact.manifest),
-                bodies: entry.artifact.bodies_path(),
-            },
-        )?;
+    let mut identities = BTreeMap::new();
+    for (key, identity) in loaves.identities() {
+        let stable = identity.stable_key();
+        if let Some(previous) = identities.insert(&identity.name, stable.clone())
+            && previous != stable
+        {
+            return Err(ExecutableResolutionError::AmbiguousPackage {
+                library: identity.name.clone(),
+                versions: format!("{previous}, {stable}"),
+            });
+        }
+        catalog.entry(identity.name.clone()).or_insert_with(|| key.to_owned());
     }
     Ok(catalog)
 }
 
-/// Preserve one admitted instance per canonical package name, rejecting different versions, digests or feature
-/// projections.
-fn insert_artifact(
-    catalog: &mut BTreeMap<String, PackageArtifact>,
-    artifact: PackageArtifact,
-) -> Result<(), ExecutableResolutionError> {
-    match catalog.entry(artifact.manifest.name.clone()) {
-        Entry::Vacant(entry) => {
-            entry.insert(artifact);
-        }
-        Entry::Occupied(entry) if entry.get().provider_key != artifact.provider_key => {
-            return Err(ExecutableResolutionError::AmbiguousPackage {
-                library: artifact.manifest.name.clone(),
-                versions: format!("{}, {}", entry.get().provider_key, artifact.provider_key),
-            });
-        }
-        Entry::Occupied(_) => {}
-    }
-    Ok(())
+/// Demand one manifest from the already disambiguated inventory catalog, retaining the same artifact for all edges.
+fn demand_package<'a>(
+    loaves: &LoafIndex,
+    catalog: &BTreeMap<String, String>,
+    packages: &'a mut BTreeMap<String, PackageArtifact>,
+    library: &str,
+) -> Result<&'a PackageArtifact, ExecutableResolutionError> {
+    let slot = match packages.entry(library.to_owned()) {
+        Entry::Occupied(slot) => return Ok(slot.into_mut()),
+        Entry::Vacant(slot) => slot,
+    };
+    let unknown = || ExecutableResolutionError::UnknownPackage {
+        library: library.to_owned(),
+    };
+    let key = catalog.get(library).ok_or_else(unknown)?;
+    let entry = loaves.demand(key)?.ok_or_else(unknown)?;
+    Ok(slot.insert(PackageArtifact {
+        manifest: Arc::clone(&entry.artifact.manifest),
+        bodies: entry.artifact.bodies_path(),
+    }))
 }
 
 /// Load every required declaration and its published closure from one package catalog.
 fn resolve_from_catalog(
-    catalog: &BTreeMap<String, PackageArtifact>,
+    loaves: &LoafIndex,
+    catalog: &BTreeMap<String, String>,
     required: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
     optional_roots: bool,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     let mut opened = BTreeMap::new();
+    let mut packages = BTreeMap::new();
     let mut pending: BTreeSet<_> = required
         .iter()
         .cloned()
@@ -195,16 +206,15 @@ fn resolve_from_catalog(
     let mut modules: BTreeMap<String, BodyIrModule> = BTreeMap::new();
     let mut resolved = ResolvedExecutableModules::default();
     while let Some((identity, implementation_allowed, optional_root)) = pending.pop_first() {
+        if checked_local.contains(&identity) {
+            continue;
+        }
         let SymbolOrigin::Package { library, .. } = &identity.origin else {
             return Err(ExecutableResolutionError::NotAPackageDeclaration {
                 declaration: identity.declaration_name.clone(),
             });
         };
-        let package = catalog
-            .get(library)
-            .ok_or_else(|| ExecutableResolutionError::UnknownPackage {
-                library: library.clone(),
-            })?;
+        let package = demand_package(loaves, catalog, &mut packages, library)?;
         // A checked module binding selects an admitted package namespace; it has no executable body. Calls and
         // type uses retain their own canonical requirements and must still resolve from the selected artifact.
         if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Module {
@@ -278,6 +288,7 @@ fn resolve_from_catalog(
         resolved.payload_bytes_read += length;
     }
     for module in modules.values_mut() {
+        crate::body_ir::retain_published_module(module);
         // Canonical lookup is name-first; module initialization follows checked physical declaration order.
         module
             .static_declarations
@@ -293,17 +304,23 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         ExecutableDeclaration::Body(body) => {
             module.bodies.push(*body);
         }
-        ExecutableDeclaration::NativeBody { body, callables } => {
-            module.bodies.push(*body);
+        ExecutableDeclaration::CompiledCallableFrame { mut frame, callables } => {
+            crate::body_ir::retain_published_frame(&mut frame);
+            if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
+                module.loaf_callables.push(callable);
+            }
             for callable in callables {
                 if !module.loaf_callables.contains(&callable) {
                     module.loaf_callables.push(callable);
                 }
             }
         }
-        ExecutableDeclaration::CompiledCallable(frame) => {
-            if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
-                module.loaf_callables.push(callable);
+        ExecutableDeclaration::NativeBody { body, callables } => {
+            module.bodies.push(*body);
+            for callable in callables {
+                if !module.loaf_callables.contains(&callable) {
+                    module.loaf_callables.push(callable);
+                }
             }
         }
         ExecutableDeclaration::DecoratedBody { body, binding, storage } => {
@@ -381,13 +398,16 @@ impl OpenSurface {
             .executable_representation
             .as_ref()
             .ok_or_else(|| package.unusable(malformed("manifest descriptor disappeared")))?;
-        if descriptor.representation_version
-            != incan_semantics_core::executable_representation::EXECUTABLE_REPRESENTATION_VERSION
-        {
+        if !incan_semantics_core::executable_representation::supports_version(descriptor.representation_version) {
             return Err(package.unusable(ExecutableRepresentationError::UnsupportedVersion {
                 found: descriptor.representation_version,
                 supported: incan_semantics_core::executable_representation::EXECUTABLE_REPRESENTATION_VERSION,
             }));
+        }
+        let encoded_version = incan_semantics_core::executable_representation::representation_version(&version)
+            .map_err(|error| package.unusable(error))?;
+        if descriptor.representation_version != encoded_version {
+            return Err(package.unusable(malformed("manifest and executable representation versions differ")));
         }
         let mut length = [0u8; 8];
         file.read_exact(&mut length)
@@ -438,29 +458,8 @@ impl OpenSurface {
                 "declared representation coverage differs from the manifest public surface",
             )));
         }
-        // A descriptor selects immutable publication content; it does not authenticate a package. Use the same open
-        // handle for verification and later range reads, without decoding unrelated declaration payloads.
-        file.seek(SeekFrom::Start(0))
-            .map_err(|error| package.unreadable(path.clone(), error))?;
-        let mut digest = Sha256::new();
-        let mut buffer = [0u8; 64 * 1024];
-        let mut content_bytes_verified = 0;
-        loop {
-            let length = file
-                .read(&mut buffer)
-                .map_err(|error| package.unreadable(path.clone(), error))?;
-            if length == 0 {
-                break;
-            }
-            digest.update(&buffer[..length]);
-            content_bytes_verified +=
-                u64::try_from(length).map_err(|_| package.unusable(malformed("read length exceeds wire range")))?;
-        }
-        if hex::encode(digest.finalize()) != descriptor.content_digest {
-            return Err(package.unusable(malformed(
-                "executable content differs from its manifest-selected digest",
-            )));
-        }
+        let content_bytes_verified =
+            Self::verify_content_digest(&mut file, &path, package, &descriptor.content_digest)?;
         Ok(Self {
             file,
             path,
@@ -468,6 +467,40 @@ impl OpenSurface {
             index,
             content_bytes_verified,
         })
+    }
+
+    /// Verify immutable publication content on the handle later used for range reads, without decoding payloads.
+    ///
+    /// The digest binds the manifest-selected bytes; it does not authenticate the package. Successful verification
+    /// leaves the handle at EOF and reports the number of bytes read for the resolution evidence.
+    fn verify_content_digest(
+        file: &mut File,
+        path: &Path,
+        package: &PackageArtifact,
+        expected_digest: &str,
+    ) -> Result<u64, ExecutableResolutionError> {
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| package.unreadable(path.to_path_buf(), error))?;
+        let mut digest = Sha256::new();
+        let mut buffer = [0u8; CONTENT_DIGEST_BUFFER_BYTES];
+        let mut content_bytes_verified = 0;
+        loop {
+            let length = file
+                .read(&mut buffer)
+                .map_err(|error| package.unreadable(path.to_path_buf(), error))?;
+            if length == 0 {
+                break;
+            }
+            digest.update(&buffer[..length]);
+            content_bytes_verified +=
+                u64::try_from(length).map_err(|_| package.unusable(malformed("read length exceeds wire range")))?;
+        }
+        if hex::encode(digest.finalize()) != expected_digest {
+            return Err(package.unusable(malformed(
+                "executable content differs from its manifest-selected digest",
+            )));
+        }
+        Ok(content_bytes_verified)
     }
 
     /// Range-read one selected fragment and validate its payload identity against its checked index key.

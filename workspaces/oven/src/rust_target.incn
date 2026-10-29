@@ -1,0 +1,83 @@
+"""Read the pinned Rust compiler's target facts and cache immutable installation probes."""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.json import JsonValue
+from observation import observe
+from retained_readings import recall, retain
+from rust_activation import CfgSnapshot, TargetConfiguration
+
+
+pub def target_configuration(rustc: str) -> Result[TargetConfiguration, str]:
+    """The host target and its complete `cfg`, as the pinned rustc prints them."""
+    host = probed(rustc, ["-vV"])?
+    mut triple = ""
+    for line in host.split("\n"):
+        if line.startswith("host: "):
+            triple = line[6:].strip()
+    if triple == "":
+        return Err(f"{rustc} -vV names no host")
+    printed = probed(rustc, ["--print", "cfg", "--target", triple])?
+    mut flags: list[str] = []
+    mut values: Dict[str, list[str]] = {}
+    for line in printed.split("\n"):
+        entry = line.strip()
+        if entry == "":
+            continue
+        if "=" in entry:
+            parts = entry.split("=")
+            name = parts[0]
+            value = unquoted("=".join(parts[1:]))
+            mut known: list[str] = []
+            if name in values:
+                known = values[name]
+            known.append(value)
+            values[name] = known
+        else:
+            flags.append(entry)
+    return Ok(TargetConfiguration(triple=triple, cfg=Some(CfgSnapshot(flags=flags, values=values))))
+
+
+def probed(rustc: str, arguments: list[str]) -> Result[str, str]:
+    """
+    What the pinned rustc prints for `arguments`, run once per rustc installation (see `retained_readings`): its
+    version and target configuration depend only on the installed compiler.
+    """
+    program = Path(rustc)
+    observed = observe(program)?
+    selection = " ".join(arguments)
+    if let Some(value) = recall(program, selection, observed.stamp):
+        if let Some(printed) = value.as_str():
+            return Ok(printed)
+    printed = run_text(rustc, arguments)?
+    retain(program, selection, observed, JsonValue.string(printed))
+    return Ok(printed)
+
+
+pub def run_text(program: str, arguments: list[str]) -> Result[str, str]:
+    """Run a program to completion and return its stdout; a failure returns its stderr."""
+    mut command = Command.new(program)
+    for argument in arguments:
+        command.arg(argument)
+    match command.output():
+        Err(error) => return Err(f"cannot run {program}: {error}")
+        Ok(output) =>
+            stdout = decoded(output.stdout)
+            if not output.status.success():
+                return Err(f"{program} {" ".join(arguments)} failed:\n{decoded(output.stderr)}")
+            return Ok(stdout)
+
+
+pub def decoded(bytes: bytes) -> str:
+    """Process output as text; output that is not UTF-8 is named, not repaired."""
+    match RustString.from_utf8(bytes):
+        Ok(text) => return str(text)
+        Err(_) => return "(output that is not UTF-8)"
+
+
+def unquoted(text: str) -> str:
+    """A `cfg` value without the quotes rustc prints around it."""
+    if len(text) >= 2 and text.startswith("\"") and text.endswith("\""):
+        return text[1:len(text) - 1]
+    return text

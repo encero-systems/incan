@@ -1,0 +1,54 @@
+# Installs the pinned dev.8 release bundle for the runner's host through scripts/ci-dev8.sh and puts its `incan` on
+# PATH for the job's later steps. Every job that runs `incan` uses this action; it fails, naming BUILD_TOOLCHAIN, while
+# that repository variable pins no bundle for the host.
+name: Install the build toolchain
+description: >
+  Pulls the GHCR bundle that BUILD_TOOLCHAIN pins for this host, installs it with Rust 1.98.0, and exports
+  INCAN_HOME, INCAN_STDLIB and PATH. With verify, it also runs the Oven tests, the LSP contract and every contract
+  family against the installation.
+inputs:
+  reference:
+    description: The bundle's GHCR tag@sha256:digest, read from the BUILD_TOOLCHAIN map for the host's target triple.
+    required: false
+    default: ''
+  token:
+    description: Token that can read the bundle's GHCR package.
+    required: true
+  verify:
+    description: Also verify the installation against this checkout's tests and contracts.
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Require a pinned release bundle
+      shell: bash
+      env:
+        TOOLCHAIN_REF: ${{ inputs.reference }}
+      run: |
+        if [ -z "$TOOLCHAIN_REF" ]; then
+          echo "::error::BUILD_TOOLCHAIN pins no build toolchain for this host; this job runs incan and needs one"
+          exit 1
+        fi
+    - name: Install oras
+      uses: oras-project/setup-oras@v1
+      with:
+        version: 1.3.0
+    - name: Authenticate for the release bundle
+      shell: bash
+      env:
+        GHCR_USER: ${{ github.actor }}
+        GHCR_TOKEN: ${{ inputs.token }}
+      run: printf '%s' "$GHCR_TOKEN" | oras login ghcr.io --username "$GHCR_USER" --password-stdin
+    - name: Install dev.8
+      shell: bash
+      env:
+        TOOLCHAIN_REF: ${{ inputs.reference }}
+        VERIFY: ${{ inputs.verify }}
+        CI_DEV8_OUT: ${{ runner.temp }}/dev8
+      run: |
+        if [ "$VERIFY" = true ]; then
+          scripts/ci-dev8.sh "$TOOLCHAIN_REF"
+        else
+          scripts/ci-dev8.sh --install "$TOOLCHAIN_REF"
+        fi

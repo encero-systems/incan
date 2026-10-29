@@ -1,4 +1,4 @@
-# behavior: A top-level comment opens the next section: two blank lines separate it from the suite before it, and it stays attached to the declaration below it unless the source separates them; this holds after a docstring, a nested match and nested for and match suites.
+# behavior: A top-level comment opens the next section: two blank lines separate it from the suite before it, and it stays attached to the declaration below it unless the source separates them; this holds after a docstring, a nested match and nested for and match suites. A trailing comment at EOF keeps its preceding source gap.
 # expect-formatted:
 #   def count() -> int:
 #       """
@@ -62,6 +62,8 @@
 #   def after_tally() -> int:
 #       """Return the value after the comment."""
 #       return 3
+#
+#   # Keep this trailing explanation outside the suite.
 
 def count() -> int:
     """
@@ -124,3 +126,5 @@ def tally(items: list[int]) -> int:
 def after_tally() -> int:
     """Return the value after the comment."""
     return 3
+
+# Keep this trailing explanation outside the suite.

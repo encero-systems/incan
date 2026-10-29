@@ -1,6 +1,7 @@
 """Carry the attribute macros a declaration applies from Body IR into the plan, as written."""
 
 from rust::incan_semantics_core::body_ir import (
+    Body,
     NativeAttribute as RustNativeAttribute,
     NativeAttributeArgument as RustAttributeArgument,
     NativeAttributeValue as RustAttributeValue,
@@ -8,10 +9,10 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import AttributeArgument, AttributeValue, NativeAttribute
 
 
-pub def native_attributes(attributes: &list[RustNativeAttribute]) -> list[NativeAttribute]:
+pub def native_attributes(body: &Body) -> list[NativeAttribute]:
     """Copy each application's macro path and written arguments; rustc, not the plan, interprets them."""
     mut result: list[NativeAttribute] = []
-    for attribute in attributes:
+    for attribute in body.native_attributes.iter():
         result.append(native_attribute(attribute))
     return result
 

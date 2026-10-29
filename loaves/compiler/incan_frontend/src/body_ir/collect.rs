@@ -2,6 +2,7 @@
 //! layouts.
 
 use super::*;
+use crate::typechecker::ClassLayoutInfo;
 
 /// Retain imported storage types from their checked owning declarations without resolving a nominal by spelling.
 /// Conflicting copies of one canonical declaration cannot authorize either representation at a consumer global place.
@@ -39,11 +40,7 @@ pub(super) fn collect_local_receiver_methods(
             ast::Declaration::Class(class) => &class.methods,
             _ => continue,
         };
-        let Some(owner) = facts
-            .declarations
-            .declaration_identities
-            .get(&(declaration.span.start, declaration.span.end))
-        else {
+        let Some(owner) = facts.declarations.declaration_identities.get(&declaration.span) else {
             continue;
         };
         for method in source {
@@ -83,7 +80,7 @@ pub(super) fn collect_constants(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let value = match type_info.const_value(&item.name) {
                 Some(crate::typechecker::ConstValue::Int(value)) => bir::Constant::Int(*value),
@@ -113,10 +110,7 @@ fn checked_newtype_constant(
     type_info: &TypeCheckInfo,
     nominals: &[bir::NominalDeclaration],
 ) -> Option<bir::Constant> {
-    let fact = type_info
-        .consts
-        .body_ir_newtype_values
-        .get(&(expression.span.start, expression.span.end))?;
+    let fact = type_info.consts.body_ir_newtype_values.get(&expression.span)?;
     let mut owners = nominals.iter().filter(|nominal| nominal.canonical == fact.owner);
     let owner = owners.next()?;
     if owners.next().is_some() {
@@ -142,11 +136,21 @@ fn checked_newtype_constant(
 }
 
 /// Evaluate only literal signed integer addition, subtraction, multiplication and negation. Each intermediate must fit
-/// i64, matching legacy's const arithmetic; names, calls, sized literals and every other operation stay unretained.
+/// i64; names, calls, sized literals and every other operation stay unretained. A unary-negative literal is admitted
+/// from its full magnitude before narrowing, so the minimum does not require an unrepresentable positive intermediate.
 fn literal_integer_constant(value: &ast::Expr) -> Option<i64> {
     match value {
-        ast::Expr::Literal(ast::Literal::Int(value)) if value.suffix.is_none() && value.fits_i64() => Some(value.value),
-        ast::Expr::Unary(ast::UnaryOp::Neg, inner) => literal_integer_constant(&inner.node)?.checked_neg(),
+        ast::Expr::Literal(ast::Literal::Int(value)) if value.suffix.is_none() => {
+            i64::try_from(value.signed_value(false)?).ok()
+        }
+        ast::Expr::Unary(ast::UnaryOp::Neg, inner) => {
+            if let ast::Expr::Literal(ast::Literal::Int(value)) = &inner.node
+                && value.suffix.is_none()
+            {
+                return i64::try_from(value.signed_value(true)?).ok();
+            }
+            literal_integer_constant(&inner.node)?.checked_neg()
+        }
         ast::Expr::Binary(left, op, right) => {
             let left = literal_integer_constant(&left.node)?;
             let right = literal_integer_constant(&right.node)?;
@@ -166,6 +170,11 @@ fn literal_integer_constant(value: &ast::Expr) -> Option<i64> {
 pub(super) fn frozen_literal_constant(value: &ast::Expr, ty: &IncanType) -> Option<bir::Constant> {
     if let ast::Expr::Literal(literal) = value {
         return Some(primitives::lower_checked_literal(literal, ty));
+    }
+    if let ast::Expr::Unary(ast::UnaryOp::Neg, inner) = value
+        && let ast::Expr::Literal(literal) = &inner.node
+    {
+        return primitives::lower_checked_negative_literal(literal, ty);
     }
     if let (ast::Expr::Tuple(values), IncanType::Tuple(types)) = (value, ty) {
         if values.len() != types.len() || values.len() == 1 {
@@ -227,7 +236,7 @@ pub(super) fn collect_type_aliases(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             Some(bir::TypeAliasDeclaration {
                 canonical,
@@ -259,7 +268,7 @@ pub(super) fn collect_statics(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let initial = static_initializer(&storage.value, &ty, type_info).unwrap_or_else(|| {
                 bir::StaticInitializer::Computed(Box::new(lower_static_initializer_body(
@@ -294,7 +303,7 @@ pub(super) fn collect_computed_constants(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             if retained.iter().any(|constant| constant.canonical == canonical) {
                 return None;
@@ -439,7 +448,7 @@ pub(super) fn collect_local_enum_declarations(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let parameter_names = value
                 .type_params
@@ -453,7 +462,7 @@ pub(super) fn collect_local_enum_declarations(
                     let canonical = type_info
                         .declarations
                         .member_declaration_identities
-                        .get(&(variant.span.start, variant.span.end))?
+                        .get(&variant.span)?
                         .clone();
                     let fields = variant
                         .node
@@ -463,16 +472,12 @@ pub(super) fn collect_local_enum_declarations(
                             type_info
                                 .declarations
                                 .enum_payload_types
-                                .get(&(field.span.start, field.span.end))
+                                .get(&field.span)
                                 .map(|ty| parameter_types::checked_parameter_type(ty, type_info, &parameter_names))
                         })
                         .collect::<Option<Vec<_>>>()?;
                     Some(bir::EnumVariantDeclaration {
-                        direct_declaration_id: CompilerNodeId::declaration_span(
-                            module_identity,
-                            variant.span.start,
-                            variant.span.end,
-                        ),
+                        direct_declaration_id: CompilerNodeId::declaration_at(module_identity, variant.span),
                         canonical,
                         name: variant.node.name.clone(),
                         fields,
@@ -482,11 +487,7 @@ pub(super) fn collect_local_enum_declarations(
             Some(bir::EnumDeclaration {
                 native_item: String::new(),
                 native_type_arguments: Vec::new(),
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
+                direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
                 canonical,
                 name: value.name.clone(),
                 public: value.visibility == ast::Visibility::Public,
@@ -715,7 +716,7 @@ pub(super) fn collect_local_nongeneric_function_identities(
             type_info
                 .declarations
                 .function_bindings_by_span
-                .get(&(declaration.span.start, declaration.span.end))
+                .get(&declaration.span)
                 .and_then(|binding| binding.identity.clone())
         })
         .collect()
@@ -766,7 +767,7 @@ pub(super) fn collect_local_nominal_declarations(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let field_identities = fields
                 .iter()
@@ -774,7 +775,7 @@ pub(super) fn collect_local_nominal_declarations(
                     type_info
                         .declarations
                         .member_declaration_identities
-                        .get(&(field.span.start, field.span.end))
+                        .get(&field.span)
                         .cloned()
                 })
                 .collect::<Option<Vec<_>>>()?;
@@ -783,11 +784,7 @@ pub(super) fn collect_local_nominal_declarations(
                 native_item: String::new(),
                 class_inheritance: None,
                 native_type_arguments: Vec::new(),
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
+                direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
                 canonical,
                 name: name.clone(),
                 fields: fields.iter().map(|field| field.node.name.clone()).collect(),
@@ -840,33 +837,42 @@ pub(super) fn collect_local_nominal_declarations(
                 derives: nominal_derives(name, class_layout.is_some(), type_info)?,
                 newtype_deserialize: bir::NewtypeDeserialize::Unselected,
                 newtype_string_conversion: bir::NewtypeStringConversion::Unselected,
-                field_types: fields
-                    .iter()
-                    .map(|field| {
-                        if let Some(layout) = class_layout {
-                            layout
-                                .fields
-                                .iter()
-                                .find(|checked| checked.name == field.node.name)
-                                .map(|checked| {
-                                    parameter_types::checked_parameter_type(&checked.ty, type_info, &type_parameters)
-                                })
-                                .unwrap_or(IncanType::Unknown)
-                        } else {
-                            type_info
-                                .declarations
-                                .model_field_types
-                                .get(&(field.span.start, field.span.end))
-                                .map(|ty| parameter_types::checked_parameter_type(ty, type_info, &type_parameters))
-                                .unwrap_or(IncanType::Unknown)
-                        }
-                    })
-                    .collect(),
+                field_types: nominal_field_types(fields, class_layout, &type_parameters, type_info),
                 named_type_identities: parameter_types::retained_type_identities(type_info),
                 type_parameter_count: type_parameters.len(),
                 type_parameters,
             };
             retain_inherited_layout(retained, type_info)
+        })
+        .collect()
+}
+
+/// Retain source field order while resolving types from the checked class layout or span-keyed model facts.
+/// A missing field fact keeps the existing unknown carrier rather than inferring a layout from source spelling.
+fn nominal_field_types(
+    fields: &[ast::Spanned<ast::FieldDecl>],
+    class_layout: Option<&ClassLayoutInfo>,
+    type_parameters: &[String],
+    type_info: &TypeCheckInfo,
+) -> Vec<IncanType> {
+    fields
+        .iter()
+        .map(|field| {
+            if let Some(layout) = class_layout {
+                layout
+                    .fields
+                    .iter()
+                    .find(|checked| checked.name == field.node.name)
+                    .map(|checked| parameter_types::checked_parameter_type(&checked.ty, type_info, type_parameters))
+                    .unwrap_or(IncanType::Unknown)
+            } else {
+                type_info
+                    .declarations
+                    .model_field_types
+                    .get(&field.span)
+                    .map(|ty| parameter_types::checked_parameter_type(ty, type_info, type_parameters))
+                    .unwrap_or(IncanType::Unknown)
+            }
         })
         .collect()
 }
@@ -966,7 +972,7 @@ fn checked_trait_adoptions(owner: &str, parameters: &[String], facts: &TypeCheck
         .into_iter()
         .flatten()
         .map(|adoption| {
-            let key = (adoption.span.start, adoption.span.end);
+            let key = adoption.span;
             let arguments = facts
                 .traits
                 .body_ir_adoption_type_args
@@ -980,6 +986,8 @@ fn checked_trait_adoptions(owner: &str, parameters: &[String], facts: &TypeCheck
                     .map(|argument| parameter_types::checked_parameter_type(argument, facts, parameters))
                     .collect(),
                 methods: adoption.methods.clone(),
+                primitive_adapter: None,
+                fields: adoption.fields.clone(),
             }
         })
         .collect()
@@ -1008,11 +1016,7 @@ fn collect_plain_newtype(
     {
         return None;
     }
-    let canonical = type_info
-        .declarations
-        .declaration_identities
-        .get(&(span.start, span.end))?
-        .clone();
+    let canonical = type_info.declarations.declaration_identities.get(&span)?.clone();
     let underlying = parameter_types::checked_parameter_type(&facts.underlying, type_info, &facts.type_params);
     if !facts.constraints.is_empty() && underlying != IncanType::Primitive(IncanPrimitiveType::Int) {
         return None;
@@ -1022,10 +1026,13 @@ fn collect_plain_newtype(
         underlying,
         IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool)
     ) {
-        if !derives.iter().any(|derive| derive == "Clone") {
-            derives.push("Clone".to_owned());
+        if !derives
+            .iter()
+            .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+        {
+            derives.push(derives::as_str(DeriveId::Clone).to_owned());
         }
-        derives.push("Copy".to_owned());
+        derives.push(derives::as_str(DeriveId::Copy).to_owned());
     }
     for selection in type_info.declarations.body_ir_newtype_derives.get(&newtype.name)? {
         if !derives.contains(selection) {
@@ -1044,7 +1051,7 @@ fn collect_plain_newtype(
         native_item: String::new(),
         class_inheritance: None,
         native_type_arguments: Vec::new(),
-        direct_declaration_id: CompilerNodeId::declaration_span(module_identity, span.start, span.end),
+        direct_declaration_id: CompilerNodeId::declaration_at(module_identity, span),
         field_identities: vec![canonical.clone()],
         canonical,
         name: newtype.name.clone(),
@@ -1086,10 +1093,7 @@ fn collect_field_metadata(
                 .contains(&(name.to_owned(), field.node.name.clone()))
         })
         .map(|field| {
-            let ty = facts
-                .declarations
-                .model_field_types
-                .get(&(field.span.start, field.span.end))?;
+            let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {
                 name: field.node.name.clone(),
                 alias: field.node.metadata.alias.clone(),
@@ -1113,7 +1117,7 @@ fn checked_display_method(declaration: &ast::Declaration, type_info: &TypeCheckI
         return type_info
             .declarations
             .method_bindings_by_span
-            .get(&(method.span.start, method.span.end))?
+            .get(&method.span)?
             .identity
             .clone();
     }
@@ -1142,7 +1146,7 @@ pub(super) fn collect_local_fieldless_enum_declarations(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let variants = enum_decl
                 .variants
@@ -1151,25 +1155,17 @@ pub(super) fn collect_local_fieldless_enum_declarations(
                     let canonical = type_info
                         .declarations
                         .member_declaration_identities
-                        .get(&(variant.span.start, variant.span.end))?
+                        .get(&variant.span)?
                         .clone();
                     Some(bir::FieldlessEnumVariantDeclaration {
-                        direct_declaration_id: CompilerNodeId::declaration_span(
-                            module_identity,
-                            variant.span.start,
-                            variant.span.end,
-                        ),
+                        direct_declaration_id: CompilerNodeId::declaration_at(module_identity, variant.span),
                         canonical,
                         name: variant.node.name.clone(),
                     })
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::FieldlessEnumDeclaration {
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
+                direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
                 canonical,
                 name: enum_decl.name.clone(),
                 variants,
@@ -1200,7 +1196,7 @@ pub(super) fn collect_local_value_enum_declarations(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let backing = match enum_decl.value_type.as_ref().map(|value| value.node) {
                 Some(ast::ValueEnumType::Int) => bir::ValueEnumBacking::Int,
@@ -1214,7 +1210,7 @@ pub(super) fn collect_local_value_enum_declarations(
                     let canonical = type_info
                         .declarations
                         .member_declaration_identities
-                        .get(&(variant.span.start, variant.span.end))?
+                        .get(&variant.span)?
                         .clone();
                     let raw_value = match variant.node.value.as_ref().map(|value| &value.node) {
                         Some(ast::ValueEnumLiteral::Int(value)) if matches!(backing, bir::ValueEnumBacking::Int) => {
@@ -1226,11 +1222,7 @@ pub(super) fn collect_local_value_enum_declarations(
                         _ => return None,
                     };
                     Some(bir::ValueEnumVariantDeclaration {
-                        direct_declaration_id: CompilerNodeId::declaration_span(
-                            module_identity,
-                            variant.span.start,
-                            variant.span.end,
-                        ),
+                        direct_declaration_id: CompilerNodeId::declaration_at(module_identity, variant.span),
                         canonical,
                         name: variant.node.name.clone(),
                         raw_value,
@@ -1238,11 +1230,7 @@ pub(super) fn collect_local_value_enum_declarations(
                 })
                 .collect::<Vec<_>>();
             (variants.len() == enum_decl.variants.len()).then(|| bir::ValueEnumDeclaration {
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
+                direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
                 canonical,
                 name: enum_decl.name.clone(),
                 backing,
@@ -1267,7 +1255,7 @@ pub(super) fn collect_local_trait_declarations(
             type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))
+                .get(&declaration.span)
                 .cloned()
         })
         .collect()
@@ -1350,8 +1338,8 @@ fn local_supertraits<'program>(
 /// supertraits those reach.
 ///
 /// Bare clauses consume the separate checked Body IR witness; written clauses keep their existing explicit snapshot.
-/// A generic trait adopted without recorded arguments contributes nothing. A trait reached at two different
-/// instantiations is dropped entirely, because its slot identities cannot tell the implementations apart.
+/// A generic trait adopted without recorded arguments contributes nothing. Distinct checked instantiations retain
+/// separate dispatch records; their slot arguments distinguish the same declaration's overload selections.
 fn adopted_local_traits<'program>(
     program: &'program ast::Program,
     type_info: &TypeCheckInfo,
@@ -1368,13 +1356,9 @@ fn adopted_local_traits<'program>(
             match type_info
                 .traits
                 .body_ir_adoption_type_args
-                .get(&(adoption.span.start, adoption.span.end))
-                .or_else(|| {
-                    type_info
-                        .traits
-                        .adoption_type_args
-                        .get(&(adoption.span.start, adoption.span.end))
-                }) {
+                .get(&adoption.span)
+                .or_else(|| type_info.traits.adoption_type_args.get(&adoption.span))
+            {
                 Some(arguments) if arguments.len() == declaration.type_params.len() => arguments.clone(),
                 _ => continue,
             }
@@ -1396,16 +1380,6 @@ fn adopted_local_traits<'program>(
             direct_ancestors: None,
         }));
     }
-    let conflicting = adopted
-        .iter()
-        .filter(|candidate| {
-            adopted.iter().any(|other| {
-                other.declaration.name == candidate.declaration.name && other.arguments != candidate.arguments
-            })
-        })
-        .map(|candidate| candidate.declaration.name.clone())
-        .collect::<HashSet<_>>();
-    adopted.retain(|candidate| !conflicting.contains(&candidate.declaration.name));
     adopted
 }
 
@@ -1427,17 +1401,20 @@ fn slot_implementation(
         .method_identities
         .get(&(slot_trait.declaration.name.clone(), slot.node.name.clone()))?;
     let selected_name = checked_slot_method_name(type_info, owner, &slot.node.name);
-    let candidates = methods
+    let mut candidates = methods
         .iter()
         .filter(|candidate| {
             candidate.node.name == selected_name && method_fills_trait_slot(type_info, &candidate.node, identity)
         })
         .collect::<Vec<_>>();
+    if candidates.len() > 1 {
+        candidates.retain(|candidate| instantiated_slot_signature_matches(type_info, slot_trait, slot, candidate));
+    }
     match candidates.as_slice() {
         [candidate] => type_info
             .declarations
             .method_bindings_by_span
-            .get(&(candidate.span.start, candidate.span.end))
+            .get(&candidate.span)
             .and_then(|binding| binding.identity.clone())
             .map(|identity| (identity, Vec::new())),
         [] if slot.node.body.is_some() => type_info
@@ -1474,6 +1451,44 @@ fn slot_implementation(
         }
         _ => None,
     }
+}
+
+/// Select among checked overloads using the slot's instantiated signature contract. The checker already proved
+/// adoption compatibility; Body IR consumes its resolved signatures instead of resolving annotations again.
+fn instantiated_slot_signature_matches(
+    facts: &TypeCheckInfo,
+    adopted: &AdoptedTrait<'_>,
+    slot: &ast::Spanned<ast::MethodDecl>,
+    candidate: &ast::Spanned<ast::MethodDecl>,
+) -> bool {
+    let bindings = &facts.declarations.method_bindings_by_span;
+    let Some(expected) = bindings.get(&slot.span) else {
+        return false;
+    };
+    let Some(actual) = bindings.get(&candidate.span) else {
+        return false;
+    };
+    let parameters = adopted
+        .declaration
+        .type_params
+        .iter()
+        .map(|parameter| parameter.name.clone())
+        .collect::<Vec<_>>();
+    let substitution = crate::resolved_type_subst::type_param_subst_map(&parameters, &adopted.arguments);
+    expected.params.len() == actual.params.len()
+        && instantiate_declared_slot_type(&expected.return_type, &substitution) == actual.return_type
+        && expected.params.iter().zip(&actual.params).all(|(expected, actual)| {
+            expected.kind == actual.kind && instantiate_declared_slot_type(&expected.ty, &substitution) == actual.ty
+        })
+}
+
+/// Substitute only the declaring trait's binders, including legacy Named placeholders retained by checked abstract
+/// signatures. A same-spelled nominal outside that declaration's parameter map never becomes a binder.
+fn instantiate_declared_slot_type(ty: &ResolvedType, bindings: &HashMap<String, ResolvedType>) -> ResolvedType {
+    crate::resolved_type_subst::map_resolved_type_leaves(ty, &|leaf| match leaf {
+        ResolvedType::Named(name) | ResolvedType::TypeVar(name) => bindings.get(name).cloned(),
+        _ => None,
+    })
 }
 
 /// Match an explicit method target through its checked slot identity; unqualified methods can fill any compatible
@@ -1513,7 +1528,7 @@ fn derived_trait_implementations(
                 (Some(candidate), None) => type_info
                     .declarations
                     .method_bindings_by_span
-                    .get(&(candidate.span.start, candidate.span.end))
+                    .get(&candidate.span)
                     .and_then(|binding| binding.identity.clone()),
                 (None, None) if method.has_default => Some(method.method.clone()),
                 _ => None,
@@ -1522,6 +1537,11 @@ fn derived_trait_implementations(
                 owner: owner.clone(),
                 method: method.method.clone(),
                 implementation,
+                slot_arguments: method
+                    .type_arguments
+                    .iter()
+                    .map(|(_, argument)| semantic_type_from_resolved(argument))
+                    .collect(),
                 type_arguments: method
                     .type_arguments
                     .iter()
@@ -1550,11 +1570,7 @@ pub(super) fn collect_trait_argument_witnesses(
             ast::Declaration::Newtype(value) => &value.traits,
             _ => continue,
         };
-        let Some(identity) = facts
-            .declarations
-            .declaration_identities
-            .get(&(declaration.span.start, declaration.span.end))
-        else {
+        let Some(identity) = facts.declarations.declaration_identities.get(&declaration.span) else {
             continue;
         };
         let Some(owner) = nominals.iter().find(|owner| &owner.canonical == identity) else {
@@ -1565,10 +1581,9 @@ pub(super) fn collect_trait_argument_witnesses(
                 .declarations
                 .iter()
                 .find_map(|declaration| match &declaration.node {
-                    ast::Declaration::Trait(value) if std::ptr::eq(value, adopted.declaration) => facts
-                        .declarations
-                        .declaration_identities
-                        .get(&(declaration.span.start, declaration.span.end)),
+                    ast::Declaration::Trait(value) if std::ptr::eq(value, adopted.declaration) => {
+                        facts.declarations.declaration_identities.get(&declaration.span)
+                    }
                     _ => None,
                 })
             else {
@@ -1620,11 +1635,7 @@ pub(super) fn collect_local_trait_implementations(
             }
             _ => continue,
         };
-        let Some(owner) = type_info
-            .declarations
-            .declaration_identities
-            .get(&(declaration.span.start, declaration.span.end))
-        else {
+        let Some(owner) = type_info.declarations.declaration_identities.get(&declaration.span) else {
             continue;
         };
         let retained = nominal_declarations
@@ -1651,10 +1662,16 @@ pub(super) fn collect_local_trait_implementations(
                 else {
                     continue;
                 };
-                if implementations
-                    .iter()
-                    .any(|existing: &bir::TraitImplementation| &existing.owner == owner && &existing.method == method)
-                {
+                if implementations.iter().any(|existing: &bir::TraitImplementation| {
+                    &existing.owner == owner
+                        && &existing.method == method
+                        && existing.slot_arguments
+                            == slot_trait
+                                .arguments
+                                .iter()
+                                .map(semantic_type_from_resolved)
+                                .collect::<Vec<_>>()
+                }) {
                     continue;
                 }
                 let Some((implementation, type_arguments)) =
@@ -1666,6 +1683,7 @@ pub(super) fn collect_local_trait_implementations(
                     owner: owner.clone(),
                     method: method.clone(),
                     implementation,
+                    slot_arguments: slot_trait.arguments.iter().map(semantic_type_from_resolved).collect(),
                     type_arguments,
                 });
             }
@@ -1691,7 +1709,7 @@ fn property_implementations(
             let Some(method) = facts
                 .declarations
                 .body_ir_property_bindings
-                .get(&(slot.span.start, slot.span.end))
+                .get(&slot.span)
                 .and_then(|binding| binding.callable.identity.as_ref())
             else {
                 continue;
@@ -1708,7 +1726,7 @@ fn property_implementations(
             let Some(implementation) = facts
                 .declarations
                 .body_ir_property_bindings
-                .get(&(property.span.start, property.span.end))
+                .get(&property.span)
                 .and_then(|binding| binding.callable.identity.as_ref())
             else {
                 continue;
@@ -1723,6 +1741,7 @@ fn property_implementations(
                 owner: owner.clone(),
                 method: method.clone(),
                 implementation: implementation.clone(),
+                slot_arguments: trait_info.arguments.iter().map(semantic_type_from_resolved).collect(),
                 type_arguments: Vec::new(),
             });
         }
@@ -1779,6 +1798,7 @@ fn imported_trait_implementations(
                     owner: owner.clone(),
                     method: method.clone(),
                     implementation,
+                    slot_arguments: type_arguments.iter().map(|binding| binding.argument.clone()).collect(),
                     type_arguments,
                 });
             }
@@ -1807,7 +1827,7 @@ fn imported_slot_arguments(
     if parameters.is_empty() {
         return adoption.node.type_args.is_empty().then(Vec::new);
     }
-    let key = (adoption.span.start, adoption.span.end);
+    let key = adoption.span;
     let arguments = type_info
         .traits
         .body_ir_adoption_type_args
@@ -1959,7 +1979,7 @@ fn imported_slot_implementation(
         [candidate] => type_info
             .declarations
             .method_bindings_by_span
-            .get(&(candidate.span.start, candidate.span.end))
+            .get(&candidate.span)
             .and_then(|binding| binding.identity.clone()),
         [] if defaults && type_info.traits.default_method_identities.contains(method) => Some(method.clone()),
         _ => None,

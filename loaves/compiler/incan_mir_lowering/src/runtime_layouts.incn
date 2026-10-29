@@ -1,0 +1,68 @@
+"""Retain the checked runtime zip result as the builtin iterator's consumer-owned storage."""
+
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from pub::incan_mir_plan import PlanType, ZipCarrier, EnumDeclaration
+from runtime_calls import runtime_body
+from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
+from unions import collect_unions
+from tuples import tuple_element
+from symbols import model_symbol
+
+
+pub def runtime_zip_carriers(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[list[ZipCarrier], str]:
+    """Select zip storage: 1. Read its published result identity. 2. Retain that declaration's closed carriers."""
+    # 1. Read the published result identity rather than choosing a same-named nominal.
+    match runtime_body(module, "incan_native_runtime::zip_lists")?:
+        None => return Ok([])
+        Some(body) =>
+            owner = zip_result_identity(body.return_type, body)?
+            # 2. Retain each actual closed instance of that exact declaration.
+            return closed_zip_carriers(constructors, module, owner, intrinsics)
+
+
+def zip_result_identity(result: &RustType, body: &Body) -> Result[CanonicalSymbolId, str]:
+    """Require the zip declaration's checked nominal result and its exact published owner binding."""
+    match result:
+        RustType.Generic(base=base, args=arguments) =>
+            if len(arguments) != 2:
+                return Err("invalid governed zip result arity")
+            match body.named_type_identities.get(str(base)):
+                Some(identity) => return Ok(identity.clone())
+                None => return Err("unretained governed zip result identity")
+        _ => return Err("unsupported governed zip result declaration")
+
+
+def closed_zip_carriers(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    owner: &CanonicalSymbolId,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[list[ZipCarrier], str]:
+    """Associate builtin element layouts only with closed instances of the source result's canonical declaration."""
+    mut carriers: list[ZipCarrier] = []
+    mut unions = collect_unions(module)
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
+    for index in range(len(module.nominal_declarations)):
+        declaration = module.nominal_declarations[index]
+        candidate: &CanonicalSymbolId = declaration.canonical
+        if candidate != owner or len(declaration.native_type_arguments) != 2:
+            continue
+        left = declaration.native_type_arguments[0]
+        right = declaration.native_type_arguments[1]
+        first = native_source_type(constructors, nominals, enums, unions, left, intrinsics)?
+        second = native_source_type(constructors, nominals, enums, unions, right, intrinsics)?
+        carriers.append(
+            ZipCarrier(
+                left=tuple_element(first, left)?,
+                right=tuple_element(second, right)?,
+                target=PlanType.Model(index, model_symbol(str(declaration.name))),
+            ),
+        )
+    return Ok(carriers)

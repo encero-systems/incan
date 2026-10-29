@@ -10,6 +10,8 @@ from frame import Builder, temporary, read_place, text_literal
 pub def frozen_observation_type(ty: PlanType) -> bool:
     """Recognize immutable static carriers whose read-only wrapper observations own no allocation."""
     match ty:
+        PlanType.StaticText => return true
+        PlanType.StaticBytes => return true
         PlanType.FrozenStr => return true
         PlanType.FrozenBytes => return true
         PlanType.FrozenCollection(_name, _elements) => return true
@@ -20,7 +22,7 @@ pub def frozen_collection_literal(mut builder: Builder, value: &RustConstant, sp
     """Materialize a fresh checked static wrapper by value, without imposing Copy on its element type."""
     match value:
         RustConstant.FrozenAggregate(ty, elements) =>
-            storage = model_type(builder.nominals, ty)?
+            storage = model_type(builder.constructors, builder.nominals, ty)?
             values = frozen_elements(builder, elements)?
             output = temporary(builder, storage, span)
             builder.emit(plan_assign(output, RvalueKind.FrozenCollection(storage, values), span))
@@ -40,7 +42,10 @@ def frozen_elements(mut builder: Builder, elements: &list[RustConstant]) -> Resu
             RustConstant.Bytes(_bytes) => values.append(FrozenValue.Bytes(frozen_byte_data(element)?))
             RustConstant.FrozenAggregate(ty, nested) =>
                 values.append(
-                    FrozenValue.Collection(model_type(builder.nominals, ty)?, frozen_elements(builder, nested)?),
+                    FrozenValue.Collection(
+                        model_type(builder.constructors, builder.nominals, ty)?,
+                        frozen_elements(builder, nested)?,
+                    ),
                 )
             _ => return Err("unsupported Body IR frozen collection element")
     return Ok(values)

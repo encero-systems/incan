@@ -5,6 +5,7 @@
 //! The constructor keeps rustc's own MIR; only the closure's executable body is replaced, with a call that forwards
 //! the captures and then the closure's inputs to the Incan-planned lifted function.
 
+use crate::ast_build::ident as identifier;
 use crate::error::PlanError;
 use crate::plan::{Callee, CalleeKind, Function, PlanType, TerminatorKind};
 use crate::{callees, declarations};
@@ -13,7 +14,7 @@ use rustc_hir::def_id::LocalDefId;
 use rustc_index::IndexVec;
 use rustc_middle::ty::TyCtxt;
 use rustc_middle::{mir, ty};
-use rustc_span::{Ident, Span, Spanned, Symbol};
+use rustc_span::{Span, Spanned};
 use thin_vec::{ThinVec, thin_vec};
 
 /// Identify a reusable or consuming closure constructor, returning the lifted function and its capture count.
@@ -40,11 +41,6 @@ fn expression(kind: ast::ExprKind, span: Span) -> Box<ast::Expr> {
     })
 }
 
-/// Name an injected parameter or path segment without parsing source text.
-fn identifier(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
-}
-
 /// Create an AST block without source tokens.
 fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
     Box::new(ast::Block {
@@ -63,7 +59,9 @@ fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
 /// replaces its MIR. Preflight proves the constructor's object kind and exact capture parameters.
 pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Block>> {
     constructor(function)?;
-    let (PlanType::Closure(signature) | PlanType::ClosureOnce(signature)) = &function.return_type else {
+    let (PlanType::Closure(signature) | PlanType::ClosureOnce(signature) | PlanType::NativeClosure(signature, _, _)) =
+        &function.return_type
+    else {
         return None;
     };
     let consumes_environment = matches!(function.return_type, PlanType::ClosureOnce(_));

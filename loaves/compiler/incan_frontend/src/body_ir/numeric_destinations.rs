@@ -53,11 +53,11 @@ pub(super) fn collection_numeric_destination(source: &IncanType, collection: &In
 }
 
 impl BodyBuilder<'_, '_> {
-    /// Evaluate a boundary value once and retain a numeric conversion selected by its checked destination.
+    /// Evaluate a boundary value once, applying retained native adapters before its checked numeric destination.
     ///
-    /// Explicit conversion decisions precede ordinary lossless destination adaptation. Destination types belong to
-    /// bindings and callable slots; otherwise the recorded value destination covers field writes and constructor
-    /// fields. Expressions without either fact retain their existing operand.
+    /// Native adapter and explicit numeric decisions precede ordinary lossless destination adaptation. Destination
+    /// types belong to bindings and callable slots; otherwise the recorded value destination covers field writes
+    /// and constructor fields. Expressions without either fact retain their existing operand.
     pub(super) fn lower_boundary_value(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -65,15 +65,18 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let operand = self.lower_expr_to_operand(expr, scope, out);
-        if let Some(destination) = self
+        let operand = match self.lower_adjusted_argument(expr, scope, out) {
+            Some(Ok(operand)) => operand,
+            Some(Err(reason)) => return self.unsupported_operand(reason, scope, hir_span(expr.span), out),
+            None => self.lower_expr_to_operand(expr, scope, out),
+        };
+        if self
             .type_info
             .expressions
             .numeric_conversion_destinations
-            .get(&(expr.span.start, expr.span.end))
+            .contains_key(&expr.span)
         {
-            let destination = self.checked_type(destination);
-            return self.push_assign_temp(bir::Rvalue::Use(operand), destination, scope, hir_span(expr.span), out);
+            return self.retain_checked_numeric_result(operand, expr.span, scope, out);
         }
         let recorded = self
             .type_info
@@ -83,6 +86,25 @@ impl BodyBuilder<'_, '_> {
             Some(destination) => self.retain_numeric_destination(expr, operand, destination, scope, out),
             None => operand,
         }
+    }
+
+    /// Apply an explicitly selected numeric result conversion once, including a native length's usize-to-int edge.
+    /// Reading the retained temporary type prevents an enclosing assignment from repeating the same conversion.
+    pub(super) fn retain_checked_numeric_result(
+        &mut self,
+        operand: bir::Operand,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let Some(destination) = self.type_info.expressions.numeric_conversion_destinations.get(&span) else {
+            return operand;
+        };
+        let destination = self.checked_type(destination);
+        if self.retained_operand_type(&operand).as_ref() == Some(&destination) {
+            return operand;
+        }
+        self.push_assign_temp(bir::Rvalue::Use(operand), destination, scope, hir_span(span), out)
     }
 
     /// Give an accepted numeric value its checked destination or selected primitive union-member storage before
@@ -125,7 +147,7 @@ impl BodyBuilder<'_, '_> {
         let (IncanType::Named(name) | IncanType::Generic { base: name, .. }) = ty else {
             return false;
         };
-        name.starts_with("__incan_carrier_")
+        name.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX)
             || self
                 .type_info
                 .declarations

@@ -1,211 +1,121 @@
-#!/bin/bash
-
-# Incan Benchmark Suite
-# Compares Incan, Rust, and Python performance
-
-set -e
+#!/usr/bin/env bash
+# Measure installed Incan, its pinned Rust compiler, and Python on identical workloads.
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-RESULTS_DIR="$SCRIPT_DIR/results"
-RESULTS_FILE="$RESULTS_DIR/results.md"
-
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-echo -e "${BLUE}=== Incan Benchmark Suite ===${NC}"
-echo ""
-
-# Check for hyperfine
-if ! command -v hyperfine &> /dev/null; then
-    echo -e "${YELLOW}Warning: hyperfine not found. Install with: brew install hyperfine${NC}"
-    echo "Falling back to basic timing..."
-    USE_HYPERFINE=false
-else
-    USE_HYPERFINE=true
-fi
-
-# Build Incan compiler in release mode
-echo -e "${GREEN}Building Incan compiler...${NC}"
-cd "$PROJECT_ROOT"
-cargo build --release --quiet
-INCAN="$PROJECT_ROOT/target/release/incan"
-
-# Initialize results file
+source "$SCRIPT_DIR/toolchain.sh"
+benchmark_toolchain
+for tool in hyperfine jq python3; do
+    command -v "$tool" >/dev/null || { echo "Required tool missing: $tool" >&2; exit 2; }
+done
+RUNS="${RUNS:-10}"
+[[ "$RUNS" =~ ^[0-9]+$ && "$RUNS" -ge 10 ]] || { echo 'RUNS must be at least 10' >&2; exit 2; }
+RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR/results}"
 mkdir -p "$RESULTS_DIR"
-echo "# Benchmark Results" > "$RESULTS_FILE"
-echo "" >> "$RESULTS_FILE"
-echo "Generated: $(date)" >> "$RESULTS_FILE"
-echo "" >> "$RESULTS_FILE"
-echo "| Benchmark | Incan | Rust | Python | Incan vs Python |" >> "$RESULTS_FILE"
-echo "|-----------|-------|------|--------|-----------------|" >> "$RESULTS_FILE"
+ARTIFACTS="$(mktemp -d "${BENCH_SCRATCH:-$SCRIPT_DIR/target}/run.XXXXXX")"
+RESULTS_FILE="$RESULTS_DIR/results.md"
+BUILD_FILE="$RESULTS_DIR/build_times.md"
+failures=0
 
-# Function to run a single benchmark
-run_benchmark() {
-    local name=$1
-    local dir=$2
-    local basename=$3
-    local skip_rust="${SKIP_RUST:-false}"
-    local skip_python="${SKIP_PYTHON:-false}"
-    local incan_only="${INCAN_ONLY:-false}"
-    local build_only="${BUILD_ONLY:-false}"
-    
-    echo -e "${GREEN}Running: $name${NC}"
-    cd "$dir"
-    
-    if [ "$incan_only" = true ]; then
-        skip_rust=true
-        skip_python=true
-    fi
-
-    # Build Incan version (use absolute path so target goes to project root)
-    echo "  Building Incan..."
-    cd "$PROJECT_ROOT"
-    if ! $INCAN build "$dir/$basename.incn" 2>"/tmp/incan_build_${basename}.log"; then
-        echo "  Failed to build Incan version"
-        echo "  ---- compiler output ----"
-        sed -n '1,200p' "/tmp/incan_build_${basename}.log" || true
-        echo "  -------------------------"
-        return 1
-    fi
-    cd "$dir"
-    # An Oven build writes the executable beside its generated project (`<project>/oven/release/<name>`); the
-    # Cargo-routed path keeps the older shared layout (`target/incan/.cargo-target/release/<name>`). Both are
-    # legitimate outcomes depending on how the project's dependencies resolve, so locate the binary rather than
-    # assuming one layout -- assuming the Cargo layout is what silently broke this harness when Oven became the
-    # default build path.
-    local incan_bin=""
-    for candidate in \
-        "$dir/target/incan/$basename/oven/release/$basename" \
-        "$PROJECT_ROOT/target/incan/$basename/oven/release/$basename" \
-        "$PROJECT_ROOT/target/incan/.cargo-target/release/$basename"
-    do
-        if [ -x "$candidate" ]; then
-            incan_bin="$candidate"
-            break
-        fi
-    done
-    if [ -z "$incan_bin" ]; then
-        incan_bin="$(find "$dir/target" "$PROJECT_ROOT/target/incan" -type f -perm -111 -name "$basename" \
-            -not -path '*/deps/*' -not -path '*/build/*' 2>/dev/null | head -1)"
-    fi
-    if [ -z "$incan_bin" ]; then
-        echo "  Failed to locate the Incan binary for $basename"
-        return 1
-    fi
-    cp "$incan_bin" "${basename}_incan" || {
-        echo "  Failed to copy Incan binary from $incan_bin"
-        return 1
-    }
-    
-    # Build Rust version
-    if [ "$skip_rust" != true ]; then
-        echo "  Building Rust..."
-        rustc -O "$basename.rs" -o "${basename}_rust" 2>/dev/null || {
-            echo "  Failed to build Rust version"
-            return 1
-        }
-    fi
-
-    if [ "$build_only" = true ]; then
-        rm -f "${basename}_incan" "${basename}_rust" 2>/dev/null || true
-        echo ""
-        return 0
-    fi
-    
-    if [ "$USE_HYPERFINE" = true ]; then
-        # Run with hyperfine
-        echo "  Benchmarking..."
-        if [ "$skip_python" = true ] && [ "$skip_rust" = true ]; then
-            hyperfine --warmup 2 --min-runs 5 \
-                "./${basename}_incan" \
-                --export-json "/tmp/bench_${basename}.json"
-        elif [ "$skip_python" = true ]; then
-            hyperfine --warmup 2 --min-runs 5 \
-                "./${basename}_incan" \
-                "./${basename}_rust" \
-                --export-json "/tmp/bench_${basename}.json"
-        elif [ "$skip_rust" = true ]; then
-            hyperfine --warmup 2 --min-runs 5 \
-                "./${basename}_incan" \
-                "python3 $basename.py" \
-                --export-json "/tmp/bench_${basename}.json"
-        else
-            hyperfine --warmup 2 --min-runs 5 \
-                "./${basename}_incan" \
-                "./${basename}_rust" \
-                "python3 $basename.py" \
-                --export-json "/tmp/bench_${basename}.json"
-        fi
-        
-        # Extract times
-        INCAN_TIME=$(jq -r '.results[0].mean * 1000 | floor' "/tmp/bench_${basename}.json")
-        RUST_TIME="-"
-        PYTHON_TIME="-"
-        if [ "$skip_python" != true ] && [ "$skip_rust" != true ]; then
-            RUST_TIME=$(jq -r '.results[1].mean * 1000 | floor' "/tmp/bench_${basename}.json")
-            PYTHON_TIME=$(jq -r '.results[2].mean * 1000 | floor' "/tmp/bench_${basename}.json")
-        elif [ "$skip_python" = true ] && [ "$skip_rust" != true ]; then
-            RUST_TIME=$(jq -r '.results[1].mean * 1000 | floor' "/tmp/bench_${basename}.json")
-        elif [ "$skip_rust" = true ] && [ "$skip_python" != true ]; then
-            PYTHON_TIME=$(jq -r '.results[1].mean * 1000 | floor' "/tmp/bench_${basename}.json")
-        fi
-        
-        # Calculate speedup
-        if [ "$PYTHON_TIME" != "-" ] && [ "$PYTHON_TIME" -gt 0 ] && [ "$INCAN_TIME" -gt 0 ]; then
-            SPEEDUP=$(echo "scale=1; $PYTHON_TIME / $INCAN_TIME" | bc)
-            SPEEDUP_STR="${SPEEDUP}x faster"
-        else
-            SPEEDUP_STR="N/A"
-        fi
-        
-        echo "| $name | ${INCAN_TIME}ms | ${RUST_TIME}ms | ${PYTHON_TIME}ms | $SPEEDUP_STR |" >> "$RESULTS_FILE"
-    else
-        # Fallback: simple timing
-        echo "  Running Incan..."
-        INCAN_TIME=$( { time ./"${basename}_incan" > /dev/null; } 2>&1 | grep real | awk '{print $2}' )
-        
-        RUST_TIME="-"
-        if [ "$skip_rust" != true ]; then
-            echo "  Running Rust..."
-            RUST_TIME=$( { time ./"${basename}_rust" > /dev/null; } 2>&1 | grep real | awk '{print $2}' )
-        fi
-        
-        PYTHON_TIME="-"
-        if [ "$skip_python" != true ]; then
-            echo "  Running Python..."
-            PYTHON_TIME=$( { time python3 "$basename.py" > /dev/null; } 2>&1 | grep real | awk '{print $2}' )
-        fi
-        
-        echo "| $name | $INCAN_TIME | $RUST_TIME | $PYTHON_TIME | - |" >> "$RESULTS_FILE"
-    fi
-    
-    # Cleanup binaries
-    rm -f "${basename}_incan" "${basename}_rust"
-    
-    echo ""
+write_identity() {
+    printf 'Measured: %s\n\nCommit: `%s`\n\n' "$(date -u +%FT%TZ)" "$(git -C "$SCRIPT_DIR" rev-parse HEAD)"
+    printf 'Toolchain: `%s`; driver SHA-256: `%s`.\n\n' "$TOOLCHAIN_NAME" "$(shasum -a 256 "$DRIVER" | cut -d ' ' -f1)"
+    printf 'Rust: `%s`; Python: `%s`; host: `%s`.\n\n' "$("$PINNED_RUSTC" --version)" "$(python3 --version)" "$(uname -sm)"
+    printf 'Raw evidence directory: `%s` under `BENCH_SCRATCH` (default `workspaces/benchmarks/target`).\n\n' "${ARTIFACTS##*/}"
 }
 
-# Run all benchmarks
-echo ""
-echo -e "${BLUE}=== Compute Benchmarks ===${NC}"
-run_benchmark "Fibonacci (1M)" "$SCRIPT_DIR/compute/fib" "fib"
-run_benchmark "Collatz (1M)" "$SCRIPT_DIR/compute/collatz" "collatz"
-run_benchmark "GCD (10M)" "$SCRIPT_DIR/compute/gcd" "gcd"
-run_benchmark "Mandelbrot (2K)" "$SCRIPT_DIR/compute/mandelbrot" "mandelbrot"
-run_benchmark "N-Body (500K)" "$SCRIPT_DIR/compute/nbody" "nbody"
-run_benchmark "Prime Sieve (50M)" "$SCRIPT_DIR/compute/primes" "primes"
+{
+    echo '# Benchmark results'
+    echo
+    write_identity
+    echo 'Hyperfine: two warmups, at least ten measured runs, shell disabled. Times are means in milliseconds.'
+    echo 'August values are the 0.5 measurements from 2026-08-21; they are historical comparisons on a different toolchain.'
+    echo
+    echo '| Benchmark | dev.8 ms | August Incan ms | Rust ms | Python ms | Output | Performance flags |'
+    echo '| --- | ---: | ---: | ---: | ---: | --- | --- |'
+} > "$RESULTS_FILE"
+{
+    echo '# Incan build times'
+    echo
+    write_identity
+    echo 'Cold means one release build in a fresh project with installed dependencies already available. Warm is an unchanged second build. Both include CLI startup; neither measures installing a toolchain or flushing OS caches.'
+    echo
+    echo '| Benchmark | Cold ms | Warm ms | Status |'
+    echo '| --- | ---: | ---: | --- |'
+} > "$BUILD_FILE"
 
-echo ""
-echo -e "${BLUE}=== Sorting Benchmarks ===${NC}"
-run_benchmark "Quicksort (1M)" "$SCRIPT_DIR/sorting/quicksort" "quicksort"
-run_benchmark "Mergesort (1M)" "$SCRIPT_DIR/sorting/mergesort" "mergesort"
+mean_ms() {
+    jq -r --argjson index "$2" '.results[$index].mean * 1000 | . * 100 | round / 100' "$1"
+}
 
-echo ""
-echo -e "${GREEN}=== Results ===${NC}"
+run_benchmark() {
+    local area=$1 name=$2 august=$3
+    local source="$SCRIPT_DIR/$area/$name" project="$ARTIFACTS/$name"
+    local cold warm status=verified incan_time=refused flags=none
+    mkdir -p "$project/src"
+    cp "$source/$name.incn" "$project/src/main.incn"
+    printf '[project]\nname = "%s"\nversion = "0.1.0"\n\n[project.scripts]\n%s = "src/main.incn"\n' "$name" "$name" > "$project/loaf.toml"
+    uptime > "$project/build-load.txt"
+    echo "Building $name"
+    if /usr/bin/time -p "$INCAN" build "$project/src/main.incn" --profile release > "$project/cold.log" 2> "$project/cold.time"; then
+        /usr/bin/time -p "$INCAN" build "$project/src/main.incn" --profile release > "$project/warm.log" 2> "$project/warm.time"
+        cold=$(awk '$1 == "real" {print $2 * 1000}' "$project/cold.time")
+        warm=$(awk '$1 == "real" {print $2 * 1000}' "$project/warm.time")
+    else
+        status='build refused'
+        cold=refused
+        warm=unmeasured
+        failures=$((failures + 1))
+        tail -8 "$project/cold.time"
+    fi
+    printf '| %s | %s | %s | %s |\n' "$name" "$cold" "$warm" "$status" >> "$BUILD_FILE"
+    "$PINNED_RUSTC" --edition 2024 -C opt-level=3 "$source/$name.rs" -o "$project/rust"
+    "$project/rust" > "$project/rust.stdout"
+    python3 "$source/$name.py" > "$project/python.stdout"
+    if ! cmp -s "$project/rust.stdout" "$project/python.stdout"; then
+        status='Rust/Python mismatch'
+        failures=$((failures + 1))
+    fi
+    local binary="$project/target/incan/release/bin/$name"
+    local commands=("\"$project/rust\"" "python3 \"$source/$name.py\"")
+    if [[ -x "$binary" ]]; then
+        if ! "$binary" > "$project/incan.stdout" 2> "$project/incan.stderr"; then
+            status='Incan execution failed'
+            failures=$((failures + 1))
+        elif ! cmp -s "$project/incan.stdout" "$project/rust.stdout"; then
+            status='Incan output mismatch'
+            failures=$((failures + 1))
+        fi
+        if [[ "$status" == verified ]]; then
+            commands=("\"$binary\"" "${commands[@]}")
+        fi
+    elif [[ "$status" == verified ]]; then
+        status='missing Incan executable'
+        failures=$((failures + 1))
+    fi
+    uptime > "$project/measurement-load.txt"
+    hyperfine --shell=none --warmup 2 --runs "$RUNS" --export-json "$project/times.json" "${commands[@]}" > "$project/hyperfine.log" 2>&1
+    local rust_index=0
+    if [[ "$status" == verified ]]; then
+        incan_time=$(mean_ms "$project/times.json" 0)
+        rust_index=1
+    fi
+    local rust_time python_time
+    rust_time=$(mean_ms "$project/times.json" "$rust_index")
+    python_time=$(mean_ms "$project/times.json" "$((rust_index + 1))")
+    if [[ "$status" == verified ]]; then
+        flags=$(jq -nr --argjson incan "$incan_time" --argjson rust "$rust_time" --argjson old "$august" \
+            '[if $incan > $old * 1.1 then ">10% August" else empty end, if $incan > $rust * 1.25 then ">25% Rust" else empty end] | if length == 0 then "none" else join(", ") end')
+    fi
+    printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$name" "$incan_time" "$august" "$rust_time" "$python_time" "$status" "$flags" >> "$RESULTS_FILE"
+}
+
+# Optional names select a smaller measurement loop without changing the workload.
+for row in 'compute fib 3' 'compute collatz 94' 'compute gcd 92' 'compute mandelbrot 113' 'compute nbody 20' 'compute primes 141' 'sorting quicksort 56' 'sorting mergesort 83'; do
+    read -r area name august <<< "$row"
+    if [[ $# -eq 0 || " $* " == *" $name "* ]]; then
+        run_benchmark "$area" "$name" "$august"
+    fi
+done
 cat "$RESULTS_FILE"
-echo ""
-echo -e "${GREEN}Results saved to: $RESULTS_FILE${NC}"
+[[ "$failures" -eq 0 ]]

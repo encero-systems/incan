@@ -420,7 +420,7 @@ pub struct Param {
 ///
 /// Rest parameters use the annotated element/value type at the source level, but downstream semantic layers bind the
 /// local variable as the explicit container type described by RFC 038.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ParamKind {
     /// Ordinary fixed-arity parameter: `name: T`.
     Normal,

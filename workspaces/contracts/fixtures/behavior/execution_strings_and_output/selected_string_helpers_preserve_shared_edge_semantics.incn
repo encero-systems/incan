@@ -1,4 +1,4 @@
-# behavior: Unicode case conversion and stripping, overlapping and empty replacements, joining and splitting preserve their edge semantics
+# behavior: Runtime and frozen string helpers preserve Unicode semantics and sliced-list arguments (#2256)
 # expect-stdout:
 #   STRASSE
 #   héllo
@@ -9,7 +9,13 @@
 #   |é|
 #   a||b|
 
-"""Selected string helpers preserve shared edge semantics."""
+"""Observe checked string helpers with runtime text, frozen text and sliced list arguments."""
+
+# A constant annotated as str still has the frozen receiver that fixture templates use.
+const TEMPLATE: str = "name = {name}"
+const FROZEN: FrozenStr = "é"
+
+
 def result() -> str:
     """Return the fixture expression `"Straße".upper()`."""
     return "Straße".upper()
@@ -51,7 +57,7 @@ def split_repeated() -> str:
 
 
 def main() -> None:
-    """Print the fixture values in the expected order."""
+    """Print the existing string observations, then check frozen receivers and sliced arguments."""
     println(result())
     println(lower_text())
     println(stripped())
@@ -60,3 +66,26 @@ def main() -> None:
     println(joined())
     println(split_empty())
     println(split_repeated())
+    frozen_helpers()
+    sliced_join()
+
+
+def frozen_helpers() -> None:
+    """Retain selected string helpers on frozen receivers, including constant template replacement."""
+    assert TEMPLATE.replace("{name}", "case") == "name = case"
+    assert FROZEN.upper() == "É"
+    assert FROZEN.lower() == "é"
+    assert FROZEN.strip() == "é"
+    assert FROZEN.replace("", "-") == "-é-"
+    assert FROZEN.join(["a", "b"]) == "aéb"
+    assert FROZEN.split("") == ["", "é", ""]
+    assert FROZEN.contains("é")
+    assert FROZEN.len() == 1
+
+
+def sliced_join() -> None:
+    """Borrow copied slices once for joining while keeping their source list readable."""
+    parts = ["first", "second", "third"]
+    assert ":".join(parts[1:]) == "second:third"
+    assert ":".join(parts[::-1]) == "third:second:first"
+    assert parts == ["first", "second", "third"]

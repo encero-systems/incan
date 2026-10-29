@@ -147,8 +147,7 @@ fn is_exported_type(
 ) -> bool {
     exported_types.iter().any(|identity| {
         identity.kind == kind
-            && identity.declaration_span.start == anchor.span.start
-            && identity.declaration_span.end == anchor.span.end
+            && identity.declaration_span == anchor.span
             && matches!(
                 &identity.origin,
                 incan_semantics_core::SymbolOrigin::Package { library, module_path: path }
@@ -185,48 +184,123 @@ fn add_public_fields(fields: &[FieldExport], identities: &mut BTreeSet<Canonical
 
 #[cfg(test)]
 mod tests {
-    use super::executable_surface_path;
-    use crate::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
-    use std::path::Path;
+    use super::public_executable_identities;
+    use crate::library_manifest::{
+        CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FieldExport,
+        FieldVisibilityExport, LibraryManifest, ModelExport, TypeRef,
+    };
+    use incan_semantics_core::{
+        CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+    };
 
-    /// Linking-only packages never invent a semantic artifact path.
+    /// Linking-only packages never invent executable members from their package name.
     #[test]
-    fn no_representation_is_a_valid_absence() {
-        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &LibraryManifest::new("pkg", "1.0")).is_none());
+    fn no_exports_is_a_valid_empty_surface() {
+        assert!(public_executable_identities(&LibraryManifest::new("pkg", "1.0")).is_empty());
     }
 
-    /// Only the declared content identity selects the sidecar; arbitrary manifest paths cannot escape the root.
+    /// Published canonical identity admits an export; public and source spellings cannot manufacture one.
     #[test]
-    fn a_manifest_selects_a_safe_immutable_sidecar() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_manifest_selects_only_authenticated_export_identities() -> Result<(), Box<dyn std::error::Error>> {
         let mut manifest = LibraryManifest::new("pkg", "1.0");
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: 2,
-            content_digest: "a".repeat(64),
-        });
+        let mut export = ExportIdentity {
+            public_name: "alias".into(),
+            public_path: vec!["pkg".into(), "alias".into()],
+            source_path: vec!["different".into(), "spelling".into()],
+            kind: ExportIdentityKind::Function,
+            projection: ExportIdentityProjection::Direct,
+            canonical: None,
+        };
+        manifest.contract_metadata.identity_graph.exports.push(export.clone());
+        assert!(public_executable_identities(&manifest).is_empty());
+        let canonical = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "pkg".into(),
+                module_path: vec!["implementation".into()],
+            },
+            declaration_name: "function".into(),
+            kind: SemanticSourceTargetKind::Function,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(1, 2),
+        };
+        export.canonical = Some(CanonicalIdentityExport::from_canonical("pkg", &canonical).ok_or("identity missing")?);
+        manifest.contract_metadata.identity_graph.exports.push(export);
         assert_eq!(
-            executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).ok_or("path missing")?,
-            Path::new("/pkg/semantic").join(format!("{}.incnsem", "a".repeat(64)))
+            public_executable_identities(&manifest),
+            [canonical.clone()].into_iter().collect()
         );
-        // A short value is rejected by the length check before the charset guard ever runs, so it proves only
-        // half the contract. Both halves need a case: a wrong-length digest, and a right-length one whose bytes
-        // are not hex -- including a separator, which is the shape that would actually escape the root.
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: 2,
-            content_digest: "../escape".into(),
+
+        let owner = published_identity("Value", SemanticSourceTargetKind::Model, 10)?;
+        let visible = published_identity("Value.visible", SemanticSourceTargetKind::Field, 20)?;
+        let private = published_identity("Value.secret", SemanticSourceTargetKind::Field, 30)?;
+        let expected = [
+            canonical,
+            owner.hydrate().ok_or("owner identity missing")?,
+            visible.hydrate().ok_or("public field identity missing")?,
+        ]
+        .into_iter()
+        .collect();
+        manifest.contract_metadata.identity_graph.exports.push(ExportIdentity {
+            public_name: "Value".into(),
+            public_path: vec!["Value".into()],
+            source_path: vec!["main".into(), "Value".into()],
+            kind: ExportIdentityKind::Model,
+            projection: ExportIdentityProjection::Direct,
+            canonical: Some(owner),
         });
-        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: 2,
-            content_digest: "g".repeat(64),
+        manifest.exports.models.push(ModelExport {
+            name: "Value".into(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            derives: Vec::new(),
+            fields: vec![
+                field("visible", Some(visible), FieldVisibilityExport::Public),
+                field("secret", Some(private), FieldVisibilityExport::Private),
+                field("unproven", None, FieldVisibilityExport::Public),
+            ],
+            properties: Vec::new(),
+            methods: Vec::new(),
         });
-        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
-        let mut traversal = "a".repeat(61);
-        traversal.push_str("/..");
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: 2,
-            content_digest: traversal,
-        });
-        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
+        assert_eq!(public_executable_identities(&manifest), expected);
         Ok(())
+    }
+
+    /// Project a source declaration fixture into the package identity domain used by manifest consumers.
+    fn published_identity(
+        name: &str,
+        kind: SemanticSourceTargetKind,
+        start: usize,
+    ) -> Result<CanonicalIdentityExport, &'static str> {
+        let member = matches!(kind, SemanticSourceTargetKind::Field);
+        let mut identity = CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            name,
+            kind,
+            HirSourceSpan::new(start, start + 5),
+        );
+        if member {
+            identity.namespace = SymbolNamespace::Member;
+        }
+        CanonicalIdentityExport::from_canonical("pkg", &identity).ok_or("fixture identity cannot be published")
+    }
+
+    /// Retain a field's explicit publication proof and visibility independently of its source spelling.
+    fn field(name: &str, canonical: Option<CanonicalIdentityExport>, visibility: FieldVisibilityExport) -> FieldExport {
+        FieldExport {
+            name: name.into(),
+            canonical,
+            visibility,
+            ty: TypeRef::Named {
+                name: "int".into(),
+                origin: None,
+            },
+            surface_type_name: None,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        }
     }
 }

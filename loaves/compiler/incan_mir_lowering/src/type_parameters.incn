@@ -4,12 +4,34 @@ from rust::incan_semantics_core import (
     IncanCallableParam as RustCallableParam,
     IncanType as RustType,
     SemanticSourceTargetKind,
+    SymbolOrigin,
+    CanonicalSymbolId,
     function_type,
     generic,
     native_array_type,
 )
-from rust::incan_semantics_core::body_ir import Body, LocalId as RustLocalId
+from rust::incan_semantics_core::body_ir import (
+    Body,
+    BodyIrModule,
+    NamedCallableTarget,
+    LocalId as RustLocalId,
+    LocalDecl,
+    nominal_carrier_key,
+    TraitDefaultInstantiation,
+)
+from rust::std::collections import BTreeMap, VecDeque
 from symbols import type_component
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from table_views import borrowed_at
+from native_type_identity import OWNED_CALLABLE_STORAGE
+
+# The refusal for a placeholder no binder of the instantiated frame closes; callers that may leave owner placeholders
+# open recognize their skip by this prefix.
+pub const UNBOUND_TYPE_PARAMETER: str = "unsupported Body IR unbound type parameter"
+
+
+# Canonical declaration, closed arguments, owned callable slots and execution role form the exact queue key.
+type InstanceKey = tuple[Option[CanonicalSymbolId], list[RustType], list[int], bool]
 
 
 pub model Instance:
@@ -22,14 +44,132 @@ pub model Instance:
     pub original_callable: bool
 
 
+pub model InstanceQueue:
+    """Drain executable requests while retaining only their exact checked equivalence shapes after processing."""
+
+    pub pending: VecDeque[Instance]
+    pub seen: BTreeMap[InstanceKey, list[list[LocalDecl]]]
+
+    def add(mut self, request: Instance) -> None:
+        """Preserve the first request with the same canonical arguments, local declarations, storage and role."""
+        key = (request.body.canonical, request.arguments, request.owned_callable_slots, request.original_callable)
+        match self.seen.get(key):
+            Some(shapes) =>
+                for shape in shapes:
+                    if shape == request.body.locals:
+                        return
+            None => pass
+        self.seen.entry(key).or_insert([]).push(list(request.body.locals))
+        self.pending.push_back(request)
+
+
+pub def instance_queue() -> InstanceQueue:
+    """Start an empty executable queue and its structured, body-free seen inventory."""
+    pending: VecDeque[Instance] = VecDeque.new()
+    seen: BTreeMap[InstanceKey, list[list[LocalDecl]]] = BTreeMap.new()
+    return InstanceQueue(pending=pending, seen=seen)
+
+
+pub def enqueue_instances(mut queue: InstanceQueue, mut additions: list[Instance]) -> None:
+    """Move a producer's requests into the shared queue in source order, leaving its body-owning list empty."""
+    mut ordered: VecDeque[Instance] = VecDeque.new()
+    while len(additions) != 0:
+        ordered.push_front(additions.pop())
+    while let Some(request) = ordered.pop_front():
+        queue.add(request)
+
+
+pub def request_instance(
+    mut instances: list[Instance],
+    body: &Body,
+    arguments: list[RustType],
+    owned_callable_slots: list[int],
+    original_callable: bool,
+) -> None:
+    """Queue a checked frame: 1. Compare its retained identity and storage. 2. Copy its body only for a new request."""
+    # 1. Preserve the first request with the same checked declaration, arguments, locals and execution role.
+    for position in range(len(instances)):
+        retained = borrowed_at(instances, position)
+        if instance_matches(retained, body, arguments, owned_callable_slots, original_callable):
+            return
+    # 2. Only a new request owns another copy of its typed template.
+    instances.append(
+        Instance(
+            body=body.clone(),
+            arguments=arguments,
+            owned_callable_slots=owned_callable_slots,
+            original_callable=original_callable,
+        ),
+    )
+
+
+pub def merge_instance_requests(mut instances: list[Instance], additions: &list[Instance]) -> None:
+    """Merge independent request lists in first-occurrence order, retaining each checked frame once."""
+    for position in range(len(additions)):
+        added = borrowed_at(additions, position)
+        request_instance(instances, added.body, added.arguments, added.owned_callable_slots, added.original_callable)
+
+
+def instance_matches(
+    retained: &Instance,
+    body: &Body,
+    arguments: list[RustType],
+    owned_callable_slots: list[int],
+    original_callable: bool,
+) -> bool:
+    """Use the completed-frame equivalence before allocation; emitted names never establish identity."""
+    return (
+        retained.body.canonical == body.canonical
+        and retained.arguments == arguments
+        and retained.body.locals == body.locals
+        and retained.owned_callable_slots == owned_callable_slots
+        and retained.original_callable == original_callable
+    )
+
+
+pub def static_type_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
+    """
+    Return an associated call's checked owner arguments followed by its method arguments.
+
+    1. Validate and retain the receiver's owner arguments.
+    2. Append the method's checked arguments in declaration order.
+    """
+    # 1. Validate and retain the receiver's owner arguments.
+    mut arguments = static_owner_arguments(module, target)?
+    # 2. Append the method's checked arguments in declaration order.
+    for argument in target.type_args:
+        arguments.append(argument.clone())
+    return Ok(arguments)
+
+
+def static_owner_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
+    """Read an applied receiver only when its retained canonical template confirms the owner and arity."""
+    match target.receiver_type:
+        Some(ty) =>
+            match ty:
+                RustType.Generic(base=base, args=owner_arguments) =>
+                    for declaration in module.nominal_declarations:
+                        if declaration.template_carrier_name() != str(base):
+                            continue
+                        if len(declaration.type_parameters) != len(owner_arguments):
+                            return Err(f"unsupported Body IR static owner type argument arity on {base}")
+                        mut arguments: list[RustType] = []
+                        for argument in owner_arguments:
+                            arguments.append(argument.clone())
+                        return Ok(arguments)
+                    return Err(f"unsupported Body IR static receiver {base}")
+                _ => return Ok([])
+        None => return Ok([])
+
+
 pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -> Result[RustType, str]:
-    """Substitute declared placeholders through structural types and references without inferring bindings from operands or source spelling."""
+    """Close structural types and references with declared arguments; names never infer new type bindings."""
     match ty:
         RustType.TypeVar(name) =>
             for index in range(len(names)):
                 if names[index] == str(name):
                     return Ok(arguments[index].clone())
-            return Err(f"unsupported Body IR unbound type parameter {name}")
+            return Err(f"{UNBOUND_TYPE_PARAMETER} {name} in binding scope {names}")
         RustType.Named(name) =>
             # A named declaration is not a placeholder, even when its spelling matches a type parameter.
             return Ok(ty.clone())
@@ -68,26 +208,67 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
         _ => return Ok(ty.clone())
 
 
+pub def close_trait_environment(
+    environment: Option[TraitDefaultInstantiation],
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[Option[TraitDefaultInstantiation], str]:
+    """
+    Close a derived default scope with the same owner or method instance as its frame.
+
+    1. Preserve the absence of a default scope.
+    2. Substitute instance arguments through the receiver and trait bindings.
+    """
+    # 1. Ordinary source bodies have no derived trait scope.
+    match environment:
+        None => return Ok(None)
+        Some(retained) =>
+            # 2. Close the complete retained scope without merging its binders into method binders.
+            mut closed = retained.clone()
+            receiver: RustType = substitute(retained.receiver_type, names, arguments).map_err(
+                (reason) => f"{reason} in trait-default receiver",
+            )?
+            closed.receiver_type = receiver
+            for index in range(len(closed.arguments)):
+                argument: RustType = substitute(closed.arguments[index].argument, names, arguments).map_err(
+                    (reason) => f"{reason} in trait-default argument",
+                )?
+                closed.arguments[index].argument = argument
+            return Ok(Some(closed))
+
+
 pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots: list[int]) -> Result[Body, str]:
     """Close checked types and preserve the value ABI of captured callables passed to original generic parameters."""
     names = body.type_parameters.clone()
     match body.canonical:
         Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method and identity.kind != SemanticSourceTargetKind.Property:
+            if (
+                identity.kind != SemanticSourceTargetKind.Function
+                and identity.kind != SemanticSourceTargetKind.Method
+                and identity.kind != SemanticSourceTargetKind.Property
+            ):
                 return Err("unsupported Body IR declaration with type parameters")
         None => return Err("unsupported Body IR unproven declaration with type parameters")
     if len(names) != len(arguments):
         return Err(f"unsupported Body IR type argument arity on {body.name}")
-    mut result = retain_owned_callable_storage(body, owned_callable_slots)?
+    storage = callable_storage_arguments(body, arguments, owned_callable_slots)?
+    mut result = retain_owned_callable_storage(body, owned_callable_slots, storage)?
+    result.trait_default_instantiation = close_trait_environment(body.trait_default_instantiation, names, arguments)?
+    body_name = str(body.name)
+    source_owners = source_nominal_owners(body)
     for index in range(len(result.locals)):
-        concrete: RustType = substitute(result.locals[index].ty, names, arguments)?
-        result.locals[index].ty = concrete.clone()
+        concrete: RustType = substitute(result.locals[index].ty, names, storage).map_err(
+            (reason) => f"{reason} in instantiated local of {body_name}",
+        )?
+        result.locals[index].ty = source_nominal_storage(source_owners, concrete)?
     for index in range(len(result.params)):
-        concrete: RustType = substitute(result.params[index].ty, names, arguments)?
-        result.params[index].ty = concrete.clone()
-    concrete: RustType = substitute(result.return_type, names, arguments)?
-    result.return_type = concrete.clone()
-    mut name = str(body.name)
+        concrete: RustType = substitute(result.params[index].ty, names, storage)?
+        result.params[index].ty = source_nominal_storage(source_owners, concrete)?
+        if owns_instantiated_collection(body.params[index].ty, body.params[index].mutable, concrete):
+            result.params[index].native_owned = true
+    concrete: RustType = substitute(result.return_type, names, storage)?
+    result.return_type = source_nominal_storage(source_owners, concrete)?
+    mut name = body_name
     for argument in arguments:
         name += type_component(argument)
     for slot in owned_callable_slots:
@@ -96,9 +277,148 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
     return Ok(result)
 
 
-def retain_owned_callable_storage(original: &Body, slots: list[int]) -> Result[Body, str]:
-    """Return the updated imported body explicitly; retain owners only for verified generic values and their aliases."""
-    mut result = original.clone()
+def owns_instantiated_collection(formal: &RustType, mutable: bool, concrete: &RustType) -> bool:
+    """Keep a generic value's owned ABI after substitution; written collection parameters retain source borrowing."""
+    if mutable:
+        return false
+    match formal:
+        RustType.TypeVar(_name) => pass
+        _ => return false
+    match concrete:
+        RustType.Generic(base=base, args=_arguments) =>
+            match collection_type(str(base)):
+                Some(CollectionTypeId.List | CollectionTypeId.Set | CollectionTypeId.Dict) => return true
+                _ => pass
+        _ => pass
+    return false
+
+
+pub def callable_storage_arguments(
+    body: &Body,
+    arguments: list[RustType],
+    slots: list[int],
+) -> Result[list[RustType], str]:
+    """
+    1. Read selected generic value slots. 2. Preserve their owned ABI throughout nested native arguments.
+
+    The private structural marker carries an existing Body IR representation selection through substitution; it
+    introduces no source type or callable inference. Unselected function types remain function pointers.
+    """
+    # 1. Read selected generic value slots.
+    names = owned_callable_parameters(body, slots)?
+    mut storage: list[RustType] = []
+    # 2. Preserve the owned ABI throughout nested native arguments.
+    for index in range(len(arguments)):
+        if body.type_parameters[index] in names:
+            owned: RustType = owned_callable_argument(arguments[index])?
+            storage.append(owned.clone())
+        else:
+            storage.append(arguments[index].clone())
+    return Ok(storage)
+
+
+def source_nominal_storage(owners: &dict[str, bool], ty: &RustType) -> Result[RustType, str]:
+    """
+    Keep source nominal arguments semantic; their declared generic value fields already retain owning storage.
+
+    A bare callable or a native constructor argument keeps its representation marker. Only the direct arguments
+    of an identity-bound source nominal use the signature type; this does not guess a carrier from its spelling.
+    """
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            source = source_nominal_owner(owners, str(base))
+            mut retained: list[RustType] = []
+            for argument in arguments:
+                value: &RustType = argument
+                match value:
+                    RustType.Generic(base=marker, args=signature) =>
+                        if source and str(marker) == OWNED_CALLABLE_STORAGE and len(signature) == 1:
+                            retained.append(source_nominal_storage(owners, signature[0])?)
+                            continue
+                    _ => pass
+                retained.append(source_nominal_storage(owners, argument)?)
+            return Ok(generic(str(base), retained))
+        RustType.Ref(inner) => return Ok(RustType.Ref(source_nominal_storage(owners, inner)?))
+        RustType.RefMut(inner) => return Ok(RustType.RefMut(source_nominal_storage(owners, inner)?))
+        RustType.TypeToken(inner) => return Ok(RustType.TypeToken(source_nominal_storage(owners, inner)?))
+        RustType.Tuple(elements) =>
+            mut retained: list[RustType] = []
+            for element in elements:
+                retained.append(source_nominal_storage(owners, element)?)
+            return Ok(RustType.Tuple(retained))
+        RustType.NativeArray(element=element, length=length) =>
+            return Ok(native_array_type(source_nominal_storage(owners, element)?, length.clone()))
+        RustType.Function(params=parameters, return_type=result) =>
+            mut retained = parameters.clone()
+            for index in range(len(retained)):
+                concrete: RustType = source_nominal_storage(owners, parameters[index].ty)?
+                retained[index].ty = concrete.clone()
+            return Ok(function_type(retained, source_nominal_storage(owners, result)?))
+        _ => return Ok(ty.clone())
+
+
+def source_nominal_owner(owners: &dict[str, bool], name: str) -> bool:
+    """Read the checked-origin index without cloning its keys or revisiting declaration metadata."""
+    match owners.get(name):
+        Some(value) => return value.clone()
+        None => return false
+
+
+def source_nominal_owners(body: &Body) -> dict[str, bool]:
+    """Index checked source origins once per frame, preserving direct alias precedence over carrier spellings."""
+    mut owners: dict[str, bool] = {}
+    for identity in body.named_type_identities.values():
+        match nominal_carrier_key(identity):
+            Some(key) => owners[str(key)] = source_nominal_identity(identity)
+            None => pass
+    for key, identity in body.named_type_identities.iter():
+        owners[str(key)] = source_nominal_identity(identity)
+    return owners
+
+
+def source_nominal_identity(identity: &CanonicalSymbolId) -> bool:
+    """Separate retained source declarations from native constructors by their canonical origin."""
+    if (
+        identity.kind != SemanticSourceTargetKind.Model
+        and identity.kind != SemanticSourceTargetKind.Class
+        and identity.kind != SemanticSourceTargetKind.Newtype
+        and identity.kind != SemanticSourceTargetKind.Enum
+    ):
+        return false
+    origin: SymbolOrigin = identity.origin
+    match origin:
+        SymbolOrigin.Module(_path) => return true
+        SymbolOrigin.Package(library=_library, module_path=_owner) => return true
+        _ => return false
+
+
+def owned_callable_parameters(body: &Body, slots: list[int]) -> Result[list[str], str]:
+    """Read generic binders only from the validated original value slots that own callable environments."""
+    mut names: list[str] = []
+    for slot in slots:
+        if slot < 0 or slot >= len(body.params):
+            return Err("invalid owned callable storage slot")
+        match body.params[slot].ty:
+            RustType.TypeVar(name) => names.append(str(name))
+            _ => return Err("invalid owned callable storage binder")
+    return Ok(names)
+
+
+def owned_callable_argument(argument: &RustType) -> Result[RustType, str]:
+    """Mark one function signature as owned, retaining an existing marker when a generic call forwards it."""
+    match argument:
+        RustType.Function(params=_parameters, return_type=_result) =>
+            return Ok(generic(OWNED_CALLABLE_STORAGE, [argument.clone()]))
+        RustType.Generic(base=base, args=elements) =>
+            if str(base) == OWNED_CALLABLE_STORAGE and len(elements) == 1:
+                return Ok(argument.clone())
+        _ => pass
+    return Err("invalid owned callable storage argument")
+
+
+def retain_owned_callable_storage(original: &Body, slots: list[int], arguments: list[RustType]) -> Result[Body, str]:
+    """Preserve selected pointer storage and retain environments only for verified generic owners and their aliases."""
+    mut result = retain_pointer_callable_storage(original, arguments)?
     if len(slots) == 0:
         return Ok(result)
     mut names: list[str] = []
@@ -128,6 +448,46 @@ def retain_owned_callable_storage(original: &Body, slots: list[int]) -> Result[B
                 _ => pass
             result.callable_representation = Some(retained)
     return Ok(result)
+
+
+def retain_pointer_callable_storage(original: &Body, arguments: list[RustType]) -> Result[Body, str]:
+    """Keep a checked pointer instantiation concrete; environment-capable source parameters retain their shared ABI."""
+    mut result = original.clone()
+    mut pointers: list[RustLocalId] = []
+    for local in original.locals:
+        if pointer_instantiation(local.ty, original.type_parameters, arguments):
+            pointers.append(local.id)
+    if len(pointers) == 0:
+        return Ok(result)
+    match result.callable_representation:
+        None => return Err("unsupported Body IR generic callable without representation facts")
+        Some(representation) =>
+            mut retained = representation.clone()
+            retained.closure_holding_locals = without_locals(representation.closure_holding_locals, pointers)
+            retained.closure_holding_parameters = without_locals(representation.closure_holding_parameters, pointers)
+            if pointer_instantiation(original.return_type, original.type_parameters, arguments):
+                retained.closure_holding_return = false
+            result.callable_representation = Some(retained)
+    return Ok(result)
+
+
+def pointer_instantiation(ty: &RustType, names: list[str], arguments: list[RustType]) -> bool:
+    """Recognize a generic value's checked pointer argument; an authored callable keeps its environment capability."""
+    match ty:
+        RustType.TypeVar(name) =>
+            for index in range(len(names)):
+                if names[index] != str(name):
+                    continue
+                match arguments[index]:
+                    RustType.Function(params=_parameters, return_type=_result) => return true
+                    _ => return false
+        _ => pass
+    return false
+
+
+def without_locals(locals: &list[RustLocalId], excluded: &list[RustLocalId]) -> list[RustLocalId]:
+    """Keep the original order and identities of slots not selected for pointer storage."""
+    return [local for local in locals if not has_local(excluded, local)]
 
 
 def has_local(locals: &list[RustLocalId], sought: &RustLocalId) -> bool:

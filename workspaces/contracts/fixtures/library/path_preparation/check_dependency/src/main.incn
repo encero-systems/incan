@@ -1,4 +1,4 @@
-# behavior: checking a fresh project rejects a consumer that assigns a path library's integer result to a string
+# behavior: checking a dependency with a custom source root retains its integer return contract
 # expect-diagnostic: INCAN-T0001
 
 from pub::values import answer

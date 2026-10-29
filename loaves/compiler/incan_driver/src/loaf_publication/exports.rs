@@ -15,6 +15,7 @@ pub fn module_key(path_segments: &[String]) -> String {
 
 /// Resolves a library entry module's public names over checked exports.
 pub struct LibraryReexportResolver<'a> {
+    /// Checked exports keyed by canonical source-module name, then by source export name.
     pub module_exports: &'a HashMap<String, HashMap<String, Vec<CheckedNamedExport>>>,
 }
 
@@ -39,23 +40,14 @@ impl<'a> LibraryReexportResolver<'a> {
         let known_modules: Vec<String> = self.module_exports.keys().cloned().collect();
         let entrypoint_exports = self.module_exports.get(&module_key(&lib_module.path_segments));
 
-        if let Some(exports_by_name) = self.module_exports.get(&module_key(&lib_module.path_segments)) {
-            let mut direct_groups = HashSet::new();
-            for (export_name, export_span) in Self::direct_public_exports(lib_module) {
-                let exports = exports_by_name.get(&export_name);
-                // The checked map owns one binding group, including all selected overload declarations. Register
-                // that group once; later, distinct import projections still pass through the collision registry.
-                if exports.is_some() && !direct_groups.insert(export_name.clone()) {
-                    continue;
-                }
-                if let Err(error) = exported_names.register(&export_name, export_span) {
-                    errors.push(error);
-                    continue;
-                }
-                if let Some(exports) = exports {
-                    resolved.extend(exports.iter().cloned());
-                }
-            }
+        if let Some(exports_by_name) = entrypoint_exports {
+            Self::append_direct_public_exports(
+                lib_module,
+                exports_by_name,
+                &mut exported_names,
+                &mut resolved,
+                &mut errors,
+            );
         }
 
         for decl in &lib_module.ast.declarations {
@@ -77,7 +69,7 @@ impl<'a> LibraryReexportResolver<'a> {
                 _ => None,
             };
             if let Some((namespace, provider, path, items)) = checked_external_import {
-                let Some(exports_by_name) = self.module_exports.get(&module_key(&lib_module.path_segments)) else {
+                let Some(exports_by_name) = entrypoint_exports else {
                     errors.push(diagnostics::errors::library_reexport_unknown_module(
                         &module_key(&lib_module.path_segments),
                         &known_modules,
@@ -153,6 +145,31 @@ impl<'a> LibraryReexportResolver<'a> {
         }
 
         if errors.is_empty() { Ok(resolved) } else { Err(errors) }
+    }
+
+    /// Append each checked direct binding group once, preserving its overloads and source order. The collision
+    /// registry remains shared with later import projections so distinct reexports still receive their diagnostics.
+    fn append_direct_public_exports(
+        lib_module: &ParsedModule,
+        exports_by_name: &HashMap<String, Vec<CheckedNamedExport>>,
+        exported_names: &mut LibraryExportBindingRegistry,
+        resolved: &mut Vec<CheckedNamedExport>,
+        errors: &mut Vec<diagnostics::CompileError>,
+    ) {
+        let mut direct_groups = HashSet::new();
+        for (export_name, export_span) in Self::direct_public_exports(lib_module) {
+            let exports = exports_by_name.get(&export_name);
+            if exports.is_some() && !direct_groups.insert(export_name.clone()) {
+                continue;
+            }
+            if let Err(error) = exported_names.register(&export_name, export_span) {
+                errors.push(error);
+                continue;
+            }
+            if let Some(exports) = exports {
+                resolved.extend(exports.iter().cloned());
+            }
+        }
     }
 
     /// Return public names declared directly by the library entrypoint, excluding public imports that are resolved from

@@ -1,12 +1,17 @@
 # Incan development commands: formatting, quality gates and docs.
 #
-# Nothing here runs Cargo or builds the compiler. The Oven (workspaces/oven, DD-0008) builds and tests it; during dev.8
-# the frozen dev.7 builder bakes the Oven and the compiler.
+# Nothing here runs Cargo or builds the compiler: Oven (workspaces/oven, DD-0008) builds and tests it.
 
 .DEFAULT_GOAL := help
 
-# Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert and vendored crates their upstream form.
-RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**' ':!:loaves/third_party/**'
+INCAN ?= incan
+
+.PHONY: rust-facet-tests  ## tests - Run every production Loaf's Rust facet unit tests through Oven
+rust-facet-tests:
+	@scripts/test-rust-facets.sh "$(INCAN)"
+
+# Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert.
+RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**'
 
 # =============================================================================
 # Help
@@ -26,6 +31,10 @@ help:  ## Display this help message
 # =============================================================================
 # Build
 # =============================================================================
+
+.PHONY: examples  ## build - Run examples and check declared frontend-only examples with installed incan
+examples:
+	@bash scripts/run_examples.sh
 
 .PHONY: install-hooks  ## build - Point git at the repository's commit hooks
 install-hooks:
@@ -48,39 +57,39 @@ fmt-check:
 .PHONY: rustdoc-gate  ## quality - Require rustdoc on changed Rust functions/methods
 rustdoc-gate:
 	@echo "\033[1mChecking rustdoc coverage for changed Rust functions/methods...\033[0m"
-	@cd scripts && python3 -m unittest -q test_check_changed_rustdocs
-	@python3 scripts/check_changed_rustdocs.py
+	@$(INCAN) test scripts/test_check_changed_rustdocs.incn
+	@$(INCAN) run scripts/check_changed_rustdocs.incn
 
 .PHONY: rustdoc-gate-ci
 rustdoc-gate-ci:
-	@python3 scripts/check_changed_rustdocs.py
+	@$(INCAN) run scripts/check_changed_rustdocs.incn
 
 .PHONY: doc-paths  ## quality - Check repository paths named in contributor documentation
 doc-paths:
-	@python3 scripts/check_doc_paths.py
+	@$(INCAN) run scripts/check_doc_paths.incn
 
 .PHONY: us-english-check  ## quality - Fail on UK spellings in tracked text (US English is the standard); us-english-fix rewrites them
 us-english-check:
-	@python3 scripts/check_us_english.py
+	@$(INCAN) run scripts/check_us_english.incn
 
 .PHONY: us-english-fix  ## quality - Rewrite UK spellings as US English in place, prose and identifiers alike
 us-english-fix:
-	@python3 scripts/check_us_english.py --fix
+	@$(INCAN) run scripts/check_us_english.incn -- --fix
 
 .PHONY: reference-contract-check  ## quality - Fail when a changed docs-site reference page states more than its contract
 reference-contract-check:
-	@python3 scripts/check_reference_contract.py
+	@$(INCAN) run scripts/check_reference_contract.incn
 
 .PHONY: agents-doc-sync  ## quality - Check AGENTS.md's skill table matches .agents/skills/
 agents-doc-sync:
 	@echo "\033[1mChecking AGENTS.md skill table against .agents/skills/...\033[0m"
-	@python3 scripts/check_agents_doc_sync.py
+	@$(INCAN) run scripts/check_agents_doc_sync.incn
 
 .PHONY: agents-doc-sync-ci
 agents-doc-sync-ci:
-	@python3 scripts/check_agents_doc_sync.py
+	@$(INCAN) run scripts/check_agents_doc_sync.incn
 
-.PHONY: pre-commit-fast  ## quality - Fast local gate: formatting, spelling, rustdoc and the skill table (doc paths return with the dev.8 docs pass)
+.PHONY: pre-commit-fast  ## quality - Fast local gate: formatting, spelling, rustdoc and the skill table
 pre-commit-fast: fmt-check us-english-check rustdoc-gate agents-doc-sync
 
 # =============================================================================

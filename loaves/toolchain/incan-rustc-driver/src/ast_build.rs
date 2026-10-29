@@ -7,6 +7,32 @@ use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol, kw};
 use thin_vec::{ThinVec, thin_vec};
 
+/// Physical Rust core::result::Result success variant, also reexported by std.
+pub(crate) const RUST_RESULT_OK_SYMBOL: &str = "Ok";
+/// Physical Rust core::result::Result failure variant, also reexported by std.
+pub(crate) const RUST_RESULT_ERR_SYMBOL: &str = "Err";
+/// Physical Rust core::option::Option present variant, also reexported by std.
+pub(crate) const RUST_OPTION_SOME_SYMBOL: &str = "Some";
+/// Physical Rust core::option::Option absent variant, also reexported by std.
+pub(crate) const RUST_OPTION_NONE_SYMBOL: &str = "None";
+
+/// Physical core::fmt::Debug trait, also reexported by std.
+pub(crate) const RUST_FMT_DEBUG_SYMBOL: &str = "Debug";
+/// Physical core::fmt::Display trait, also reexported by std.
+pub(crate) const RUST_FMT_DISPLAY_SYMBOL: &str = "Display";
+/// Physical core::clone::Clone trait, also reexported by std.
+pub(crate) const RUST_CLONE_SYMBOL: &str = "Clone";
+/// Physical core::cmp::PartialEq trait, independent of Incan's Eq bound mapping.
+pub(crate) const RUST_CMP_PARTIAL_EQ_SYMBOL: &str = "PartialEq";
+/// Physical core::cmp::Eq trait, also reexported by std.
+pub(crate) const RUST_CMP_EQ_SYMBOL: &str = "Eq";
+/// Physical core::cmp::PartialOrd trait, also reexported by std.
+pub(crate) const RUST_CMP_PARTIAL_ORD_SYMBOL: &str = "PartialOrd";
+/// Physical core::cmp::Ord trait, also reexported by std.
+pub(crate) const RUST_CMP_ORD_SYMBOL: &str = "Ord";
+/// Physical core::convert::TryFrom trait, also reexported by std.
+pub(crate) const RUST_CONVERT_TRY_FROM_SYMBOL: &str = "TryFrom";
+
 /// The receiver `self` as an expression.
 pub(crate) fn self_value(span: Span) -> Box<ast::Expr> {
     expression(

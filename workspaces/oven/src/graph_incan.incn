@@ -7,10 +7,10 @@ from files import json_text, make_directory, read, remove
 from graph_cache import cache_file, is_unchecked, publish_unchecked, tree_inputs
 from publication import publish, publish_binary
 from unit_freshness import artifact_identity, cache_identities, fingerprint, native_identities
-from incan_units import crate_name, run_compiler, write_unit
+from unit_compiler import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
-
+from unit_rust import prepare_linked
 
 # The version of the key an export is cached under; changing it discards every cached export.
 const EXPORT_DOMAIN: str = "incan.codegraph.incan/4"
@@ -84,15 +84,16 @@ def prepared_unit(
     each built crate replacing the toolchain's of the same name. Its standard Loaves are kept, and every other Loaf it
     reaches is linked to its checked interface.
     """
-    mut ready = unit
-    ready.search = toolchain.search
-    ready.rust_abi = toolchain.rust_abi
-    ready.externs = toolchain.externs
+    mut selected = unit
+    selected.loaves = linked_loaves(
+        [loaf for loaf in unit.loaves if not loaf.is_dependency()] + source_loaves,
+        interfaces,
+    )?
+    mut ready = prepare_linked(selected, toolchain, [loaf.name for loaf in source_loaves])?
     for name in sorted([key for key in built.keys()]):
         native = built[name]
         ready.externs = [item for item in ready.externs if item.name != name] + [native]
         ready.search.append(Path(native.path).parent().0)
-    ready.loaves = linked_loaves([loaf for loaf in ready.loaves if loaf.standard] + source_loaves, interfaces)?
     return Ok(ready)
 
 
@@ -101,7 +102,7 @@ def linked_loaves(loaves: list[UnitLoaf], interfaces: Dict[str, Path]) -> Result
     mut linked = loaves
     for index in range(len(linked)):
         mut loaf = linked[index]
-        if not loaf.standard:
+        if loaf.is_dependency():
             if loaf.name not in interfaces:
                 return Err(f"inspection needs the checked interface of {loaf.name}")
             loaf.dir = interfaces[loaf.name].0

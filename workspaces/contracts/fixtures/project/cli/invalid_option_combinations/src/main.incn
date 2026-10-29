@@ -1,0 +1,22 @@
+# behavior: commands refuse options they cannot apply before preparing any unit
+# cli-commands:
+#   run src/main.incn --substitute missing=absent
+#   check src/main.incn --substitute missing=absent
+#   test src/main.incn --substitute missing=absent
+#   describe-unit src/main.incn --substitute missing=absent
+#   build src/main.incn --substitute missing=absent
+#   build facet --argv0 chosen
+#   build facet --program-entry src/main.incn
+#   run /dev/null --features absent
+#   check /dev/null --no-default-features
+#   test /dev/null --all-features
+#   describe-unit /dev/null --features absent
+#   build /dev/null --features absent
+# expect-exit: 2
+# expect-stderr-contains:
+#   requires
+#   Run `incan --help` for usage.
+
+def main() -> None:
+    """Option validation must finish before this body can be compiled."""
+    pass

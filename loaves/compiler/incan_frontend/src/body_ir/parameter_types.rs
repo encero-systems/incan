@@ -6,6 +6,7 @@ use super::{
 };
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
 use crate::symbols::ResolvedType;
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::IncanCallableParamKind;
 
 /// Preserve the already checked source role independently from its element or packed carrier type.
@@ -28,6 +29,12 @@ pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &T
         super::runtime_nominals::project_type(facts.semantic_type(&ty), facts),
         facts,
     )
+}
+
+/// Preserve the checked owned ABI of an imported native collection before storage projection erases its provenance.
+pub(super) fn native_collection_parameter(ty: &ResolvedType, facts: &TypeCheckInfo) -> bool {
+    let ty = expand_rusttype_aliases(ty, facts);
+    super::runtime_nominals::native_collection_parameter(&semantic_type_from_resolved(&ty), facts)
 }
 
 /// Classify declaration binders before SDK and builtin storage projection so a same-spelled parameter keeps its own
@@ -256,11 +263,37 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
     }
 }
 
-/// Copy the checker's complete carrier binding proof; Body IR neither mints carrier keys nor adds aliases.
+/// Copy checked carrier bindings and preserve unambiguous short names selected by standard storage projection.
+/// A projected name carries its original canonical owner; conflicting owners never grant a short binding.
+/// Native paths from structural storage add their declaration identities without replacing a source binding.
 pub(super) fn retained_type_identities(
     facts: &TypeCheckInfo,
 ) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
     let mut identities = facts.declarations.named_type_identities.clone();
+    // Standard carrier projection uses the declaration's short native name. Preserve the checked binding of that
+    // projected name too, including signature-only imports; two different owners never authorize a short alias.
+    let mut projected = std::collections::BTreeMap::<String, Option<super::CanonicalSymbolId>>::new();
+    for identity in identities.values() {
+        let name = &identity.declaration_name;
+        let candidate = projected.entry(name.clone()).or_insert_with(|| Some(identity.clone()));
+        if candidate.as_ref() != Some(identity) {
+            *candidate = None;
+        }
+    }
+    for (name, identity) in projected {
+        if let Some(identity) = identity
+            && matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library.starts_with("incan_stdlib_"))
+        {
+            identities.entry(name).or_insert(identity);
+        }
+    }
+    for storage in facts.rust.storage_types.values() {
+        if let IncanType::Named(name) = storage
+            && let Some(identity) = bir::rust_item_identity(name)
+        {
+            identities.entry(name.clone()).or_insert(identity);
+        }
+    }
     for call in facts.rust.checked_calls.values().chain(
         facts
             .rust
@@ -422,10 +455,15 @@ impl BodyBuilder<'_, '_> {
                     declaration.canonical.kind,
                     SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
                 )
-                && declaration.derives.iter().any(|derive| derive == "Clone")
-        }) || self
-            .local_enum_declarations
-            .get(identity)
-            .is_some_and(|declaration| declaration.derives.iter().any(|derive| derive == "Clone"))
+                && declaration
+                    .derives
+                    .iter()
+                    .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+        }) || self.local_enum_declarations.get(identity).is_some_and(|declaration| {
+            declaration
+                .derives
+                .iter()
+                .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+        })
     }
 }

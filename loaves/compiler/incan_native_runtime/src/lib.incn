@@ -3,7 +3,9 @@
 from rust::incan_std_core::strings import float_to_string
 from rust::std::primitive import i64 as RuntimeInt
 from rust::std::string import String as RustString
-
+from rust::std::io import stdout, Stdout, Write
+from rust::std::vec import Vec
+from rust::std::panic import panic_any
 pub from fallible_defaults import (
     fallible_next,
     fallible_map,
@@ -17,12 +19,13 @@ pub from fallible_defaults import (
     fallible_fold,
 )
 pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
-pub from generic_decorators import cached_text_binding, callable_text_name
+pub from generic_decorators import cached_text_binding, register_callable_name, callable_name
 pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
 pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
 pub from frozen_text import format_frozen
 pub from frozen_text import length_frozen_bytes, copy_frozen_bytes
 pub from text_codecs import encode_text, encode_frozen_text, decode_bytes, decode_frozen_bytes
+pub from checked_c_strings import checked_c_string, checked_c_utf8
 pub from text_codecs import text_codec_encoding_valid, text_codec_errors_valid
 pub from diverging_errors import raise_value_error
 pub from frozen_collections import freeze_list, frozen_list_length, frozen_list_items, frozen_list_text_items
@@ -170,16 +173,6 @@ pub from statics import (
     write_static_bool,
     begin_module_initialization,
     end_module_initialization,
-)
-pub from static_lists import (
-    read_static_int_list,
-    write_static_int_list,
-    read_static_float_list,
-    write_static_float_list,
-    read_static_bool_list,
-    write_static_bool_list,
-    read_static_text_list,
-    write_static_text_list,
 )
 pub from static_collections import (
     read_static_text_int_dict,
@@ -342,8 +335,17 @@ pub def format_bool(value: bool) -> str:
 
 
 pub def println_text(value: str) -> None:
-    """Print one formatted value followed by the language's normal newline."""
-    println(value)
+    """Print one line: 1. Retain UTF-8 bytes. 2. Append a newline. 3. Write the line or raise its I/O failure."""
+    # 1. Retain independently owned UTF-8 bytes.
+    native: RustString = value
+    mut bytes: Vec[u8] = native.into_bytes()
+    # 2. Append the language's normal newline.
+    bytes.push(10)
+    mut stream: Stdout = stdout()
+    # 3. Write the complete line with the standard I/O failure message.
+    match stream.write_all(bytes):
+        Ok(_value) => return
+        Err(error) => panic_any(f"failed printing to stdout: {error}")
 
 
 pub def clone_text(value: &str) -> str:
@@ -357,8 +359,12 @@ pub def validate_range(start: int, end: int, step: int) -> None:
 
 
 pub def assert_failure(message: str) -> None:
-    """Raise the same assertion panic and empty-message fallback as the legacy language primitive."""
-    assert false, message
+    """Raise an assertion panic: 1. Retain the empty-message fallback. 2. Attach an explicit message."""
+    # 1. Retain the language's empty-message fallback.
+    if message == "":
+        panic_any("AssertionError")
+    # 2. Attach an explicit message to the same owned panic payload.
+    panic_any(f"AssertionError: {message}")
 
 
 pub def initialize_panic_hook() -> None:

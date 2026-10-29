@@ -70,7 +70,7 @@ orchestrator.
   `--bin` is exposed publicly but has no effect.
 
 ## Reviewed Clean Surfaces
-- loaves/toolchain/incan-cli/src/commands/init.rs — maintainability reviewed; no findings
+- workspaces/oven/src/main.incn — maintainability reviewed; no findings
 ```
 
 If there are no findings, say so explicitly.

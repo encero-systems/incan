@@ -19,6 +19,7 @@ from pub::incan_mir_plan import (
 )
 from unions import collect_unions
 from layout_types import stored_field_type
+from native_type_identity import ConstructorIndex
 from checked_json_contracts import checked_deserialize_name
 from comparison_methods import comparison_functions
 from fallible_methods import fallible_methods
@@ -29,6 +30,7 @@ from nominal_instances import NominalInstance
 from library_model_arguments import library_model_arguments, local_generic_item
 from string_conversion_contracts import conversion_name, conversion_trait
 from symbols import model_symbol
+from pub::incan_mir_plan import source_span as plan_span
 
 
 pub def static_slot(declarations: &list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
@@ -43,15 +45,11 @@ pub def static_slot(declarations: &list[StaticDeclaration], value: &GlobalPlace)
 
 pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
     """
-    Name persistent primitive, flat-list and set cells after checked carrier admission.
+    Name persistent primitive and set cells after checked carrier admission.
 
-    Literal dictionaries use native guarded cells; the remaining carriers use typed runtime cells.
+    Literal lists and dictionaries use native guarded cells; the remaining carriers use typed runtime cells.
     """
     match ty:
-        PlanType.List(leaf, depth) =>
-            if depth != 1:
-                return Err("unsupported Body IR nested static list carrier")
-            return static_list_accessors(leaf)
         PlanType.Set(leaf) =>
             if leaf == ListLeaf.Int:
                 return Ok(("incan_native_runtime::read_static_int_set", "incan_native_runtime::write_static_int_set"))
@@ -66,24 +64,9 @@ pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
         _ => return Err("unsupported Body IR static carrier")
 
 
-def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
-    """Choose typed runtime list cells without erasing their checked element representation."""
-    mut name = ""
-    match leaf:
-        ListLeaf.Int =>
-            name = "int"
-        ListLeaf.Float =>
-            name = "float"
-        ListLeaf.Bool =>
-            name = "bool"
-        ListLeaf.Str =>
-            name = "text"
-        _ => return Err("unsupported Body IR static list element")
-    return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
-
-
 pub def publish_local_layouts(mut models: list[ModelDeclaration], mut enums: list[EnumDeclaration]) -> None:
-    """Expose canonical native ABI items for a compiled Loaf; its checked manifest retains source visibility.
+    """
+    Expose canonical native ABI items for a compiled Loaf; its checked manifest retains source visibility.
 
     Private layouts can appear in compiled callable signatures or governed defaults. Linked layouts already belong
     to their selected artifact and keep its visibility.
@@ -97,14 +80,17 @@ pub def publish_local_layouts(mut models: list[ModelDeclaration], mut enums: lis
 
 
 pub def lower_model_declarations(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     file: str,
-    mut intrinsics: list[EnumDeclaration] = [],
-    nominal_instances: list[NominalInstance] = [],
+    mut intrinsics: list[EnumDeclaration],
+    nominal_instances: &list[NominalInstance],
     publish_generics: bool = false,
 ) -> Result[list[ModelDeclaration], str]:
     """
     Retain checked field layout and derives for admitted plain model, class, and newtype declarations.
+
+    Instance selection borrows the retained inventory; only the resulting native declaration plan is owned here.
 
     A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
     derives Default: a Rust derive would give every field its zero value instead.
@@ -112,7 +98,7 @@ pub def lower_model_declarations(
     mut unions = collect_unions(module)
     reached = serde_propagation(module)?
     mut models: list[ModelDeclaration] = []
-    comparisons = comparison_functions(module, intrinsics)?
+    comparisons = comparison_functions(constructors, module, intrinsics)?
     for owner in range(len(module.nominal_declarations)):
         declaration = module.nominal_declarations[owner]
         mut item = library_item(declaration)
@@ -129,17 +115,24 @@ pub def lower_model_declarations(
                 string_conversion_trait = conversion_trait(module)?
         mut derives: list[str] = []
         for derive in declaration.derives:
-            if derive != "Default" and not (
-                len(comparisons[owner]) != 0
-                and derive in ["PartialEq", "Eq", "PartialOrd", "Ord"]
+            if (
+                derive != "Default"
+                and not (len(comparisons[owner]) != 0 and derive in ["PartialEq", "Eq", "PartialOrd", "Ord"])
             ):
                 derives.append(derive)
         mut fields: list[Parameter] = []
         mut field_public = declaration.field_public
         mut serde_names: list[str] = []
         if item != "":
-            library_arguments = library_model_arguments(module, declaration, nominal_instances, intrinsics)?
-            fields = library_fields(module, declaration, file, intrinsics)
+            library_arguments = library_model_arguments(
+                constructors,
+                module,
+                declaration,
+                nominal_instances,
+                unions,
+                intrinsics,
+            )?
+            fields = library_fields(constructors, module, declaration, file, unions, intrinsics)
             if len(fields) != len(declaration.fields):
                 field_public = []
             # Native Copy is a checked capability, verified again against rustc rather than derived on this alias.
@@ -154,6 +147,7 @@ pub def lower_model_declarations(
             for slot in range(len(declaration.fields)):
                 mut ty = PlanType.Unit
                 match stored_field_type(
+                    constructors,
                     list(module.nominal_declarations),
                     list(module.enum_declarations),
                     unions,
@@ -161,13 +155,12 @@ pub def lower_model_declarations(
                     slot,
                     intrinsics,
                 ):
-                    Ok(resolved) =>
-                        ty = resolved
+                    Ok(resolved) => ty = resolved
                     Err(reason) => return Err(f"{reason} in model {declaration.name} field {declaration.fields[slot]}")
                 fields.append(
-                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
+                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=plan_span(file=file, line=1, column=1)),
                 )
-        callable_name, callable_signature = callable_methods(module, owner, intrinsics)?
+        callable_name, callable_signature = callable_methods(constructors, module, owner, intrinsics)?
         if item == "":
             validate_marker_traits(declaration)?
         models.append(
@@ -178,15 +171,15 @@ pub def lower_model_declarations(
                 field_public=field_public,
                 derives=derives,
                 source_name=str(declaration.canonical.declaration_name),
-                span=SourceSpan(file=file, line=1, column=1),
+                span=plan_span(file=file, line=1, column=1),
                 library_item=item,
                 library_type_arguments=library_arguments,
                 field_serde_names=serde_names,
                 checked_deserialize=checked_deserialize,
                 reflection_metadata=planned_field_metadata(declaration),
                 comparison_methods=comparisons[owner],
-                fallible_iterator=fallible_methods(module, owner, intrinsics)?,
-                iterator=iterator_methods(module, owner, intrinsics)?,
+                fallible_iterator=fallible_methods(constructors, module, owner, intrinsics)?,
+                iterator=iterator_methods(constructors, module, owner, intrinsics)?,
                 callable_method=callable_name,
                 callable_signature=callable_signature,
                 string_conversion_root=string_conversion_root,
@@ -206,12 +199,10 @@ def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[Fiel
                 mut alias: Option[str] = None
                 mut description: Option[str] = None
                 match field.alias:
-                    Some(value) =>
-                        alias = Some(str(value))
+                    Some(value) => alias = Some(str(value))
                     None => pass
                 match field.description:
-                    Some(value) =>
-                        description = Some(str(value))
+                    Some(value) => description = Some(str(value))
                     None => pass
                 result.append(
                     FieldMetadata(
@@ -287,10 +278,8 @@ def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
         RustType.Tuple(elements) =>
             for element in elements:
                 result = reached_names(element, result)?
-        RustType.Ref(inner) =>
-            result = reached_names(inner, result)?
-        RustType.RefMut(inner) =>
-            result = reached_names(inner, result)?
+        RustType.Ref(inner) => result = reached_names(inner, result)?
+        RustType.RefMut(inner) => result = reached_names(inner, result)?
         _ => pass
     return Ok(result)
 
@@ -307,9 +296,11 @@ pub def with_serde_derives(derives: list[str], name: str, reached: tuple[list[st
 
 
 def library_fields(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
     file: str,
+    mut unions: list[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> list[Parameter]:
     """
@@ -318,11 +309,13 @@ def library_fields(
     A layout without fields is opaque: its values move and drop as the SDK crate's own type. Reading a field whose type
     the plan cannot carry refuses while lowering; the driver's plan validation rejects any projection into an opaque
     layout.
+
+    Reuse the enclosing layout pass's union inventory so every field reads that pass's exact slot order.
     """
-    mut unions = collect_unions(module)
     mut fields: list[Parameter] = []
     for slot in range(len(declaration.fields)):
         match stored_field_type(
+            constructors,
             list(module.nominal_declarations),
             list(module.enum_declarations),
             unions,
@@ -332,7 +325,7 @@ def library_fields(
         ):
             Ok(ty) =>
                 fields.append(
-                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
+                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=plan_span(file=file, line=1, column=1)),
                 )
             Err(_reason) => return []
     return fields

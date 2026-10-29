@@ -1,0 +1,76 @@
+"""
+The search index of a toolchain generation: every directory the toolchain's own crates and its compiled registry keep
+their libraries in, published once per generation under the SHA-256 of its exact bytes (DD-0008).
+
+A unit description names the index and lists only the directories beyond it, and a library's native closure publishes
+only those; the compiler searches both. The index's path is retained beside the identities of the toolchain
+description and the registry closure it was derived from (see `retained_readings`), so a command whose toolchain is
+unchanged reads neither to find it.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from files import json_text
+from home import home
+from loaf_local_graph import unique
+from observation import observe
+from publication import publish
+from retained_readings import recall, retain
+from rust_units import read_registry_units
+from toolchain import Toolchain, toolchain_file
+
+const SCHEMA: str = "incan.search-index/1"
+const SELECTION: str = "search-index/1"
+
+
+pub def search_index(toolchain: Toolchain) -> Result[str, str]:
+    """
+    The path of the toolchain generation's search index, published when the generation has none yet.
+
+    1. Observe the toolchain description and the registry closure the index is derived from.
+    2. A path retained for exactly those identities answers while its index exists.
+    3. Otherwise publish the index under its digest and retain its path for those identities.
+    """
+    # 1. Both identities are taken before anything is derived from the files.
+    description = toolchain_file()?
+    observed = observe(description)?
+    selection = f"{SELECTION} {registry_identity(toolchain)}"
+    # 2. An index never changes once published, so a retained path is used while the file is there.
+    if let Some(value) = recall(description, selection, observed.stamp):
+        if let Some(path) = value.as_str():
+            if Path(path).is_file():
+                return Ok(path)
+    # 3. The same directories always publish the same bytes, and so the same path.
+    path = published_index(toolchain)?
+    retain(description, selection, observed, JsonValue.string(path))
+    return Ok(path)
+
+
+def registry_identity(toolchain: Toolchain) -> str:
+    """The identity of the toolchain's registry closure, or why there is none to read."""
+    if toolchain.registry_units == "":
+        return "no registry"
+    match observe(Path(toolchain.registry_units)):
+        Ok(observed) => return observed.stamp
+        Err(_) => return "no registry closure"
+
+
+def published_index(toolchain: Toolchain) -> Result[str, str]:
+    """
+    Publish the sorted, distinct directories of the toolchain's crates and of its registry units in one document named
+    by its SHA-256, unless that document already exists.
+    """
+    mut directories = toolchain.search
+    registry = Path(toolchain.registry_units)
+    if toolchain.registry_units != "" and registry.is_file():
+        directories = directories + read_registry_units(registry)?.search
+    listed = JsonValue.array([JsonValue.string(directory) for directory in unique(directories)])
+    text = json_text(JsonValue.object({"schema": JsonValue.string(SCHEMA), "search": listed}))?
+    digest = hexlify(sha256.digest(text.encode("utf-8")))
+    path = home()?.joinpath("cache").joinpath("search-indexes").joinpath(f"{digest}.json")
+    if not path.is_file():
+        path.parent().mkdir(true, true).map_err((error) => f"{path.parent().0}: {error.message()}")?
+        publish(path, text)?
+    return Ok(path.0)

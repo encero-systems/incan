@@ -1,4 +1,4 @@
-"""Native test execution: compile one unit, then report the session-collected entries' observed outcomes."""
+"""Discover Incan test modules and report the observed outcomes of compiled Incan and Rust harnesses."""
 
 from rust::std::process import Command
 from rust::std::io import Write, stderr
@@ -6,9 +6,38 @@ from std.fs import Path
 from std.json import JsonValue
 from files import parse_json, read
 from incan_units import compile_unit, stored_executable, test_report
+from intake import read_project, source_root_of
 from json_fields import array, text_field
+from observation import trace_launch
+from rust_target import decoded
 from toolchain import Toolchain
 from unit import UnitDescription
+
+
+pub def test_sources(project: Path) -> Result[list[Path], str]:
+    """
+    Select test_*.incn modules directly under the source root and tests directory.
+
+    1. Read the Loaf's source-root policy and collect matching files without descending into dependencies.
+    2. Return each path once in stable order.
+    """
+    # 1. The manifest owns the source root; the test role additionally owns the tests directory.
+    root = source_root_of(read_project(project).map_err((error) => error.message())?)
+    mut paths: list[str] = []
+    for directory in [Path(root), project.joinpath("tests")]:
+        if not directory.is_dir():
+            continue
+        for source in directory.iterdir().map_err((error) => error.message())?:
+            if is_test_source(source) and source.0 not in paths:
+                paths.append(source.0)
+    # 2. Discovery order does not change execution or duplicate a source root named tests.
+    return Ok([Path(path) for path in sorted(paths)])
+
+
+def is_test_source(source: Path) -> bool:
+    """Whether a direct source-root entry is an authored Incan test module."""
+    name = source.name()
+    return source.is_file() and name.startswith("test_") and name.endswith(".incn")
 
 
 pub def tests_binary(unit: UnitDescription) -> Path:
@@ -19,7 +48,7 @@ pub def tests_binary(unit: UnitDescription) -> Path:
 pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
     """Compile once, unless the stored executable is current, and run the collected tests."""
     binary = tests_binary(unit)
-    compiled = compile_unit(unit, toolchain, binary)?
+    compiled = compile_unit(unit, toolchain, binary, true)?
     if compiled != 0:
         return Ok(compiled)
     return run_collected(binary, Path(unit.source).name())
@@ -49,6 +78,35 @@ pub def run_collected(binary: Path, file: str) -> Result[i32, str]:
     return Ok(0)
 
 
+pub def run_rust_harness(binary: Path, project: Path) -> Result[i32, str]:
+    """
+    Report each discovered Rust unit test with the same outcome and exit semantics as Incan tests.
+
+    1. Ask the harness for its exact test names, refusing a failed discovery.
+    2. Run every discovered test in isolation, from the owning project directory.
+    3. Fail the invocation if any test failed, without hiding later tests.
+    """
+    # 1. The harness, rather than source scanning, is the test inventory authority.
+    mut command = Command.new(binary.0)
+    command.arg("--list").arg("--format").arg("terse").current_dir(project.0)
+    output = command.output().map_err((error) => f"cannot list {binary.0}: {error}")?
+    if not output.status.success():
+        return Err(f"cannot list {binary.0}: {decoded(output.stderr)}")
+    # 2. Every test runs, including those after a failure.
+    mut failed = false
+    for line in decoded(output.stdout).split("\n"):
+        if not line.endswith(": test"):
+            continue
+        name = line[0:len(line) - len(": test")]
+        test = JsonValue.object({"name": JsonValue.string(name), "native": JsonValue.string(name)})
+        if not run_test(binary, binary.name(), test, project.0)?:
+            failed = true
+    # 3. A failed Rust test fails the same public command as a failed Incan test.
+    if failed:
+        return Ok(1)
+    return Ok(0)
+
+
 def reason(test: JsonValue, marker: str) -> Option[str]:
     """Read a marker reason; null means the collected test has no such marker."""
     match test.get(marker):
@@ -56,7 +114,7 @@ def reason(test: JsonValue, marker: str) -> Option[str]:
         None => return None
 
 
-def run_test(binary: Path, file: str, test: JsonValue) -> Result[bool, str]:
+def run_test(binary: Path, file: str, test: JsonValue, project: str = "") -> Result[bool, str]:
     """
     Observe one exact native test and apply its collected skip or expected-failure policy. Whether it counts as held.
 
@@ -77,8 +135,14 @@ def run_test(binary: Path, file: str, test: JsonValue) -> Result[bool, str]:
     # 2. The test runs in a process of its own, so a panic ends only that test.
     mut command = Command.new(binary.0)
     command.arg("--exact").arg(native).arg("--nocapture")
+    if project != "":
+        command.current_dir(project)
+    trace_launch(binary.0)
     output = command.output().map_err((error) => f"cannot run {binary.0}: {error}")?
     passed = output.status.success()
+    if project != "" and passed and "1 ignored" in decoded(output.stdout):
+        println(f"{label} SKIPPED (Rust ignore attribute)")
+        return Ok(true)
     # 3. A test expected to fail holds when it fails, and does not when it unexpectedly passes.
     match reason(test, "xfail"):
         Some(why) =>

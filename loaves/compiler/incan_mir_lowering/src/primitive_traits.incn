@@ -1,0 +1,332 @@
+"""Normalize checked primitive capability calls to their ordinary source-model implementations."""
+
+from rust::incan_semantics_core import CanonicalSymbolId, IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Statement,
+    StatementKind,
+    Callee,
+    CallableTarget,
+    MethodTarget,
+    NamedCallableTarget,
+    ArgumentElement,
+    ArgumentBinding,
+    ConstructorTarget,
+    AggregateKind,
+    Rvalue,
+    Operand,
+    OwnershipFact,
+    Place as RustPlace,
+    LocalId,
+)
+from pub::incan_mir_plan import SourceSpan, PlanType
+from frame import Builder, temporary, place_type
+from layout_types import native_source_type
+from lowering import (
+    argument_place,
+    lower_assignment,
+    ordinal_value_owner,
+    select_value_enum_raw,
+    value_enum_raw_type,
+    source_operand_type,
+)
+from type_parameters import substitute
+from table_views import borrowed_at
+
+
+pub def normalized_primitive_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    statement: &Statement,
+    span: SourceSpan,
+) -> Result[Option[Statement], str]:
+    """
+    Normalize a checked primitive capability call through its retained source implementation.
+
+    1. Preserve the complete call record, including its destination, source span and panic fact.
+    2. Normalize a primitive receiver or associated target through its checked adapter.
+    3. Return the ordinary source call for the existing call dispatcher.
+    """
+    # 1. Read the complete source call record without changing its destination or panic fact.
+    return normalized_call_kind(module, builder, statement, statement.kind, span)
+
+
+def normalized_call_kind(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    statement: &Statement,
+    kind: &StatementKind,
+    span: SourceSpan,
+) -> Result[Option[Statement], str]:
+    """Inspect a typed call kind while retaining its enclosing statement unchanged."""
+    match kind:
+        StatementKind.Call(destination=destination, callee=callee, args=arguments, may_panic=may_panic) =>
+            # 2. Normalize only the receiver or target selected by the checked adapter.
+            match callee:
+                Callee.Method(target) =>
+                    match normalized_primitive_receiver(module, builder, target, arguments, span)?:
+                        None => return Ok(None)
+                        Some(retained) =>
+                            selected_callee: Callee = Callee.Method(target.clone())
+                            # 3. Preserve the ordinary call's frozen destination, source span and panic fact.
+                            return Ok(statement.with_call(selected_callee, retained))
+                Callee.Function(CallableTarget.Named(target)) =>
+                    match normalized_primitive_static(module, builder, target)?:
+                        None => return Ok(None)
+                        Some(retained) =>
+                            named: CallableTarget = CallableTarget.Named(retained)
+                            selected_callee: Callee = Callee.Function(named)
+                            # 3. Preserve the ordinary call's frozen destination, source span and panic fact.
+                            return Ok(statement.with_call(selected_callee, arguments.clone()))
+                _ => return Ok(None)
+        _ => return Ok(None)
+    return Ok(None)
+
+
+def normalized_primitive_receiver(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[ArgumentElement],
+    span: SourceSpan,
+) -> Result[Option[list[ArgumentElement]], str]:
+    """
+    Wrap an admitted primitive receiver once before ordinary method dispatch.
+
+    1. Select its retained source adapter by the exact checked slot and receiver carrier.
+    2. Construct that model through its checked single-field layout.
+    3. Retain every ordinary argument while borrowing the constructed adapter as the receiver.
+    """
+    # 1. Select the retained source adapter for this exact slot and receiver.
+    mut retained_arguments = primitive_receiver_arguments(module, builder, target, arguments, span)?
+    mut owner = -1
+    match target.canonical:
+        None => return Ok(None)
+        Some(identity) =>
+            if not has_adapter_slot(module, identity):
+                return Ok(None)
+            if len(arguments) == 0:
+                return Err("invalid Body IR primitive capability without a receiver")
+            receiver = retained_receiver_type(builder, retained_arguments, span)?
+            owner = adapter_owner(module, builder, identity, receiver)?
+            if owner < 0:
+                return Ok(None)
+    # 2. Construct the source model through its checked single-field layout.
+    declaration = module.nominal_declarations[owner]
+    owner_type = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        RustType.Named(str(declaration.name)),
+        builder.intrinsics,
+    )?
+    storage = temporary(builder, owner_type, span)
+    destination = temporary_source_place(builder, storage.local)?
+    constructor = ConstructorTarget(
+        name=str(declaration.name),
+        canonical=Some(declaration.canonical.clone()),
+        direct_declaration_id=Some(declaration.direct_declaration_id.clone()),
+        canonical_field_layout=Some(declaration.fields.clone()),
+        binding=ArgumentBinding.resolved_positional(1),
+    )
+    value = Rvalue.Aggregate(AggregateKind.Constructor(constructor), [retained_arguments[0].clone()])
+    lower_assignment(module, builder, destination, value, span)?
+    # 3. Preserve the ordinary arguments and borrow the source adapter.
+    receiver = Operand.place(destination, OwnershipFact.Borrow, false)
+    mut retained: list[ArgumentElement] = [ArgumentElement.One(receiver)]
+    for index in range(1, len(retained_arguments)):
+        retained.append(retained_arguments[index].clone())
+    return Ok(Some(retained))
+
+
+def retained_receiver_type(
+    mut builder: Builder,
+    mut arguments: list[ArgumentElement],
+    span: SourceSpan,
+) -> Result[PlanType, str]:
+    """Read a materialized argument list through the ordinary checked argument-type boundary."""
+    match arguments[0].as_one():
+        Some(value) => return source_operand_type(builder, value, span)
+        None => return Err("unsupported Body IR primitive receiver spread")
+
+
+def copied_arguments(arguments: &list[ArgumentElement]) -> list[ArgumentElement]:
+    """Copy argument records without copying or evaluating any represented runtime value."""
+    mut result: list[ArgumentElement] = []
+    for index in range(len(arguments)):
+        result.append(arguments[index].clone())
+    return result
+
+
+def primitive_receiver_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[ArgumentElement],
+    span: SourceSpan,
+) -> Result[list[ArgumentElement], str]:
+    """Project a checked value enum's raw payload before using its source-owned primitive adapter."""
+    match target.canonical:
+        None => return Ok(copied_arguments(arguments))
+        Some(identity) =>
+            if not has_adapter_slot(module, identity) or identity.declaration_name != "ordinal_bytes":
+                return Ok(copied_arguments(arguments))
+    if len(arguments) != 1:
+        return Ok(copied_arguments(arguments))
+    source = argument_place(builder, arguments, 0, span)?
+    match ordinal_value_owner(builder, place_type(builder.locals, source)):
+        None => return Ok(copied_arguments(arguments))
+        Some(owner) =>
+            raw_type = value_enum_raw_type(builder, owner)
+            raw = temporary(builder, raw_type, span)
+            select_value_enum_raw(builder, owner, source, raw, span)?
+            retained = temporary_source_place(builder, raw.local)?
+            mut ownership = OwnershipFact.Copy
+            if raw_type == PlanType.String:
+                # The getter created this owned text temporary; transfer it into the adapter's payload field.
+                ownership = OwnershipFact.Move
+            return Ok([ArgumentElement.One(Operand.place(retained, ownership, false))])
+
+
+def normalized_primitive_static(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &NamedCallableTarget,
+) -> Result[Option[NamedCallableTarget], str]:
+    """
+    Select a source associated implementation without reconstructing any callable identity.
+
+    1. Close the checked primitive receiver in the caller's existing binding.
+    2. Select its exact source implementation or checked primitive decoder.
+    """
+    # 1. Close the checked primitive receiver in the caller's existing binding.
+    identity: Option[CanonicalSymbolId] = target.canonical.clone()
+    match identity:
+        None => return Ok(None)
+        Some(selected) =>
+            if not has_adapter_slot(module, selected):
+                return Ok(None)
+    mut receiver = RustType.Unknown
+    match target.receiver_type:
+        None => return Ok(None)
+        Some(ty) => receiver = substitute(ty, builder.type_parameters, builder.type_arguments)?
+    concrete = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        receiver,
+        builder.intrinsics,
+    )?
+    mut owner = -1
+    match identity:
+        Some(selected) => owner = adapter_owner(module, builder, selected, concrete)?
+        None => return Ok(None)
+    if owner < 0:
+        return Ok(None)
+    # 2. Select its exact source implementation or checked primitive decoder.
+    mut result = target.clone()
+    for adoption_position in range(len(module.nominal_declarations[owner].trait_adoptions)):
+        adoption = borrowed_at(module.nominal_declarations[owner].trait_adoptions, adoption_position)
+        match adoption.primitive_adapter:
+            Some(adapter) =>
+                if identity == Some(adapter.decode_slot.clone()):
+                    result.canonical = Some(adapter.decoded_value.clone())
+                    receiver_type: RustType = RustType.Named(str(module.nominal_declarations[owner].name))
+                    result.receiver_type = Some(receiver_type)
+                    return Ok(Some(result))
+            None => pass
+    mut implementation: Option[CanonicalSymbolId] = None
+    for implementation_position in range(len(module.trait_implementations)):
+        record = borrowed_at(module.trait_implementations, implementation_position)
+        if record.owner != module.nominal_declarations[owner].canonical or Some(record.method.clone()) != identity:
+            continue
+        if len(record.slot_arguments) != 0 or len(record.type_arguments) != 0:
+            return Err("unsupported Body IR generic primitive adapter associated implementation")
+        match implementation:
+            Some(previous) =>
+                if previous != record.implementation:
+                    return Err("unsupported Body IR conflicting primitive adapter associated implementations")
+            None => implementation = Some(record.implementation.clone())
+    match implementation:
+        None => return Err("unsupported Body IR primitive adapter without associated implementation")
+        Some(selected) => result.canonical = Some(selected.clone())
+    receiver_type: RustType = RustType.Named(str(module.nominal_declarations[owner].name))
+    result.receiver_type = Some(receiver_type)
+    return Ok(Some(result))
+
+
+pub def has_adapter_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
+    """
+    Authenticate an exact retained adapter slot before inspecting an unrelated call's operands.
+
+    1. Search the module's validated source adapter adoptions by slot identity.
+    """
+    # 1. Search validated source adapter adoptions by exact slot identity.
+    selected_slot: CanonicalSymbolId = slot.clone()
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
+        for adoption in declaration.trait_adoptions:
+            if adoption.primitive_adapter == None:
+                continue
+            match adoption.methods:
+                Some(methods) =>
+                    for index in range(len(methods)):
+                        if methods[index] == selected_slot:
+                            return true
+                None => pass
+    return false
+
+
+def adapter_owner(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    slot: &CanonicalSymbolId,
+    receiver: PlanType,
+) -> Result[int, str]:
+    """Select a unique checked adapter without changing the primitive's general storage or type compatibility."""
+    mut selected = -1
+    selected_slot: CanonicalSymbolId = slot.clone()
+    mut owner = -1
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
+        owner += 1
+        for adoption in declaration.trait_adoptions:
+            match adoption.primitive_adapter:
+                None => pass
+                Some(adapter) =>
+                    if not adapter.is_well_formed_for(declaration, adoption):
+                        return Err("invalid Body IR primitive source adapter")
+                    mut matches_slot = false
+                    match adoption.methods:
+                        Some(methods) =>
+                            for index in range(len(methods)):
+                                if methods[index] == selected_slot:
+                                    matches_slot = true
+                        None => pass
+                    if not matches_slot:
+                        continue
+                    expected = native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        adapter.receiver_type,
+                        builder.intrinsics,
+                    )?
+                    if expected != receiver:
+                        continue
+                    if selected >= 0 and selected != owner:
+                        return Err("unsupported Body IR conflicting primitive source adapters")
+                    selected = owner
+    return Ok(selected)
+
+
+def temporary_source_place(mut builder: Builder, local: int) -> Result[RustPlace, str]:
+    """Project a newly allocated plan temporary through the existing local offset, with an explicit index bound."""
+    index = local - builder.local_offset - 1
+    if index < 0 or index > 4294967295:
+        return Err("unsupported Body IR primitive adapter temporary index")
+    slot: u32 = index.wrapping_resize()
+    return Ok(RustPlace.from_local(LocalId(slot)))

@@ -68,6 +68,7 @@ fn test_imported_vocab_block_accepts_scoped_leading_dot_path() -> Result<(), Box
     Ok(())
 }
 
+/// Leading-dot misuse outside its owning vocabulary retains the descriptor's diagnostic and help.
 #[test]
 fn test_scoped_leading_dot_path_still_rejects_outside_vocab_block() -> Result<(), Box<dyn std::error::Error>> {
     let source = "import pub::analytics\n\ndef configure() -> None:\n  .amount\n";
@@ -99,7 +100,7 @@ fn test_scoped_leading_dot_path_still_rejects_outside_vocab_block() -> Result<()
 
     let result = crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
     let errors = result.expect_err("leading-dot path should remain invalid outside the owning vocab block");
-    let first_error = errors.first().expect("expected at least one leading-dot diagnostic");
+    let first_error = errors.first().ok_or("expected at least one leading-dot diagnostic")?;
     assert!(
         first_error
             .message
@@ -109,7 +110,7 @@ fn test_scoped_leading_dot_path_still_rejects_outside_vocab_block() -> Result<()
     );
     assert!(
         first_error
-            .hints
+            .hints()
             .iter()
             .any(|hint| hint.contains("move this expression")),
         "expected author-provided help, got {:?}",
@@ -382,6 +383,7 @@ fn test_nested_vocab_block_prefers_innermost_scoped_symbol() -> Result<(), Box<d
     Ok(())
 }
 
+/// A scoped symbol in an ineligible clause reports the descriptor's own refusal and help.
 #[test]
 fn test_active_scoped_symbol_misuse_uses_descriptor_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
     let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
@@ -425,7 +427,7 @@ fn test_active_scoped_symbol_misuse_uses_descriptor_diagnostic() -> Result<(), B
 
     let result = crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
     let errors = result.expect_err("active scoped symbol misuse should use descriptor diagnostic");
-    let first_error = errors.first().expect("expected at least one scoped-symbol diagnostic");
+    let first_error = errors.first().ok_or("expected at least one scoped-symbol diagnostic")?;
     assert!(
         first_error
             .message
@@ -434,7 +436,7 @@ fn test_active_scoped_symbol_misuse_uses_descriptor_diagnostic() -> Result<(), B
         errors
     );
     assert!(
-        first_error.hints.iter().any(|hint| hint.contains("move `sum(...)`")),
+        first_error.hints().iter().any(|hint| hint.contains("move `sum(...)`")),
         "expected author-provided scoped-symbol help, got {:?}",
         errors
     );
@@ -611,6 +613,7 @@ fn rfc040_product_probe_query_method_arguments_accept_leading_dot_fields() -> Re
     Ok(())
 }
 
+/// Leading-dot syntax remains invalid in a call whose arguments have no registered scoped surface.
 #[test]
 fn test_call_argument_scoped_leading_dot_rejects_unregistered_call() -> Result<(), Box<dyn std::error::Error>> {
     let source = "import pub::querykit\n\ndef configure(orders: Any) -> None:\n  orders.map(.amount)\n";
@@ -635,7 +638,7 @@ fn test_call_argument_scoped_leading_dot_rejects_unregistered_call() -> Result<(
     let errors = result.expect_err("leading-dot path should remain invalid in unregistered calls");
     let first_error = errors
         .first()
-        .expect("expected at least one unregistered-call diagnostic");
+        .ok_or("expected at least one unregistered-call diagnostic")?;
     assert!(
         first_error
             .message

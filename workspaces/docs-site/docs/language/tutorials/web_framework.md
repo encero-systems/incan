@@ -4,8 +4,8 @@ This page is the task-oriented guide to Incan's web framework. For a linear firs
 
 Incan's web surface currently lowers to [Axum](https://docs.rs/axum/latest/axum/), giving Flask/FastAPI-shaped route declarations a native async server design.
 
-!!! info "0.5 runtime boundary"
-    The included `verified_*.incn` snippets pass source verification, and the documented route shapes are covered by the repository's generated-Rust route tests. Short fragments with ellipses illustrate local concepts rather than complete checked programs. Complete projects build and run through the checked web closure in the 0.5 full-standard-library Loaf.
+!!! info "Runtime requirements"
+    Complete programs require compiled web, async and data standard packages for the selected dev.8 profile. Short fragments with ellipses illustrate local concepts rather than complete programs.
 
 ## Quick Start
 
@@ -22,7 +22,7 @@ incan build examples/web/hello_web.incn
 incan run examples/web/hello_web.incn
 ```
 
-This verifies the route declarations and handler types, emits a native server, and starts it on `127.0.0.1:8080`. The normal commands reuse the checked full-standard-library Loaf; they do not fall back to Cargo.
+The server listens on `127.0.0.1:8080`; [Build a typed API](build_your_first_api.md) requests each of its routes.
 
 ## Routes
 

@@ -33,42 +33,34 @@ In this file we demonstrate the full rust interop surface (as introduced by RFC 
     `spawn_blocking` runs sync work on the thread-pool without blocking the async executor.
     `timeout` wraps any async call with a wall-clock deadline.
 
-**Design note** — str vs &str at rusttype method boundaries:  
-Incan's `str` maps to Rust `String`. A method declared `def label(self) -> str` will emit `widget.label()` in Rust,
-which must return `String` (not `&str`). When built with the `rust_inspect` feature, the compiler detects the mismatch
-and automatically inserts `.to_string()` at the call site. Without that feature, choose methods whose Rust signatures
-already return `String` (e.g. `to_string()`). This example uses Uuid which has `to_string() -> String` (always safe).
+**Design note** — str vs &str at rusttype method boundaries:
+Incan's `str` maps to Rust `String`. Rust method signatures come from checked ABI metadata. This example uses
+`Uuid::to_string() -> String` so its declared `str` result matches the Rust method's owned string result.
 """
 
 from rust::std::time import Instant
-from rust::uuid import Uuid
+from rust::uuid @ "1.0" with ["v4"] import Uuid
 from std.async.task import spawn_blocking
 from std.async.time import sleep, timeout
 from std.rust import Send, Sync, Static
-
-
 # ---- RequestId rusttype ----
 
 
 type RequestId = rusttype Uuid:
     """
     Wraps `uuid::Uuid` as an opaque, RFC 4122-compliant request identifier.
-    
+
     The interop: block provides safe boundary conversions without glue code:
 
     - from str: parse a hyphenated UUID string (fallible, via try adapter)
     - into str: format back to canonical hyphenated form (infallible, via adapter)
-    
+
     `to_string` is used over `as_str` because Uuid::to_string returns String directly, matching Incan's str = String
-    contract without needing the `rust_inspect` feature.
+    contract through the checked Rust method signature.
     """
+
     # Abstract rusttype method declarations: bodies are `...` on purpose.
     # Implementations are provided by the underlying Rust type (`uuid::Uuid`).
-    def parse_str(raw: str) -> Result[RequestId, str]:
-        ...
-
-    def to_string(self) -> str:
-        ...
 
     # Here we declare the interop edges for the RequestId rusttype.
     interop:
@@ -77,8 +69,15 @@ type RequestId = rusttype Uuid:
         from str try RequestId.parse_str
         into str via RequestId.to_string
 
+    def parse_str(raw: str) -> Result[RequestId, str]:
+        pass
+
+    def to_string(self) -> str:
+        pass
+
 
 # ---- Generic utilities bounded by std.rust capability traits ----
+
 
 # T must be Send + Sync + 'static so it can cross async/thread boundaries.
 def make_tag[T with Send, Sync, Static](label: str, _value: T) -> str:

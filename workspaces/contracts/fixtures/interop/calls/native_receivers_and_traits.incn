@@ -1,22 +1,36 @@
-# behavior: native receivers, associated functions and traits keep their owners: Rust associated functions infer owner arguments, select alias Default and preserve transparent rusttype fields, native method receivers retain checked borrows, associated constructors remain callable as stored values and imported method defaults retain native carriers, Rust From accepts borrowed text while blanket traits preserve reusable values, declared native bounds retain generic calls and native iteration retains enumeration positions, and native argument iterators yield their declared Item through loops and list comprehensions
+# behavior: native receivers retain loans, projections, trait calls, primitive methods and specialized public alias constructors, including AtomicUsize and AtomicBool (#2256)
 # expect-stdout:
 #   allocated
 #   1
 #   1
 #   2
+#   7
 #   hello
 #   hello
 #   hello
 #   true
+#   11 24
+#   3
+#   7
 
 """Observe native receivers through associated functions, inherent methods, blanket traits and iterators."""
 
-from rust::std::collections import VecDeque
+from rust::std::collections import BTreeMap, VecDeque
+from rust::std::cmp import Ordering
 from rust::std::env import args, args_os
 from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
+from rust::std::io import Cursor
+from rust::std::io::prelude import Read as FacadeRead
+from rust::std::net import Ipv4Addr
 from rust::std::os::raw import c_int
+from rust::std::ops import Index, Range
+from rust::std::os::unix::process import CommandExt as UnixCommandExt
+from rust::std::path import PathBuf
+from rust::std::primitive import usize, i64 as NativeInt, u32 as NativeUnsigned, bool as NativeBool
+from rust::std::process import Command, Output
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
+from rust::std::sync::atomic import AtomicUsize, AtomicBool, Ordering as AtomicOrdering
 from rust::std import time as native_time
 from rust::std::time import Duration
 from std.io import BytesIO
@@ -30,6 +44,25 @@ model Allocation:
     """Keep an imported allocation in a source model field."""
 
     raw: AllocationHandle
+
+
+model Flag:
+    """Keep scalar, enum and native Copy fields in one indexed record."""
+
+    enabled: bool
+    ordering: Ordering
+    address: Ipv4Addr
+
+
+model FlagSet:
+    """Keep indexed records behind a borrowed model field."""
+
+    flags: list[Flag]
+
+
+def ends_in_c(path: PathBuf) -> bool:
+    """Only read a native owner, so each caller lends it, a closure expression's call included."""
+    return path.ends_with("c")
 
 
 def native_hash[T with NativeHash](value: T) -> u64:
@@ -70,9 +103,34 @@ def show_receiver_methods() -> None:
     assert construct(4u64).as_secs() == 4u64
     qualified = native_time.Duration.from_secs
     assert qualified(5u64).as_secs() == 5u64
+    samples = [Duration.from_secs(7u64)]
+    assert first_duration_seconds(samples) == 7u64
+    assert first_duration(samples).as_secs() == 7u64
+    numbers = [7]
+    println(first_number(numbers))
     match BytesIO(b"abc").read():
-        Ok(data) => assert data == b"abc"
-        Err(_) => assert false
+        Ok(data) =>
+            assert data == b"abc"
+        Err(_) =>
+            assert false
+
+
+def first_duration_seconds(values: &list[Duration]) -> u64:
+    """Resolve Index's Output from both its native list owner and its concrete usize trait argument."""
+    slot: usize = 0
+    return Index.index(values, slot).as_secs()
+
+
+def first_duration(values: &list[Duration]) -> &Duration:
+    """Return the shared element selected by Index without copying its storage."""
+    slot: usize = 0
+    return Index.index(values, slot)
+
+
+def first_number(values: &list[int]) -> &int:
+    """Return the same shared Index contract for an exact scalar element."""
+    slot: usize = 0
+    return Index.index(values, slot)
 
 
 def show_trait_methods() -> None:
@@ -86,16 +144,168 @@ def show_trait_methods() -> None:
     println(Duration.from_secs(3).eq(Duration.from_secs(3)))
     mut queue: VecDeque[i64] = VecDeque.new()
     queue.push_back(3i64)
+    assert len(queue) == 1
     mut seen = 0
     for index, _value in enumerate(queue.iter()):
         seen += index + 1
     assert seen == 1
     assert native_hash(7) == native_hash(7)
+    # A trait reached through a facade re-export selects the trait its definition path names (rust-23).
+    mut cursor = Cursor.new(b"text")
+    mut read: str = ""
+    assert FacadeRead.read_to_string(cursor, read).unwrap() == 4
+    assert read == "text"
+    # A private function's shared-read loan holds for a call inside a closure expression too (rust-13).
+    path = PathBuf.from("a/b/c")
+    check = () => ends_in_c(path)
+    assert ends_in_c(path)
+    assert check()
+    assert ends_in_c(path)
+
+
+def show_mutable_tuple_fields() -> None:
+    """Mutate disjoint native fields through each component of a borrowed tuple."""
+    mut rows: VecDeque[tuple[Range[int], Range[int]]] = VecDeque.new()
+    rows.push_back((Range(start=1, end=2), Range(start=3, end=4)))
+    for left, right in rows.iter_mut():
+        left.start += 10
+        right.end += 20
+    match rows.pop_front():
+        Some(pair) =>
+            left, right = pair
+            println(f"{left.start} {right.end}")
+        None => println("missing")
+
+
+def show_native_constructor() -> None:
+    """Keep record construction and opaque child ownership native, using Rust's status and Clone implementations."""
+    match Command.new("rustc").arg("--version").output():
+        Ok(report) =>
+            snapshot = Output(status=report.status, stdout=report.stdout, stderr=report.stderr)
+            copied = snapshot.clone()
+            assert copied.status.success()
+            reports = [snapshot, copied]
+            assert reports[1].status.success()
+            assert len(reports[1].stdout) > 0
+        Err(_) =>
+            assert false
+    match Command.new("true").spawn():
+        Ok(child) =>
+            mut running = child
+            assert running.id() > 0
+            match running.wait():
+                Ok(status) =>
+                    assert status.success()
+                Err(_) =>
+                    assert false
+        Err(_) =>
+            assert false
+
+
+def show_entry_defaults() -> None:
+    """Infer an empty native entry default from its concrete value type before materializing the collection."""
+    mut entries: BTreeMap[int, list[int]] = BTreeMap.new()
+    entries.entry(7).or_insert([]).push(11)
+    entries.entry(7).or_insert([]).push(13)
+    match entries.get(7):
+        Some(values) =>
+            assert len(values) == 2
+            assert values[0] == 11
+            assert values[1] == 13
+        None =>
+            assert false
+
+
+def show_indexed_flags() -> None:
+    """Read a scalar field from a constant-indexed record without moving the list."""
+    address = Ipv4Addr.new(127u8, 0u8, 0u8, 1u8)
+    addresses = [address, address]
+    assert addresses[1].to_bits() == 2130706433u32
+    flags = [
+        Flag(enabled=false, ordering=Ordering.Less, address=address),
+        Flag(enabled=true, ordering=Ordering.Greater, address=address),
+    ]
+    assert flags[1].enabled
+    match flags[1].ordering:
+        Ordering.Greater => pass
+        _ =>
+            assert false
+    assert not flags[0].enabled
+    inspect_flag_set(FlagSet(flags=flags))
+
+
+def inspect_flag_set(values: &FlagSet) -> None:
+    """Observe fields after a borrowed model and list-element prefix."""
+    assert values.flags[1].enabled
+    assert values.flags[1].address.to_bits() == 2130706433u32
+    match values.flags[1].ordering:
+        Ordering.Greater => pass
+        _ =>
+            assert false
+    assert not values.flags[0].enabled
+
+
+def reverse_ordering(value: &Ordering) -> Ordering:
+    """Copy a borrowed native enum into its by-value method receiver."""
+    return value.reverse()
 
 
 def main() -> None:
-    """Run each receiver observation in the order of the cases it carries."""
+    """
+    Observe native receivers.
+
+    1. Exercise associated functions and argument iteration.
+    2. Exercise inherent methods, trait methods and constructed records.
+    """
+    # 1. Observe associated functions and argument iteration.
     show_associated_functions()
     show_argument_iteration()
+
+    # 2. Observe methods and constructed records.
     show_receiver_methods()
     show_trait_methods()
+    show_mutable_tuple_fields()
+    configure_process_group()
+    show_native_constructor()
+    show_primitive_methods()
+    show_entry_defaults()
+    show_indexed_flags()
+    show_atomic_aliases()
+    match reverse_ordering(Ordering.Less):
+        Ordering.Greater => pass
+        _ =>
+            assert false
+
+
+def configure_process_group() -> None:
+    """Keep an aliased Unix extension trait's exact callee on a mutable command receiver."""
+    mut command = Command.new("true")
+    command.process_group(0)
+    command.process_group((0))
+    command.process_group(-0)
+
+
+def show_primitive_methods() -> None:
+    """Native scalar owners retain inherent calls on values and associated calls with explicit receivers."""
+    signed: NativeInt = 7
+    unsigned: NativeUnsigned = 8
+    flag: NativeBool = true
+    assert NativeInt.count_ones(signed) == 3
+    assert NativeInt.abs(-signed) + 1 == 8
+    assert NativeUnsigned.count_ones(unsigned) == 1
+    assert NativeBool.then_some(flag, 42) == Some(42)
+    assert signed.count_ones() == 3
+    assert unsigned.count_ones() == 1
+    assert flag.then_some(42) == Some(42)
+
+
+def show_atomic_aliases() -> None:
+    """Construct different specializations of one native alias target and observe their own methods."""
+    counter: AtomicUsize = AtomicUsize.new(3usize)
+    println(counter.fetch_add(4usize, AtomicOrdering.SeqCst))
+    println(counter.load(AtomicOrdering.SeqCst))
+    flag: AtomicBool = AtomicBool.new(false)
+    assert not flag.swap(true, AtomicOrdering.SeqCst)
+    assert flag.load(AtomicOrdering.SeqCst)
+    inferred = AtomicUsize.new(9usize)
+    assert inferred.load(AtomicOrdering.SeqCst) == 9usize

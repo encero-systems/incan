@@ -122,11 +122,8 @@ pub struct CheckedApiMetadata {
     pub declarations: Vec<ApiDeclaration>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceSpan {
-    pub start: usize,
-    pub end: usize,
-}
+/// Source coordinates and generated declaration identity retained by checked API publication.
+pub use incan_semantics_core::HirSourceSpan as SourceSpan;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceAnchor {
@@ -685,66 +682,15 @@ pub fn collect_checked_api_metadata(
 
     let mut declarations = Vec::new();
     for decl in &program.declarations {
+        if let Some(nominal) = checked_nominal_api_declaration(decl, &checked_by_name, checker, &module_path) {
+            declarations.push(nominal);
+            continue;
+        }
         match &decl.node {
             Declaration::Function(function) if public(function.visibility) => {
                 if let Some(CheckedExportKind::Function(export)) = checked_kind(&checked_by_name, &function.name) {
                     declarations.push(ApiDeclaration::Function(api_function(
                         function,
-                        decl.span,
-                        export,
-                        checker,
-                        &module_path,
-                    )));
-                }
-            }
-            Declaration::Model(model) if public(model.visibility) => {
-                if let Some(CheckedExportKind::Model(export)) = checked_kind(&checked_by_name, &model.name) {
-                    declarations.push(ApiDeclaration::Model(api_model(
-                        model,
-                        decl.span,
-                        export,
-                        checker,
-                        &module_path,
-                    )));
-                }
-            }
-            Declaration::Class(class) if public(class.visibility) => {
-                if let Some(CheckedExportKind::Class(export)) = checked_kind(&checked_by_name, &class.name) {
-                    declarations.push(ApiDeclaration::Class(api_class(
-                        class,
-                        decl.span,
-                        export,
-                        checker,
-                        &module_path,
-                    )));
-                }
-            }
-            Declaration::Trait(trait_decl) if public(trait_decl.visibility) => {
-                if let Some(CheckedExportKind::Trait(export)) = checked_kind(&checked_by_name, &trait_decl.name) {
-                    declarations.push(ApiDeclaration::Trait(api_trait(
-                        trait_decl,
-                        decl.span,
-                        export,
-                        checker,
-                        &module_path,
-                    )));
-                }
-            }
-            Declaration::Enum(enum_decl) if public(enum_decl.visibility) => {
-                if let Some(CheckedExportKind::Enum(export)) = checked_kind(&checked_by_name, &enum_decl.name) {
-                    declarations.push(ApiDeclaration::Enum(api_enum(
-                        enum_decl,
-                        decl.span,
-                        export,
-                        checker,
-                        &module_path,
-                    )));
-                }
-            }
-            Declaration::Newtype(newtype) if public(newtype.visibility) => {
-                if let Some(CheckedExportKind::Newtype(export)) = checked_kind(&checked_by_name, &newtype.name) {
-                    declarations.push(ApiDeclaration::Newtype(api_newtype(
-                        newtype,
                         decl.span,
                         export,
                         checker,
@@ -816,6 +762,79 @@ pub fn collect_checked_api_metadata(
         },
         &checker.checked_nominal_type_origins(),
     )
+}
+
+/// Project a public nominal declaration only when the checked export inventory retains its matching kind. Source
+/// visibility and declaration order remain with the module collector; this boundary does not infer missing exports.
+fn checked_nominal_api_declaration(
+    decl: &Spanned<Declaration>,
+    checked: &HashMap<String, CheckedNamedExport>,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> Option<ApiDeclaration> {
+    match &decl.node {
+        Declaration::Model(model) if public(model.visibility) => {
+            let Some(CheckedExportKind::Model(export)) = checked_kind(checked, &model.name) else {
+                return None;
+            };
+            Some(ApiDeclaration::Model(api_model(
+                model,
+                decl.span,
+                export,
+                checker,
+                module_path,
+            )))
+        }
+        Declaration::Class(class) if public(class.visibility) => {
+            let Some(CheckedExportKind::Class(export)) = checked_kind(checked, &class.name) else {
+                return None;
+            };
+            Some(ApiDeclaration::Class(api_class(
+                class,
+                decl.span,
+                export,
+                checker,
+                module_path,
+            )))
+        }
+        Declaration::Trait(trait_decl) if public(trait_decl.visibility) => {
+            let Some(CheckedExportKind::Trait(export)) = checked_kind(checked, &trait_decl.name) else {
+                return None;
+            };
+            Some(ApiDeclaration::Trait(api_trait(
+                trait_decl,
+                decl.span,
+                export,
+                checker,
+                module_path,
+            )))
+        }
+        Declaration::Enum(enum_decl) if public(enum_decl.visibility) => {
+            let Some(CheckedExportKind::Enum(export)) = checked_kind(checked, &enum_decl.name) else {
+                return None;
+            };
+            Some(ApiDeclaration::Enum(api_enum(
+                enum_decl,
+                decl.span,
+                export,
+                checker,
+                module_path,
+            )))
+        }
+        Declaration::Newtype(newtype) if public(newtype.visibility) => {
+            let Some(CheckedExportKind::Newtype(export)) = checked_kind(checked, &newtype.name) else {
+                return None;
+            };
+            Some(ApiDeclaration::Newtype(api_newtype(
+                newtype,
+                decl.span,
+                export,
+                checker,
+                module_path,
+            )))
+        }
+        _ => None,
+    }
 }
 
 /// Collect only the checked public alias projection for one parsed module.
@@ -1301,7 +1320,7 @@ fn api_function(
             .type_info()
             .declarations
             .native_attribute_externs
-            .get(&(span.start, span.end))
+            .get(&span)
             .cloned(),
     }
 }
@@ -2741,7 +2760,7 @@ fn push_docstring_diagnostic(
 ) {
     diagnostics.push(ApiDocstringDiagnostic {
         module_path: module_path.to_vec(),
-        error: CompileError::new(message, Span::new(anchor.span.start, anchor.span.end)).with_hint(hint),
+        error: CompileError::new(message, anchor.span).with_hint(hint),
     });
 }
 
@@ -2835,10 +2854,7 @@ fn anchor(module_path: &[String], name: &str, span: Span) -> SourceAnchor {
 
 /// Convert a concrete span into an API metadata source span.
 fn source_span(span: Span) -> SourceSpan {
-    SourceSpan {
-        start: span.start,
-        end: span.end,
-    }
+    span
 }
 
 #[cfg(test)]
@@ -3140,6 +3156,42 @@ pub def col(name: str) -> ColumnExpr:
         Ok(())
     }
 
+    /// Require the decorator context to retain the callable's complete named parameter and return signature.
+    fn assert_decorated_callable_signature(callable: &ApiCallableMetadata) {
+        assert_eq!(callable.name, "eq");
+        assert_eq!(
+            callable
+                .params
+                .iter()
+                .map(|param| (param.name.as_str(), &param.ty))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "left",
+                    &TypeRef::Named {
+                        origin: None,
+                        name: "ColumnExpr".to_string()
+                    }
+                ),
+                (
+                    "right",
+                    &TypeRef::Named {
+                        origin: None,
+                        name: "ColumnExpr".to_string()
+                    }
+                ),
+            ]
+        );
+        assert_eq!(
+            callable.return_type,
+            TypeRef::Named {
+                origin: None,
+                name: "ColumnExpr".to_string()
+            }
+        );
+    }
+
+    /// Preserve decorated callable context and nested structural arguments without losing checked constant facts.
     #[test]
     fn checked_api_metadata_projects_decorated_callable_context_issue694() -> Result<(), String> {
         let source = r#"
@@ -3184,37 +3236,7 @@ pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
             .as_ref()
             .ok_or_else(|| "expected decorated callable context".to_string())?;
 
-        assert_eq!(callable.name, "eq");
-        assert_eq!(
-            callable
-                .params
-                .iter()
-                .map(|param| (param.name.as_str(), &param.ty))
-                .collect::<Vec<_>>(),
-            vec![
-                (
-                    "left",
-                    &TypeRef::Named {
-                        origin: None,
-                        name: "ColumnExpr".to_string(),
-                    },
-                ),
-                (
-                    "right",
-                    &TypeRef::Named {
-                        origin: None,
-                        name: "ColumnExpr".to_string(),
-                    },
-                ),
-            ]
-        );
-        assert_eq!(
-            callable.return_type,
-            TypeRef::Named {
-                origin: None,
-                name: "ColumnExpr".to_string(),
-            }
-        );
+        assert_decorated_callable_signature(callable);
 
         let [
             DecoratorArgMetadata::Positional {

@@ -22,25 +22,46 @@ from toolchain import (
 )
 from rust_units import decoded, read_registry_units
 from observation import file_digest
-
+from cli_help import render, unknown_option
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
 # What a packed Loaf's native document is relative to: its profile directory, three levels below the archive root.
 const FROM_PROFILE: str = "../../../"
+pub const PACK_USAGE: str = "incan toolchain pack OUT"
+pub const INSTALL_USAGE: str = "incan toolchain install ARCHIVE"
 
 
-pub def toolchain_command(arguments: list[str]) -> Result[i32, str]:
-    """Dispatch the toolchain archive commands, refusing missing operands."""
+pub def help_text(command: str) -> str:
+    """Describe the selected archive operation without loading or changing an installation."""
+    if command == "pack":
+        return render(PACK_USAGE, [], "incan toolchain pack toolchain.tar.zst")
+    return render(INSTALL_USAGE, [], "incan toolchain install toolchain.tar.zst")
+
+
+pub def parse_arguments(arguments: list[str]) -> Result[tuple[str, str], str]:
+    """Require an archive command and one operand, rejecting unknown commands and options before I/O."""
+    if len(arguments) == 0:
+        return Err("expected `pack OUT` or `install ARCHIVE`")
+    command = arguments[0]
+    if command not in ["pack", "install"] and not command.startswith("-"):
+        return Err(f"unknown command `{command}`")
+    match unknown_option(arguments):
+        Some(reason) => return Err(reason)
+        None => pass
     if len(arguments) != 2:
-        return Err("usage: incan toolchain pack OUT | install ARCHIVE")
-    if arguments[0] == "pack":
-        pack_toolchain(Path(arguments[1]))?
+        return Err("expected `pack OUT` or `install ARCHIVE`")
+    return Ok((command, arguments[1]))
+
+
+pub def toolchain_command(request: tuple[str, str]) -> Result[i32, str]:
+    """Execute a parsed archive request; syntax has already been validated without side effects."""
+    command, operand = request
+    if command == "pack":
+        pack_toolchain(Path(operand))?
         return Ok(0)
-    if arguments[0] == "install":
-        install_toolchain(Path(arguments[1]))?
-        return Ok(0)
-    return Err(f"unknown toolchain command `{arguments[0]}`")
+    install_toolchain(Path(operand))?
+    return Ok(0)
 
 
 pub def pack_toolchain(output: Path) -> Result[None, str]:
@@ -85,7 +106,11 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     search = stage_search(toolchain.search, stage, "")?
     stage_loaves(directory.joinpath("loaves"), stage)?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
-    write_json(stage.joinpath("toolchain.json"), portable_description(driver, abi, externs, search))?
+    mut description = portable_description(driver, abi, externs, search)
+    if toolchain.registry_lock != "":
+        link_file(Path(toolchain.registry_lock), stage.joinpath("registry/selected.json"))?
+        description = replaced(description, "registry_lock", JsonValue.string("registry/selected.json"))?
+    write_json(stage.joinpath("toolchain.json"), description)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
     return archive(stage, output)
 
@@ -109,25 +134,18 @@ def stage_externs(externs: list[NativeCrate], stage: Path) -> Result[list[JsonVa
     return Ok(staged)
 
 
-def portable_description(
-    driver: str,
-    abi: list[str],
-    externs: list[JsonValue],
-    search: list[str],
-) -> JsonValue:
+def portable_description(driver: str, abi: list[str], externs: list[JsonValue], search: list[str]) -> JsonValue:
     """The toolchain description of a packed toolchain: every path relative to the toolchain directory."""
-    return JsonValue.object(
-        {
-            "schema": JsonValue.string(TOOLCHAIN_SCHEMA),
-            "name": JsonValue.string(TOOLCHAIN),
-            "driver": JsonValue.string(driver),
-            "sysroot": JsonValue.string("sysroot"),
-            "rust_abi": JsonValue.array([JsonValue.string(path) for path in abi]),
-            "externs": JsonValue.array(externs),
-            "search": JsonValue.array([JsonValue.string(path) for path in search]),
-            "registry_units": JsonValue.string("registry/closure.json"),
-        },
-    )
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(TOOLCHAIN_SCHEMA)
+    fields["name"] = JsonValue.string(TOOLCHAIN)
+    fields["driver"] = JsonValue.string(driver)
+    fields["sysroot"] = JsonValue.string("sysroot")
+    fields["rust_abi"] = JsonValue.array([JsonValue.string(path) for path in abi])
+    fields["externs"] = JsonValue.array(externs)
+    fields["search"] = JsonValue.array([JsonValue.string(path) for path in search])
+    fields["registry_units"] = JsonValue.string("registry/closure.json")
+    return JsonValue.object(fields)
 
 
 def archive(stage: Path, output: Path) -> Result[None, str]:
@@ -436,7 +454,9 @@ def safe_member(path: str) -> bool:
 
 def verify_contents(toolchain: Toolchain) -> Result[None, str]:
     """Refuse incomplete archives before invoking the driver or replacing an installed closure."""
-    files = [toolchain.driver, toolchain.registry_units] + toolchain.rust_abi
+    mut files = [toolchain.driver, toolchain.registry_units] + toolchain.rust_abi
+    if toolchain.registry_lock != "":
+        files.append(toolchain.registry_lock)
     for file in files + [native.path for native in toolchain.externs]:
         if not Path(file).is_file():
             return Err(f"missing toolchain artifact: {file}")
@@ -461,6 +481,8 @@ def manifest_paths(document: JsonValue) -> Result[list[str], str]:
     mut paths: list[str] = []
     for key in ["driver", "registry_units"]:
         paths.append(required_text(document, key)?)
+    if document.get("registry_lock") != None:
+        paths.append(required_text(document, "registry_lock")?)
     for key in ["rust_abi", "search"]:
         for value in required_items(document, key)?:
             paths.append(string_value(value)?)
@@ -495,7 +517,7 @@ def publish_install(stage: Path, target: Path) -> Result[None, str]:
         rename(stage.0, target.0).map_err((error) => str(error))?
         return Ok(None)
     # 2. The previous installation is moved aside, not deleted, until the new one is in place.
-    previous =target.parent().joinpath(f".previous-{TOOLCHAIN}-{id()}")
+    previous = target.parent().joinpath(f".previous-{TOOLCHAIN}-{id()}")
     if previous.exists():
         return Err(f"previous installation backup already exists: {previous.0}")
     rename(f"{target.0}", f"{previous.0}").map_err((error) => str(error))?

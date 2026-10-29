@@ -154,7 +154,8 @@ impl Formatter {
     /// Format a docstring while preserving source prose.
     pub(super) fn format_docstring(&mut self, doc: &str) {
         // Trim leading and trailing whitespace from the docstring content to ensure idempotent formatting
-        let trimmed = doc.trim();
+        let escaped = doc.trim().replace('\\', "\\\\").replace("\"\"\"", "\\\"\\\"\\\"");
+        let trimmed = escaped.as_str();
         if trimmed.is_empty() {
             self.writer.writeln("\"\"\"\"\"\"");
         } else if trimmed.contains('\n') {
@@ -818,7 +819,9 @@ impl Formatter {
         self.writer.newline();
     }
 
-    /// Format a newtype or rusttype declaration, including method aliases.
+    /// Format a newtype or rusttype declaration, emitting each alias through its declaration view once.
+    ///
+    /// The parser also records aliases as rebindings for checking; that compatibility view is not additional syntax.
     fn format_newtype(&mut self, nt: &NewtypeDecl) {
         for dec in &nt.decorators {
             self.format_decorator(&dec.node);
@@ -846,7 +849,6 @@ impl Formatter {
 
         let has_body = nt.docstring.is_some()
             || !nt.associated_types.is_empty()
-            || !nt.rebindings.is_empty()
             || !nt.method_aliases.is_empty()
             || !nt.method_partials.is_empty()
             || !nt.interop_edges.is_empty()
@@ -862,7 +864,6 @@ impl Formatter {
         if let Some(docstring) = &nt.docstring {
             self.format_docstring(docstring);
             if !nt.associated_types.is_empty()
-                || !nt.rebindings.is_empty()
                 || !nt.method_aliases.is_empty()
                 || !nt.method_partials.is_empty()
                 || !nt.interop_edges.is_empty()
@@ -876,23 +877,14 @@ impl Formatter {
             self.format_associated_type(&associated_type.node);
         }
         if !nt.associated_types.is_empty()
-            && (!nt.rebindings.is_empty()
-                || !nt.method_aliases.is_empty()
-                || !nt.interop_edges.is_empty()
-                || !nt.methods.is_empty())
+            && (!nt.method_aliases.is_empty() || !nt.interop_edges.is_empty() || !nt.methods.is_empty())
         {
             self.writer.newline();
         }
 
-        for rebinding in &nt.rebindings {
-            self.writer.write(&rebinding.node.name);
-            self.writer.write(" = ");
-            self.format_spanned_expr(&rebinding.node.target);
-            self.writer.newline();
-        }
         self.format_method_aliases(&nt.method_aliases);
         self.format_method_partials(&nt.method_partials);
-        if (!nt.rebindings.is_empty() || !nt.method_aliases.is_empty() || !nt.method_partials.is_empty())
+        if (!nt.method_aliases.is_empty() || !nt.method_partials.is_empty())
             && (!nt.interop_edges.is_empty() || !nt.methods.is_empty())
         {
             self.writer.newline();

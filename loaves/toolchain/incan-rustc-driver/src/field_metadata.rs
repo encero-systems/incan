@@ -1,8 +1,12 @@
 //! Immutable compiler-generated field metadata, constructed from the Incan plan's checked declaration facts.
 
-use crate::ast_build::{block, expression, expression_statement, global_path, ident, local, path_ty};
+use crate::ast_build::{
+    RUST_OPTION_NONE_SYMBOL, RUST_OPTION_SOME_SYMBOL, block, expression, expression_statement, global_path, ident,
+    local, path_ty,
+};
 use crate::error::PlanError;
 use crate::plan::{CalleeKind, FieldMetadata, ModelDeclaration, Plan, PlanType, TerminatorKind};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use rustc_ast as ast;
 use rustc_span::{Span, Symbol};
 use std::collections::BTreeSet;
@@ -38,7 +42,7 @@ pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError>
         return Err(refused());
     }
     Ok(PlanType::FrozenCollection(
-        "FrozenList".into(),
+        collections::as_str(CollectionTypeId::FrozenList).into(),
         vec![PlanType::Model(info, metadata.name.clone())],
     ))
 }
@@ -68,7 +72,12 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
 /// Declare a zero-input accessor; the source receiver has already been evaluated by Body IR and is never consumed.
 fn accessor(owner: i64, output: &PlanType, span: Span) -> Box<ast::Item> {
     let value = call(
-        &["incan_std_core", "frozen", "FrozenList", "new"],
+        &[
+            "incan_std_core",
+            "frozen",
+            collections::as_str(CollectionTypeId::FrozenList),
+            "new",
+        ],
         thin_vec![local(&storage_name(owner), span)],
         span,
     );
@@ -175,7 +184,12 @@ fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
         (
             "extra",
             call(
-                &["incan_std_core", "frozen", "FrozenDict", "new"],
+                &[
+                    "incan_std_core",
+                    "frozen",
+                    collections::as_str(CollectionTypeId::FrozenDict),
+                    "new",
+                ],
                 thin_vec![expression(
                     ast::ExprKind::AddrOf(
                         ast::BorrowKind::Ref,
@@ -231,12 +245,15 @@ fn frozen_text(text: &str, span: Span) -> Box<ast::Expr> {
 fn optional_text(value: &Option<String>, span: Span) -> Box<ast::Expr> {
     match value {
         Some(text) => call(
-            &["core", "option", "Option", "Some"],
+            &["core", "option", "Option", RUST_OPTION_SOME_SYMBOL],
             thin_vec![frozen_text(text, span)],
             span,
         ),
         None => expression(
-            ast::ExprKind::Path(None, global_path(&["core", "option", "Option", "None"], span)),
+            ast::ExprKind::Path(
+                None,
+                global_path(&["core", "option", "Option", RUST_OPTION_NONE_SYMBOL], span),
+            ),
             span,
         ),
     }

@@ -1,44 +1,49 @@
 """
 Incan units: checking and compiling a described unit with the toolchain's compiler (DD-0008).
 
-Oven writes the unit description where the compiler reads it, `<project>/target/incan/units/<crate>.unit.json`, and
+Oven writes the unit description where the compiler reads it, under `<project>/target/incan/units/`, and
 runs the compiler once per unit. The description already names the exact Rust externs, ABI caches, and dependency
 search directories; these are the same inputs for checking and compilation.
 
 A program or test executable is stored under the project's `target/incan/` with a stamp of the key it was built for
 (see `unit_freshness`). A later run whose key is unchanged executes the stored executable and starts no compiler.
+Compiler-certified deterministic refusals retain their exact output bytes under that same identity. A normal repeat
+replays them; crashes, signals, resource failures and missing successful outputs remain retryable.
 """
 
-from rust::std::fs import File, OpenOptions
 from rust::std::os::unix::process import CommandExt
-from rust::std::process import Command, Stdio
+from rust::std::process import Command
 from std.fs import Path
+from compiler_refusals import check_or_replay
 from files import discard_file
-from home import dependency_artifact_dir
-from observation import trace
+from observation import trace, trace_launch
 from publication import place
 from toolchain import Toolchain
-from unit import UnitDescription, dependency_units
-from unit_freshness import Key, artifact_files, install_all, record, reusable, staleness, unit_key
-from unit_rust import prepare_native
-
-
-pub def crate_name(unit: UnitDescription) -> str:
-    """The crate a unit compiles to: its package, or its source file's stem when it has no project."""
-    if unit.package != "":
-        return unit.package.replace("-", "_")
-    return Path(unit.source).stem().replace("-", "_")
+from unit import UnitDescription
+from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
+from unit_freshness import Key, install_all, reusable, staleness, unit_key
+from unit_rust import compile_library_unit, prepare_native
+from shared_link import development_link, library_witness, linkage_key, shared_current
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
-    """Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code."""
-    prepared = prepare_dependencies(unit, toolchain)?
-    if prepared != 0:
-        return Ok(prepared)
+    """
+    Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code.
+
+    A unit whose key is unchanged replays the report and status of its last certified check (see `check_or_replay`).
+
+    1. Prepare the dependencies and exact native inputs, and key the prepared unit.
+    2. Publish its description under that key.
+    3. Replay the stored report for this key and format, or check and retain a certified report.
+    """
+    # 1. A dependency whose sources changed is compiled again, which changes the key of the unit checked against it.
     ready = prepare_native(unit, toolchain)?
-    path = write_unit(ready, crate_name(ready))?
+    key = unit_key(ready, toolchain)?
+    # 2. An unchanged description is kept as it is.
+    path = write_unit(ready, crate_name(ready), None, described_by(key))?
+    # 3. The record's identity covers the key and the complete invocation, so text and JSON reports are kept apart.
     arguments = ["--check", path.0, toolchain.sysroot, "--format", format]
-    return run_compiler(toolchain, arguments)
+    return check_or_replay(ready, toolchain, arguments, check_record(ready, format), key)
 
 
 pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, check: bool) -> Result[i32, str]:
@@ -50,83 +55,40 @@ pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, ch
     return run_compiler(toolchain, arguments)
 
 
-pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
+pub def compile_unit(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    development: bool = false,
+) -> Result[i32, str]:
     """
     Compile the described program, library or test unit to `output`. Returns the compiler's exit code.
 
-    1. Prepare the path libraries it depends on.
-    2. Prepare its native inputs.
-    3. A library is compiled; an executable whose inputs are unchanged since it was built is kept instead.
+    A development request may share debug native inputs; ordinary builds and all libraries retain archive linkage.
+
+    1. Prepare the shared local graph and bind the exact native inputs.
+    2. Compile a library, or reuse an executable whose inputs have not changed.
     """
-    # 1. Every path library the unit links is current before the unit itself is compiled.
-    prepared = prepare_dependencies(unit, toolchain)?
-    if prepared != 0:
-        return Ok(prepared)
-    # 2. The unit names the exact native crates, ABI caches and search directories its compilation reads.
+    # 1. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
     ready = prepare_native(unit, toolchain)?
-    # 3. A library is always compiled; an executable is compiled only when its key has changed.
+    # 2. Both libraries and executables reuse their complete, unchanged artifact sets.
     if ready.kind == "library":
-        return compile_prepared_unit(ready, toolchain, output)
-    return compile_executable(ready, toolchain, output, unit_key(ready, toolchain)?)
+        return compile_library_unit(ready, toolchain, output)
+    return compile_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
 
 
-pub def prepare_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
-    """
-    Prepare path libraries once in dependency order for every command that checks or compiles a unit.
-
-    1. Describe the active path dependencies, each before the units that consume it.
-    2. Prepare each one: keep its stored library while its key is unchanged, otherwise compile it.
-    3. Stop at the first library the compiler refuses, and report its exit code.
-    """
-    for dependency in dependency_units(unit)?:
-        code = prepare_library(unit, dependency, toolchain)?
-        if code != 0:
-            return Ok(code)
-    return Ok(0)
-
-
-def prepare_library(consumer: UnitDescription, dependency: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
-    """
-    Keep the stored library of a path dependency of `consumer`, or compile it. Returns the compiler's exit code.
-
-    1. Key the dependency as a library and look at its stamp.
-    2. An unchanged library is kept.
-    3. Otherwise withdraw the stamp, compile the library and check that every artifact was published.
-    4. Record the stamp of the completed build.
-    """
-    # 1. The dependency is keyed as the library it will be, against the stamp of the build it last had.
-    mut library_unit = prepare_native(dependency, toolchain)?
-    library_unit.kind = "library"
-    directory = dependency_artifact_dir(consumer.project_root, dependency.package, consumer.profile)
-    artifacts = artifact_files(directory, dependency.package)
-    key = unit_key(library_unit, toolchain)?
-    stamp = directory.joinpath(".oven-inputs.sha256")
-    why = staleness(artifacts, stamp, key)?
-    # 2. A library whose stamp vouches for its key starts no compiler.
-    if why == "":
-        trace(f"unit {dependency.package} library: reused")
-        return Ok(0)
-    # 3. A stale library loses its stamp first, so no stamp vouches for a build the compiler is about to replace.
-    trace(f"unit {dependency.package} library: compiled ({why})")
-    if stamp.is_file():
-        stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
-    output = directory.joinpath(f"lib{crate_name(dependency)}.rlib")
-    compiled = compile_prepared_unit(library_unit, toolchain, output)?
-    if compiled != 0:
-        return Ok(compiled)
-    for artifact in artifacts:
-        if not artifact.is_file():
-            return Err(f"compiler did not publish {artifact.0}")
-    # 4. The new stamp binds the key to the artifacts the compiler published.
-    record(stamp, key, artifacts)?
-    return Ok(0)
-
-
-pub def compile_executable(unit: UnitDescription, toolchain: Toolchain, output: Path, key: Key) -> Result[i32, str]:
+pub def compile_executable(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    key: Key,
+    development: bool = false,
+) -> Result[i32, str]:
     """
     Keep the stored executable while `key` is unchanged; otherwise build it beside `output` and install it.
 
     The caller reconciled the unit's inputs into `key`, so a resident owner can answer from what it retains.
+    Development linkage has its own key, and every shared library is validated before reuse.
 
     1. An executable whose stamp vouches for `key` is kept.
     2. Otherwise take the output's lock: one build of an output at a time.
@@ -134,11 +96,15 @@ pub def compile_executable(unit: UnitDescription, toolchain: Toolchain, output: 
     4. Compile to a staged name beside the output.
     5. Install the staged build, with the stamp of its key.
     """
+    shared = development_link(unit, development)
+    selected = linkage_key(key, shared)?
     stamp = Path(f"{output.0}.oven-inputs")
-    outputs = executable_outputs(unit.kind, output)
+    outputs = executable_outputs(unit.kind, output, shared)
     label = f"unit {crate_name(unit)} {unit.kind}"
     # 1. An executable whose stamp vouches for the key starts no compiler.
-    why = staleness(outputs, stamp, key)?
+    mut why = staleness(outputs, stamp, selected)?
+    if why == "" and shared and not shared_current(output):
+        why = "dynamic native inputs changed"
     if why == "":
         trace(f"{label}: reused")
         return Ok(0)
@@ -146,37 +112,46 @@ pub def compile_executable(unit: UnitDescription, toolchain: Toolchain, output: 
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     building = output.lock_exclusive().map_err((error) => error.message())?
     # 3. A build another command finished while this one waited is used, not repeated.
-    if reusable(outputs, stamp, key)?:
+    if reusable(outputs, stamp, selected)? and (not shared or shared_current(output)):
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(0)
-    trace(f"{label}: compiled ({why})")
     # 4. The staged name is stable, because the system vets a path the first time it runs a new executable at it.
     staged = Path(f"{output.0}-staged")
-    code = compile_staged(unit, toolchain, staged)?
+    code = compile_staged(unit, toolchain, staged, key, why, shared)?
     if code != 0:
         return Ok(code)
     # 5. A complete build replaces the stored one with its stamp, or an interruption leaves a rebuild and no mix.
-    install_executable(staged, output, unit.kind, stamp, key)?
+    install_executable(staged, output, unit.kind, stamp, selected, shared)?
     return Ok(0)
 
 
-def compile_staged(unit: UnitDescription, toolchain: Toolchain, staged: Path) -> Result[i32, str]:
+def compile_staged(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    staged: Path,
+    key: Key,
+    reason: str,
+    shared: bool,
+) -> Result[i32, str]:
     """Compile a unit to its staged name; a build that fails leaves nothing behind. Returns the compiler's exit code."""
-    match compile_prepared_unit(unit, toolchain, staged):
+    match compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared):
         Err(reason) =>
-            discard(staged, unit.kind)
+            discard(staged, unit.kind, shared)
             return Err(reason)
         Ok(code) =>
             if code != 0:
-                discard(staged, unit.kind)
+                discard(staged, unit.kind, shared)
             return Ok(code)
 
 
-pub def executable_outputs(kind: str, output: Path) -> list[Path]:
-    """The files that make up a stored executable: the program, and for a test unit the report of its tests."""
+pub def executable_outputs(kind: str, output: Path, shared: bool = false) -> list[Path]:
+    """The executable, its optional test report and its required loader witness when shared linkage was selected."""
+    mut outputs = [output]
     if kind == "test":
-        return [output, test_report(output)]
-    return [output]
+        outputs.append(test_report(output))
+    if shared:
+        outputs.append(library_witness(output))
+    return outputs
 
 
 pub def test_report(binary: Path) -> Path:
@@ -184,13 +159,20 @@ pub def test_report(binary: Path) -> Path:
     return Path(f"{binary.0}.tests.json")
 
 
-pub def install_executable(staged: Path, output: Path, kind: str, stamp: Path, key: Key) -> Result[None, str]:
+pub def install_executable(
+    staged: Path,
+    output: Path,
+    kind: str,
+    stamp: Path,
+    key: Key,
+    shared: bool = false,
+) -> Result[None, str]:
     """
     Replace the stored executable with a completed build of `key`, atomically (see `install_all`).
 
     The debug bundle the linker wrote beside it follows, and only helps a debugger.
     """
-    install_all(executable_outputs(kind, staged), executable_outputs(kind, output), stamp, key)?
+    install_all(executable_outputs(kind, staged, shared), executable_outputs(kind, output, shared), stamp, key)?
     if debug_bundle(staged).is_dir():
         if debug_bundle(output).is_dir():
             debug_bundle(output).remove_tree().map_err((error) => error.message())?
@@ -203,23 +185,14 @@ def debug_bundle(binary: Path) -> Path:
     return Path(f"{binary.0}.dSYM")
 
 
-def discard(staged: Path, kind: str) -> None:
+def discard(staged: Path, kind: str, shared: bool = false) -> None:
     """Remove what a failed build left beside the stored executable; the stored executable itself is untouched."""
-    for leftover in executable_outputs(kind, staged):
+    for leftover in executable_outputs(kind, staged, shared):
         if leftover.is_file():
             discard_file(leftover)
     if debug_bundle(staged).is_dir():
         # Tidying a failed build is best effort: a bundle that stays is replaced by the next build.
         _ = debug_bundle(staged).remove_tree()
-
-
-def compile_prepared_unit(unit: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
-    """Compile one unit after its dependencies are ready; preparation owns ordering and is never recursive here."""
-    compiled = crate_name(unit)
-    path = write_unit(unit, compiled)?
-    output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
-    arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
-    return run_compiler(toolchain, arguments)
 
 
 pub def run_program(binary: Path, arguments: list[str], argv0: Option[str] = None) -> Result[i32, str]:
@@ -230,58 +203,13 @@ pub def run_program(binary: Path, arguments: list[str], argv0: Option[str] = Non
     program = f"{binary.0}"
     mut command = Command.new(binary.0)
     match argv0:
-        Some(value) =>
-            command.arg0(value)
+        Some(value) => _ = command.arg0(value)
         None => pass
     for argument in arguments:
         command.arg(argument)
+    trace_launch(program)
     failure = command.exec()
     return Err(f"cannot run {program}: {failure}")
-
-
-pub def write_unit(unit: UnitDescription, compiled: str, owner: Option[Path] = None) -> Result[Path, str]:
-    """Write the unit description where the compiler reads it."""
-    mut root = Path(unit.project_root)
-    if let Some(selected) = owner:
-        root = selected
-    directory = root.joinpath("target").joinpath("incan").joinpath("units")
-    directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
-    path = directory.joinpath(f"{compiled}.unit.json")
-    text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
-    path.write_text(text, "utf-8", "strict", None).map_err((error) => f"{path.0}: {error.message()}")?
-    return Ok(path)
-
-
-pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:
-    """Run the toolchain's compiler; it refuses an inherited `RUSTC_BOOTSTRAP`, so none reaches it."""
-    mut command = Command.new(toolchain.driver)
-    for argument in arguments:
-        command.arg(argument)
-    command.env_remove("RUSTC_BOOTSTRAP")
-    if toolchain.console != "":
-        command.stdout(Stdio.from(open_stream(f"{toolchain.console}.out")?))
-        command.stderr(Stdio.from(open_stream(f"{toolchain.console}.err")?))
-    return status_of(command, toolchain.driver)
-
-
-def open_stream(path: str) -> Result[File, str]:
-    """A file a compiler stream is appended to, created when it is missing."""
-    mut options = OpenOptions.new()
-    options.append(true)
-    options.create(true)
-    match options.open(path):
-        Ok(file) => return Ok(file)
-        Err(error) => return Err(f"cannot open {path}: {error}")
-
-
-def status_of(mut command: Command, program: str) -> Result[i32, str]:
-    """Run a command with the caller's standard streams; a process ended by a signal counts as exit code 1."""
-    match command.status():
-        Err(error) => return Err(f"cannot run {program}: {error}")
-        Ok(status) =>
-            match status.code():
-                Some(code) => return Ok(code)
-                None => return Ok(1)
 
 
 pub def program_binary(unit: UnitDescription) -> Path:
@@ -293,3 +221,9 @@ pub def stored_executable(unit: UnitDescription, directory: str) -> Path:
     """Where an executable of a unit is stored: `target/incan/<profile>/<directory>/<crate>` in its project."""
     profile = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile)
     return profile.joinpath(directory).joinpath(crate_name(unit))
+
+
+def check_record(unit: UnitDescription, format: str) -> Path:
+    """Where a unit's last certified check report is retained: `target/incan/<profile>/check/<crate>.<format>`."""
+    stored = stored_executable(unit, "check")
+    return Path(f"{stored.0}.{format}.oven-check")

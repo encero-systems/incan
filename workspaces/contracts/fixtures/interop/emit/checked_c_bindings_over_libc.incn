@@ -1,4 +1,4 @@
-# behavior: checked C bindings over the host libc call a scalar function with an exact c.i32 carrier, receive a scalar through a c.Out slot, pass bounded NUL-terminated text through c.cstr and copy a returned C string view as UTF-8
+# behavior: checked C carriers, initialized slots and bounded UTF-8 text avoid recursive sized display and refuse a nonpositive bound with its own message (incan-4.10)
 # expect-stdout:
 #   5
 #   7
@@ -6,8 +6,13 @@
 #   5
 #   interior nul refused
 #   true
+#   65
+#   0 5
+#   true true true
+#   max_bytes is not a valid bound
 
 from std.interop import c
+
 
 binding LibC:
     header = "stdlib.h"
@@ -15,57 +20,123 @@ binding LibC:
 
     symbol absolute(value: c.i32) -> c.i32:
         native = "abs"
+    enum Status:
+        OK: c.i32 = EXIT_SUCCESS
+        ONE: c.i32 = EXIT_FAILURE
 
-    symbol frexp(value: c.f64, exponent: c.Out[c.i32]) -> c.f64:
+    symbol decode(output: c.Out[c.i32], text: c.ConstPtr[c.c_char], length: c.Size) -> c.i32:
+        native = "mbtowc"
+
+        outcome Status.ONE:
+            initializes = [output]
+
+
+binding LibMath:
+    header = "math.h"
+    link = c.system_library("m")
+
+    symbol frexp(value: c.f64, exponent: c.InOut[c.i32]) -> c.f64:
         native = "frexp"
 
-        outcome Status.OK:
-            initializes = [exponent]
+
+binding LibString:
+    header = "string.h"
+    link = c.system_library("c")
 
     symbol string_length(value: c.ConstPtr[c.c_char]) -> c.Size:
         native = "strlen"
 
-    symbol error_text(code: c.i32) -> c.ConstPtr[c.c_char]:
-        native = "strerror"
 
-    enum Status:
-        OK: c.i32 = EXIT_SUCCESS
+binding LibResolver:
+    header = "netdb.h"
+    link = c.system_library("c")
+
+    symbol error_text(code: c.i32) -> c.ConstPtr[c.c_char]:
+        native = "gai_strerror"
 
 
 def absolute(value: i32) -> i32:
+    """Return the checked C absolute value."""
     unsafe:
         return LibC.absolute(value)
 
 
 def split(value: f64) -> str:
+    """Read the initialized in/out exponent written by the checked C call."""
     unsafe:
-        exponent = c.out[c.i32]()
-        mantissa = LibC.frexp(value, exponent)
+        initial: i32 = 0
+        exponent = c.inout(initial)
+        mantissa = LibMath.frexp(value, exponent)
         return f"{mantissa} {exponent.take()}"
 
 
 def string_length(value: str) -> Result[usize, str]:
+    """Pass validated, owned terminated storage to the checked length function."""
     text = c.cstr(value)?
     unsafe:
-        return Ok(LibC.string_length(text.as_const_ptr()))
+        return Ok(LibString.string_length(text.as_const_ptr()))
 
 
-def error_text(code: i32) -> Result[str, str]:
+def error_text(code: i32, bound: int = 256) -> Result[str, str]:
+    """Copy the returned view only within the requested byte bound."""
     unsafe:
-        view = LibC.error_text(code)
-        return view.copy_utf8(max_bytes=256)
+        view = LibResolver.error_text(code)
+        return view.copy_utf8(max_bytes=bound)
+
+
+def decode_initial() -> Result[i32, str]:
+    """Read a fresh output only after its declared initializing outcome."""
+    text = c.cstr("A")?
+    unsafe:
+        output = c.out[c.i32]()
+        status = LibC.decode(output, text.as_const_ptr(), 1usize)
+        if status == LibC.Status.ONE:
+            return Ok(output.take())
+        return Err("C conversion failed")
+
+
+def refused_bound(bound: int) -> bool:
+    """Report whether an insufficient or nonpositive text bound is refused."""
+    match error_text(0, bound):
+        Ok(_) => return false
+        Err(_) => return true
 
 
 def main() -> None:
+    """
+    Print the checked scalar, slot and bounded text results.
+
+    1. Call scalar functions and read the initialized output slot.
+    2. Check valid text and text containing an actual NUL byte.
+    3. Copy a bounded returned C string view.
+    4. Check conditional output initialization, empty and UTF-8 inputs, and refused scan bounds.
+    5. Refuse a nonpositive bound with its own reason.
+    """
+    # 1. Scalar carriers and the initialized output slot keep their declared types.
     println(absolute(-5))
     println(absolute(7))
     println(split(8.0))
+    # 2. Text escapes preserve \0 literally, so construct the NUL through a byte literal.
     match string_length("hello"):
         Ok(length) => println(length)
         Err(error) => println(f"error {error}")
-    match string_length("a\0b"):
+    interior_nul = b"a\x00b".decode("utf-8").unwrap_or("")
+    match string_length(interior_nul):
         Ok(length) => println(length)
         Err(_) => println("interior nul refused")
+    # 3. A returned view is copied with an explicit bound before leaving the unsafe helper.
     match error_text(0):
         Ok(text) => println(len(text) > 0)
         Err(error) => println(f"error {error}")
+    # 4. Out permission follows the outcome; text bounds count encoded bytes including the terminator.
+    match decode_initial():
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    empty = string_length("").unwrap_or(99usize)
+    encoded = string_length("café").unwrap_or(99usize)
+    println(f"{empty} {encoded}")
+    println(f"{refused_bound(1)} {refused_bound(0)} {refused_bound(-1)}")
+    # 5. A nonpositive bound is refused before any read, with its own reason.
+    match error_text(0, 0):
+        Ok(text) => println(text)
+        Err(error) => println(error)

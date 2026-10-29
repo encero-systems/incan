@@ -802,7 +802,7 @@ fn checked_direct_identity_at_span(checker: &TypeChecker, name: &str, span: Span
         .type_info()
         .declarations
         .function_bindings_by_span
-        .get(&(span.start, span.end))
+        .get(&span)
         .and_then(|binding| binding.identity.clone())
         .or_else(|| checked_binding_canonical(checker, name));
     CheckedExportIdentity::direct(checked_export_source_path(checker, name)).with_canonical(canonical)
@@ -1637,7 +1637,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
         derives: sorted_vec(derives.clone()),
         is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
-        checked_constructor: TypeChecker::validated_newtype_ctor_name(&newtype_decl.name, info),
+        checked_constructor: checker.validated_newtype_ctor_name(&newtype_decl.name, info),
         constraints: constraints.clone(),
         implicit_coercion_enabled: *implicit_coercion_enabled,
         methods: map_method_overloads_with_defaults(method_overloads, &newtype_decl.methods, checker),

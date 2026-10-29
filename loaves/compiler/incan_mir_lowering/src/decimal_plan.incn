@@ -22,10 +22,10 @@ pub def decimal_literal(mut builder: Builder, value: &TypedNumericConstant, span
                 "incan_native_runtime::decimal_from_parts",
                 [PlanType.I128, PlanType.U8],
                 PlanType.Decimal,
-                [literal(Constant.Numeric(str(coefficient), PlanType.I128), span), literal(
-                    Constant.Numeric(str(scale), PlanType.U8),
-                    span,
-                )],
+                [
+                    literal(Constant.Numeric(str(coefficient), PlanType.I128), span),
+                    literal(Constant.Numeric(str(scale), PlanType.U8), span),
+                ],
                 output,
                 span,
             )
@@ -43,19 +43,13 @@ pub def decimal_comparison(
     """Use the canonical Decimal128 value comparison, never rustc scalar arithmetic."""
     mut name = ""
     match operator:
-        BinOp.Eq =>
-            name = "equal_decimal"
-        BinOp.Ne =>
-            name = "unequal_decimal"
-        BinOp.Lt =>
-            name = "less_decimal"
-        BinOp.Le =>
-            name = "less_equal_decimal"
-        BinOp.Gt =>
-            name = "greater_decimal"
-        BinOp.Ge =>
-            name = "greater_equal_decimal"
-        _ => return Err("unsupported Body IR decimal arithmetic: legacy comparison-only carrier")
+        BinOp.Eq => name = "equal_decimal"
+        BinOp.Ne => name = "unequal_decimal"
+        BinOp.Lt => name = "less_decimal"
+        BinOp.Le => name = "less_equal_decimal"
+        BinOp.Gt => name = "greater_decimal"
+        BinOp.Ge => name = "greater_equal_decimal"
+        _ => return Err("decimal values support comparison here; decimal arithmetic is unsupported")
     output = temporary(builder, PlanType.Bool, span)
     external_call(
         builder,

@@ -194,6 +194,7 @@ impl BodyBuilder<'_, '_> {
                 intrinsic_carrier: None,
                 reflection: None,
                 loaf_trait: None,
+                trait_arguments: None,
                 canonical: Some(identity),
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(count),
@@ -216,11 +217,8 @@ impl BodyBuilder<'_, '_> {
 
     /// Reuse the ordinary checked target first, then the independent frozen-codec selection legacy does not read.
     fn selected_codec_identity(&self, span: ast::Span) -> Option<&CanonicalSymbolId> {
-        self.type_info.resolved_identity(span).or_else(|| {
-            self.type_info
-                .calls
-                .body_ir_native_codec_members
-                .get(&(span.start, span.end))
-        })
+        self.type_info
+            .resolved_identity(span)
+            .or_else(|| self.type_info.calls.body_ir_native_codec_members.get(&span))
     }
 }

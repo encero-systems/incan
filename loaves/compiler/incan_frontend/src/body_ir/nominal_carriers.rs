@@ -71,6 +71,13 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
     for alias in &mut module.type_alias_declarations {
         qualify_type(&mut alias.ty, None, &alias.named_type_identities);
     }
+    for declaration in &mut module.enum_declarations {
+        for variant in &mut declaration.variants {
+            for ty in &mut variant.fields {
+                qualify_type(ty, None, &declaration.named_type_identities);
+            }
+        }
+    }
     for body in &mut module.bodies {
         retain_body(body, facts, &constructors);
     }
@@ -165,26 +172,83 @@ fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &Const
             );
         }
     }
+    retain_body_types(body, Some(facts));
+}
+
+/// Project authenticated published types through their retained bindings, including pre-carrier-key enum bodies.
+/// This consumes declaration-owned identities only; no consumer spelling, source lookup or inference participates.
+pub(crate) fn retain_published_frame(body: &mut bir::Body) {
+    let keys: Vec<_> = body
+        .named_type_identities
+        .values()
+        .filter_map(|identity| nominal_carrier_key(identity).map(|key| (key, identity.clone())))
+        .collect();
+    for (key, identity) in keys {
+        body.named_type_identities.entry(key).or_insert(identity);
+    }
+    retain_body_types(body, None);
+}
+
+/// Retain canonical carriers on decoded declarations without rechecking or changing their persisted ownership.
+pub(crate) fn retain_published_module(module: &mut bir::BodyIrModule) {
+    for declaration in &mut module.nominal_declarations {
+        for ty in &mut declaration.field_types {
+            qualify_type(ty, None, &declaration.named_type_identities);
+        }
+        if let Some(body) = &mut declaration.field_default_body {
+            retain_published_frame(body);
+        }
+        for partial in &mut declaration.method_partial_defaults {
+            retain_published_frame(&mut partial.frame);
+        }
+    }
+    for declaration in &mut module.enum_declarations {
+        for variant in &mut declaration.variants {
+            for ty in &mut variant.fields {
+                qualify_type(ty, None, &declaration.named_type_identities);
+            }
+        }
+    }
+    for alias in &mut module.type_alias_declarations {
+        qualify_type(&mut alias.ty, None, &alias.named_type_identities);
+    }
+    for body in &mut module.bodies {
+        retain_published_frame(body);
+    }
+    for binding in &mut module.decorated_bindings {
+        retain_published_frame(&mut binding.original_body);
+    }
+    for storage in &mut module.static_declarations {
+        if let bir::StaticInitializer::Computed(body) = &mut storage.initial {
+            retain_published_frame(body);
+            storage.ty = body.return_type.clone();
+        }
+    }
+}
+
+/// Apply one identity map to every frame type; checked source spans refine erased aliases only during creation.
+fn retain_body_types(body: &mut bir::Body, facts: Option<&TypeCheckInfo>) {
     let identities = &body.named_type_identities;
     let binding = body.canonical.as_ref().and_then(|canonical| {
-        facts
+        facts?
             .declarations
             .function_bindings_by_span
             .values()
-            .chain(facts.declarations.method_bindings_by_span.values())
+            .chain(facts?.declarations.method_bindings_by_span.values())
             .find(|binding| binding.identity.as_ref() == Some(canonical))
     });
     let checked_return = binding.map(|binding| semantic_type_from_resolved(&binding.return_type));
     qualify_type(&mut body.return_type, checked_return.as_ref(), identities);
     for local in &mut body.locals {
-        let span = ast::Span::new(local.span.start, local.span.end);
+        let span = local.span;
         let checked = facts
-            .expr_type(span)
-            .or_else(|| {
-                local
-                    .name
-                    .as_deref()
-                    .and_then(|name| facts.resolved_write_type(span, name))
+            .and_then(|facts| {
+                facts.expr_type(span).or_else(|| {
+                    local
+                        .name
+                        .as_deref()
+                        .and_then(|name| facts.resolved_write_type(span, name))
+                })
             })
             .map(semantic_type_from_resolved);
         qualify_type(&mut local.ty, checked.as_ref(), identities);
@@ -371,6 +435,11 @@ fn retain_callee(callee: &mut bir::Callee, identities: &Identities) {
             &mut target.type_args
         }
         bir::Callee::Method(target) => {
+            if let Some(arguments) = &mut target.trait_arguments {
+                for argument in arguments {
+                    qualify_type(argument, None, identities);
+                }
+            }
             if let Some(selection) = &mut target.native_trait_delegation {
                 for ty in selection
                     .parameters
@@ -724,7 +793,10 @@ fn retain_selected_returns(
                 };
                 retain_declared_return_type(&mut local.ty, &carrier.ty, &carrier.identities, identities);
             }
-            bir::StatementKind::Assign { rvalue, .. } => match rvalue {
+            bir::StatementKind::Assign { place, rvalue } => match rvalue {
+                bir::Rvalue::Use(bir::Operand::Place(read)) => {
+                    retain_local_value_carrier(place, &read.place, false, locals, identities);
+                }
                 bir::Rvalue::Closure { body, .. } => retain_selected_returns(&body.stmts, locals, identities, returns),
                 bir::Rvalue::Generator { body, .. } => {
                     retain_selected_returns(&body.stmts, locals, identities, returns)
@@ -748,6 +820,13 @@ fn retain_selected_returns(
                 }
                 _ => {}
             },
+            bir::StatementKind::IterNext {
+                destination,
+                iterator: bir::Operand::Place(read),
+                protocol: bir::IterProtocol::Builtin,
+            } => {
+                retain_local_value_carrier(destination, &read.place, true, locals, identities);
+            }
             bir::StatementKind::If {
                 then_block, else_block, ..
             } => {
@@ -766,6 +845,41 @@ fn retain_selected_returns(
             }
             _ => {}
         }
+    }
+}
+
+/// Transfer a whole local's checked carrier through an assignment or builtin list poll. The source has already
+/// received its selected declaration's owner; no display spelling or consumer namespace grants a new identity.
+fn retain_local_value_carrier(
+    destination: &bir::Place,
+    source: &bir::Place,
+    element: bool,
+    locals: &mut [bir::LocalDecl],
+    identities: &Identities,
+) {
+    if !destination.projection.is_empty() || !source.projection.is_empty() {
+        return;
+    }
+    let Some(source) = source.local_id().and_then(|id| locals.get(id.index())) else {
+        return;
+    };
+    let mut retained = &source.ty;
+    while let IncanType::Ref(inner) | IncanType::RefMut(inner) = retained {
+        retained = inner;
+    }
+    if element {
+        let IncanType::Generic { base, args } = retained else {
+            return;
+        };
+        if collection_type(base) != Some(CollectionTypeId::List) {
+            return;
+        }
+        let [item] = args.as_slice() else { return };
+        retained = item;
+    }
+    let retained = retained.clone();
+    if let Some(local) = destination.local_id().and_then(|id| locals.get_mut(id.index())) {
+        qualify_type(&mut local.ty, Some(&retained), identities);
     }
 }
 

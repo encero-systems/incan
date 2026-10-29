@@ -1,0 +1,92 @@
+"""
+A check case's replay contract: an unchanged check shows exactly what the first one showed without checking again,
+and an edit of each file the case lists, its entry or a path dependency, checks the unit again.
+"""
+
+from std.fs import Path
+from compare import compare
+from header import Header
+from run import Outcome, clear_trace, invoke, trace_file, unit_notes
+
+# A comment keeps the program's meaning, so an edited check must report what the first check reported.
+const EDIT: str = "\n# edited by the check-edits contract\n"
+const REPLAYED: str = " check: replayed"
+const CHECKED: str = " check: checked"
+
+
+model Traced:
+    """What one check showed, with the notes Oven traced about the units it prepared and the check itself."""
+
+    outcome: Outcome
+    notes: list[str]
+
+
+pub def compare_check_edits(incan: str, project: Path, header: Header, command: list[str]) -> Result[list[str], str]:
+    """
+    Return the expectations broken by a check, its unchanged repeat and its repeat after each listed edit.
+
+    1. Check once and compare the report with the case's expectations.
+    2. Check again unchanged: the same streams and status, replayed rather than checked.
+    3. Edit each listed file in turn: the same report, checked again; the file is then restored.
+    """
+    # 1. The first check is the case's ordinary comparison.
+    first = traced(incan, command, project)?
+    mut failures = compare("check", header, first.outcome)
+    # 2. An unchanged unit replays its stored report byte for byte.
+    repeat = traced(incan, command, project)?
+    failures = failures + differences("the unchanged repeat", first.outcome, repeat.outcome)
+    if not noted(repeat.notes, REPLAYED):
+        failures.append(f"the unchanged repeat was not replayed; Oven noted: {listing(repeat.notes)}")
+    # 3. An edit that keeps the program's meaning still checks the unit again.
+    for item in header.items("check-edits"):
+        failures = failures + edited_check(incan, command, project, item, first.outcome)?
+    return Ok(failures)
+
+
+def traced(incan: str, command: list[str], project: Path) -> Result[Traced, str]:
+    """Run the check with a fresh trace, so its notes are this invocation's alone."""
+    clear_trace(project)?
+    outcome = invoke(incan, command, project)?
+    return Ok(Traced(outcome=outcome, notes=unit_notes(trace_file(project))))
+
+
+def edited_check(incan: str, command: list[str], project: Path, item: str, first: Outcome) -> Result[list[str], str]:
+    """Append a comment to one listed file, check the unit again, and put the file's original text back."""
+    path = project.joinpath(item)
+    original = path.read_text("utf-8", "strict").map_err((error) => f"{item}: {error.message()}")?
+    path.write_text(original + EDIT, "utf-8", "strict", None).map_err((error) => f"{item}: {error.message()}")?
+    checked = traced(incan, command, project)
+    path.write_text(original, "utf-8", "strict", None).map_err((error) => f"{item}: {error.message()}")?
+    result = checked?
+    label = f"the check after editing {item}"
+    mut failures = differences(label, first, result.outcome)
+    if noted(result.notes, REPLAYED) or not noted(result.notes, CHECKED):
+        failures.append(f"{label} did not check the unit again; Oven noted: {listing(result.notes)}")
+    return Ok(failures)
+
+
+def differences(label: str, expected: Outcome, actual: Outcome) -> list[str]:
+    """How `actual` differs from the first check's stdout, stderr and status; empty when every byte agrees."""
+    mut failures: list[str] = []
+    if actual.stdout != expected.stdout:
+        failures.append(f"{label} printed a different stdout")
+    if actual.stderr != expected.stderr:
+        failures.append(f"{label} printed a different stderr")
+    if actual.code != expected.code:
+        failures.append(f"{label} exited {actual.exit_text()}, the first check {expected.exit_text()}")
+    return failures
+
+
+def noted(notes: list[str], marker: str) -> bool:
+    """Whether Oven traced a note containing `marker`."""
+    for note in notes:
+        if marker in note:
+            return true
+    return false
+
+
+def listing(notes: list[str]) -> str:
+    """Traced notes as a report shows them, or `nothing` when there were none."""
+    if len(notes) == 0:
+        return "nothing"
+    return "; ".join(notes)

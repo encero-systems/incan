@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -30,15 +30,12 @@ use incan_semantics_core::{
     AbiV0RuntimeRequirement, CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
 
-/// Errors surfaced while reading, writing, parsing, serializing, or validating `.incnlib` manifests.
+/// Errors surfaced while reading, parsing, serializing, or validating `.incnlib` manifests.
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryManifestError {
     /// Reading manifest contents from disk failed.
     #[error("failed to read {path}: {source}")]
     Read { path: PathBuf, source: std::io::Error },
-    /// Writing manifest contents to disk failed.
-    #[error("failed to write {path}: {source}")]
-    Write { path: PathBuf, source: std::io::Error },
     /// The manifest payload could not be decoded from its transport format.
     #[error("failed to parse library manifest: {0}")]
     Parse(String),
@@ -91,220 +88,6 @@ pub struct LibraryExports {
     pub newtypes: Vec<NewtypeExport>,
     pub consts: Vec<ConstExport>,
     pub statics: Vec<StaticExport>,
-}
-
-impl LibraryExports {
-    /// Borrow this export set as the shared view used for public-surface questions.
-    pub fn view(&self) -> LibraryExportView<'_> {
-        LibraryExportView {
-            aliases: &self.aliases,
-            partials: &self.partials,
-            models: &self.models,
-            classes: &self.classes,
-            functions: &self.functions,
-            traits: &self.traits,
-            enums: &self.enums,
-            type_aliases: &self.type_aliases,
-            newtypes: &self.newtypes,
-            consts: &self.consts,
-            statics: &self.statics,
-        }
-    }
-}
-
-/// A borrowed view over one library's public export lists.
-///
-/// The same eligibility question is asked from two sides. A provider's own build validates the wire form of its
-/// manifest, while every consumer's frontend resolves helper references against the loaded form. Those two carry the
-/// same export categories, so answering from one view is what stops a helper the provider accepted from being
-/// rejected as missing by each consumer, which is the drift #1031 exists to remove.
-pub struct LibraryExportView<'a> {
-    pub aliases: &'a [AliasExport],
-    pub partials: &'a [PartialExport],
-    pub models: &'a [ModelExport],
-    pub classes: &'a [ClassExport],
-    pub functions: &'a [FunctionExport],
-    pub traits: &'a [TraitExport],
-    pub enums: &'a [EnumExport],
-    pub type_aliases: &'a [TypeAliasExport],
-    pub newtypes: &'a [NewtypeExport],
-    pub consts: &'a [ConstExport],
-    pub statics: &'a [StaticExport],
-}
-
-/// Maximum reexport hops followed before giving up, so a cyclic alias chain cannot loop forever.
-const MAX_ALIAS_HOPS: usize = 8;
-
-/// What a helper's exported name resolves to on a library's public surface.
-///
-/// A desugared helper reference is spliced into call position, so the kind decides whether the emitted program can
-/// actually run. Resolving only "is this name exported" accepted traits and constants, which typecheck as names and
-/// then fail in generated Rust as calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HelperExportKind {
-    Function,
-    Class,
-    Model,
-    Newtype,
-    EnumVariant,
-    /// A public partial: a preset over a callable target, so it is callable in its own right.
-    Partial,
-    /// A reexport alias whose target could not be classified further.
-    Alias,
-    Enum,
-    Trait,
-    TypeAlias,
-    Const,
-    Static,
-}
-
-impl HelperExportKind {
-    /// Return whether a value of this kind may appear as the callee of a desugared helper call.
-    pub fn is_callable(self) -> bool {
-        matches!(
-            self,
-            Self::Function
-                | Self::Class
-                | Self::Model
-                | Self::Newtype
-                | Self::EnumVariant
-                | Self::Partial
-                | Self::Alias
-        )
-    }
-
-    /// Return the user-facing noun for this kind, for diagnostics.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Function => "function",
-            Self::Class => "class",
-            Self::Model => "model",
-            Self::Newtype => "newtype",
-            Self::EnumVariant => "enum variant",
-            Self::Partial => "partial",
-            Self::Alias => "alias",
-            Self::Enum => "enum",
-            Self::Trait => "trait",
-            Self::TypeAlias => "type alias",
-            Self::Const => "const",
-            Self::Static => "static",
-        }
-    }
-}
-
-impl<'a> LibraryExportView<'a> {
-    /// Resolve one exported name to the kind of item it names, following reexport aliases to their target.
-    ///
-    /// Callable kinds are checked first so a name that is both an enum and a variant resolves to the usable one.
-    /// Public partials and reexport aliases count as callable: both are facade spellings over a callable target, and
-    /// a companion binding one is resolving through the same public surface an ordinary consumer would.
-    pub fn helper_export_kind(&self, name: &str) -> Option<HelperExportKind> {
-        self.helper_export_kind_with_hops(name, 0)
-    }
-
-    /// Classify one exported name, carrying the reexport hop budget shared with [`Self::resolve_alias_kind`].
-    fn helper_export_kind_with_hops(&self, name: &str, hops: usize) -> Option<HelperExportKind> {
-        if self.functions.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Function);
-        }
-        if self.classes.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Class);
-        }
-        if self.models.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Model);
-        }
-        if self.newtypes.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Newtype);
-        }
-        if self.partials.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Partial);
-        }
-        if self
-            .enums
-            .iter()
-            .any(|item| item.variants.iter().any(|variant| variant.name == name))
-        {
-            return Some(HelperExportKind::EnumVariant);
-        }
-        if self.enums.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Enum);
-        }
-        if self.traits.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Trait);
-        }
-        if self.type_aliases.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::TypeAlias);
-        }
-        if let Some(alias) = self.aliases.iter().find(|item| item.name == name) {
-            return Some(self.resolve_alias_kind(alias, hops));
-        }
-        if self.consts.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Const);
-        }
-        if self.statics.iter().any(|item| item.name == name) {
-            return Some(HelperExportKind::Static);
-        }
-        None
-    }
-
-    /// Resolve what a reexport alias ultimately names.
-    ///
-    /// A library may publish a helper under an alias rather than its declaration name, and a consumer binding that
-    /// alias should resolve exactly as the original does. `projected_function` settles the common case directly;
-    /// otherwise the alias is followed by its target's final path segment, which is how the manifest spells a
-    /// reexport. An unresolvable or over-long chain stays `Alias`, which is callable, so an alias whose target cannot
-    /// be classified is admitted rather than rejected on incomplete information.
-    fn resolve_alias_kind(&self, alias: &AliasExport, hops: usize) -> HelperExportKind {
-        if alias.projected_function.is_some() {
-            return HelperExportKind::Function;
-        }
-        if hops >= MAX_ALIAS_HOPS {
-            return HelperExportKind::Alias;
-        }
-        let Some(target) = alias.target_path.last() else {
-            return HelperExportKind::Alias;
-        };
-        if target == &alias.name {
-            return HelperExportKind::Alias;
-        }
-        match self.helper_export_kind_with_hops(target, hops + 1) {
-            Some(kind) => kind,
-            None => HelperExportKind::Alias,
-        }
-    }
-
-    /// Name the export category when `name` is exported but cannot appear in call position.
-    ///
-    /// A helper reference is spliced into call position by the desugarer, so binding one to a trait, constant,
-    /// static, or bare enum type produces generated Rust that cannot compile.
-    pub fn uncallable_kind(&self, name: &str) -> Option<&'static str> {
-        match self.helper_export_kind(name) {
-            Some(kind) if !kind.is_callable() => Some(kind.label()),
-            _ => None,
-        }
-    }
-
-    /// Collect every exported name, for membership checks that need the whole set at once.
-    pub fn names(&self) -> HashSet<&'a str> {
-        let mut names = HashSet::new();
-        names.extend(self.aliases.iter().map(|item| item.name.as_str()));
-        names.extend(self.partials.iter().map(|item| item.name.as_str()));
-        names.extend(self.models.iter().map(|item| item.name.as_str()));
-        names.extend(self.classes.iter().map(|item| item.name.as_str()));
-        names.extend(self.functions.iter().map(|item| item.name.as_str()));
-        names.extend(self.traits.iter().map(|item| item.name.as_str()));
-        names.extend(self.enums.iter().map(|item| item.name.as_str()));
-        names.extend(
-            self.enums
-                .iter()
-                .flat_map(|item| item.variants.iter().map(|variant| variant.name.as_str())),
-        );
-        names.extend(self.type_aliases.iter().map(|item| item.name.as_str()));
-        names.extend(self.newtypes.iter().map(|item| item.name.as_str()));
-        names.extend(self.consts.iter().map(|item| item.name.as_str()));
-        names.extend(self.statics.iter().map(|item| item.name.as_str()));
-        names
-    }
 }
 
 /// Exported declaration-level alias metadata.
@@ -460,9 +243,6 @@ pub struct CompiledProviderMetadata {
     /// SDK components that must already be enabled while this artifact projection is active.
     #[serde(default)]
     pub required_sdk_components: BTreeSet<String>,
-    /// Private backend mappings selected from semantic module and feature use.
-    #[serde(default)]
-    pub implementation_facets: Vec<ProviderImplementationFacet>,
     /// Checked provider-call declarations that a consumer may lower into provider-operation plans.
     ///
     /// Each record was resolved at the provider declaration site. This payload is metadata, not a source convention:
@@ -482,7 +262,6 @@ impl Default for CompiledProviderMetadata {
             provider_dependencies: Vec::new(),
             fact_requirements: Vec::new(),
             required_sdk_components: BTreeSet::new(),
-            implementation_facets: Vec::new(),
             operation_descriptors: Vec::new(),
         }
     }
@@ -498,7 +277,6 @@ impl CompiledProviderMetadata {
             && self.provider_dependencies.is_empty()
             && self.fact_requirements.is_empty()
             && self.required_sdk_components.is_empty()
-            && self.implementation_facets.is_empty()
             && self.operation_descriptors.is_empty()
     }
 }
@@ -639,61 +417,6 @@ pub struct ProviderFactRequirement {
     /// Features that must all be active.
     #[serde(default)]
     pub required_features: BTreeSet<String>,
-}
-
-/// Provider-owned private mapping from semantic use to the current Cargo backend.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProviderImplementationFacet {
-    /// Stable provider-local facet id.
-    pub id: String,
-    /// Provider-local modules whose use selects this facet.
-    #[serde(default)]
-    pub required_modules: BTreeSet<Vec<String>>,
-    /// Public features whose activation selects this facet.
-    #[serde(default)]
-    pub required_features: BTreeSet<String>,
-    /// Private Cargo features grouped by generated dependency key.
-    #[serde(default)]
-    pub cargo_features: BTreeMap<String, BTreeSet<String>>,
-    /// Current-backend Cargo dependencies selected by this facet.
-    #[serde(default)]
-    pub cargo_dependencies: Vec<ProviderCargoDependency>,
-}
-
-/// Relocatable Cargo dependency metadata owned privately by one provider implementation facet.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ProviderCargoDependency {
-    /// Rust dependency key used by generated code.
-    pub crate_name: String,
-    /// Published Cargo package name when it differs from the dependency key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub package: Option<String>,
-    /// Registry version requirement for registry-backed dependencies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    /// Private Cargo features required on this dependency.
-    #[serde(default)]
-    pub features: BTreeSet<String>,
-    /// Whether the dependency's Cargo default features remain enabled.
-    #[serde(default = "provider_cargo_default_features")]
-    pub default_features: bool,
-    /// Relocatable source class interpreted only by the active backend adapter.
-    pub source: ProviderCargoDependencySource,
-}
-
-/// Current-backend dependency source without producer-specific absolute paths.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ProviderCargoDependencySource {
-    /// A dependency resolved from the Cargo registry using `version`.
-    Registry,
-    /// A crate shipped within the active Incan toolchain at this toolchain-root-relative path.
-    Toolchain { relative_path: String },
-}
-
-/// Preserve Cargo's default-feature behavior when reading older private implementation metadata.
-fn provider_cargo_default_features() -> bool {
-    true
 }
 
 /// Serialized schema version for the public export identity graph.
@@ -840,15 +563,6 @@ impl LibraryIdentityGraph {
             .collect()
     }
 
-    /// Return every canonical overload identity published at one exact package-visible path.
-    pub fn function_identities_for_public_path(&self, public_path: &[String]) -> Vec<Option<CanonicalSymbolId>> {
-        self.exports
-            .iter()
-            .filter(|entry| entry.kind == ExportIdentityKind::Function && entry.public_path == public_path)
-            .map(|entry| entry.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate))
-            .collect()
-    }
-
     /// Return the one canonical identity published for a non-overloaded public spelling.
     ///
     /// Multiple distinct identities are ambiguous and therefore produce no aggregate identity. Overload consumers
@@ -872,6 +586,25 @@ impl LibraryIdentityGraph {
             .filter_map(|entry| entry.canonical.as_ref()?.hydrate());
         let first = candidates.next()?;
         candidates.all(|candidate| candidate == first).then_some(first)
+    }
+
+    /// Retain identities from the declaration source the checked namespace selected. A module's own member can
+    /// precede a same-named child projection at one public path; its signature and identity must select the same
+    /// source. Reexports without an exact source record retain the public path's existing ambiguity.
+    pub fn identities_for_public_source_path(
+        &self,
+        public_path: &[String],
+        source_path: &[String],
+    ) -> Vec<Option<CanonicalSymbolId>> {
+        let exact_source = self
+            .exports
+            .iter()
+            .any(|entry| entry.public_path == public_path && entry.source_path == source_path);
+        self.exports
+            .iter()
+            .filter(|entry| entry.public_path == public_path && (!exact_source || entry.source_path == source_path))
+            .map(|entry| entry.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate))
+            .collect()
     }
 
     /// Return every canonical identity published at one exact package-visible path, in graph order.
@@ -992,6 +725,7 @@ impl CanonicalIdentityExport {
             declaration_span: CanonicalIdentitySpanExport {
                 start: u64::try_from(identity.declaration_span.start).ok()?,
                 end: u64::try_from(identity.declaration_span.end).ok()?,
+                expansion: identity.declaration_span.expansion,
             },
         })
     }
@@ -1019,7 +753,8 @@ impl CanonicalIdentityExport {
             declaration_span: HirSourceSpan::new(
                 usize::try_from(self.declaration_span.start).ok()?,
                 usize::try_from(self.declaration_span.end).ok()?,
-            ),
+            )
+            .with_expansion(self.declaration_span.expansion),
         })
     }
 }
@@ -1065,6 +800,8 @@ pub enum CanonicalIdentityOriginExport {
 /// Stable byte-offset provenance for one declaration in the published source projection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CanonicalIdentitySpanExport {
+    /// Compiler-owned context of a generated declaration, absent for authored declarations.
+    pub expansion: Option<[u8; 32]>,
     pub start: u64,
     pub end: u64,
 }
@@ -1134,7 +871,7 @@ pub enum ExportIdentityProjection {
 
 /// Versioned Rust ABI payload persisted into `.incnlib`.
 ///
-/// The payload stores the same backend-neutral metadata shape that `rust_inspect` extracts, but ships it with the
+/// The payload stores the backend-neutral metadata shape extracted from rustc, but ships it with the
 /// library artifact so consumers can resolve Rust-backed imports without loading the producer workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryRustAbi {
@@ -1182,12 +919,16 @@ pub struct SoftKeywordExports {
     pub activations: Vec<SoftKeywordActivation>,
 }
 
-/// Optional vocab companion metadata packaged with the library manifest.
+/// Published producer vocabulary descriptors packaged with the ordinary library manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VocabExports {
-    /// Relative crate path to the vocab companion source inside the producer workspace.
+    /// The schema of the Incan registration that produced these descriptors.
+    pub metadata_version: u32,
+    /// Identity of the native producer registration unit, including its imports and compiled inputs.
+    pub unit_identity: String,
+    /// Project-relative Incan entry path, retained under the historical descriptor field spelling.
     pub crate_path: String,
-    /// Cargo package name of the vocab companion crate.
+    /// The Loaf that registered these descriptors.
     pub package_name: String,
     /// Keywords registered by the vocab provider.
     pub keyword_registrations: Vec<VocabKeywordRegistration>,
@@ -1213,25 +954,17 @@ impl VocabExports {
 /// Packaged compile-time desugarer artifact metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VocabDesugarerArtifact {
+    /// RFC 124 identity of the compiled native vocabulary unit.
+    #[serde(default)]
+    pub unit_identity: String,
     /// Artifact representation understood by the compiler.
     pub artifact_kind: incan_vocab::DesugarerArtifactKind,
-    /// ABI version expected by the artifact/host bridge.
-    #[serde(default = "default_wasm_desugar_abi_version")]
+    /// Public syntax version of the worker protocol the artifact speaks.
     pub abi_version: u32,
-    /// Normalized relative path from the packaged crate root to the artifact file.
+    /// Normalized relative path from the packaged Loaf root to the artifact file.
     pub relative_path: String,
-    /// Target triple used to build the artifact.
-    pub target: String,
-    /// Cargo profile used to build the artifact.
-    pub profile: String,
-    /// Exported desugarer entrypoint symbol the host should invoke.
-    pub entrypoint: String,
     /// SHA-256 digest used to verify the packaged artifact on the consumer side.
     pub sha256: String,
-}
-
-fn default_wasm_desugar_abi_version() -> u32 {
-    incan_vocab::WASM_DESUGAR_ABI_VERSION
 }
 
 /// One import-activated soft keyword exported by a library.
@@ -1880,6 +1613,15 @@ pub struct StaticExport {
 }
 
 impl LibraryManifest {
+    /// Encode already admitted facts for a private generation-bound cache, preserving the public JSON contract.
+    pub(crate) fn encode_retained(&self) -> Result<Vec<u8>, String> {
+        super::retained::encode(self)
+    }
+
+    /// Decode a private cache after its caller verifies the exact compiler and source-file generations.
+    pub(crate) fn decode_retained(bytes: &[u8]) -> Result<Self, String> {
+        super::retained::decode(bytes)
+    }
     /// Create a new manifest seeded with the current compiler version and format version.
     pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
@@ -1917,18 +1659,6 @@ impl LibraryManifest {
             }
         }
         manifest
-    }
-
-    /// Serialize, validate, and write the manifest to disk.
-    ///
-    /// Validation happens before serialization so producer mistakes fail early instead of emitting an invalid
-    /// `.incnlib` file.
-    pub fn write_to_path(&self, path: &Path) -> Result<(), LibraryManifestError> {
-        fs::write(path, self.to_json_string()?).map_err(|source| LibraryManifestError::Write {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        Ok(())
     }
 
     /// Validate and encode this manifest before a caller atomically publishes it beside immutable sidecars.

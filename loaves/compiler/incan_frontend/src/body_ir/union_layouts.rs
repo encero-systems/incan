@@ -33,7 +33,7 @@ pub(super) fn retain(module: &mut bir::BodyIrModule) {
             continue;
         }
         let mut members = args.clone();
-        members.sort_by_key(|member| format!("{member:?}"));
+        members.sort_by_cached_key(|member| format!("{member:?}"));
         members.dedup();
         let keys = format!("{members:?}");
         let hash = keys.bytes().fold(14695981039346656037_u64, |hash, byte| {

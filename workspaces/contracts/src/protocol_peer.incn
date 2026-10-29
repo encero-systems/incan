@@ -1,0 +1,173 @@
+"""Owned stdio JSON-RPC clients for MCP and LSP graph contract checks."""
+
+from rust::std::cell import RefCell
+from rust::std::fs import File
+from rust::std::io import Read, Write
+from rust::std::mem import drop as close_pipe, take
+from rust::std::os::fd import OwnedFd
+from rust::std::os::unix::net import UnixStream
+from rust::std::process import Child, Command, Stdio
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.io import BytesIO
+from std.json import JsonValue, parse
+from files import optional_text as string
+
+# Bound unrelated notifications and untrusted LSP frames independently.
+const MAX_RESPONSE_MESSAGES: int = 128
+const MAX_LSP_HEADER_BYTES: int = 8192
+const MAX_LSP_PAYLOAD_BYTES: int = 16_777_216
+
+
+pub def start(binary: str, project: Path, arguments: list[str] = [], framing: str = "lsp") -> Result[Peer, str]:
+    """Start the real stdio server: 1. Configure streams. 2. Record ownership. 3. Retain shared handles."""
+    # 1. Configure streams and diagnostic output.
+    pid_file = project.joinpath(f".{framing}-pid")
+    input, child_input = UnixStream.pair().map_err((error) => str(error))?
+    output, child_output = UnixStream.pair().map_err((error) => str(error))?
+    mut command = Command.new(binary)
+    command.stderr(File.create(project.joinpath("target").joinpath(f"{framing}.log").0).map_err((error) => str(error))?)
+    command.current_dir(project.0)
+    command.stdin(Stdio.from(OwnedFd.from(child_input))).stdout(Stdio.from(OwnedFd.from(child_output)))
+    for argument in arguments:
+        command.arg(argument)
+    child = Rc.new(RefCell.new(command.spawn().map_err((error) => str(error))?))
+    # 2. Record process ownership.
+    pid_file.write_text(str(child.borrow().id()), "utf-8", "strict", None).map_err((error) => error.message())?
+    # 3. Retain shared handles without copying foreign resources.
+    return Ok(
+        Peer(input=Some(Rc.new(RefCell.new(input))), output=Rc.new(RefCell.new(output)), child=child, framing=framing),
+    )
+
+
+pub class Peer:
+    """Share foreign handles and the capture cursor; close stdin before reaping the server's transport."""
+
+    input: Option[Rc[RefCell[UnixStream]]]
+    output: Rc[RefCell[UnixStream]]
+    child: Rc[RefCell[Child]]
+    framing: str = "lsp"
+
+    def send(mut self, value: JsonValue) -> Result[None, str]:
+        """Write a newline-delimited MCP message or a byte-counted LSP message."""
+        document = value.to_json().map_err((error) => error.message())?
+        if self.framing == "jsonl":
+            return self.write(f"{document}\n".encode("utf-8"))
+        payload = document.encode("utf-8")
+        self.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("utf-8"))?
+        return self.write(payload)
+
+    def write(mut self, payload: bytes) -> Result[None, str]:
+        """Write through the owned pipe; a closed input is an explicit refusal."""
+        match self.input:
+            None => return Err("protocol input is closed")
+            Some(writer) =>
+                match writer.borrow_mut().write_all(payload):
+                    Ok(_) => return Ok(None)
+                    Err(error) => return Err(f"cannot write protocol input: {error}")
+
+    def notify(mut self, method: str, params: JsonValue) -> Result[None, str]:
+        """Omit null parameters for parameterless LSP notifications."""
+        mut envelope = {"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string(method)}
+        if not params.is_null():
+            envelope["params"] = params
+        return self.send(JsonValue.object(envelope))
+
+    def request(mut self, identifier: int, method: str, params: JsonValue) -> Result[JsonValue, str]:
+        """Read the matching result while allowing intervening server notifications."""
+        mut envelope = {"jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier), "method": JsonValue.string(
+            method,
+        )}
+        if not params.is_null():
+            envelope["params"] = params
+        self.send(JsonValue.object(envelope))?
+        for attempt in range(MAX_RESPONSE_MESSAGES):
+            reply = self.receive()?
+            match reply.get("id"):
+                Some(value) =>
+                    if value.as_int() == Some(identifier):
+                        reason = f"protocol request failed: {reply.to_json().unwrap_or("")}"
+                        return reply.require("result").map_err((_) => reason)
+                None => pass
+        return Err(f"protocol response did not arrive within {MAX_RESPONSE_MESSAGES} messages")
+
+    def diagnostics(mut self, uri: str, version: int) -> Result[None, str]:
+        """Wait for the LSP's completed checking pass before asking navigation questions."""
+        for attempt in range(MAX_RESPONSE_MESSAGES):
+            reply = self.receive()?
+            if string(reply, "method") != "textDocument/publishDiagnostics":
+                continue
+            params = reply.require("params").map_err((error) => error.message())?
+            actual_version = params.require("version").map_err((error) => error.message())?.as_int()
+            if string(params, "uri") != uri or actual_version != Some(version):
+                continue
+            diagnostics = params.require("diagnostics").map_err((error) => error.message())?
+            for diagnostic in diagnostics.expect_array().map_err((error) => error.message())?:
+                if diagnostic.require("severity").map_err((error) => error.message())?.as_int() == Some(1):
+                    return Err(f"LSP analysis refused the fixture: {diagnostic.to_json().unwrap_or("")}")
+            return Ok(None)
+        return Err("LSP did not publish this live snapshot's diagnostics")
+
+    def receive(mut self) -> Result[JsonValue, str]:
+        """Read one frame: a JSONL line, or an LSP header byte by byte and then exactly its `Content-Length` payload."""
+        if self.framing == "jsonl":
+            return self.receive_line()
+        mut header = ""
+        mut byte = b" "
+        while not header.endswith("\r\n\r\n"):
+            if len(header) > MAX_LSP_HEADER_BYTES:
+                return Err(f"LSP header exceeds {MAX_LSP_HEADER_BYTES} bytes")
+            match self.output.borrow_mut().read_exact(byte):
+                Ok(_) => pass
+                Err(error) => return Err(f"cannot read LSP header: {error}")
+            header += decode(byte)?
+        mut size = 0
+        for line in header.split("\r\n"):
+            if line.startswith("Content-Length:"):
+                value = parse(line[len("Content-Length:"):].strip()).map_err((error) => error.message())?
+                size = value.expect_int().map_err((error) => error.message())?
+        if size <= 0 or size > MAX_LSP_PAYLOAD_BYTES:
+            return Err("LSP frame has an invalid Content-Length")
+        mut payload = zeroes(size)
+        match self.output.borrow_mut().read_exact(payload):
+            Ok(_) => return parse(decode(payload)?).map_err((error) => error.message())
+            Err(error) => return Err(f"cannot read LSP payload: {error}")
+
+    def receive_line(mut self) -> Result[JsonValue, str]:
+        """Read exactly one JSONL frame, retaining complete UTF-8 bytes without consuming the next response."""
+        line = BytesIO()
+        mut byte = b" "
+        while true:
+            match self.output.borrow_mut().read_exact(byte):
+                Ok(_) => pass
+                Err(error) => return Err(f"cannot read MCP message: {error}")
+            if byte == b"\x0a":
+                return parse(decode(line.getvalue())?).map_err((error) => error.message())
+            line.write_bytes(byte).map_err((error) => error.message())?
+
+    def finish(mut self) -> Result[None, str]:
+        """Close stdin before waiting so a pending transport read observes EOF, including after LSP exit."""
+        closed: Option[Rc[RefCell[UnixStream]]] = take(self.input)
+        close_pipe(closed)
+        match self.child.borrow_mut().wait():
+            Ok(status) =>
+                if status.success():
+                    return Ok(None)
+                return Err("protocol child exited unsuccessfully")
+            Err(error) => return Err(f"cannot reap protocol child: {error}")
+
+
+def zeroes(count: int) -> bytes:
+    """Allocate a mutable foreign-read buffer using Oven's established doubling pattern."""
+    mut value = "0"
+    while len(value) < count:
+        value += value
+    return value[:count].encode("utf-8")
+
+
+pub def decode(value: bytes) -> Result[str, str]:
+    """Require exact UTF-8 protocol bytes rather than replacement characters."""
+    match RustString.from_utf8(value):
+        Ok(text) => return Ok(str(text))
+        Err(_) => return Err("protocol output is not UTF-8")

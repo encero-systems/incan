@@ -17,6 +17,7 @@ from pub::incan_mir_plan import (
     CalleeKind,
     EnumDeclaration,
     Operand,
+    OperandKind,
     Place,
     PlanType,
     Projection,
@@ -25,12 +26,14 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, forget_owned, place_type, read_place, temporary, track_rvalue_moves, value_type
+from frame import Builder, drop_owned, forget_owned, place_type, read_place, temporary, track_rvalue_moves, value_type
 from options import assign_carrier, carrier_layout, carrier_payload_value, replace_owned_destination, variant_condition
-from classes import frame_type, function_name
+from classes import frame_type, function_name, parameter_local_index
+from table_views import borrowed_at
 from closures import callable_signature
 from layout_types import native_source_type
-from lowering import scalar_place, lower_callable_result, call_closure, boundary_plan_operand
+from lowering import scalar_place, lower_callable_result, call_closure, boundary_plan_operand, list_borrow
+from collections import is_collection, collection_owned, collection_reference
 from trait_links import contains
 
 
@@ -105,10 +108,8 @@ def owned_receiver(mut builder: Builder, argument: &RustArgumentElement, span: S
                 OwnershipFact.Move =>
                     if place.projection != Projection.Whole:
                         return Err("unsupported Body IR partial Result combinator receiver move")
-                OwnershipFact.Clone =>
-                    value = carrier_payload_value(builder, place, span)?
-                OwnershipFact.Borrow =>
-                    value = carrier_payload_value(builder, place, span)?
+                OwnershipFact.Clone => value = carrier_payload_value(builder, place, span)?
+                OwnershipFact.Borrow => value = carrier_payload_value(builder, place, span)?
                 _ => return Err("unsupported Body IR Result combinator receiver ownership")
             source = temporary(builder, ty, span)
             track_rvalue_moves(builder, RvalueKind.Use(value))
@@ -246,27 +247,68 @@ def call_callback(
     result: PlanType,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Call the held callback on one payload, requiring exactly the payload's input and the expected result."""
+    """Call the held callback at its checked ABI, retaining an owned payload through an implicit shared view."""
     ty = place_type(builder.locals, callback)
     match ty:
         PlanType.Model(index, _name) =>
             return call_callable_model(module, builder, index, callback, argument, payload, output, result, span)
         _ => pass
     signature = callable_signature(ty)?
-    if len(signature) != 2 or signature[0] != payload or signature[1] != result:
+    if len(signature) != 2 or signature[1] != result:
         return Err("unsupported Body IR Result combinator callback signature")
+    prepared, held = callback_argument(builder, argument, payload, signature[0], span)?
     match ty:
-        PlanType.Closure(_held) => return call_closure(builder, callback, signature, [argument], output, span)
-        PlanType.ClosureRef(_held) => return call_closure(builder, callback, signature, [argument], output, span)
+        (PlanType.Closure(_signature) | PlanType.ClosureRef(_signature)) =>
+            call_closure(builder, callback, signature, [prepared], output, span)?
+        _ =>
+            lower_callable_result(
+                builder,
+                CalleeKind.Value(read_place(callback, false, span)),
+                [prepared],
+                output,
+                result,
+                span,
+            )?
+    drop_callback_argument(builder, held, span)
+    return Ok(None)
+
+
+def callback_argument(
+    mut builder: Builder,
+    argument: Operand,
+    payload: PlanType,
+    parameter: PlanType,
+    span: SourceSpan,
+) -> Result[tuple[Operand, Option[int]], str]:
+    """Borrow an owned builtin collection for a view parameter, keeping consumed payload storage alive until return."""
+    if parameter == payload:
+        return Ok((argument, None))
+    if not shared_callback_parameter(payload, parameter):
+        return Err("unsupported Body IR Result combinator callback signature")
+    match argument.kind:
+        OperandKind.Copy(source) => return Ok((list_borrow(builder, source, false, span)?, None))
+        OperandKind.Move(_source) =>
+            held = temporary(builder, payload, span)
+            replace_owned_destination(builder, held, RvalueKind.Use(argument), span)
+            return Ok((list_borrow(builder, held, false, span)?, Some(held.local)))
+        _ => return Err("unsupported Body IR borrowed Result callback payload without storage")
+
+
+def shared_callback_parameter(payload: PlanType, parameter: PlanType) -> bool:
+    """Require an exact implicit shared list, set or dictionary view, never a new element layout or exclusive loan."""
+    match payload:
+        PlanType.List(leaf, depth) => return parameter == PlanType.ListRef(leaf, depth)
         _ => pass
-    return lower_callable_result(
-        builder,
-        CalleeKind.Value(read_place(callback, false, span)),
-        [argument],
-        output,
-        result,
-        span,
+    return is_collection(payload) and collection_owned(payload) == payload and (
+        parameter == collection_reference(payload, false)
     )
+
+
+def drop_callback_argument(mut builder: Builder, held: Option[int], span: SourceSpan) -> None:
+    """Release the consumed payload after the callback returns; its call's unwind cleanup retains the same owner."""
+    match held:
+        Some(local) => drop_owned(builder, local, span)
+        None => pass
 
 
 def call_callable_model(
@@ -286,7 +328,9 @@ def call_callable_model(
     for position in range(len(module.bodies)):
         match module.bodies[position].canonical:
             Some(identity) =>
-                if identity.origin == owner.origin and contains(owner, identity) and str(identity.declaration_name) == "__call__":
+                if identity.origin != owner.origin or not contains(owner, identity):
+                    continue
+                if str(identity.declaration_name) == "__call__":
                     found.append(position)
             None => pass
     if len(found) != 1:
@@ -294,28 +338,32 @@ def call_callable_model(
     body = module.bodies[found[0]]
     if len(body.type_parameters) != 0 or len(body.params) != 2 or body.params[1].mutable:
         return Err("unsupported Body IR Result combinator callback __call__ shape")
-    receiver_type = frame_type(builder.nominals, builder.enums, body.locals[0], builder.intrinsics)?
+    first = borrowed_at(body.locals, 0)
+    receiver_type = frame_type(builder.constructors, builder.nominals, builder.enums, first, builder.intrinsics)?
     match receiver_type:
         PlanType.ModelRef(_owner, _name) => pass
         _ => return Err("unsupported Body IR Result combinator callback __call__ receiver")
-    parameter = native_source_type(
+    parameter = frame_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        body.locals[parameter_local_index(body, 1)],
+        builder.intrinsics,
+    )?
+    returned = native_source_type(
+        builder.constructors,
         builder.nominals,
         builder.enums,
         builder.unions,
-        body.params[1].ty,
+        body.return_type,
         builder.intrinsics,
     )?
-    returned = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
-    if parameter != payload or returned != result:
+    if returned != result:
         return Err("unsupported Body IR Result combinator callback signature")
+    prepared, held = callback_argument(builder, argument, payload, parameter, span)?
     reference = temporary(builder, receiver_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(callback), span))
-    operands = [read_place(reference, true, span), argument]
-    return lower_callable_result(
-        builder,
-        CalleeKind.Planned(function_name(module, body)),
-        operands,
-        output,
-        result,
-        span,
-    )
+    operands = [read_place(reference, true, span), prepared]
+    lower_callable_result(builder, CalleeKind.Planned(function_name(module, body)), operands, output, result, span)?
+    drop_callback_argument(builder, held, span)
+    return Ok(None)

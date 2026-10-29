@@ -1,215 +1,68 @@
-# Managing dependencies
+# Manage dependencies
 
-This guide covers how to declare and lock Rust crate requirements in Incan projects. In the Oven Alpha envelope,
-normal `build`, `run`, and `test` commands consume only dependencies already sealed in a compatible toolchain Loaf;
-they do not ask Cargo to resolve a new requirement or silently fall back to Cargo.
+Dev.8 builds local Incan dependencies and links Rust dependencies from the installed toolchain's registry closure.
 
-For the full manifest format, see: [Project configuration reference](../reference/project_configuration.md). For inline import syntax, see: [Rust interop](../../language/how-to/rust_interop.md).
+## Add a local Incan library
 
-## Adding a Rust crate (quick start)
-
-The simplest way to use a Rust crate is with an inline version annotation:
-
-```incan
-import rust::my_crate @ "1.0"
-```
-
-This records a compatibility requirement without needing a project manifest. It succeeds in a normal Oven command
-only when the selected Loaf already authorizes that crate, version, and feature closure. Otherwise Oven reports an
-unsupported envelope and tells you to install a compatible toolchain; it does not resolve the crate during the
-command.
-
-For common crates, the compiler can supply a known requirement when the version is omitted:
-
-```incan
-import rust::serde_json as json    # Uses known-good default: serde_json 1.0
-import rust::tokio                 # Uses known-good default: tokio 1 with common features
-```
-
-These defaults define dependency intent; they are not a promise that every published Alpha Loaf contains every
-listed crate. See [Oven Alpha](../explanation/oven_alpha.md#current-alpha-boundary) for the supported envelope.
-
-## Using `loaf.toml` for project dependencies
-
-For projects with more than a handful of dependencies, create a `loaf.toml` manifest:
-
-```bash
-incan init
-```
-
-This creates a starter `loaf.toml`. Then declare your dependencies:
+Point a dependency alias at its source project:
 
 ```toml
 [project]
-name = "my_app"
+name = "pricing_app"
+version = "0.1.0"
 
-[rust-dependencies]
-tokio = { version = "1.35", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+pricing = { path = "../producer" }
 ```
 
-Once a crate is in `loaf.toml`, the manifest is the single source of truth. Inline `@ "version"` annotations for that crate are not allowed — use bare imports instead:
-
-```incan
-# Good: bare import, version comes from loaf.toml
-import rust::tokio
-
-# Error: inline annotation conflicts with loaf.toml
-import rust::tokio @ "2.0"
-```
-
-## Specifying features
-
-### Inline
-
-```incan
-import rust::tokio @ "1.0" with ["full"]
-import rust::serde @ "1.0" with ["derive", "rc"]
-```
-
-When multiple files import the same crate, features are unioned automatically.
-
-### In `loaf.toml`
-
-```toml
-[rust-dependencies]
-tokio = { version = "1.35", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-```
-
-To disable default features:
-
-```toml
-[rust-dependencies]
-serde = { version = "1.0", default-features = false, features = ["derive"] }
-```
-
-## Dev-only dependencies
-
-Use `[rust-dev-dependencies]` for crates needed only during testing:
-
-```toml
-[rust-dev-dependencies]
-criterion = "0.5"
-test_helpers = { path = "../test-helpers" }
-```
-
-Dev dependencies are only available in test contexts (files under `tests/`). Importing a dev-only crate from production code produces a compile-time error.
-
-## Locking dependencies
-
-### Generating the lock file
-
-Run `incan lock` to resolve all dependencies and create `oven.lock`:
+The producer has its own `loaf.toml` and `src/lib.incn`. Import its public API through `pub::pricing`. Build and run the consumer with explicit paths:
 
 ```bash
-incan lock src/main.incn
+incan build src/main.incn
+incan run src/main.incn
 ```
 
-Or, if your `loaf.toml` has `[project.scripts].main` set:
+Oven prepares the active path libraries before the consumer. Their artifacts live under the consumer root's `target/incan/loaves/`.
+
+## Add a Rust requirement
+
+```toml
+[rust-dependencies]
+regex = "1"
+```
+
+Use a versionless source import when the manifest declares the dependency:
+
+```incan
+from rust::regex import Regex
+```
+
+The declared requirement must match the installed registry's available unit, including its features. An absent unit is an explicit error; adding a version does not download source or invoke another package manager. For a single source, inline requirements use `@ "VERSION"` and `with ["FEATURE"]`; they do not provision missing artifacts.
+
+## Select optional behavior
+
+Use `optional = true` on an edge and activate it from a package feature with `dep:ALIAS`. Dependency feature requests use `ALIAS/FEATURE`. See [Select package features](sdk_components_and_package_features.md).
+
+## Select a recorded producer closure
+
+When a registry catalog contains several coherent builds that satisfy your requirements, point the project at its producer's recorded closure:
+
+```toml
+[build]
+registry-lock = "closure.json"
+```
+
+Use the record exported by that producer. Its exact entry identities must already exist in the installed catalog; the path does not provision artifacts. Oven holds the selected bindings for the entire graph. Without a project record, an installed standard-producer record supplies its selection; otherwise an ambiguous choice is refused by name.
+
+## Inspect the selection
 
 ```bash
-incan lock
+incan describe-unit src/main.incn
 ```
 
-In a workspace, `incan lock` covers every member and locks each with the package features its manifest activates: `--features`, `--no-default-features` and `--all-features` do not reach the lock, while `--sdk-profile` and the `--cargo-*` feature options apply to every member. To give one member different persistent feature selections, set them in that member's manifest.
+The unit description lists active features, Loaves, Rust crates and native artifacts. Keep authored manifests and source under version control. Dev.8 has no `incan lock` command or lock-policy flags.
 
-`oven.lock` records normalized semantic dependency, feature, provider, and implementation-facet inputs. **Commit it to version control** so normal commands can validate that the project still matches the receipt-compatible Loaf selection. The lock is not permission for a normal command to resolve missing crates with Cargo.
-
-For compiled SDK providers, the fingerprint identifies checked provider contracts, dependency and feature choices, and authored Incan inputs. Native Rust output and host-derived ABI metadata remain covered by each installed provider artifact's exact integrity digest, but do not make an otherwise equivalent macOS and Linux SDK selection semantically different. User-authored path dependencies remain part of the semantic fingerprint.
-
-A project locked by a toolchain older than `oven.lock` may still have an `incan.lock`. Run `incan lock` to write `oven.lock`, then delete `incan.lock`: nothing reads it once the project has `oven.lock`.
-
-### Legacy generated-Cargo behavior (pre-Oven Alpha)
-
-The generated-Cargo cache, preheat controls, Cargo policy flags, and target-directory overrides describe the former 0.5 execution backend. They are not controls for ordinary Oven Alpha commands. See [Generated-build storage model](../explanation/generated_build_storage.md) only when auditing that historical backend or the explicit compatibility-publisher boundary.
-
-### CI and offline use
-
-Normal Oven Alpha `build`, `run`, and `test` do not launch Cargo or access a registry, so Cargo's `--offline`, `--locked`, and `--frozen` policies are not normal-command controls. Commit `oven.lock`, install the required Oven-enabled toolchain before entering the restricted environment, and let receipt/lock validation fail closed if the project no longer matches the sealed Loaf. Maintainer publication can separately constrain the internal compatibility publisher with Cargo policy; that does not change the consumer contract.
-
-## Resolution rules
-
-When the compiler resolves a dependency, it follows this precedence:
-
-| Priority | Source                  | Example                                   |
-| -------- | ----------------------- | ----------------------------------------- |
-| 1 (high) | `loaf.toml`            | `[dependencies] tokio = "1.35"`           |
-| 2        | Inline annotation       | `import rust::tokio @ "1.35"`             |
-| 3        | Known-good default      | `import rust::tokio` (compiler default)   |
-| 4 (low)  | Error                   | `import rust::unknown_crate` (no version) |
-
-Key rules:
-
-- If a crate is in `loaf.toml`, inline annotations for that crate are forbidden.
-- If the same crate is imported inline in multiple files, the version must match exactly; features are unioned automatically.
-- Known-good defaults only apply when there is no `loaf.toml` entry and no inline annotation.
-
-## Rust dependency feature boundary
-
-Declare Rust dependency features in the inline import or `[rust-dependencies]` entry before running `incan lock`. The resulting requirement participates in semantic lock and receipt identity. A normal Oven command accepts it only when a sealed Loaf authorizes the exact dependency/feature closure.
-
-Cargo feature and argument passthrough options are not accepted by normal Oven Alpha `build`, `run`, or `test`. They remain only on explicit compatibility surfaces such as lock preparation and the internal compatibility publisher. If a required closure is absent, change the declaration and install or bake a matching Loaf instead of trying to mutate Cargo resolution during the consumer command.
-
-## Common errors and fixes
-
-### Unknown crate without version
-
-```text
-error: unknown Rust crate `my_crate`: no version specified
-```
-
-**Fix**: Add `@ "version"` to the import, or add the crate to `loaf.toml`.
-
-### Inline annotation conflicts with manifest
-
-```text
-error: inline Rust dependency annotation for `tokio` is not allowed because it is configured in loaf.toml
-```
-
-**Fix**: Remove the `@ "..."` and `with [...]` from the import. Use `loaf.toml` to control the version.
-
-### Version conflict across files
-
-```text
-error: conflicting inline dependency specifications for `uuid`
-```
-
-**Fix**: Make all inline version annotations match, or centralize the dependency in `loaf.toml`.
-
-### Dev-only crate in production code
-
-```text
-error: Rust crate `criterion` is dev-only and cannot be imported from production code
-```
-
-**Fix**: Move the crate to `[dependencies]`, or move the import to a test file.
-
-### Optional dependency not enabled
-
-```text
-error: Rust crate `fancy_logging` is optional but not enabled for this build
-```
-
-**Fix**: Enable it through the owning manifest or Incan package feature, regenerate `oven.lock`, and use a toolchain whose Loaf authorizes the resulting closure. Otherwise remove the optional dependency.
-
-### Stale lock file
-
-```text
-oven.lock is out of date
-
-  expected deps-fingerprint: sha256:…
-    actual deps-fingerprint: sha256:…
-```
-
-The diagnostic lists what usually moved the fingerprint (manifest dependency entries, inline `rust::…` annotations, toolchain defaults, feature selection) and ends with the fix. A command that does not require the lock as authority prints the shorter `warning: oven.lock is out of date; continuing without using it as Oven lock authority or rewriting it.` and carries on.
-
-**Fix**: Run `incan lock` to regenerate the lock file after changing dependencies.
-
-## See also
-
-- [Project configuration reference](../reference/project_configuration.md) - Full `loaf.toml` format
-- [Rust interop](../../language/how-to/rust_interop.md) - Inline version/feature syntax
-- [CLI reference](../reference/cli_reference.md) - `incan init`, `incan lock`, and flags
-- [CI & automation](ci_and_automation.md) - Locked builds in CI
+The [manifest reference](../reference/project_configuration.md) lists accepted fields and defaults.

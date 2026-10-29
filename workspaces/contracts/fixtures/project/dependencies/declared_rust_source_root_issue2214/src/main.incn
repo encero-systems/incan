@@ -1,5 +1,8 @@
-# behavior: a local Rust dependency with a declared source root accepts its declared crate alias (#2214)
-# expect-dependencies:
+# behavior: a custom source root links a Rust dependency whose artifact path contains equals (#2214)
+# cli-commands:
+#   run app=source/code/main.incn
+# expect-stdout:
+#   42
 
 def main() -> None:
     """Describe the dependency without needing any Rust declarations."""

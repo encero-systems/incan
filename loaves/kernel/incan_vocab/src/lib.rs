@@ -1,45 +1,19 @@
-//! Stable vocabulary registration contract for Incan library companion crates.
+//! Vocabulary descriptor DTOs and compatibility bindings below the compiler boundary.
 //!
-//! Companion crates should expose one canonical Rust entrypoint:
-//!
-//! ```rust
-//! use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
-//!
-//! pub fn library_vocab() -> VocabRegistration {
-//!     VocabRegistration::new().with_surface(
-//!         DslSurface::on_import("demo.surface").with_declaration(
-//!             DeclarationSurface::named("query")
-//!                 .with_clause_body()
-//!                 .desugars_to_expression()
-//!                 .with_clauses([
-//!                     ClauseSurface::expr("FROM").required(),
-//!                     ClauseSurface::expr_list("SELECT").required().after("FROM"),
-//!                 ]),
-//!         ),
-//!     )
-//! }
-//! ```
-//!
-//! [`VocabRegistration`], [`DslSurface`], [`DeclarationSurface`], [`ClauseSurface`], [`VocabSyntaxNode`], and
-//! [`DesugarOutput`] are the canonical author-facing surface. [`VocabMetadata`] and [`KeywordRegistration`] remain
-//! available as lower-level transport and escape-hatch types, but they are not the intended starting point for normal
-//! companion-crate authoring.
+//! Authors register and expand vocabulary in Incan through `std.vocab`. The frontend translates that versioned public
+//! syntax model explicitly; compiler-private AST types never cross a worker pipe. Rust registration types here retain
+//! compatibility metadata but provide no executable companion-crate route or WebAssembly runtime.
 
 /// Public AST types used by vocab desugarers.
 pub mod ast;
-/// Desugaring traits and error types for library-provided syntax lowering.
+/// Desugarer descriptors carried in a vocabulary registration.
 pub mod desugar;
 /// Low-level keyword DTOs shared by companion crates and compiler tooling.
 pub mod keywords;
 /// Stable manifest DTOs carried inside a vocabulary registration.
 pub mod manifest;
-/// WASM desugarer runtime export helpers for companion crates.
-#[cfg(feature = "serde")]
-pub mod runtime;
 /// Version constants for serialized vocab metadata.
 pub mod version;
-/// Canonical WASM ABI names shared between desugarers and compiler tooling.
-pub mod wasm_abi;
 
 pub use ast::{
     Decorator, DecoratorArg, DecoratorArgValue, IncanBinaryOp, IncanClassDeclaration, IncanDeclaration, IncanExpr,
@@ -49,12 +23,7 @@ pub use ast::{
     VocabDeclarationHead, VocabExpressionItem, VocabExpressionItemModifier, VocabFieldSpec, VocabKeywordMetadata,
     VocabParameter, VocabSyntaxNode, VocabTypeExpr,
 };
-#[cfg(feature = "serde")]
-pub use desugar::execute_desugar_request;
-pub use desugar::{
-    DesugarError, DesugarOutput, DesugarRequest, DesugarResponse, DesugarerArtifactKind, DesugarerMetadata,
-    DesugarerRegistration, VocabDesugarer,
-};
+pub use desugar::{DesugarerArtifactKind, DesugarerMetadata};
 pub use keywords::{
     ClauseBodyKind, ClauseCardinality, ClausePlacement, ClauseSurface, DeclarationBodyKind, DeclarationHeadKind,
     DeclarationSurface, DesugarTarget, DslSurface, EmbeddedFragmentDescriptor, EmbeddedFragmentFormatHint,
@@ -67,16 +36,10 @@ pub use keywords::{
     ScopedSymbolPosition, ScopedSymbolRoleMetadata,
 };
 pub use manifest::{
-    CargoDependency, CargoDependencySource, FieldExport, FunctionExport, HelperBinding, LibraryManifest,
-    ManifestFormatVersion, ModuleExport, TypeExport, TypeExportKind, TypeRef,
+    FieldExport, FunctionExport, LibraryManifest, ManifestFormatVersion, ModuleExport, TypeExport, TypeExportKind,
+    TypeRef,
 };
-pub use version::{VOCAB_METADATA_VERSION, WASM_DESUGAR_ABI_VERSION};
-pub use wasm_abi::{
-    WASM_DESUGAR_ENTRYPOINT, WASM_DESUGAR_ERROR_LEN_GLOBAL, WASM_DESUGAR_ERROR_PTR_GLOBAL, WASM_DESUGAR_FAILURE_STATUS,
-    WASM_DESUGAR_INIT_ENTRYPOINT, WASM_DESUGAR_INPUT_CAPACITY_GLOBAL, WASM_DESUGAR_INPUT_LEN_GLOBAL,
-    WASM_DESUGAR_INPUT_PTR_GLOBAL, WASM_DESUGAR_MEMORY_EXPORT, WASM_DESUGAR_OUTPUT_LEN_GLOBAL,
-    WASM_DESUGAR_OUTPUT_PTR_GLOBAL, WASM_DESUGAR_REQUIRED_I32_GLOBAL_EXPORTS, WASM_DESUGAR_SUCCESS_STATUS,
-};
+pub use version::{VOCAB_METADATA_VERSION, VOCAB_SYNTAX_VERSION};
 
 /// The stable serializable output shape derived from a companion crate registration.
 ///
@@ -103,6 +66,7 @@ pub struct VocabMetadata {
 }
 
 impl Default for VocabMetadata {
+    /// Construct an empty descriptor payload under the supported registration schema.
     fn default() -> Self {
         Self {
             metadata_version: VOCAB_METADATA_VERSION,
@@ -115,15 +79,16 @@ impl Default for VocabMetadata {
 }
 
 #[cfg(feature = "serde")]
+/// Read a descriptor written before registrations carried an explicit schema version.
 fn default_vocab_metadata_version() -> u32 {
     VOCAB_METADATA_VERSION
 }
 
 /// High-level Rust entrypoint for one library's vocabulary surface.
 ///
-/// This bundles author-facing DSL surfaces, manifest metadata, and the optional desugarer into one author-facing
-/// value. Low-level keyword registrations are still available as an escape hatch, but the intended companion-crate
-/// contract is:
+/// This bundles author-facing DSL surfaces and manifest metadata into one author-facing value; desugarers are
+/// authored in Incan through `std.vocab`. Low-level keyword registrations are still available as an escape hatch, but
+/// the intended companion-crate contract is:
 ///
 /// ```rust
 /// use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
@@ -147,7 +112,6 @@ pub struct VocabRegistration {
     keyword_registrations: Vec<KeywordRegistration>,
     dsl_surfaces: Vec<DslSurface>,
     library_manifest: LibraryManifest,
-    desugarer: Option<DesugarerRegistration>,
 }
 
 impl VocabRegistration {
@@ -198,23 +162,6 @@ impl VocabRegistration {
         self
     }
 
-    /// Register one Rust desugarer using the default packaging metadata.
-    #[must_use]
-    pub fn with_desugarer<D>(mut self, desugarer: D) -> Self
-    where
-        D: VocabDesugarer + 'static,
-    {
-        self.desugarer = Some(DesugarerRegistration::new(desugarer));
-        self
-    }
-
-    /// Register one desugarer with explicit packaging metadata overrides.
-    #[must_use]
-    pub fn with_desugarer_registration(mut self, desugarer: DesugarerRegistration) -> Self {
-        self.desugarer = Some(desugarer);
-        self
-    }
-
     /// Borrow the parser-facing keyword registrations.
     #[must_use]
     pub fn keyword_registrations(&self) -> &[KeywordRegistration] {
@@ -233,12 +180,6 @@ impl VocabRegistration {
         &self.dsl_surfaces
     }
 
-    /// Borrow the optional desugarer registration.
-    #[must_use]
-    pub fn desugarer_registration(&self) -> Option<&DesugarerRegistration> {
-        self.desugarer.as_ref()
-    }
-
     /// Derive the compiler-facing transport metadata consumed by build tooling.
     #[must_use]
     pub fn metadata(&self) -> VocabMetadata {
@@ -247,7 +188,7 @@ impl VocabRegistration {
             keyword_registrations: self.derived_keyword_registrations(),
             dsl_surfaces: self.dsl_surfaces.clone(),
             library_manifest: self.library_manifest.clone(),
-            desugarer: self.desugarer.as_ref().map(|desugarer| desugarer.metadata().clone()),
+            desugarer: None,
         }
     }
 
@@ -310,14 +251,6 @@ pub fn serialize_registration_json_pretty(registration: &VocabRegistration) -> R
 mod tests {
     use super::*;
 
-    struct DemoDesugarer;
-
-    impl VocabDesugarer for DemoDesugarer {
-        fn desugar(&self, _node: &VocabSyntaxNode) -> Result<DesugarOutput, DesugarError> {
-            Ok(DesugarOutput::Statements(Vec::new()))
-        }
-    }
-
     #[test]
     fn vocab_registration_builds_metadata_from_rust_entrypoint() {
         let registration = VocabRegistration::new()
@@ -335,13 +268,7 @@ mod tests {
                     ..ModuleExport::default()
                 }],
                 ..LibraryManifest::default()
-            })
-            .with_desugarer_registration(
-                DesugarerRegistration::new(DemoDesugarer)
-                    .with_target("wasm32-wasip1")
-                    .with_profile("release")
-                    .with_file_name("demo_routes.wasm"),
-            );
+            });
 
         let metadata = registration.metadata();
 
@@ -349,14 +276,7 @@ mod tests {
         assert_eq!(metadata.keyword_registrations[0].keywords.len(), 2);
         assert_eq!(metadata.dsl_surfaces.len(), 1);
         assert_eq!(metadata.library_manifest.modules[0].path, "demo.routes");
-        assert_eq!(
-            metadata
-                .desugarer
-                .as_ref()
-                .and_then(|desugarer| desugarer.file_name.as_deref()),
-            Some("demo_routes.wasm")
-        );
-        assert!(registration.desugarer_registration().is_some());
+        assert_eq!(metadata.desugarer, None);
     }
 
     #[test]

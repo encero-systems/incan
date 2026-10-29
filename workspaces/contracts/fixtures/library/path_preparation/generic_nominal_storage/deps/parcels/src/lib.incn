@@ -1,3 +1,10 @@
+"""Publish generic source and native storage through one package boundary."""
+
+from rust::incan_std_core::frozen import FrozenList as NativeFrozenList
+from rust::std::vec import Vec as NativeVec
+from std.rust import Static
+
+
 pub model Parcel[T]:
     """Keep one value in the provider's generic storage."""
 
@@ -18,3 +25,24 @@ pub def wrap(value: int) -> Parcel[int]:
 pub def unpack(value: Parcel[str]) -> str:
     """Read a different concrete instance constructed by the consumer."""
     return value.value
+
+
+pub model Entry:
+    """Keep a nominal element whose name the consumer never imports."""
+
+    pub value: str
+
+
+pub def entries() -> list[Entry]:
+    """Return records that consuming iteration must retain through its Option poll."""
+    return [Entry(value="visible")]
+
+
+pub def freeze_values[T with Static](values: NativeVec[T]) -> NativeFrozenList[T]:
+    """Preserve the checked native element carrier when publishing a frozen generic result."""
+    return NativeFrozenList.leak(values)
+
+
+pub def frozen_count[T with Static](values: NativeFrozenList[T]) -> int:
+    """Read a native frozen generic argument through its retained storage contract."""
+    return int(values.len())

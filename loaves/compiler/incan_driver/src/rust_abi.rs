@@ -69,10 +69,7 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
     let shipped = unit
         .rust_abi
         .iter()
-        .map(|path| {
-            let bytes = fs::read(path).map_err(|error| CliError::failure(format!("{}: {error}", path.display())))?;
-            RustAbiCache::decode(&bytes).map_err(failure)
-        })
+        .map(|path| RustAbiCache::open(path).map_err(failure))
         .collect::<CliResult<Vec<_>>>()?;
     externs.retain(|name, _| !shipped.iter().any(|cache| cache.covers_crate(name)));
     drop(shipped);
@@ -96,7 +93,7 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
     if !reused {
         extract_cache(&toolchain, unit, &externs, &directory, &cache)?;
     }
-    if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+    if incan_frontend::trace_flags::trace_rust_facts() {
         eprintln!(
             "rust ABI cache: {} {} crates in {:?}",
             if reused { "reused" } else { "compiled" },
@@ -125,30 +122,32 @@ pub fn cached_path_facts(
     let (directory, cache, _lock) = match path_cache_location(unit, paths) {
         Ok(location) => location,
         Err(error) => {
-            if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+            if incan_frontend::trace_flags::trace_rust_facts() {
                 eprintln!("rust facts cache unavailable: {}", error.message);
             }
             return extract().map_err(CliError::failure);
         }
     };
     // ---- Retained facts or genuine extraction ----
-    let cached = fs::read(&cache)
-        .ok()
-        .and_then(|bytes| RustAbiCache::decode(&bytes).and_then(RustAbiCache::into_items).ok());
+    let cached = fs::read(&cache).ok().and_then(|bytes| {
+        RustAbiCache::decode_owned(bytes)
+            .and_then(RustAbiCache::into_items)
+            .ok()
+    });
     let reused = cached.is_some();
     let facts = if let Some(facts) = cached {
         facts
     } else {
         let facts = extract().map_err(CliError::failure)?;
         if let Err(error) = persist_path_facts(&directory, &cache, &facts)
-            && std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some()
+            && incan_frontend::trace_flags::trace_rust_facts()
         {
             eprintln!("rust facts cache not retained: {}", error.message);
         }
         facts
     };
     // ---- Optional retrieval trace ----
-    if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+    if incan_frontend::trace_flags::trace_rust_facts() {
         eprintln!(
             "rust facts cache: {} {} paths, {} items in {:?}",
             if reused { "reused" } else { "compiled" },
@@ -221,6 +220,8 @@ fn generation_identity(
 }
 
 /// Find the installed toolchain that owns one of the ABI caches Oven supplied, without selecting another toolchain.
+/// Resolve its paths relative to the descriptor, as required for relocated release archives; absolute bootstrap paths
+/// remain absolute. The owning cache must match after resolution, before any extraction can run.
 fn installed_toolchain(unit: &UnitDescription) -> CliResult<(PathBuf, Toolchain)> {
     for cache in &unit.rust_abi {
         let Some(directory) = cache.parent().and_then(Path::parent) else {
@@ -230,7 +231,13 @@ fn installed_toolchain(unit: &UnitDescription) -> CliResult<(PathBuf, Toolchain)
         if !descriptor.is_file() {
             continue;
         }
-        let toolchain: Toolchain = serde_json::from_slice(&fs::read(&descriptor).map_err(failure)?).map_err(failure)?;
+        let mut toolchain: Toolchain =
+            serde_json::from_slice(&fs::read(&descriptor).map_err(failure)?).map_err(failure)?;
+        toolchain.driver = directory.join(toolchain.driver);
+        toolchain.sysroot = directory.join(toolchain.sysroot);
+        for path in &mut toolchain.rust_abi {
+            *path = directory.join(&*path);
+        }
         if toolchain.schema != "incan.toolchain/1" || !toolchain.rust_abi.contains(cache) {
             return Err(CliError::failure(format!(
                 "{} does not own the unit's ABI cache",
@@ -391,7 +398,7 @@ fn extract_cache(
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    incan_lang::interop::RustAbiCache::decode(&fs::read(temporary.path()).map_err(failure)?).map_err(failure)?;
+    incan_lang::interop::RustAbiCache::open(temporary.path()).map_err(failure)?;
     temporary.flush().map_err(failure)?;
     temporary.persist(cache).map_err(failure)?;
     Ok(())

@@ -2,7 +2,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 DEFAULT_KEYS=100000
 DEFAULT_PROBES=1000000
 PYTHON_BIN="${PYTHON:-python3}"
@@ -34,6 +33,11 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
+[[ "$keys" =~ ^[1-9][0-9]*$ && "$probes" =~ ^[1-9][0-9]*$ ]] || {
+  echo '--keys and --probes must be positive integers' >&2
+  exit 2
+}
+
 run_python_script() {
   local script="$1"
   if [[ "${#original_args[@]}" -eq 0 ]]; then
@@ -56,24 +60,10 @@ fi
 
 echo ""
 echo "== Incan OrdinalMap =="
-if [[ -z "${INCAN:-}" ]]; then
-  cargo build --release --quiet --manifest-path "$PROJECT_ROOT/Cargo.toml"
-  INCAN="$PROJECT_ROOT/target/release/incan"
-elif [[ ! -x "$INCAN" ]]; then
+INCAN="${INCAN:-$(command -v incan || true)}"
+if [[ ! -x "$INCAN" ]]; then
   echo "INCAN points to a non-executable path: $INCAN" >&2
   exit 2
 fi
 
-incan_source="$SCRIPT_DIR/ordinal_map.incn"
-if [[ "$keys" != "$DEFAULT_KEYS" || "$probes" != "$DEFAULT_PROBES" ]]; then
-  generated_dir="$(mktemp -d "${TMPDIR:-/tmp}/incan-ordinal-map-bench-${keys}-${probes}.XXXXXX")"
-  trap 'rm -rf "$generated_dir"' EXIT
-  incan_source="$generated_dir/ordinal_map.incn"
-  sed \
-    -e "s/key_count = 100_000/key_count = ${keys}/" \
-    -e "s/probe_count = 1_000_000/probe_count = ${probes}/" \
-    "$SCRIPT_DIR/ordinal_map.incn" > "$incan_source"
-fi
-
-"$INCAN" build "$incan_source"
-"$PROJECT_ROOT/target/incan/.cargo-target/release/ordinal_map"
+"$INCAN" run "$SCRIPT_DIR/ordinal_map.incn" --profile release -- "$keys" "$probes"

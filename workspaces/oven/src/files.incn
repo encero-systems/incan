@@ -1,17 +1,33 @@
 """Reading, writing and removing the files Oven keeps, reporting every failure as the system's message in plain text."""
 
+from rust::std::fs import File, OpenOptions
 from std.fs import Path
 from std.json import JsonValue, parse
+from jec import begin, record, text_size
 
 
 pub def read(path: Path) -> Result[str, str]:
     """A file as strict UTF-8 text."""
-    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+    clock = begin()
+    result = path.read_text("utf-8", "strict").map_err((error) => error.message())
+    if clock is not None:
+        match result:
+            Ok(content) => record("file_read", path.0, clock, text_size(content, clock))
+            Err(_) => record("file_read", path.0, clock)
+    return result
 
 
 pub def write(path: Path, text: str) -> Result[None, str]:
     """Create or replace a file with strict UTF-8 text; its directory must exist."""
     return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def open_stream(path: str) -> Result[File, str]:
+    """Append a request's console bytes, creating the sink without truncating earlier dependency diagnostics."""
+    mut options = OpenOptions.new()
+    options.append(true)
+    options.create(true)
+    return options.open(path).map_err((error) => f"cannot open {path}: {error}")
 
 
 pub def remove(path: Path) -> Result[None, str]:
@@ -31,8 +47,11 @@ pub def make_directory(path: Path) -> Result[None, str]:
 
 pub def read_json(path: Path) -> Result[JsonValue, str]:
     """A JSON document from a file; a failure names the file."""
-    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
-    return parse(text).map_err((error) => f"{path.0}: {error.message()}")
+    text = read(path).map_err((error) => f"{path.0}: {error}")?
+    clock = begin()
+    result = parse(text).map_err((error) => f"{path.0}: {error.message()}")
+    record("json_decode", path.0, clock, text_size(text, clock))
+    return result
 
 
 pub def parse_json(text: str) -> Result[JsonValue, str]:

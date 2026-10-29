@@ -1,4 +1,4 @@
-# behavior: every checked, wrapping, and saturating integer helper follows its overflow policy and explicit resize targets select their destination
+# behavior: Checked, wrapping and saturating integer helpers and explicit resizes preserve their policies (#2256)
 # expect-stdout:
 #   none
 #   none
@@ -16,29 +16,78 @@
 #   44
 #   255
 
+"""Exercise integer overflow policies and range-checked conversion across every integer carrier."""
+
+
 def show(value: Option[u8]) -> None:
+    """Print the checked value or the absence of a representable result."""
     match value:
         Some(item) => println(item)
         None => println("none")
 
 
+def check_fixed_width_conversions() -> None:
+    """Check every integer destination and reject narrowing or negative unsigned values without truncation."""
+    value: int = 42
+    assert value.try_resize[i8]() == Some(42i8)
+    assert value.try_resize[i16]() == Some(42i16)
+    assert value.try_resize[i32]() == Some(42i32)
+    assert value.try_resize[i64]() == Some(42i64)
+    assert value.try_resize[i128]() == Some(42i128)
+    assert value.try_resize[isize]() == Some(42isize)
+    assert value.try_resize[u8]() == Some(42u8)
+    assert value.try_resize[u16]() == Some(42u16)
+    assert value.try_resize[u32]() == Some(42u32)
+    assert value.try_resize[u64]() == Some(42u64)
+    assert value.try_resize[u128]() == Some(42u128)
+    assert value.try_resize[usize]() == Some(42usize)
+    negative: int = -1
+    assert negative.try_resize[u8]() == None
+    assert negative.try_resize[u16]() == None
+    assert negative.try_resize[u32]() == None
+    assert negative.try_resize[u64]() == None
+    assert negative.try_resize[u128]() == None
+    assert negative.try_resize[usize]() == None
+    assert 128.try_resize[i8]() == None
+    assert 32768.try_resize[i16]() == None
+    assert 2147483648.try_resize[i32]() == None
+    high: u128 = 18446744073709551616u128
+    assert high.try_resize[u64]() == None
+    assert high.try_resize[i64]() == None
+
+
 def main() -> None:
+    """
+    Print integer policy results after checking every conversion destination.
+
+    1. Check successful and refused conversions across integer widths.
+    2. Print checked overflow results.
+    3. Print wrapping overflow results.
+    4. Print saturating overflow results.
+    5. Print explicit checked, wrapping, and saturating resize results.
+    """
+    # 1. Check successful and refused conversions across integer widths.
+    check_fixed_width_conversions()
     high: u8 = 250
     low: u8 = 5
     twenty: u8 = 20
     three: u8 = 3
+    # 2. Print checked overflow results.
     show(high.checked_add(10u8))
     show(low.checked_sub(10u8))
     show(twenty.checked_mul(20u8))
     show(three.checked_pow(6u32))
+    # 3. Print wrapping overflow results.
     println(high.wrapping_add(10u8))
     println(low.wrapping_sub(10u8))
     println(twenty.wrapping_mul(20u8))
     println(three.wrapping_pow(6u32))
+    # 4. Print saturating overflow results.
     println(high.saturating_add(10u8))
     println(low.saturating_sub(10u8))
     println(twenty.saturating_mul(20u8))
     println(three.saturating_pow(6u32))
+    # 5. Print explicit checked, wrapping, and saturating resize results.
     wide: i16 = 300
     show(wide.try_resize[u8]())
     println(wide.wrapping_resize[u8]())

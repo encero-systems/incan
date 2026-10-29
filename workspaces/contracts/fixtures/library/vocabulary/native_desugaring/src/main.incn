@@ -1,0 +1,39 @@
+# behavior: vocabulary output preserves declarations and distinguishes nested generated calls sharing one source span
+# expect-stdout:
+#   42
+#   8
+#   7
+#   3.5
+#   37
+#   38
+#   39
+#   linked
+#   7
+#   nested 7
+
+from pub::queries import as_text, marker
+
+synthesize 37, 38, 39:
+    pass
+
+
+def main() -> None:
+    """Check and run two expanded expressions as ordinary Incan."""
+    value = query:
+        FROM 42
+    other = query:
+        FROM marker() + 1
+    println(value)
+    println(other)
+    markup:
+        <p>{marker()}</p>
+    fraction = query:
+        FROM 3.5
+    println(fraction)
+    println(generated())
+    println(Generated().value)
+    println(GENERATED)
+    chain:
+        .amount |> orders
+    wrap:
+        pass

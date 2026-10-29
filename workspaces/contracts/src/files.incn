@@ -2,11 +2,18 @@
 
 from std.fs import Path
 from std.json import JsonValue, parse
+from timing import work_clock, work
 
 
 pub def read(path: Path) -> Result[str, str]:
     """A case file as strict UTF-8."""
-    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+    clock = work_clock()
+    result = path.read_text("utf-8", "strict").map_err((error) => error.message())
+    if clock is not None:
+        match result:
+            Ok(content) => work("runner_file_read", path.0, clock, len(content.encode("utf-8")))
+            Err(_) => work("runner_file_read", path.0, clock)
+    return result
 
 
 pub def write(path: Path, text: str) -> Result[None, str]:
@@ -16,7 +23,13 @@ pub def write(path: Path, text: str) -> Result[None, str]:
 
 pub def read_bytes(path: Path) -> Result[bytes, str]:
     """A case file's bytes."""
-    return path.read_bytes().map_err((error) => error.message())
+    clock = work_clock()
+    result = path.read_bytes().map_err((error) => error.message())
+    if clock is not None:
+        match result:
+            Ok(content) => work("runner_file_read", path.0, clock, len(content))
+            Err(_) => work("runner_file_read", path.0, clock)
+    return result
 
 
 pub def write_bytes(path: Path, content: bytes) -> Result[None, str]:
@@ -52,6 +65,13 @@ pub def required(value: JsonValue, key: str) -> Result[JsonValue, str]:
 pub def required_text(value: JsonValue, key: str) -> Result[str, str]:
     """The string at `key` of a JSON object."""
     return required(value, key)?.expect_str().map_err((error) => error.message())
+
+
+pub def optional_text(value: JsonValue, key: str) -> str:
+    """The string at `key` of a JSON object; empty when the member is absent or is not a string."""
+    match value.get(key):
+        Some(item) => return item.as_str().unwrap_or("")
+        None => return ""
 
 
 pub def items(value: JsonValue) -> Result[list[JsonValue], str]:

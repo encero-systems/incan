@@ -37,9 +37,6 @@ impl TypeChecker {
 
         let per_target_types: Vec<ResolvedType> = match different {
             None => {
-                if first_bound.is_some() {
-                    self.type_info.record_chained_targets_agree(chain.value.span);
-                }
                 let value_ty = self.check_expr_with_expected(&chain.value, first_bound.as_ref());
                 vec![value_ty; chain.targets.len()]
             }
@@ -134,33 +131,13 @@ impl TypeChecker {
 impl TypeCheckInfo {
     /// Record that each target of the chained assignment whose value is at `value_span` gets its own evaluation of it.
     pub fn record_chained_value_written_per_target(&mut self, value_span: Span) {
-        self.expressions
-            .chained_values_written_per_target
-            .insert((value_span.start, value_span.end));
+        self.expressions.chained_values_written_per_target.insert(value_span);
     }
 
     /// Return whether each target of the chained assignment whose value is at `value_span` gets its own evaluation of
     /// it: the targets have different types and the value is built only from literals and builtin empty
     /// constructors. Otherwise the value is evaluated once and shared.
     pub fn chained_value_is_written_per_target(&self, value_span: Span) -> bool {
-        self.expressions
-            .chained_values_written_per_target
-            .contains(&(value_span.start, value_span.end))
-    }
-
-    /// Record that the chained assignment whose value is at `value_span` has bound targets that all have one type.
-    pub fn record_chained_targets_agree(&mut self, value_span: Span) {
-        self.expressions
-            .chained_values_of_agreeing_targets
-            .insert((value_span.start, value_span.end));
-    }
-
-    /// Return whether the chained assignment whose value is at `value_span` has at least one bound target and every
-    /// other bound target's type is compatible both ways with the first bound target's type (`list[int]` and
-    /// `list[i64]` are). The value was then checked against the first bound target's type.
-    pub fn chained_targets_agree(&self, value_span: Span) -> bool {
-        self.expressions
-            .chained_values_of_agreeing_targets
-            .contains(&(value_span.start, value_span.end))
+        self.expressions.chained_values_written_per_target.contains(&value_span)
     }
 }

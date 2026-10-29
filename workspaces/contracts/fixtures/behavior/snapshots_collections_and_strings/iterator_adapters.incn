@@ -1,4 +1,4 @@
-# behavior: filter, map, take, batch, reduce, fold and sum adapters produce their results, including sum over newtype and validated-newtype lists (RFC 088)
+# behavior: adapters compute their results; rejected validated newtype sums retain their hook's cause (RFC 088)
 # expect-stdout:
 #   2
 #   3
@@ -8,15 +8,24 @@
 #   3
 #   3
 
+"""Observe adapter results and require the original hook cause when newtype sum reconstruction fails."""
+
+import std.testing
+from rust::incan_std_testing import panic_text
+
+
 def is_even(n: int) -> bool:
+    """Select even iterator items."""
     return n % 2 == 0
 
 
 def double(n: int) -> int:
+    """Transform an item without changing source order."""
     return n * 2
 
 
 def add(acc: int, n: int) -> int:
+    """Accumulate an item into the running integer total."""
     return acc + n
 
 
@@ -24,21 +33,44 @@ type Money = newtype int
 
 
 type PositiveInt = newtype int:
+    """Reject nonpositive totals when a sum reconstructs its item type."""
+
     def from_underlying(n: int) -> Result[PositiveInt, ValidationError]:
+        """Retain the validation cause when a nonpositive integer is rejected."""
         if n <= 0:
             return Err(ValidationError("positive int must be greater than zero"))
         return Ok(PositiveInt(n))
 
 
 def sum_money(items: list[Money]) -> Money:
+    """Construct a plain numeric newtype from its accumulated total."""
     return items.iter().sum()
 
 
 def sum_positive(items: list[PositiveInt]) -> PositiveInt:
+    """Construct a validated numeric newtype through its selected hook."""
     return items.iter().sum()
 
 
+def sum_empty_positive() -> None:
+    """Expose the validation failure produced by the zero total of an empty validated-newtype iterator."""
+    items: list[PositiveInt] = []
+    _ = sum_positive(items)
+
+
+def check_sum_failure() -> None:
+    """Require both the selected construction context and the real hook's diagnostic cause."""
+    match panic_text(sum_empty_positive):
+        Some(message) =>
+            context = "validated newtype construction failed: PositiveInt::from_underlying"
+            assert message == f"{context}: positive int must be greater than zero"
+        None =>
+            assert false, "an invalid sum unexpectedly bypassed its validation hook"
+
+
 def main() -> None:
+    """Observe the original adapter results, then require a real validation cause for a rejected empty sum."""
+    # 1. Keep every adapter's successful result observable.
     xs = [1, 2, 3, 4, 5]
     moneys = [Money(1), Money(2)]
     positives = [PositiveInt(1), PositiveInt(2)]
@@ -56,3 +88,5 @@ def main() -> None:
     println(total)
     println(total_money.0)
     println(total_positive.0)
+    # 2. A zero total cannot silently bypass the validated item type's constructor.
+    check_sum_failure()

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 /// A retained callable's original source result and its current concrete representation witness.
 #[derive(Clone)]
 struct ReturnSignature {
+    is_async: bool,
     original: IncanType,
     carrier: IncanType,
     parameters: Vec<String>,
@@ -114,7 +115,7 @@ fn retain_return_annotation(body: &mut bir::Body, program: &ast::Program, facts:
     else {
         return;
     };
-    let key = (body.span.start, body.span.end);
+    let key = body.span;
     let declared = facts
         .declarations
         .function_bindings_by_span
@@ -143,8 +144,7 @@ fn retain_return_annotation(body: &mut bir::Body, program: &ast::Program, facts:
 fn return_annotation_span(program: &ast::Program, body: &bir::Body) -> Option<ast::Span> {
     program.declarations.iter().find_map(|declaration| {
         if let ast::Declaration::Function(function) = &declaration.node {
-            return (declaration.span.start == body.span.start && declaration.span.end == body.span.end)
-                .then_some(function.return_type.span);
+            return (declaration.span == body.span).then_some(function.return_type.span);
         }
         let methods = match &declaration.node {
             ast::Declaration::Model(owner) => &owner.methods,
@@ -154,16 +154,16 @@ fn return_annotation_span(program: &ast::Program, body: &bir::Body) -> Option<as
             ast::Declaration::Newtype(owner) => &owner.methods,
             _ => return None,
         };
-        methods.iter().find_map(|method| {
-            (method.span.start == body.span.start && method.span.end == body.span.end)
-                .then_some(method.node.return_type.span)
-        })
+        methods
+            .iter()
+            .find_map(|method| (method.span == body.span).then_some(method.node.return_type.span))
     })
 }
 
 /// Snapshot the checked callable frame before refinement so only its declared result authorizes an opaque return.
 fn signature(body: &bir::Body) -> ReturnSignature {
     ReturnSignature {
+        is_async: body.is_async,
         original: body.return_type.clone(),
         carrier: body.return_type.clone(),
         parameters: body.type_parameters.clone(),
@@ -336,9 +336,19 @@ fn method_return_witness(
     for (parameter, argument) in owner.type_parameters.iter().zip(owner_arguments) {
         bindings.insert(parameter.clone(), argument.clone());
     }
-    let mut adopted = implementations
-        .iter()
-        .filter(|record| record.owner == owner.canonical && &record.method == selected);
+    let mut adopted = implementations.iter().filter(|record| {
+        record.owner == owner.canonical
+            && &record.method == selected
+            && target.trait_arguments.as_ref().is_none_or(|arguments| {
+                record
+                    .slot_arguments
+                    .iter()
+                    .map(|argument| instantiate_witness(argument, &bindings, &receiver))
+                    .collect::<Option<Vec<_>>>()
+                    .as_ref()
+                    == Some(arguments)
+            })
+    });
     let signature = if let Some(record) = adopted.next() {
         if adopted.next().is_some() {
             return None;
@@ -382,7 +392,20 @@ fn method_return_witness(
         bindings.insert(parameter.clone(), argument.clone());
     }
     let carrier = instantiate_witness(&signature.carrier, &bindings, &receiver)?;
-    retain_witness_identities(&carrier, &signature.identities, identities).then_some(carrier)
+    retain_witness_identities(&carrier, &signature.identities, identities)
+        .then(|| async_call_carrier(signature.is_async, carrier))
+}
+
+/// A callable's logical return refines the future's output; it never replaces an async call's owned future storage.
+fn async_call_carrier(is_async: bool, carrier: IncanType) -> IncanType {
+    if is_async {
+        IncanType::Generic {
+            base: "Awaitable".into(),
+            args: vec![carrier],
+        }
+    } else {
+        carrier
+    }
 }
 
 /// Carry only a selected executable return's named owners into the receiving frame, including generic heads.
@@ -506,20 +529,25 @@ fn call_carrier(
         bir::Callee::Function(bir::CallableTarget::Named(target)) => {
             let signature = signatures.get(target.canonical.as_ref()?)?;
             substitute(&signature.carrier, &signature.parameters, &target.type_args)
+                .map(|carrier| async_call_carrier(signature.is_async, carrier))
         }
         bir::Callee::Method(target) => {
             let selected = target.canonical.as_ref()?;
             let declared_self = signatures
                 .get(selected)
                 .is_some_and(|signature| signature.original == IncanType::SelfType);
-            if !declared_self && facts.calls.body_ir_self_result_methods.get(&(span.start, span.end)) != Some(selected)
-            {
+            if !declared_self && facts.calls.body_ir_self_result_methods.get(&span) != Some(selected) {
                 return None;
             }
             let bir::ArgumentElement::One(receiver) = args.first()? else {
                 return None;
             };
-            operand_type(receiver, locals)
+            operand_type(receiver, locals).map(|carrier| {
+                async_call_carrier(
+                    signatures.get(selected).is_some_and(|signature| signature.is_async),
+                    carrier,
+                )
+            })
         }
         _ => None,
     }
@@ -648,7 +676,18 @@ mod carrier_identity_tests {
         checker
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
-        let module = crate::body_ir::build_body_ir_module_v0(&program, &path, checker.type_info());
+        let providers = crate::body_ir::ProviderOperationCatalog::new();
+        let module = crate::body_ir::build_body_ir_module(
+            &program,
+            &path,
+            checker.type_info(),
+            &crate::body_ir::BodyIrContext {
+                modules: &[],
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: None,
+            },
+        );
         let owner = module.nominal_declarations.first().ok_or("missing source owner")?;
         let nominals = module.nominal_declarations.iter().collect::<Vec<_>>();
         let key = bir::nominal_carrier_key(&owner.canonical).ok_or("missing carrier key")?;

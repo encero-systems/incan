@@ -1,7 +1,8 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
+from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration, NominalDeclaration, LoafCallable
 from traits import specialize_project_traits
+from table_views import borrowed_at
 
 
 pub def project_context(
@@ -22,12 +23,14 @@ pub def project_context(
     context.loaf_callables.clear()
     context.native_union_declarations.clear()
     mut checked: list[BodyIrModule] = []
-    for module in modules:
+    for module_position in range(len(modules)):
+        module = borrowed_at(modules, module_position)
         specialized = specialize_project_traits(module, modules)?
         # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
         # An explicit interop clone is an owned call result and retains the module for both planning views.
         checked.append(specialized.clone())
-        for body in specialized.bodies:
+        for body_position in range(len(specialized.bodies)):
+            body = borrowed_at(specialized.bodies, body_position)
             context.bodies.push(body.clone())
         # Indexed interop reads avoid legacy emission moving a vector field from a borrowed loop element.
         for index in range(len(module.nominal_declarations)):
@@ -40,11 +43,10 @@ pub def project_context(
             if not retains_nominal(context, declaration)?:
                 context.nominal_declarations.push(declaration.clone())
         for index in range(len(module.enum_declarations)):
-            declaration = module.enum_declarations[index].clone()
-            for retained in range(len(context.enum_declarations)):
-                if context.enum_declarations[retained].name == declaration.name:
-                    return Err(f"unsupported Body IR ambiguous project enum carrier {declaration.name}")
-            context.enum_declarations.push(declaration.clone())
+            mut declaration = module.enum_declarations[index].clone()
+            declaration.name = declaration.carrier_name()
+            if not retains_enum(context, declaration)?:
+                context.enum_declarations.push(declaration.clone())
         for index in range(len(module.fieldless_enum_declarations)):
             declaration = module.fieldless_enum_declarations[index].clone()
             context.fieldless_enum_declarations.push(declaration.clone())
@@ -64,11 +66,20 @@ pub def project_context(
             context.decorated_bindings.push(module.decorated_bindings[index].clone())
         for index in range(len(module.loaf_callables)):
             declaration = module.loaf_callables[index].clone()
-            context.loaf_callables.push(declaration.clone())
+            if not retains_callable(context, declaration):
+                context.loaf_callables.push(declaration.clone())
         for index in range(len(module.native_union_declarations)):
             declaration = module.native_union_declarations[index].clone()
             context.native_union_declarations.push(declaration.clone())
     return Ok((context, checked))
+
+
+def retains_callable(context: &BodyIrModule, candidate: &LoafCallable) -> bool:
+    """Reuse an exact authenticated callable record, including its native arguments, signature and declaration frame."""
+    for declaration in context.loaf_callables:
+        if declaration == candidate:
+            return true
+    return false
 
 
 def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> Result[bool, str]:
@@ -80,4 +91,16 @@ def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> R
             return Ok(true)
         if declaration.name == candidate.name:
             return Err(f"unsupported Body IR ambiguous project nominal carrier {candidate.name}")
+    return Ok(false)
+
+
+def retains_enum(context: &BodyIrModule, candidate: &EnumDeclaration) -> Result[bool, str]:
+    """Keep distinct checked enum owners while refusing conflicting records or unqualified carrier collisions."""
+    for declaration in context.enum_declarations:
+        if declaration.canonical == candidate.canonical:
+            if declaration != candidate:
+                return Err(f"unsupported Body IR conflicting project enum records {candidate.name}")
+            return Ok(true)
+        if declaration.carrier_name() == candidate.carrier_name():
+            return Err(f"unsupported Body IR ambiguous project enum carrier {candidate.name}")
     return Ok(false)

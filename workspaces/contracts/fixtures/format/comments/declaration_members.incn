@@ -1,0 +1,66 @@
+# behavior: A comment above a model field, an enum variant or a match arm stays above it when formatting respaces the member or joins the arm's body onto the arm, a comment above a joined body keeps the arm in block form, and a later comment keeps its place.
+# expect-formatted:
+#   model Point:
+#       """A point."""
+#
+#       # The horizontal coordinate.
+#       x: int
+#       # The vertical coordinate.
+#       y: int = 0
+#
+#
+#   enum Shape:
+#       """A shape."""
+#
+#       # A round shape.
+#       Circle(int)
+#       # A four-sided shape.
+#       Square(int, int)
+#
+#
+#   def describe(shape: Shape) -> str:
+#       """Name a shape."""
+#       match shape:
+#           # Circles are round.
+#           Shape.Circle(_radius) => return "circle"
+#           Shape.Square(_width, _height) =>
+#               # Squares have corners.
+#               return "square"
+#
+#
+#   def main() -> None:
+#       """Print one shape."""
+#       # The comment above this call stays here.
+#       println(describe(Shape.Circle(1)))
+
+model Point:
+    """A point."""
+    # The horizontal coordinate.
+    x:int
+    # The vertical coordinate.
+    y:int=0
+
+
+enum Shape:
+    """A shape."""
+    # A round shape.
+    Circle(int)
+    # A four-sided shape.
+    Square(int,int)
+
+
+def describe(shape: Shape) -> str:
+    """Name a shape."""
+    match shape:
+        # Circles are round.
+        Shape.Circle(_radius) =>
+            return "circle"
+        Shape.Square(_width, _height) =>
+            # Squares have corners.
+            return "square"
+
+
+def main() -> None:
+    """Print one shape."""
+    # The comment above this call stays here.
+    println(describe(Shape.Circle(1)))

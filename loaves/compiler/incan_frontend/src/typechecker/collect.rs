@@ -244,17 +244,8 @@ impl TypeChecker {
             match &kind {
                 SymbolKind::Function(_) => self.record_imported_function_binding(&alias.name, &kind),
                 SymbolKind::FunctionOverloads(overloads) => {
-                    self.record_function_overload_binding(&alias.name, overloads, false);
+                    self.record_function_overload_binding(&alias.name, overloads);
                 }
-                SymbolKind::Static(info) => {
-                    self.type_info.declarations.static_bindings.insert(
-                        alias.name.clone(),
-                        crate::typechecker::StaticBindingInfo {
-                            is_imported: info.is_imported,
-                        },
-                    );
-                }
-                SymbolKind::Type(_) | SymbolKind::Trait(_) => {}
                 _ => {}
             }
         }
@@ -302,25 +293,11 @@ impl TypeChecker {
     }
 
     /// Record the common metadata for any source binding that resolves to an overload set.
-    ///
-    /// Imports additionally need provider emitted names so IR import lowering imports the concrete Rust functions
-    /// rather than the overloaded source name, which usually does not exist in generated Rust.
     pub(in crate::typechecker) fn record_function_overload_binding(
         &mut self,
         local_name: &str,
         overloads: &[FunctionOverloadInfo],
-        record_imported_emitted_names: bool,
     ) {
-        if record_imported_emitted_names {
-            let emitted_names = overloads
-                .iter()
-                .filter_map(|overload| overload.info.emitted_name.clone())
-                .collect::<Vec<_>>();
-            if !emitted_names.is_empty() {
-                self.type_info
-                    .record_imported_function_emitted_names(local_name.to_string(), emitted_names);
-            }
-        }
         self.type_info
             .record_function_overloads(local_name.to_string(), overloads.to_vec());
     }
@@ -351,7 +328,7 @@ impl TypeChecker {
                 );
             }
             SymbolKind::FunctionOverloads(overloads) => {
-                self.record_function_overload_binding(local_name, overloads, true);
+                self.record_function_overload_binding(local_name, overloads);
             }
             _ => {}
         }
@@ -460,10 +437,8 @@ impl TypeChecker {
                 .map(|arg| PartialProjectionPreset {
                     name: arg.name.clone(),
                     value: arg.value.clone(),
-                    external_value: None,
                 })
                 .collect(),
-            external_library: None,
         });
         let binding = FunctionBindingInfo {
             is_async,
@@ -478,7 +453,7 @@ impl TypeChecker {
         self.type_info
             .declarations
             .function_bindings_by_span
-            .insert((span.start, span.end), binding.clone());
+            .insert(span, binding.clone());
         self.type_info
             .declarations
             .function_bindings
@@ -708,10 +683,6 @@ impl TypeChecker {
         let decl_index = self.static_decls.len();
         self.static_decl_positions.insert(static_decl.name.clone(), decl_index);
         self.static_decls.push((static_decl.clone(), span));
-        self.type_info.declarations.static_bindings.insert(
-            static_decl.name.clone(),
-            crate::typechecker::StaticBindingInfo { is_imported: false },
-        );
     }
 
     /// Register a model declaration with its fields, methods, and derived traits.
@@ -1127,8 +1098,12 @@ impl TypeChecker {
     ///
     /// A name imported on its own resolves through its import binding (`Serialize` to `std.serde.json.Serialize`); a
     /// module-qualified name resolves its module through the module's import (`json.Serialize`,
-    /// `serde.json.Serialize`), as the same spelling does after `with` (#1885). Anything else is the name alone.
+    /// `serde.json.Serialize`), as the same spelling does after `with` (#1885). A checked standard trait identity
+    /// takes precedence over a facade's import path. Anything else is the name alone.
     pub fn derive_trait_path(&self, derive_name: &str) -> Vec<String> {
+        if let Some(path) = self.checked_stdlib_trait_path(derive_name) {
+            return path;
+        }
         if let Some(path) = self.import_binding_path(derive_name) {
             return path.to_vec();
         }
@@ -1139,6 +1114,35 @@ impl TypeChecker {
             return path;
         }
         vec![derive_name.to_string()]
+    }
+
+    /// Recover a standard trait's declaring path from its selected identity, including reexports through a source
+    /// facade. A package must be the admitted owner of that standard module; an equal-spelled user trait grants no
+    /// protocol or derive. Source shadows are read from the active symbol binding rather than an earlier import.
+    pub(in crate::typechecker) fn checked_stdlib_trait_path(&self, name: &str) -> Option<Vec<String>> {
+        let symbol = self.symbols.lookup(name)?;
+        let identity = self.symbols.identity_of(symbol)?;
+        if identity.kind != SemanticSourceTargetKind::Trait || identity.scope_discriminant.is_some() {
+            return None;
+        }
+        let mut path = match &identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(path) if path.first().is_some_and(|root| root == "std") => {
+                path.clone()
+            }
+            incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
+                let path = std::iter::once("std".to_owned())
+                    .chain(module_path.iter().cloned())
+                    .collect::<Vec<_>>();
+                let owner = self.loaves.owner_of(&path)?;
+                if owner.artifact.manifest.name != *library {
+                    return None;
+                }
+                path
+            }
+            _ => return None,
+        };
+        path.push(identity.declaration_name.clone());
+        Some(path)
     }
 
     /// Resolve a module-qualified trait name through the imported-module metadata table.
@@ -1775,7 +1779,25 @@ impl TypeChecker {
             info.method_overloads = method_overloads;
         }
 
-        // Also define each variant as a symbol
+        self.define_enum_variant_symbols(
+            en,
+            &active_variants,
+            &active_variant_aliases,
+            &variant_fields,
+            &variant_identities,
+        );
+    }
+
+    /// Publish active enum variants before their aliases, preserving existing bindings and each target's canonical
+    /// identity. Alias payload types retain their existing checked resolution after method registration.
+    fn define_enum_variant_symbols(
+        &mut self,
+        en: &EnumDecl,
+        active_variants: &[&Spanned<VariantDecl>],
+        active_variant_aliases: &[&Spanned<EnumVariantAliasDecl>],
+        variant_fields: &HashMap<String, Vec<ResolvedType>>,
+        variant_identities: &HashMap<String, CanonicalSymbolId>,
+    ) {
         for variant in active_variants {
             let fields = variant_fields.get(&variant.node.name).cloned().unwrap_or_default();
             let variant_id = self.symbols.define_preserving_existing_binding(Symbol {
@@ -1831,50 +1853,13 @@ impl TypeChecker {
     fn collect_function(&mut self, func: &FunctionDecl, span: Span) {
         let existing_module_function_id = self.current_module_function_symbols.get(&func.name).copied();
         let type_params: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
-        let type_param_bounds: HashMap<String, Vec<String>> = func
-            .type_params
-            .iter()
-            .map(|tp| {
-                (
-                    tp.name.clone(),
-                    tp.bounds
-                        .iter()
-                        .map(|bound| self.resolve_generic_bound_name(&bound.name, Span::default()))
-                        .collect(),
-                )
-            })
-            .collect();
-        let type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>> = func
-            .type_params
-            .iter()
-            .map(|tp| {
-                (
-                    tp.name.clone(),
-                    tp.bounds
-                        .iter()
-                        .map(|bound| TypeBoundInfo {
-                            name: self.resolve_generic_bound_name(&bound.name, Span::default()),
-                            source_name: self.trait_bound_source_name(&bound.name),
-                            type_args: bound
-                                .type_args
-                                .iter()
-                                .map(|type_arg| self.resolve_type_checked(type_arg))
-                                .collect(),
-                            module_path: self.trait_bound_module_path(&bound.name),
-                            implementation_type_params: Vec::new(),
-                            inferred: false,
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
+        let (type_param_bounds, type_param_bound_details) = self.collect_function_type_param_bounds(&func.type_params);
 
         let params: Vec<_> = func
             .params
             .iter()
             .map(|p| {
                 let ty = self.resolve_type_checked(&p.node.ty);
-                self.record_mutable_rust_parameter_projection(&p.node);
                 let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
                 CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                     .with_mut(is_mut)
@@ -1916,16 +1901,11 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .function_bindings_by_span
-                .insert((span.start, span.end), binding.clone());
-            let emitted_name = overloaded_function_emitted_name(&func.name, &info);
-            info.emitted_name = Some(emitted_name.clone());
-            self.type_info.record_function_emitted_name(span, emitted_name);
+                .insert(span, binding.clone());
+            info.emitted_name = Some(overloaded_function_emitted_name(&func.name, &info));
             match &mut existing_symbol.kind {
                 SymbolKind::Function(existing_info) => {
-                    let existing_emitted_name = overloaded_function_emitted_name(&func.name, existing_info);
-                    existing_info.emitted_name = Some(existing_emitted_name.clone());
-                    self.type_info
-                        .record_function_emitted_name(existing_symbol.span, existing_emitted_name);
+                    existing_info.emitted_name = Some(overloaded_function_emitted_name(&func.name, existing_info));
                     let overloads = vec![
                         FunctionOverloadInfo {
                             info: existing_info.clone(),
@@ -1941,8 +1921,8 @@ impl TypeChecker {
                     self.type_info
                         .record_function_overloads(func.name.clone(), overloads.clone());
                     existing_symbol.kind = SymbolKind::FunctionOverloads(overloads);
-                    // The symbol no longer names one declaration, so its minted identity must go: each overload
-                    // keeps its own span-keyed identity on `function_bindings_by_span`.
+                    // Each overload keeps its own span-keyed identity; the combined binding names no single
+                    // declaration.
                     self.symbols.clear_identity(existing_id);
                     return;
                 }
@@ -1979,9 +1959,54 @@ impl TypeChecker {
         self.type_info
             .declarations
             .function_bindings_by_span
-            .insert((span.start, span.end), binding);
+            .insert(span, binding);
         self.current_module_function_symbols
             .insert(func.name.clone(), symbol_id);
+    }
+
+    /// Collect the name and structured views of a function's declared bounds in their existing two-pass order.
+    /// The structured view retains source/module provenance and checked type arguments for later call validation.
+    fn collect_function_type_param_bounds(
+        &mut self,
+        params: &[TypeParam],
+    ) -> (HashMap<String, Vec<String>>, HashMap<String, Vec<TypeBoundInfo>>) {
+        let type_param_bounds = params
+            .iter()
+            .map(|tp| {
+                (
+                    tp.name.clone(),
+                    tp.bounds
+                        .iter()
+                        .map(|bound| self.resolve_generic_bound_name(&bound.name, Span::default()))
+                        .collect(),
+                )
+            })
+            .collect();
+        let type_param_bound_details = params
+            .iter()
+            .map(|tp| {
+                (
+                    tp.name.clone(),
+                    tp.bounds
+                        .iter()
+                        .map(|bound| TypeBoundInfo {
+                            name: self.resolve_generic_bound_name(&bound.name, Span::default()),
+                            source_name: self.trait_bound_source_name(&bound.name),
+                            type_args: bound
+                                .type_args
+                                .iter()
+                                .map(|type_arg| self.resolve_type_checked(type_arg))
+                                .collect(),
+                            module_path: self.trait_bound_module_path(&bound.name),
+                            implementation_type_params: Vec::new(),
+                            inferred: false,
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+
+        (type_param_bounds, type_param_bound_details)
     }
 }
 

@@ -38,7 +38,8 @@ pub(super) fn project_constant(
     Ok((value, audit.requirements))
 }
 
-/// Select a compiled contract, governed body, or complete checked decorator replacement under one public identity.
+/// Select a governed body or complete checked decorator replacement under one public identity. Compiled exports
+/// reach `project_compiled_frame` directly at the owning publication boundary.
 pub(super) fn project_callable(
     source: &Body,
     module: &BodyIrModule,
@@ -74,25 +75,8 @@ pub(super) fn project_callable(
             value.requirements,
         ));
     }
-    if !module.body_requires_instantiation(source)
-        && !source.is_generator()
-        && crate::body_ir::LoafCallable::from_body(source).is_some()
-    {
-        return project_compiled_callable(source, module, library, eligible);
-    }
     let value = project_body(source, module, library, eligible)?;
-    let mut callables = Vec::new();
-    for (identity, arguments) in value.native_calls {
-        let callable = native_callables
-            .iter()
-            .copied()
-            .find(|callable| callable.canonical == identity && callable.native_type_arguments == arguments)
-            .cloned()
-            .ok_or(CoverageReason::UnresolvedReference)?;
-        if !callables.contains(&callable) {
-            callables.push(callable);
-        }
-    }
+    let callables = selected_native_calls(&value.native_calls, native_callables)?;
     let declaration = if callables.is_empty() {
         ExecutableDeclaration::Body(Box::new(value.body))
     } else {
@@ -104,9 +88,10 @@ pub(super) fn project_callable(
     Ok((declaration, value.requirements))
 }
 
-/// Publish only the caller-visible frame of an already compiled item, retaining parameter defaults and their local
-/// types. Implementation locals and Rust calls stay in the rlib; they cannot become consumer execution requirements.
-fn project_compiled_callable(
+/// Publish only a compiled export's governed signature, independently of whether its implementation is portable.
+/// Parameter passing and default computations retain their real locals; unused implementation slots are inert unit
+/// placeholders so declaration-local addresses remain stable without publishing private implementation types.
+pub(super) fn project_compiled_frame(
     source: &Body,
     module: &BodyIrModule,
     library: &str,
@@ -137,12 +122,65 @@ fn project_compiled_callable(
             local.ty = IncanType::Tuple(Vec::new());
         }
     }
+    frame.runtime_requirements.clear();
+    frame.extern_delegation = None;
     frame.named_type_identities = audit.used_nominal_types;
     require_module_initialization(module, &mut audit.requirements);
+    let native_callables = module.loaf_callables.iter().collect::<Vec<_>>();
+    let callables = selected_native_calls(&audit.native_calls, &native_callables)?;
     Ok((
-        ExecutableDeclaration::CompiledCallable(Box::new(frame)),
+        ExecutableDeclaration::CompiledCallableFrame {
+            frame: Box::new(frame),
+            callables,
+        },
         audit.requirements,
     ))
+}
+
+/// Recover checker-authenticated native selections for executable bodies and declaration defaults. Open argument
+/// spellings can belong to different generic frames, so preserve every checked signature sharing that selection;
+/// the closed consumer selects against its own checked result rather than losing a frame to first-match ordering.
+/// Borrowed structured keys index the inventory once; duplicate records and repeated selections retain their first
+/// publication position without cloning identities or type arguments for lookup.
+fn selected_native_calls(
+    selections: &[(CanonicalSymbolId, Vec<IncanType>)],
+    native_callables: &[&crate::body_ir::LoafCallable],
+) -> Result<Vec<crate::body_ir::LoafCallable>, CoverageReason> {
+    if selections.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // ---- Inventory: retain all distinct signatures under their checked selection ----
+    let requested = selections
+        .iter()
+        .map(|(identity, arguments)| (identity, arguments.as_slice()))
+        .collect::<BTreeSet<_>>();
+    let mut indexed: BTreeMap<_, Vec<(usize, &crate::body_ir::LoafCallable)>> = BTreeMap::new();
+    for (position, callable) in native_callables.iter().copied().enumerate() {
+        let selection = (&callable.canonical, callable.native_type_arguments.as_slice());
+        if !requested.contains(&selection) {
+            continue;
+        }
+        let candidates = indexed.entry(selection).or_default();
+        if !candidates.iter().any(|(_, retained)| *retained == callable) {
+            candidates.push((position, callable));
+        }
+    }
+
+    // ---- Selection: preserve request order and the inventory order of each matching frame ----
+    let mut callables = Vec::new();
+    let mut emitted = BTreeSet::new();
+    for (identity, arguments) in selections {
+        let candidates = indexed
+            .get(&(identity, arguments.as_slice()))
+            .ok_or(CoverageReason::UnresolvedReference)?;
+        for (position, callable) in candidates {
+            if emitted.insert(*position) {
+                callables.push((*callable).clone());
+            }
+        }
+    }
+    Ok(callables)
 }
 
 /// Publish a generic wrapper and original atomically without inventing a polymorphic replacement cell.
@@ -183,11 +221,7 @@ fn project_invocation_body(
 /// Bind a declaration's physical fragment address to the already-published canonical owner and span.
 pub(super) fn declaration_id(identity: &CanonicalSymbolId) -> Result<CompilerNodeId, CoverageReason> {
     let module = canonical_module_identity(identity).ok_or(CoverageReason::UnresolvedReference)?;
-    Ok(CompilerNodeId::declaration_span(
-        &module,
-        identity.declaration_span.start,
-        identity.declaration_span.end,
-    ))
+    Ok(CompilerNodeId::declaration_at(&module, identity.declaration_span))
 }
 
 /// Project one eligible body onto package-owned addresses and audit every retained computation and type.
@@ -283,6 +317,12 @@ pub(super) fn project_nominal(
             for method in methods {
                 audit.identity(method, false)?;
             }
+        }
+        if let Some(adapter) = &mut adoption.primitive_adapter {
+            audit.ty(&adapter.receiver_type)?;
+            audit.identity(&mut adapter.payload_field, false)?;
+            audit.identity(&mut adapter.decode_slot, false)?;
+            audit.identity(&mut adapter.decoded_value, true)?;
         }
         nominal.trait_adoptions.push(adoption);
     }
@@ -569,23 +609,44 @@ impl<'a> PublicationAudit<'a> {
     }
 
     /// Admit concrete types and declared binders, retaining the canonical declaration behind each named type.
-    /// Native unsized text and slice referents remain structural types; this grants no owned frame for either.
+    ///
+    /// Native unsized `str` and slice referents, and checked awaitable outputs, retain structural identity rather than
+    /// a source nominal declaration. References may cross the body boundary; lowering still rejects unsized values in
+    /// owned frame storage.
     fn ty(&mut self, ty: &IncanType) -> Result<(), CoverageReason> {
         match ty {
+            IncanType::NativePointer { .. } | IncanType::NativeCChar => Err(CoverageReason::UnsupportedConstruct),
             IncanType::SelfType if self.trait_self => Ok(()),
             IncanType::TypeVar(name) if self.type_parameters.contains(name) => Ok(()),
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } | IncanType::NativeBuiltin(_) => {
                 Ok(())
             }
-            // The native unsized text and slice carriers have no nominal declaration. Their surrounding references
-            // and type arguments retain the same storage distinction checked by executable layout planning.
             IncanType::RustInteropPath(path) if path == "str" => Ok(()),
+            IncanType::Generic { base, args }
+                if matches!(base.as_str(), "[]" | "Awaitable" | "$FrozenList" | "$FrozenSet") =>
+            {
+                match args.as_slice() {
+                    [element] => self.ty(element),
+                    _ => Err(CoverageReason::UnresolvedReference),
+                }
+            }
+            // Native frozen storage keeps the checker's element carriers rather than applying the public frozen
+            // surface's text conversion. Its internal constructor has no source declaration to demand.
+            IncanType::Generic { base, args } if base == "$FrozenDict" => match args.as_slice() {
+                [key, value] => {
+                    self.ty(key)?;
+                    self.ty(value)
+                }
+                _ => Err(CoverageReason::UnresolvedReference),
+            },
+            IncanType::NativeTraitObject { path, .. } if crate::body_ir::rust_item_identity(path).is_some() => Ok(()),
             IncanType::Named(name) => self.named_type(name),
             IncanType::Generic { base, args } => {
                 // Compiler collections have no declaration requirement; a generic nominal retains its checked base.
                 if incan_lang::lang::types::collections::from_str(base).is_none()
                     && base != incan_lang::lang::types::UNION_TYPE_NAME
-                    && base != "[]"
+                    && !(incan_lang::lang::traits::from_str(base) == Some(incan_lang::lang::traits::TraitId::Awaitable)
+                        && args.len() == 1)
                 {
                     self.named_type(base)?;
                 }
@@ -613,6 +674,7 @@ impl<'a> PublicationAudit<'a> {
             IncanType::TypeVar(_)
             | IncanType::SelfType
             | IncanType::RustInteropPath(_)
+            | IncanType::NativeTraitObject { .. }
             | IncanType::Infer
             | IncanType::Unknown
             | IncanType::Unsupported(_) => Err(CoverageReason::UnresolvedReference),
@@ -783,7 +845,10 @@ impl<'a> PublicationAudit<'a> {
     /// Match and assert patterns can depend on types even when the matching branch is never entered.
     fn pattern(&mut self, pattern: &mut Pattern) -> Result<(), CoverageReason> {
         match pattern {
-            Pattern::Wildcard | Pattern::Var(_) | Pattern::Literal(_) => {}
+            Pattern::Var(local) => {
+                self.local_slots.insert(local.local);
+            }
+            Pattern::Wildcard | Pattern::Literal(_) => {}
             Pattern::Tuple(items) | Pattern::Or(items) | Pattern::Result { fields: items, .. } => {
                 for item in items {
                     self.pattern(item)?;
@@ -979,42 +1044,7 @@ impl<'a> PublicationAudit<'a> {
                     self.place(place)?;
                 }
                 self.arguments(args)?;
-                match callee {
-                    Callee::Function(CallableTarget::Named(target)) => {
-                        for ty in &target.type_args {
-                            self.ty(ty)?;
-                        }
-                        if target.builtin.is_none() {
-                            let identity = target.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
-                            self.identity(identity, true)?;
-                            if matches!(identity.origin, SymbolOrigin::RustCrate(_)) {
-                                let selection = (identity.clone(), target.type_args.clone());
-                                if !self.native_calls.contains(&selection) {
-                                    self.native_calls.push(selection);
-                                }
-                            }
-                            // Package dispatch is canonical throughout, including calls within the same fragment.
-                            target.direct_call_id = None;
-                        }
-                    }
-                    Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
-                    Callee::Method(target) => {
-                        self.native_trait_selection(target)?;
-                        for ty in &target.type_args {
-                            self.ty(ty)?;
-                        }
-                        if let Some(identity) = &mut target.canonical {
-                            self.identity(identity, true)?;
-                        }
-                    }
-                    Callee::Helper(_) => {}
-                    // The activation state is a producer-session fact. Until the portable host-requirement
-                    // contract exists it must not be exported as if it were the consumer's provider plan.
-                    Callee::ProviderOperation(_) => {
-                        return Err(CoverageReason::UnsupportedConstruct);
-                    }
-                    Callee::TypeMetadata(_) => return Err(CoverageReason::UnsupportedConstruct),
-                }
+                self.callee(callee)?;
             }
             StatementKind::If {
                 cond,
@@ -1092,6 +1122,52 @@ impl<'a> PublicationAudit<'a> {
             }
             StatementKind::Drop { .. } | StatementKind::Continue => {}
             StatementKind::Unsupported { .. } => return Err(CoverageReason::UnsupportedConstruct),
+        }
+        Ok(())
+    }
+
+    /// Audit the checked callee and retain exact native selections without exporting producer-session activation.
+    ///
+    /// Package calls keep canonical dispatch even within their own fragment. Provider, metadata, foreign and bridge
+    /// targets remain refused until their portable execution requirements have a represented contract.
+    fn callee(&mut self, callee: &mut Callee) -> Result<(), CoverageReason> {
+        match callee {
+            Callee::Function(CallableTarget::Named(target)) => {
+                for ty in &target.type_args {
+                    self.ty(ty)?;
+                }
+                if target.builtin.is_none() {
+                    let identity = target.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
+                    self.identity(identity, true)?;
+                    if matches!(identity.origin, SymbolOrigin::RustCrate(_)) {
+                        let selection = (identity.clone(), target.type_args.clone());
+                        if !self.native_calls.contains(&selection) {
+                            self.native_calls.push(selection);
+                        }
+                    }
+                    target.direct_call_id = None;
+                }
+            }
+            Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
+            Callee::Method(target) => {
+                self.native_trait_selection(target)?;
+                if let Some(arguments) = &target.trait_arguments {
+                    for ty in arguments {
+                        self.ty(ty)?;
+                    }
+                }
+                for ty in &target.type_args {
+                    self.ty(ty)?;
+                }
+                if let Some(identity) = &mut target.canonical {
+                    self.identity(identity, true)?;
+                }
+            }
+            Callee::Helper(_) => {}
+            Callee::ProviderOperation(_)
+            | Callee::TypeMetadata(_)
+            | Callee::CheckedForeign(_)
+            | Callee::CheckedBridge(_) => return Err(CoverageReason::UnsupportedConstruct),
         }
         Ok(())
     }
@@ -1207,11 +1283,7 @@ fn is_well_formed_source_binding(
     else {
         return false;
     };
-    let source_address = CompilerNodeId::declaration_span(
-        module.module_id.path(),
-        identity.declaration_span.start,
-        identity.declaration_span.end,
-    );
+    let source_address = CompilerNodeId::declaration_at(module.module_id.path(), identity.declaration_span);
     let mut roles = vec![&binding.original_body, wrapper];
     if binding.initialization == crate::body_ir::DecoratedInitialization::ModuleStorage {
         let Some(storage) = module

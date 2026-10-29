@@ -19,13 +19,13 @@ from rust::std::os::unix::fs import MetadataExt
 from rust::std::string import String as RustString
 from rust::std::time import SystemTime, UNIX_EPOCH
 from std.encoding.hex import hexlify
-from std.environ import get_or
+from std.environ import get_optional, get_or
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
 from json_fields import array, strings, text_field
 from publication import publish
-
+from jec import begin, record
 
 # How old a file's last change must be before its metadata can vouch for its bytes.
 pub const SETTLE_SECONDS: int = 2
@@ -192,16 +192,13 @@ pub model Ledger:
             if Path(path).is_dir():
                 directories.append(directory_row(path, self.directories[path]))
         return JsonValue.object(
-            {
-                "schema": JsonValue.string(LEDGER_SCHEMA),
-                "files": JsonValue.array(files),
-                "directories": JsonValue.array(directories),
-                "extension": JsonValue.string(self.extension),
-            },
+            {"schema": JsonValue.string(LEDGER_SCHEMA), "files": JsonValue.array(files), "directories": JsonValue.array(
+                directories,
+            ), "extension": JsonValue.string(self.extension)},
         )
 
 
-def skipped_directory(name: str) -> bool:
+pub def skipped_directory(name: str) -> bool:
     """Hidden directories, build output (`target`) and vendored packages (`node_modules`) are not entered."""
     return name.startswith(".") or name == "target" or name == "node_modules"
 
@@ -209,23 +206,16 @@ def skipped_directory(name: str) -> bool:
 def file_row(path: str, entry: FileEntry) -> JsonValue:
     """One file of the saved document."""
     return JsonValue.object(
-        {
-            "path": JsonValue.string(path),
-            "stamp": JsonValue.string(entry.stamp),
-            "digest": JsonValue.string(entry.digest),
-        },
+        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "digest": JsonValue.string(entry.digest)},
     )
 
 
 def directory_row(path: str, entry: DirectoryEntry) -> JsonValue:
     """One directory of the saved document."""
     return JsonValue.object(
-        {
-            "path": JsonValue.string(path),
-            "stamp": JsonValue.string(entry.stamp),
-            "files": texts(entry.files),
-            "directories": texts(entry.directories),
-        },
+        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "files": texts(entry.files), "directories": texts(
+            entry.directories,
+        )},
     )
 
 
@@ -237,7 +227,10 @@ def texts(items: list[str]) -> JsonValue:
 pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
     content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
-    return Ok(hexlify(sha256.digest(content)))
+    clock = begin()
+    result = hexlify(sha256.digest(content))
+    record("file_hash", path.0, clock, len(content))
+    return Ok(result)
 
 
 pub def observe(path: Path) -> Result[Observation, str]:
@@ -299,8 +292,27 @@ def refusal(failed: list[str]) -> str:
     return ".".join(failed)
 
 
+pub def trace_boundary(boundary: str) -> None:
+    """Record an opt-in preparation boundary on the launch clock; ordinary invocations read no clock here."""
+    if get_optional("INCAN_NATIVE_TIMING") is None or get_or("OVEN_TRACE", "") == "":
+        return
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => trace(f"prepare epoch={now.as_secs_f64()} boundary={boundary}")
+        Err(_) => trace(f"prepare epoch=unavailable boundary={boundary}")
+
+
+pub def trace_launch(program: str) -> None:
+    """Record a pre-launch Unix timestamp only when tracing is enabled, naming an unavailable clock explicitly."""
+    if get_or("OVEN_TRACE", "") == "":
+        return
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => trace(f"launch epoch={now.as_secs_f64()} program={program}")
+        Err(_) => trace(f"launch epoch=unavailable program={program}")
+
+
 pub def trace(message: str) -> None:
-    """Record a line of the build's reasoning where `OVEN_TRACE` says: stderr for `-`, else the file it names.
+    """
+    Record a line of the build's reasoning where `OVEN_TRACE` says: stderr for `-`, else the file it names.
 
     A file is appended to, so a caller can read what one command did without touching the command's own output.
     Silent when unset.

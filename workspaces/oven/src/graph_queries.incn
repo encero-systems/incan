@@ -3,7 +3,7 @@
 from std.json import JsonValue
 
 
-model Index:
+class Index:
     """The declarations and modules a term names, with the identities its hits are matched against."""
 
     # The ids of the declarations the term names.
@@ -15,6 +15,79 @@ model Index:
     modules: list[str]
     # Every module and declaration, by id.
     by_id: Dict[str, JsonValue]
+
+    def add(mut self, record: JsonValue, term: str) -> None:
+        """Index one compiler record and retain only the declarations and modules the term names."""
+        record_kind = text(record, "record")
+        identifier = text(record, "id")
+        if identifier != "" and record_kind in ["module", "declaration"]:
+            self.by_id[identifier] = record
+        if record_kind == "module":
+            if term in text(record, "name") or term in identifier:
+                self.modules.append(identifier)
+        if record_kind != "declaration" or not matches(record, term):
+            return
+        self.selected.append(identifier)
+        proved = identity(record)
+        if proved != "":
+            self.identities.append(proved)
+        checked = canonical(record)
+        if checked != "":
+            self.canonical_targets.append(checked)
+
+    def ambiguous(self, kind: str, root: str) -> list[str]:
+        """List ambiguous declaration matches before relationship hits, preserving the existing query order."""
+        if kind == "defs" or len(self.selected) <= 1:
+            return []
+        mut hits: list[str] = []
+        for identifier in self.selected:
+            record = self.by_id[identifier]
+            hits.append(f"declaration {display(record)} {location(record, root)}{unchecked(record)}")
+        return hits
+
+    def lines(self, record: JsonValue, kind: str, term: str, root: str) -> list[str]:
+        """Read one record against the shared index without copying every declaration for each hit."""
+        record_kind = text(record, "record")
+        where = f"{location(record, root)}{unchecked(record)}"
+        if kind == "defs":
+            if record_kind == "declaration" and text(record, "id") in self.selected:
+                return [f"{record_kind} {display(record)} {where}"]
+            return []
+        if kind == "imports":
+            if record_kind == "import" and text(record, "module_id") in self.modules:
+                return [f"import {name} {where}" for name in import_labels(record)]
+            return []
+        if kind == "refs":
+            if record_kind == "reference" and self.names_selection(record, term):
+                return [f"{record_kind} {display(record)} {where}"]
+            return []
+        if record_kind != "call":
+            return []
+        if kind == "callers" and self.names_selection(record, term):
+            owner = text(record, "owner_id")
+            mut label = owner
+            if owner in self.by_id:
+                label = display(self.by_id[owner])
+            return [f"{record_kind} {label} {where}"]
+        if kind == "callees" and text(record, "owner_id") in self.selected:
+            target = text(record, "target_id")
+            mut label = display(record)
+            if target in self.by_id:
+                label = display(self.by_id[target])
+            elif label == "":
+                label = text(record, "callee")
+            return [f"{record_kind} {label} {where}"]
+        return []
+
+    def names_selection(self, record: JsonValue, term: str) -> bool:
+        """Match a recorded target against exact ids or checked identities without duplicating the index."""
+        proved = identity(record)
+        checked = canonical(record)
+        if text(record, "target_id") in self.selected:
+            return true
+        if checked != "" and checked in self.canonical_targets:
+            return true
+        return proved != "" and (proved in self.identities or (len(self.selected) == 0 and matches(record, term)))
 
 
 pub def query_group(kind: str) -> str:
@@ -135,7 +208,7 @@ def location(value: JsonValue, root: str) -> str:
     return f"{file}:{line}"
 
 
-def matches(record: JsonValue, term: str) -> bool:
+pub def matches(record: JsonValue, term: str) -> bool:
     """Accept a complete compiler identity, a qualified name, or an exact final name component."""
     label = display(record)
     parts = label.split("::")
@@ -172,14 +245,10 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
     # 1. Every declaration and module the term names is found before any record is read for a hit.
     index = indexed(records, term)
     # 2. A term that names several declarations lists them all first, unless the query asks only for definitions.
-    mut hits: list[str] = []
-    if kind != "defs" and len(index.selected) > 1:
-        for identifier in index.selected:
-            record = index.by_id[identifier]
-            hits.append(f"declaration {display(record)} {location(record, root)}{unchecked(record)}")
+    mut hits = index.ambiguous(kind, root)
     # 3. Each record gives the lines its kind of query selects from it, and a line several records give appears once.
     for record in records:
-        for line in record_lines(record, kind, term, root, index):
+        for line in index.lines(record, kind, term, root):
             if line not in hits:
                 hits.append(line)
     return sorted(hits)
@@ -189,65 +258,5 @@ def indexed(records: list[JsonValue], term: str) -> Index:
     """Index every module and declaration by id, the declarations and identities `term` names, and its modules."""
     mut index = Index(selected=[], identities=[], canonical_targets=[], modules=[], by_id={})
     for record in records:
-        record_kind = text(record, "record")
-        identifier = text(record, "id")
-        if identifier != "" and record_kind in ["module", "declaration"]:
-            index.by_id[identifier] = record
-        if record_kind == "module":
-            if term in text(record, "name") or term in identifier:
-                index.modules.append(identifier)
-        if record_kind == "declaration" and matches(record, term):
-            index.selected.append(identifier)
-            proved = identity(record)
-            if proved != "":
-                index.identities.append(proved)
-            checked = canonical(record)
-            if checked != "":
-                index.canonical_targets.append(checked)
+        index.add(record, term)
     return index
-
-
-def record_lines(record: JsonValue, kind: str, term: str, root: str, index: Index) -> list[str]:
-    """The hit lines one record gives for a kind of query; none unless it is a record of that kind's own sort."""
-    record_kind = text(record, "record")
-    where = f"{location(record, root)}{unchecked(record)}"
-    if kind == "defs":
-        if record_kind == "declaration" and text(record, "id") in index.selected:
-            return [f"{record_kind} {display(record)} {where}"]
-        return []
-    if kind == "imports":
-        if record_kind == "import" and text(record, "module_id") in index.modules:
-            return [f"import {name} {where}" for name in import_labels(record)]
-        return []
-    if kind == "refs":
-        if record_kind == "reference" and names_selection(record, term, index):
-            return [f"{record_kind} {display(record)} {where}"]
-        return []
-    if record_kind != "call":
-        return []
-    if kind == "callers" and names_selection(record, term, index):
-        owner = text(record, "owner_id")
-        mut label = owner
-        if owner in index.by_id:
-            label = display(index.by_id[owner])
-        return [f"{record_kind} {label} {where}"]
-    if kind == "callees" and text(record, "owner_id") in index.selected:
-        target = text(record, "target_id")
-        mut label = display(record)
-        if target in index.by_id:
-            label = display(index.by_id[target])
-        elif label == "":
-            label = text(record, "callee")
-        return [f"{record_kind} {label} {where}"]
-    return []
-
-
-def names_selection(record: JsonValue, term: str, index: Index) -> bool:
-    """Whether a record's target is a declaration the term names, by id, canonical identity or proved identity."""
-    proved = identity(record)
-    checked = canonical(record)
-    if text(record, "target_id") in index.selected:
-        return true
-    if checked != "" and checked in index.canonical_targets:
-        return true
-    return proved != "" and (proved in index.identities or matches(record, term))

@@ -9,11 +9,11 @@ The comparison is:
 - Incan `std.collections.OrdinalMap[str]`
 - the prior Rust spike baseline recorded in `results.md`
 
-The default corpus has 100,000 string keys and 1,000,000 deterministic present-key probes. The runner also accepts `--keys` and `--probes`; for non-default values it generates a temporary `.incn` source with those constants before compiling the Incan benchmark.
+The default corpus has 100,000 string keys and 1,000,000 deterministic present-key probes. The runner accepts `--keys` and `--probes` and passes the same counts to each implementation.
 
 ## Run
 
-The runner builds the repository's release compiler before running Incan unless `INCAN=/path/to/incan` is set.
+The runner uses an installed CLI selected by `INCAN=/path/to/incan`, or `incan` on `PATH`. Set `INCAN_HOME` and `INCAN_STDLIB` as described in the benchmark suite README.
 
 The Python `dict` baseline has no extra dependency. To include `fastconstmap`, install it in a Python environment and pass that interpreter through `PYTHON`:
 

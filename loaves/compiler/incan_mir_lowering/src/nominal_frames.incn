@@ -1,6 +1,10 @@
 """Checked callable frames that contribute nominal layouts without adding executable bodies."""
 
-from rust::incan_semantics_core import CanonicalSymbolId as RustCanonicalSymbolId, IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    IncanType as RustType,
+    SemanticSourceTargetKind,
+)
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -11,8 +15,117 @@ from rust::incan_semantics_core::body_ir import (
     StaticInitializer,
     Rvalue,
     MatchArm,
+    MethodTarget,
+    ArgumentElement,
+    Operand,
+    Constant,
 )
-from type_parameters import substitute, instantiate
+from rust::std::collections import BTreeSet, VecDeque
+from type_parameters import substitute, instantiate, static_type_arguments, UNBOUND_TYPE_PARAMETER
+from table_views import borrowed_at
+
+
+pub model SelectedMember:
+    """One selected method identity together with the checked receiver that owns this invocation."""
+
+    pub identity: RustCanonicalSymbolId
+    pub receiver: RustType
+
+
+pub def called_members(body: &Body) -> list[SelectedMember]:
+    """Inventory selected member identities in one executable frame without admitting unused protocol defaults."""
+    mut selected: list[SelectedMember] = []
+    collect_member_block(body, body.block, selected)
+    return selected
+
+
+def collect_member_block(body: &Body, block: &Block, mut selected: list[SelectedMember]) -> None:
+    """Follow source control flow and match arms, retaining each exact checked call identity once."""
+    for statement in block.stmts:
+        collect_member_statement(body, statement.kind, selected)
+
+
+def collect_member_statement(body: &Body, kind: &StatementKind, mut selected: list[SelectedMember]) -> None:
+    """Read a foreign statement through its declared enum type before following checked member calls."""
+    match kind:
+        StatementKind.Call(destination=_destination, callee=callee, args=arguments, may_panic=_panic) =>
+            match callee:
+                Callee.Method(target) =>
+                    if len(arguments) > 0:
+                        collect_member_target(body, target, arguments[0], selected)
+                _ => pass
+        StatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            collect_member_block(body, then_body, selected)
+            match else_body:
+                Some(nested) => collect_member_block(body, nested, selected)
+                None => pass
+        StatementKind.Loop(body=nested) => collect_member_block(body, nested, selected)
+        StatementKind.UnsafeRegion(acknowledgment=_receipt, body=nested) => collect_member_block(body, nested, selected)
+        StatementKind.Race(destination=_destination, arms=arms) =>
+            for arm in arms:
+                collect_member_block(body, arm.body, selected)
+        StatementKind.Assign(place=_place, rvalue=value) => collect_member_value(body, value, selected)
+        _ => pass
+
+
+def collect_member_value(body: &Body, value: &Rvalue, mut selected: list[SelectedMember]) -> None:
+    """Match payload control flow keeps its selected calls within the surrounding executable frame."""
+    match value:
+        Rvalue.Match(scrutinee=_scrutinee, arms=arms) =>
+            for arm in arms:
+                collect_member_arm(body, arm, selected)
+        _ => pass
+
+
+def collect_member_target(
+    body: &Body,
+    target: &MethodTarget,
+    argument: &ArgumentElement,
+    mut selected: list[SelectedMember],
+) -> None:
+    """Borrow the retained target identity rather than moving its optional foreign field."""
+    receiver = selected_receiver_type(body, argument)
+    if receiver == None:
+        return
+    match target.canonical.clone():
+        Some(identity) =>
+            for retained in selected:
+                if retained.identity == identity and Some(retained.receiver) == receiver:
+                    return
+            match receiver:
+                Some(ty) => selected.append(SelectedMember(identity=identity.clone(), receiver=ty))
+                None => pass
+        None => pass
+
+
+def collect_member_arm(body: &Body, arm: &MatchArm, mut selected: list[SelectedMember]) -> None:
+    """Borrow a match arm's statement vectors through their declared foreign owner."""
+    for statement in arm.guard_stmts:
+        collect_member_statement(body, statement.kind, selected)
+    for statement in arm.body_stmts:
+        collect_member_statement(body, statement.kind, selected)
+
+
+def selected_receiver_type(body: &Body, argument: &ArgumentElement) -> Option[RustType]:
+    """Read a checked local receiver or static type token; projected receivers grant no unproven owner."""
+    match argument:
+        ArgumentElement.One(value) => return selected_operand_type(body, value)
+        _ => return None
+
+
+def selected_operand_type(body: &Body, value: &Operand) -> Option[RustType]:
+    """Keep the receiver's exact source frame type without deriving a nominal from its method spelling."""
+    match value:
+        Operand.Constant(constant) =>
+            match constant:
+                Constant.TypeToken(ty) => return Some(ty.clone())
+                _ => return None
+        Operand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return None
+            match read.place.local_id():
+                Some(local) => return Some(body.locals[int(local.index())].ty.clone())
+                None => return None
 
 
 model ScheduledFrame:
@@ -23,27 +136,42 @@ model ScheduledFrame:
     ancestors: list[str]
 
 
+model ScheduledFrames:
+    """Drain layout requests in discovery order while retaining only exact checked keys after processing."""
+
+    pending: VecDeque[ScheduledFrame]
+    seen: BTreeSet[tuple[RustCanonicalSymbolId, list[RustType]]]
+
+
+def scheduled_frames() -> ScheduledFrames:
+    """Start a layout queue independently of the completed frame inventory returned to the caller."""
+    pending: VecDeque[ScheduledFrame] = VecDeque.new()
+    seen: BTreeSet[tuple[RustCanonicalSymbolId, list[RustType]]] = BTreeSet.new()
+    return ScheduledFrames(pending=pending, seen=seen)
+
+
 pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
-    """Project frozen return, parameter and local types from imported default frames, without copying or scheduling their implementation bodies."""
+    """Read checked return, parameter and local types from retained declarations without copying their bodies."""
     mut types: list[RustType] = []
-    for callable in module.loaf_callables:
-        match callable.declaration_frame.as_ref():
+    for callable_position in range(len(module.loaf_callables)):
+        callable = borrowed_at(module.loaf_callables, callable_position)
+        match callable.declaration_frame():
             None => pass
-            Some(boxed) =>
-                body: &Body = boxed.as_ref()
+            Some(body) =>
                 types.append(body.return_type.clone())
-                for parameter in body.params:
+                for parameter in body.params.iter():
                     types.append(parameter.ty.clone())
-                for local in body.locals:
+                for local in body.locals.iter():
                     types.append(local.ty.clone())
     return types
 
 
 pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
-    """Inventory function, method, computed-static and closed source-call frames without granting execution or altering module bodies."""
+    """Collect source, static and closed callable frames for layout discovery without granting execution."""
     mut frames: list[Body] = []
-    mut pending: list[ScheduledFrame] = []
-    for body in module.bodies:
+    mut pending = scheduled_frames()
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         frames.append(body.clone())
         if len(body.type_parameters) == 0:
             schedule_block(module, body.block, [], [], pending, [])?
@@ -53,18 +181,16 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
                 append_static_frame(frames, body)
                 schedule_block(module, body.block, [], [], pending, [])?
             _ => pass
-    mut cursor = 0
-    while cursor < len(pending):
-        request = pending[cursor]
-        cursor += 1
+    while let Some(request) = pending.pending.pop_front():
         # This inventory closes layout types only; executable callable ownership is selected by call lowering. A method
-        # or property whose owner placeholders the recorded arguments leave open grants no layout.
+        # or property whose owner placeholders the recorded arguments leave open grants no layout; every other
+        # instantiation failure is refused.
         match instantiate(request.body, request.arguments, []):
-            Err(error) =>
-                if not owner_dependent(request.body):
-                    return Err(error)
-                continue
             Ok(frame) => frames.append(frame.clone())
+            Err(error) =>
+                if owner_dependent(request.body) and leaves_placeholder_open(error):
+                    continue
+                return Err(error)
         match request.body.canonical:
             Some(identity) =>
                 ancestry = request.ancestors + [identity.render_compact()]
@@ -87,6 +213,11 @@ def owner_dependent(body: &Body) -> bool:
         None => return false
 
 
+def leaves_placeholder_open(error: str) -> bool:
+    """Whether an instantiation failed only because a placeholder outside the frame's own binders stayed open."""
+    return error.startswith(UNBOUND_TYPE_PARAMETER)
+
+
 def append_static_frame(mut frames: list[Body], body: &Body) -> None:
     """Append one explicit Body clone through its declared borrow, preserving the boxed initializer's ownership."""
     frames.append(body.clone())
@@ -97,7 +228,7 @@ def schedule_block(
     block: &Block,
     names: list[str],
     arguments: list[RustType],
-    mut pending: list[ScheduledFrame],
+    mut pending: ScheduledFrames,
     ancestors: list[str],
 ) -> Result[None, str]:
     """Visit checked calls through normalized blocks; other executable constructs retain their normal lowering path."""
@@ -111,24 +242,18 @@ def schedule_statement(
     kind: &StatementKind,
     names: list[str],
     arguments: list[RustType],
-    mut pending: list[ScheduledFrame],
+    mut pending: ScheduledFrames,
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Borrow a statement kind explicitly so its foreign enum import survives the legacy fixture bake."""
+    """Read checked statement variants before following their same-frame call and control-flow edges."""
     match kind:
         StatementKind.Call(destination=_destination, callee=callee, args=_args, may_panic=_panic) =>
             match callee:
                 Callee.Function(callable) =>
                     match callable:
-                        CallableTarget.Named(target) => schedule_call(
-                            module,
-                            target.canonical,
-                            target.type_args,
-                            names,
-                            arguments,
-                            pending,
-                            ancestors,
-                        )?
+                        CallableTarget.Named(target) =>
+                            call_types = static_type_arguments(module, target)?
+                            schedule_call(module, target.canonical, call_types, names, arguments, pending, ancestors)?
                         _ => pass
                 Callee.Method(target) => schedule_call(
                     module,
@@ -168,7 +293,7 @@ def schedule_value(
     value: &Rvalue,
     names: list[str],
     arguments: list[RustType],
-    mut pending: list[ScheduledFrame],
+    mut pending: ScheduledFrames,
     ancestors: list[str],
 ) -> Result[None, str]:
     """Schedule same-frame match calls, leaving closure and generator local arenas to their own lowering."""
@@ -185,7 +310,7 @@ def schedule_arm(
     arm: &MatchArm,
     names: list[str],
     arguments: list[RustType],
-    mut pending: list[ScheduledFrame],
+    mut pending: ScheduledFrames,
     ancestors: list[str],
 ) -> Result[None, str]:
     """Preserve the checked generic binders and call lineage across a match guard and body."""
@@ -199,19 +324,23 @@ def schedule_arm(
 def schedule_call(
     module: &BodyIrModule,
     canonical: &Option[RustCanonicalSymbolId],
-    type_args: &list[RustType],
+    type_args: list[RustType],
     names: list[str],
     arguments: list[RustType],
-    mut pending: list[ScheduledFrame],
+    mut pending: ScheduledFrames,
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Select a source callable by complete identity and its recorded arguments; unresolved or recursive calls grant no layouts."""
+    """Queue a unique closed source call; unresolved binders and recursive ancestry contribute no layout."""
     if len(type_args) == 0:
         return Ok(None)
     match canonical:
         None => return Ok(None)
         Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method and identity.kind != SemanticSourceTargetKind.Property:
+            if (
+                identity.kind != SemanticSourceTargetKind.Function
+                and identity.kind != SemanticSourceTargetKind.Method
+                and identity.kind != SemanticSourceTargetKind.Property
+            ):
                 return Ok(None)
             if identity.render_compact() in ancestors:
                 return Ok(None)
@@ -227,15 +356,16 @@ def schedule_call(
                             Err(_error) => return Ok(None)
                     if not closed_arguments(closed):
                         return Ok(None)
-                    for request in pending:
-                        if request.body.canonical == body.canonical and request.arguments == closed:
-                            return Ok(None)
-                    pending.append(ScheduledFrame(body=body, arguments=closed, ancestors=ancestors))
+                    key = (identity.clone(), closed)
+                    if pending.seen.contains(key):
+                        return Ok(None)
+                    _ = pending.seen.insert(key)
+                    pending.pending.push_back(ScheduledFrame(body=body, arguments=closed, ancestors=ancestors))
     return Ok(None)
 
 
 pub def closed_arguments(arguments: list[RustType]) -> bool:
-    """Reject unresolved placeholders in nominal argument trees; native carrier admission still validates other kinds."""
+    """Require closed argument trees; native carrier admission validates the remaining type forms."""
     for argument in arguments:
         if not closed_type(argument):
             return false
@@ -272,10 +402,11 @@ pub def closed_type(ty: &RustType) -> bool:
 
 
 def checked_callable_body(module: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[Option[Body], str]:
-    """Resolve an admitted identity across retained bodies. Owner-dependent method copies grant no frame without an exact receiver selection."""
+    """Resolve a unique checked body; ambiguous owner-dependent method frames grant no nominal layout."""
     mut selected: Option[Body] = None
     canonical = Some(identity.clone())
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         if body.canonical != canonical:
             continue
         match selected:
@@ -283,6 +414,5 @@ def checked_callable_body(module: &BodyIrModule, identity: &RustCanonicalSymbolI
                 if identity.kind == SemanticSourceTargetKind.Function:
                     return Err("unsupported Body IR ambiguous canonical nominal frame")
                 return Ok(None)
-            None =>
-                selected = Some(body.clone())
+            None => selected = Some(body.clone())
     return Ok(selected)

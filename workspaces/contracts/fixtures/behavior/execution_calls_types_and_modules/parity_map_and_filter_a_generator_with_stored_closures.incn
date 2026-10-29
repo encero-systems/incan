@@ -1,8 +1,37 @@
-# behavior: a generator expression mapped and filtered through stored closures is collected (parity corpus row replacement-body-v0-011)
+# behavior: generator mapping and filtering remain lazy for stored callbacks and model-valued source elements (#1442)
 # expect-stdout:
 #   34
+#   0
+#   20 70
+#   2
+#   A
+#   13.5
+#   6
 
 """A generator expression mapped and filtered through stored closures is collected (parity corpus row replacement-body-v0-011)."""
+
+static polls: int = 0
+
+
+model Item:
+    """An owned generator element with text that must remain in its source list."""
+
+    label: str
+    value: int
+
+
+def price(item: Item) -> int:
+    """Count each actual poll and return the mapped value."""
+    polls += 1
+    return item.value * 10
+
+
+def cost(item: Item) -> float:
+    """Count each actual poll and return a float for the consuming sum."""
+    polls += 1
+    return float(item.value) * 1.5
+
+
 def generator_adapters() -> int:
     """Map and filter generated values with stored closures, then encode them."""
     increment: (int) -> int = (value) => value + 1
@@ -14,3 +43,13 @@ def generator_adapters() -> int:
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(generator_adapters())
+    items = [Item(label="A", value=2), Item(label="B", value=7)]
+    mapped = items.iter().map(price)
+    println(polls)
+    prices = mapped.collect()
+    println(f"{prices[0]} {prices[1]}")
+    println(polls)
+    println(items[0].label)
+    println(items.iter().map(cost).sum())
+    items.iter().map(cost).sum()
+    println(polls)

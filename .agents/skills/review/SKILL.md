@@ -33,7 +33,7 @@ The report must use this exact top-level shape:
 ## Activity
 - [21:54] review started
 - [21:55] scope derived from issue 73 / RFC 015 / dirty worktree
-- [21:57] found 2 warnings in loaves/oven/oven_model/src/project_lifecycle/version.rs
+- [21:57] found 2 warnings in workspaces/oven/src/semver_req.incn
 - [22:01] running make fmt
 - [22:04] make pre-commit-fast passed
 
@@ -226,7 +226,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 - [ ] **Touched Incan declarations have descriptive docstrings** — use the Python-quality rule: every touched `.incn` module, class, model, enum, trait, function, and method needs a descriptive docstring, including private/internal helpers. This is stricter than Rust prose rules and mirrors the expected ruff/pylint/mypy-style Python documentation discipline.
 - [ ] **Touched non-trivial Rust functions/methods are documented** — not just public APIs. Private Rust helpers may skip rustdoc only when they are genuinely tiny and self-evident.
 - [ ] **Docs explain intent and constraints** — especially for public types, traits, derives, runtime adapters, and non-obvious lowering/emission behavior.
-- [ ] **Docs-site changes follow repo rules** — no hard wrap under `workspaces/docs-site/`; if docs are touched, consider whether `mkdocs build --strict` should pass.
+- [ ] **Docs-site changes follow repo rules** — no hard wrap under `workspaces/docs-site/`; if docs are touched, run `make docs-build`.
 - [ ] **Docs follow Divio intent** — apply the `AGENTS.md` docs rules to the actual content. Reference pages must provide a complete factual lookup for their stated public surface, including signatures and error contracts; a truthful walkthrough or overview in `reference/` is still a finding. Check page intent and completeness independently of MkDocs, and link to how-to or explanation material when needed. A reference page also states nothing beyond the contract: read every changed sentence against the list in *Reference pages state the contract only* in `.agents/skills/review-docs-claims/SKILL.md`; each hit is a blocker.
 - [ ] **User-facing docs do not lean on RFC references** — pages under user docs (tutorials, how-to, reference, release notes, tooling/language guides) should explain behavior directly. Flag direct RFC references in user-facing prose unless the page is itself an RFC/contributor-facing document or the RFC link is part of an explicit release-note inventory.
 - [ ] **Boy Scout Rule** — did the author leave touched code at least as clean as they found it? Flag stale TODOs, misleading variable names, missing doc comments, or unused imports that could have been fixed in-scope.
@@ -315,7 +315,7 @@ Produce a report with:
 One or two sentences on overall quality and merge-readiness.
 ```
 
-- **Blocker 🔴** — must fix before merge (clippy deny, `.unwrap()`, pipeline gap, missing test for new feature).
+- **Blocker 🔴** — must fix before merge (`.unwrap()`, pipeline gap, missing test for new feature).
 - **Warning 🟡** — should fix (anti-pattern, style violation, missing doc comment on a touched public or non-trivial item).
 - **Suggestion 🟢** — nice to have (minor readability, opportunistic Boy Scout improvement).
 - **Note 💡** — observation, question, or context (no change required).
@@ -350,7 +350,7 @@ If any item is unchecked, do not claim the review is clean. Report the remaining
 
 A failed broad verification command does **not** invalidate the review.
 
-If `make fmt`, `make pre-commit-fast`, `mkdocs build --strict`, or another broad check fails for reasons unrelated to the
+If `make fmt`, `make pre-commit-fast`, `make docs-build`, or another broad check fails for reasons unrelated to the
 current local findings, you must still:
 
 1. keep reviewing the worktree,

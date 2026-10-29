@@ -278,7 +278,7 @@ impl Message for Packet {
 }
 
 /// A MAC-like engine driven through trait-qualified calls.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Engine {
     pub fed: usize,
 }

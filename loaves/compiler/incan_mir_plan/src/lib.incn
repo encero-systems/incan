@@ -6,14 +6,18 @@ order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
 location, including operands and places, so native diagnostics retain provenance.
 """
 
+from rust::std::sync import Arc
+from rust::incan_semantics_core import IncanType as SemanticType
+
 
 @derive(Clone, PartialEq)
 pub enum TupleElement:
     """
-    One tuple element's layout: a scalar, owned or frozen text, an owned list, a model or enum carrier, a Copy function
-    pointer, an exact scalar, nominal or slice reference, or a nested tuple.
+    One tuple element's layout: a scalar, owned or frozen text, an owned collection, or a model or enum carrier.
+    A Copy function pointer, exact scalar, nominal or slice reference, or nested tuple retains its full layout.
 
-    A list keeps its leaf and depth, an enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
+    A list keeps its leaf and depth, a dictionary its key/value leaves, and a set its element leaf.
+    An enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
     declaration index and name, and a nested tuple keeps its own element layout, exactly as the matching `PlanType`
     does. A model retains its declaration identity, and a function pointer retains its exact signature.
     """
@@ -24,6 +28,8 @@ pub enum TupleElement:
     Unit
     String
     List(ListLeaf, int)
+    Dict(ListLeaf, ListLeaf)
+    Set(ListLeaf)
     Model(int, str)
     Enum(int, str)
     Tuple(list[TupleElement])
@@ -34,13 +40,18 @@ pub enum TupleElement:
     SliceRef(list[PlanType])
     SliceMutRef(list[PlanType])
     FrozenStr
+    # Exact native frozen storage remains Copy inside a tuple, including nested frozen collections.
+    StaticText
+    StaticBytes
+    FrozenBytes
+    FrozenCollection(str, list[PlanType])
 
 
 @derive(Clone, PartialEq)
 pub model SourceSpan:
-    """One-based line and column in an Incan source file."""
+    """One-based location retaining a shared file handle, so copying a span never copies its path text."""
 
-    pub file: str
+    pub file: Arc[str]
     pub line: int
     pub column: int
 
@@ -107,8 +118,9 @@ pub enum PlanType:
 
     Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
     StringRef borrows an owned String, StringMutRef is the exclusive borrow a `mut str` parameter receives, and StrRef is a string literal's shared str view.
-    ScalarRef and ScalarMutRef borrow exactly one numeric, Boolean, Decimal or frozen scalar carrier with explicit shared
-    or exclusive intent; nested references and non-scalar referents are refused before native MIR construction.
+    ScalarRef and ScalarMutRef borrow one sized scalar, checked tuple, function pointer or shared reference with explicit
+    shared or exclusive intent. Borrowing a reference preserves its referent without making that referent writable.
+    Nested shared references retain their exact pointee and binders; exclusive references remain outside copying.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and
     TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleRef and TupleMutRef
@@ -155,7 +167,7 @@ pub enum PlanType:
     TupleRef(list[TupleElement])
     TupleMutRef(list[TupleElement])
     StringRef
-    # Exactly one numeric, Bool, Decimal or frozen scalar referent; the shared borrow owns no storage.
+    # Exactly one primitive, frozen scalar or sized shared reference; the shared borrow owns no storage.
     ScalarRef(list[PlanType])
     ScalarMutRef(list[PlanType])
     StringMutRef
@@ -214,6 +226,10 @@ pub enum PlanType:
     FunctionPointer(list[PlanType])
     FunctionItem(str, list[PlanType])
     Closure(list[PlanType])
+    # A Rust callback environment retains exactly its checked Send and Sync obligations.
+    NativeClosure(list[PlanType], bool, bool)
+    # A checked nongeneric Rust trait principal and its retained Send/Sync bounds.
+    NativeTraitObject(str, bool, bool)
     # A one-argument SDK callable shares an immutable primitive-capture environment and implements its published Clone and Callable1 bounds.
     SharedCallable(list[PlanType])
     # An owned FnOnce object whose invocation transfers its environment instead of borrowing it.
@@ -232,6 +248,10 @@ pub enum PlanType:
     NativeArray(list[PlanType], int)
     NativeArrayRef(list[PlanType], int)
     NativeArrayMutRef(list[PlanType], int)
+    # Exact target C character category, used by verified foreign pointer signatures.
+    CChar
+    # A compiler-managed raw pointer with exactly one pointee carrier; source arithmetic never creates one.
+    RawPointer(bool, list[PlanType])
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
@@ -271,6 +291,8 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.Unit => return PlanType.Unit
         TupleElement.String => return PlanType.String
         TupleElement.List(leaf, depth) => return PlanType.List(leaf, depth)
+        TupleElement.Dict(key, value) => return PlanType.Dict(key, value)
+        TupleElement.Set(leaf) => return PlanType.Set(leaf)
         TupleElement.Model(owner, name) => return PlanType.Model(owner, name)
         TupleElement.Enum(owner, name) => return PlanType.Enum(owner, name)
         TupleElement.Tuple(elements) => return PlanType.Tuple(elements)
@@ -281,6 +303,10 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.SliceRef(elements) => return PlanType.SliceRef(elements)
         TupleElement.SliceMutRef(elements) => return PlanType.SliceMutRef(elements)
         TupleElement.FrozenStr => return PlanType.FrozenStr
+        TupleElement.StaticText => return PlanType.StaticText
+        TupleElement.StaticBytes => return PlanType.StaticBytes
+        TupleElement.FrozenBytes => return PlanType.FrozenBytes
+        TupleElement.FrozenCollection(name, elements) => return PlanType.FrozenCollection(name, elements)
 
 
 def reference_type(mutable: bool, referent: list[PlanType]) -> PlanType:
@@ -327,12 +353,13 @@ pub model Local:
 
 @derive(Clone, PartialEq)
 pub model FieldProjection:
-    """One canonical field slot and its exact retained native type."""
+    """One typed projection step. A negative slot is a dereference-only step; ordinary slots select a field."""
 
     pub slot: int
     pub ty: PlanType
     # A nonnegative variant selects the checked enum payload before this field; -1 keeps an ordinary field.
     pub variant: int = -1
+    pub dereferences: int = 0
 
 
 @derive(Clone, PartialEq)
@@ -436,6 +463,7 @@ pub enum RvalueKind:
     projections are valid only on the selected variant branch.
 
     NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
+    NativeAlias forwards ownership between retained plan aliases only after rustc proves their native types identical.
 
     Tuple preserves the ordered operand layout of its destination type.
     Range preserves the four scalar operands in Body IR's declared range field order and requires a RangeValue destination.
@@ -447,6 +475,8 @@ pub enum RvalueKind:
     """
 
     Use(Operand)
+    # Preserve one native value across two retained plan aliases; rustc must prove their native types identical.
+    NativeAlias(Operand, PlanType, PlanType)
     # Reify a validated zero-argument unit function for the canonical async entry bridge.
     UnitFunction(str)
     FrozenText(Operand)
@@ -470,10 +500,18 @@ pub enum RvalueKind:
     UnsizeSlice(Operand)
     FunctionItem(Callee)
     ReifyFunction(Operand)
+    # Expose a checked function pointer's address without changing its argument or return signature.
+    FunctionAddress(Operand)
     # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
     ClosureObject(Place)
     # Test the selected variant using Rust's actual discriminant type and value, including explicit repr values.
     IsVariant(Place, int)
+    # Addresses and offsets are emitted only from checked bridge facts, never from source pointer arithmetic.
+    RawAddressOf(Place, bool)
+    PointerCast(Operand, PlanType)
+    PointerOffset(Operand, Operand)
+    # Observe an address for a null guard without permitting integer-to-pointer construction.
+    PointerAddress(Operand)
 
 
 @derive(Clone, PartialEq)
@@ -547,10 +585,30 @@ pub enum CalleeKind:
     StaticStore(int)
     # Run computed static slot `n`'s initializer unless it has already run, keeping the value in its storage.
     StaticForce(int)
+    # Observe or publish completion of this module's declaration-order initialization, keyed by its first cell.
+    ModuleInitialized(int)
+    ModuleComplete(int)
     # Call the selected planned method while holding computed slot n's actual shared or exclusive storage guard.
     StaticMethod(int, str)
     # Clone the captured concrete environment behind an authenticated shared callable object.
     CloneClosure(list[PlanType])
+    # Format the exact native carrier through rustc's Debug (true) or Display (false) implementation.
+    FormatValue(PlanType, bool)
+    # Box a checked noncapturing native callback and install it through Rust's standard panic API.
+    InstallPanicHook(list[PlanType])
+    # A target-verified foreign declaration; the physical symbol and link capability are never reconstructed.
+    Foreign(ForeignFunction)
+
+
+@derive(Clone, PartialEq)
+pub model ForeignFunction:
+    """One target-verified C function with its exact symbol, explicit system library, and native signature."""
+
+    pub name: str
+    pub symbol: str
+    pub library: str
+    pub parameters: list[PlanType]
+    pub return_type: PlanType
 
 
 @derive(Clone, PartialEq)
@@ -639,6 +697,16 @@ pub model NativeAttribute:
 
 
 @derive(Clone, PartialEq)
+pub model GenericLoan:
+    """One source type parameter's occurrence in a concrete signature, preserving its nested native loans."""
+
+    pub slot: int
+    pub path: list[int]
+    pub parameter: int
+    pub ty: PlanType
+
+
+@derive(Clone, PartialEq)
 pub model Function:
     """A declaration and its body, with locals zero through parameter count reserved."""
 
@@ -654,6 +722,11 @@ pub model Function:
     pub future_callee: Option[Callee] = None
     # Attribute macros rustc expands on the declaration; the macro's output replaces it.
     pub attributes: list[NativeAttribute] = []
+    # Reference preorder for each parameter and the result; equal nonempty names retain one source generic loan.
+    # Empty names keep ordinary elision, including the independent outer borrow of a mutable collection.
+    pub signature_lifetimes: list[list[str]] = []
+    # Type-parameter provenance retains hidden native lifetime arguments independently of explicit references.
+    pub generic_loans: list[GenericLoan] = []
 
 
 @derive(Clone, PartialEq)
@@ -676,6 +749,8 @@ pub model Plan:
     pub exports: list[PlanExport] = []
     # Collected test entry functions; the adapter registers these with rustc's native test harness.
     pub tests: list[str] = []
+    # A governed runtime's checked zip result owns each consumer-local carrier; absent entries use the linked ABI.
+    pub zip_carriers: list[ZipCarrier] = []
     # Canonically lowered program entries; rustc applies Termination to the one selected for this process.
     pub programs: list[str] = []
     # A library publishes each generic ADT once; concrete layouts alias its instantiations.
@@ -716,6 +791,15 @@ pub model GenericModelDeclaration:
 
 
 @derive(Clone, PartialEq)
+pub model ZipCarrier:
+    """Associate a builtin zip's checked element layouts with the published runtime result's closed source carrier."""
+
+    pub left: TupleElement
+    pub right: TupleElement
+    pub target: PlanType
+
+
+@derive(Clone, PartialEq)
 pub model PlanExport:
     """
     One public name a library plan publishes, emitted as `pub use <path> as <name>;` at the crate root.
@@ -740,6 +824,8 @@ pub model StaticCell:
     pub ty: PlanType
     pub initializer: str
     pub span: SourceSpan
+    # Only the first computed cell of a module owns its initialization completion flag.
+    pub module_completion: bool = false
 
 
 @derive(Clone, PartialEq)
@@ -808,8 +894,8 @@ pub model ModelDeclaration:
     # A checked standard Callable1 member and its ordered owned input/output carriers; empty grants no bridge.
     pub callable_method: str = ""
     pub callable_signature: list[PlanType] = []
-    # A source SDK TryFrom[str] implementation forwards to the exact validated Incan conversion root.
-    # Empty paired fields grant no implementation, independently of serde's Rust TryFrom contract.
+    # The selected source SDK TryFrom[str] identity authenticates this planned Incan conversion root.
+    # Empty paired fields grant no conversion, independently of serde's native Rust TryFrom contract.
     pub string_conversion_root: str = ""
     pub string_conversion_trait: str = ""
 
@@ -823,6 +909,18 @@ pub model ExternalFunction:
     pub parameters: list[PlanType]
     pub return_type: PlanType
     pub span: SourceSpan
+
+
+pub def source_span(file: str, line: int, column: int) -> SourceSpan:
+    """Own the file text behind a shared handle that remains valid after the creating scope returns."""
+    return SourceSpan(file=Arc.new(file), line=line, column=column)
+
+
+pub def semantic_type_matches(declaration: &EnumDeclaration, ty: &SemanticType) -> bool:
+    """Compare a retained carrier's exact checked type without reconstructing identity from diagnostic text."""
+    match declaration.semantic_key:
+        Some(retained) => return retained == ty
+        None => return false
 
 
 pub def place(local: int, span: SourceSpan) -> Place:
@@ -861,6 +959,8 @@ pub model EnumDeclaration:
     pub span: SourceSpan
     # Standard carriers use their concrete type arguments from the variant fields.
     pub carrier: str = ""
+    # The exact checked carrier witness is used for identity; source_type remains diagnostic presentation only.
+    pub semantic_key: Option[SemanticType] = None
     pub source_type: str = ""
     # A union's Debug prints the member it holds, as legacy's hand-written impl does; it is never derived.
     pub member_debug: bool = false

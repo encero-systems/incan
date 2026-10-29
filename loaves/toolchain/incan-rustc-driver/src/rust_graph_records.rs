@@ -267,7 +267,7 @@ fn imports(tcx: TyCtxt<'_>, records: &mut Vec<CodegraphRecord>) {
                 continue;
             };
             let mut targets: Vec<_> = path.res.iter().flatten().filter_map(|res| res.opt_def_id()).collect();
-            targets.sort_by_key(|def| crate::rust_graph_records::path(tcx, *def));
+            targets.sort_by_cached_key(|def| crate::rust_graph_records::path(tcx, *def));
             targets.dedup();
             let alias = item
                 .kind

@@ -2,7 +2,7 @@
 //!
 //! Body IR v0 is the backend-facing, target-agnostic representation of one function/method body. It sits between
 //! typechecked source (AST + [`crate::SemanticFactStore`] / declaration-level [`crate::HirModule`]) and the
-//! target-specific backend lowering in `loaves/compiler/incan_ir` — it must be consumable by a replacement backend
+//! target-specific native lowering in `loaves/compiler/incan_mir_lowering` — it must be consumable by a backend
 //! without that backend needing to read generated-Rust semantics or private compiler internals.
 //!
 //! Body IR v0 deliberately models a **normalized** statement/control-flow vocabulary rather than a flattened
@@ -16,8 +16,7 @@
 //! being silently dropped, so the model stays total over real programs while being honest about v0's coverage.
 //! Generator expressions lower to [`Rvalue::Generator`], preserving their established iterator-adapter timing: the
 //! outer source expression is evaluated at construction, while polling, later clause sources, filters, and elements
-//! remain inside the owned [`GeneratorBody`]. Expression-position `yield` remains a stub in the existing
-//! Rust-emission backend too.
+//! remain inside the owned [`GeneratorBody`]. Expression-position `yield` remains a stub.
 //!
 //! #1101 adds dict/set aggregates, slices, assignment variants, expression-position `if`/`loop`/`try`, f-strings,
 //! general iteration, list/dict comprehensions, closures/partial construction and local invocation, statement
@@ -61,6 +60,10 @@ use crate::{
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// Consumer-selected runtime facades authenticated by the installed Loaf manifest. Public ABI spellings select
+    /// canonical declarations independently of private same-named dependencies; publication never serializes them.
+    #[serde(skip)]
+    pub runtime_callable_bindings: Vec<RuntimeCallableBinding>,
     /// RFC 036 originals retained separately from the initialized, module-visible callable bindings.
     #[serde(default)]
     pub decorated_bindings: Vec<DecoratedBinding>,
@@ -133,6 +136,15 @@ pub struct BodyIrModule {
     pub trait_implementations: Vec<TraitImplementation>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
+}
+
+/// One authenticated public runtime facade and the declaration selected by its Loaf identity graph.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeCallableBinding {
+    /// Public runtime ABI path introduced by lowering.
+    pub path: String,
+    /// Exact declaring callable, including its provider and module identity.
+    pub canonical: CanonicalSymbolId,
 }
 
 /// Observable setup retained by the checked frontend for the selected entry module.
@@ -289,6 +301,16 @@ pub struct NativeUnionDeclaration {
     pub closure_items: Vec<String>,
 }
 
+/// One checked callback parameter and the native type argument that retains its environment representation.
+/// The named fields preserve the checker's slot mapping across the Body IR boundary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeCallableParameter {
+    /// Declaration-order parameter slot whose checked value is a callback.
+    pub parameter_slot: usize,
+    /// Position in the native instantiation's type arguments that carries this callback's environment.
+    pub type_argument_slot: usize,
+}
+
 /// An external callable: a linked Loaf declaration (DD-0007) or a checker-selected Rust instantiation (DD-0006).
 /// The driver verifies its recorded signature against the exact compiled item's metadata.
 ///
@@ -314,6 +336,9 @@ pub struct LoafCallable {
     /// these arguments from names.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
+    /// Checked callback parameter slots and their exact native generic argument positions, before signature erasure.
+    #[serde(default)]
+    pub native_callable_parameters: Vec<NativeCallableParameter>,
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
     ///
     /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
@@ -325,6 +350,14 @@ pub struct LoafCallable {
     /// Its ordinary statements are cleared; consumers compile no copy of the function's implementation.
     #[serde(skip)]
     pub declaration_frame: Option<Box<Body>>,
+}
+
+impl LoafCallable {
+    /// Borrow the authenticated declaration frame without exposing its optional Box storage to consumers. The
+    /// frame remains declaration-only and grants no implementation body or additional execution authority.
+    pub fn declaration_frame(&self) -> Option<&Body> {
+        self.declaration_frame.as_deref()
+    }
 }
 
 /// The crate a Loaf compiles to (DD-0007): its package name in lowercase, with every character other than an ASCII
@@ -398,6 +431,7 @@ impl LoafCallable {
             },
             type_parameters: body.type_parameters.clone(),
             native_type_arguments: Vec::new(),
+            native_callable_parameters: Vec::new(),
             parameter_defaults: body.params.iter().map(|param| param.default.clone()).collect(),
             declaration_frame: Some(Box::new(frame)),
             canonical,
@@ -415,6 +449,7 @@ impl BodyIrModule {
     /// program holds (DD-0006). It has no bodies, storage or effects of its own.
     pub fn declarations_only(owner: String) -> Self {
         Self {
+            runtime_callable_bindings: Vec::new(),
             string_conversion_contract: StringConversionContract::Unselected,
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
@@ -535,6 +570,10 @@ pub struct TraitImplementation {
     /// Implementing method identity: the adopter's own method, the slot's default, or the default a directly adopted
     /// subtrait declares for the slot.
     pub implementation: CanonicalSymbolId,
+    /// Checked arguments of the selected slot's declaring trait, independent of a default body's parameter scope.
+    /// Distinct adoptions of one trait retain distinct dispatch records even when their slot identities agree.
+    #[serde(default)]
+    pub slot_arguments: Vec<IncanType>,
     /// Checked type arguments of the trait whose default `implementation` is, one per type parameter of that trait.
     ///
     /// Empty for the adopter's own method and for a default of a trait without type parameters.
@@ -566,6 +605,35 @@ pub struct TraitAdoption {
     /// An authenticated marker protocol has `Some([])`; missing metadata cannot masquerade as an empty protocol.
     #[serde(default)]
     pub methods: Option<Vec<CanonicalSymbolId>>,
+    /// Checked required fields bound to this adopter's exact stored fields, transported in the nominal trailer.
+    #[serde(skip)]
+    pub fields: Vec<TraitFieldImplementation>,
+    /// Checked source-model adapter for a compiler-provided primitive family. Ordinary source adoptions carry None;
+    /// this record changes only capability dispatch, never the primitive's storage or general type compatibility.
+    #[serde(default)]
+    pub primitive_adapter: Option<PrimitiveTraitAdapter>,
+}
+
+/// A source-owned implementation of a temporary primitive capability, authenticated by its declaring compilation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PrimitiveTraitAdapter {
+    /// Primitive type whose checked capability calls may use this adoption.
+    pub receiver_type: IncanType,
+    /// Exact sole payload field through which a receiver is wrapped without changing its meaning.
+    pub payload_field: CanonicalSymbolId,
+    /// Exact selected trait slot whose result the associated primitive decoder implements.
+    pub decode_slot: CanonicalSymbolId,
+    /// Checked associated decoder returning the primitive value rather than the adapter model.
+    pub decoded_value: CanonicalSymbolId,
+}
+
+/// One required field of a trait bound to the exact stored field that satisfied conformance checking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitFieldImplementation {
+    /// Checker-minted required field identity under the declaring trait.
+    pub requirement: CanonicalSymbolId,
+    /// Canonical stored field identity in the adopting model or class, including an inherited field.
+    pub implementation: CanonicalSymbolId,
 }
 
 /// Immutable presentation values of one checked reflection-visible field, in declaration order.
@@ -734,16 +802,6 @@ pub fn native_nominal_module(identity: &CanonicalSymbolId) -> Option<String> {
         return Some(format!("native::rust::{}", path.join("::")));
     }
     crate::canonical_module_identity(identity)
-}
-
-/// Exact opaque ABI declaration of the checked ValidationError builtin, retaining its runtime's four derived traits.
-/// This layout record grants no field, constructor or display operations; those require explicit Body IR runtime
-/// operations. Storage remains opaque through native frames.
-pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
-    if identity.origin != crate::SymbolOrigin::Builtin {
-        return None;
-    }
-    native_carrier_nominal(identity)
 }
 
 /// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque, with no field,
@@ -1243,6 +1301,12 @@ pub struct CallableRepresentation {
 /// Body IR v0 for a single function or method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
+    /// Lowering-derived owner bindings for a concrete nominal frame; method binders retain their own scope.
+    #[serde(skip)]
+    pub nominal_instantiation: Vec<TraitTypeArgument>,
+    /// Lowering-derived trait-default scope, kept separate from the method's own binders and never published.
+    #[serde(skip)]
+    pub trait_default_instantiation: Option<TraitDefaultInstantiation>,
     /// Ordered declaration type parameters, retained for checker-selected native instantiation.
     #[serde(default)]
     pub type_parameters: Vec<String>,
@@ -1327,6 +1391,15 @@ pub struct Body {
     pub native_attributes: Vec<NativeAttribute>,
 }
 
+/// The checked adoption used to specialize a default body; nominal and method instances subsequently close its types.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDefaultInstantiation {
+    /// The adopter's retained receiver type, including its owner parameters before nominal instantiation.
+    pub receiver_type: IncanType,
+    /// Trait-scoped bindings, independent of the default method's own type parameters.
+    pub arguments: Vec<TraitTypeArgument>,
+}
+
 /// One native attribute macro application: `#[path(arguments)]` on a source declaration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeAttribute {
@@ -1377,6 +1450,20 @@ impl ExternDelegation {
 }
 
 impl Body {
+    /// Store the exact owner bindings used by Incan nominal specialization, independently of method binders.
+    pub fn set_nominal_instantiation(&mut self, arguments: Vec<TraitTypeArgument>) {
+        self.nominal_instantiation = arguments;
+    }
+
+    /// Retain the checked adoption scope when Incan lowering specializes a trait default, without modifying its
+    /// statements.
+    pub fn set_trait_default_instantiation(&mut self, receiver_type: IncanType, arguments: Vec<TraitTypeArgument>) {
+        self.trait_default_instantiation = Some(TraitDefaultInstantiation {
+            receiver_type,
+            arguments,
+        });
+    }
+
     /// Store this already-checked body in the recursive representation used by deferred nominal field defaults.
     ///
     /// This allocation preserves every retained fact unchanged and keeps Rust recursive-storage plumbing out of
@@ -1410,14 +1497,11 @@ impl Body {
     /// ([`StatementKind::Yield`]) reachable from its top-level block.
     ///
     /// This is a **derived** fact, walked from the already-lowered statement tree, rather than a flag stored
-    /// redundantly on `Body` -- mirroring how the existing Rust-emission backend computes its own `is_generator`
-    /// boolean at lowering time (`return_type_is_generator(&return_type) && body_contains_yield(&f.body)` in
-    /// `loaves/compiler/incan_ir/src/lower/decl/functions.rs`) rather than threading a separate stored flag through its
-    /// own IR. Unlike that backend function, this does not also fold in a return-type check: `Generator[T]` is
-    /// declaration-level information a `Body` alone does not carry, so a caller that has the owning declaration in
-    /// hand should combine the two the same way the existing backend does. In practice a well-typed program's
-    /// `yield` only ever appears inside a function whose declared return type is `Generator[T]` (the typechecker
-    /// enforces this), so this alone is already a reliable generator signal for a `Body` in isolation.
+    /// redundantly on `Body`. It does not fold in a return-type check: `Generator[T]` is declaration-level information
+    /// a `Body` alone does not carry, so a caller that has the owning declaration in hand can combine the two. In
+    /// practice a well-typed program's `yield` only ever appears inside a function whose declared return type is
+    /// `Generator[T]` (the typechecker enforces this), so this alone is already a reliable generator signal for a
+    /// `Body` in isolation.
     ///
     /// The walk recurses into every statement kind that carries a nested [`Block`] -- [`StatementKind::If`],
     /// [`StatementKind::Loop`], [`StatementKind::UnsafeRegion`], and each [`StatementKind::Race`] arm -- but does not
@@ -2232,19 +2316,14 @@ pub enum Rvalue {
     /// imported conversions, unresolved types, and cross-error-type propagation remain visible refusals.
     ResultVariant(ResultVariant),
     /// An f-string interpolation, built from a sequence of literal text chunks and already-lowered embedded
-    /// expressions. Mirrors the existing Rust-emission backend's dedicated `IrExprKind::Format { parts }` node
-    /// (`loaves/compiler/incan_ir/src/expr.rs`) rather than a helper-call desugar: an f-string is a compiler-owned
-    /// structured value, not something inferred later from a generated Rust call shape (#653 criterion 3), so it
-    /// gets its own `Rvalue` shape just like the existing backend gives it its own `IrExprKind` shape.
+    /// expressions. It is a dedicated node rather than a helper-call desugar: an f-string is a compiler-owned
+    /// structured value, not something a consumer infers later from a call shape (#653 criterion 3).
     Format(Vec<FormatPart>),
     /// A closure literal (`(params) => expr`), or a partial callable's synthesized forwarding closure (`partial
     /// Target(presets)`) -- see `loaves/compiler/incan_frontend/src/body_ir.rs`'s `BodyBuilder::lower_partial`.
     ///
-    /// Unlike the existing Rust-emission backend's `IrExprKind::Closure` (whose `captures: Vec<String>` field is
-    /// always populated empty at both of that backend's own lowering call sites -- it relies entirely on Rust's own
-    /// closure syntax plus rustc's borrow checker to work out by-value/by-reference capture), Body IR represents
-    /// every capture explicitly: representing Duckborrower ownership facts rather than deferring to
-    /// generated-Rust semantics is this IR's entire reason to exist (#653), so a closure capturing an outer
+    /// Body IR represents every capture explicitly rather than leaving by-value or by-reference capture to rustc:
+    /// representing Duckborrower ownership facts is this IR's reason to exist (#653), so a closure capturing an outer
     /// variable is exactly the kind of copy/move/borrow decision this model must carry, not omit.
     Closure {
         /// The closure's own declared parameters, in order.
@@ -2280,16 +2359,12 @@ pub enum Rvalue {
     /// A `match` expression, evaluated by testing the scrutinee against each arm's [`Pattern`] in order and running
     /// the first arm whose pattern matches (and whose optional [`MatchArm::guard`], if present, evaluates truthy).
     ///
-    /// Mirrors the existing Rust-emission backend's own `IrExprKind::Match { scrutinee, arms }` node
-    /// (`loaves/compiler/incan_ir/src/expr.rs`): that backend has already reduced Incan's match-pattern surface to the
-    /// small, closed vocabulary [`Pattern`] mirrors (see its own docs), and compiles each arm's pattern directly
-    /// into a native Rust `match` arm, letting rustc perform exhaustiveness checking and the actual
-    /// destructuring/dispatch itself. Matching the same #653-criterion-3 "compiler-owned semantic gets its own
-    /// explicit node" treatment as [`Self::Format`]/[`StatementKind::TryPropagate`]/[`StatementKind::IterNext`],
-    /// `match` stays a single structured `Rvalue` here too rather than being decomposed into a chain of `If`
-    /// statements: decomposing it would mean re-deriving the same destructuring/dispatch logic a target backend's
-    /// native `match` already gives for free, and would lose the direct correspondence with the existing backend's
-    /// own `Pattern` vocabulary this model is built to mirror.
+    /// Arms use the small, closed [`Pattern`] vocabulary, which a consumer can translate directly into native `match`
+    /// arms and leave exhaustiveness checking and destructuring to rustc. Matching the same #653-criterion-3
+    /// "compiler-owned semantic gets its own explicit node" treatment as
+    /// [`Self::Format`]/[`StatementKind::TryPropagate`]/[`StatementKind::IterNext`], `match` stays a single structured
+    /// `Rvalue` rather than being decomposed into a chain of `If` statements, which would re-derive the
+    /// destructuring and dispatch a native `match` already provides.
     Match {
         /// The value being matched. Always read as [`OwnershipFact::Borrow`]: more than one arm's pattern bindings
         /// may read from the scrutinee across the arm list (only one arm actually runs at a time, but see
@@ -2630,7 +2705,13 @@ pub struct CallableParam {
     /// and its changes are visible to the caller: callers pass the argument as
     /// [`OwnershipFact::MutBorrow`], and the callee neither owns nor drops the parameter, as the emitted route's
     /// `&mut T` parameter does. For a `Copy` type it is a mutable local copy, so callers still pass a copy.
+    /// An owned native collection keeps its by-value boundary through `native_owned`; mutability then applies to the
+    /// owned local.
     pub mutable: bool,
+    /// The checker selected an owned native collection boundary rather than implicit source collection borrowing.
+    /// The local may still be mutable; that does not turn this by-value ABI into an exclusive caller loan.
+    #[serde(default)]
+    pub native_owned: bool,
 }
 
 /// Preserve the ordinary passing convention when reading a Body IR parameter published before source roles.
@@ -2764,6 +2845,9 @@ impl DefaultComputation {
 /// own parameters and captures show up in the ordinary `locals:` listing like any other local.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosureBody {
+    /// Native callback storage checked against the callee's retained bounds. Absent storage grants no auto traits.
+    #[serde(default)]
+    pub native_storage: Option<NativeClosureStorage>,
     /// Compiler-retained original callable read during RFC 036 initialization. This must resolve to exactly one
     /// decorated binding, and is never inferred from a forwarding closure's source spelling.
     #[serde(default)]
@@ -2787,6 +2871,17 @@ pub struct ClosureBody {
     pub stmts: Vec<Statement>,
     /// The closure body expression's value.
     pub result: Operand,
+}
+
+/// Checked ownership and auto-trait obligations of a callback retained by Rust.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NativeClosureStorage {
+    /// The native environment owns its captures rather than borrowing its creating frame.
+    pub move_capture: bool,
+    /// Every captured value has retained Send evidence.
+    pub send: bool,
+    /// Every captured value has retained Sync evidence.
+    pub sync: bool,
 }
 
 impl ClosureBody {
@@ -2860,9 +2955,7 @@ pub struct MatchArm {
     /// if any, was truthy).
     pub body_stmts: Vec<Statement>,
     /// This arm's produced value. A source arm whose body is a statement block rather than a single `=> expr`
-    /// always resolves to [`Constant::Unit`], mirroring the existing Rust-emission backend's own
-    /// `IrExprKind::Block { stmts, value: None }` treatment of the same shape
-    /// (`loaves/compiler/incan_ir/src/lower/expr/patterns.rs`'s `lower_match_arms`).
+    /// always resolves to [`Constant::Unit`].
     pub result: Operand,
 }
 
@@ -2901,16 +2994,11 @@ impl MatchArm {
 
 /// A `match` arm's pattern.
 ///
-/// Mirrors the existing Rust-emission backend's own closed `Pattern` vocabulary
-/// (`loaves/compiler/incan_ir/src/expr.rs`) almost exactly -- see #1101's B6 pre-intake in `plan.md` for why this
-/// vocabulary is already small and closed rather than something this bucket needed to design from scratch: the existing
-/// backend compiles each variant here directly into the matching native Rust pattern syntax and lets rustc itself do
-/// the actual destructuring/ dispatch, so a target backend consuming this model can do the same. The one deliberate
-/// divergence from the existing backend's vocabulary is [`Self::Var`]: the existing backend's `Pattern::Var(String)`
-/// carries a bare source name (that backend's own separate, string-keyed scope tracks what it resolves to), while this
-/// model's [`PatternBinding`] carries an already-declared [`LocalId`] plus the Duckborrower fact/last-use marker for
-/// reading that part of the scrutinee -- consistent with #653's requirement that ownership decisions be
-/// represented as explicit facts on the model itself, not deferred to a target backend's own name resolution.
+/// The vocabulary is small and closed: a consumer translates each variant directly into the matching native pattern
+/// syntax and leaves the destructuring and dispatch to rustc. A binding ([`Self::Var`]) carries no bare source name:
+/// its [`PatternBinding`] holds an already-declared [`LocalId`] plus the Duckborrower fact/last-use marker for reading
+/// that part of the scrutinee, consistent with #653's requirement that ownership decisions be represented as
+/// explicit facts on the model itself, not deferred to a consumer's own name resolution.
 ///
 /// [`Self::UnionMember`] retains the checker-selected target of an ordinary union constructor pattern. Native backends
 /// can select its payload variant without resolving the written constructor name. Subset targets remain explicit types;
@@ -3103,8 +3191,7 @@ impl PatternBinding {
 
 /// One part of an [`Rvalue::Format`] f-string, either a literal text chunk carried through verbatim or an
 /// already-lowered embedded expression plus the formatting style its source `{expr}`/`{expr!r}` syntax requested.
-/// Mirrors the existing Rust-emission backend's `FormatPart` (`loaves/compiler/incan_ir/src/expr.rs`), except the
-/// expression side carries an [`Operand`] rather than a full expression tree -- Body IR always lowers embedded
+/// The expression side carries an [`Operand`] rather than a full expression tree: Body IR always lowers embedded
 /// expressions through the same [`Operand`]-producing path as any other read, so ownership facts and last-use tracking
 /// apply to f-string interpolations exactly like any other expression use.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3134,10 +3221,9 @@ impl FormatPart {
     }
 }
 
-/// Formatting style requested by one f-string interpolation (`{expr}` vs. `{expr!r}`). Mirrors the existing
-/// Rust-emission backend's `FormatStyle` (`loaves/compiler/incan_ir/src/expr.rs`); unlike that backend's version, this
-/// one carries no `emits_rust_debug`-style target-representation logic, since Body IR v0 stays target-agnostic and
-/// leaves the decision of how a given style maps to a concrete formatting call to the consuming backend.
+/// Formatting style requested by one f-string interpolation (`{expr}` vs. `{expr!r}`). This model carries no
+/// target-representation logic, since Body IR v0 stays target-agnostic and leaves the decision of how a given style
+/// maps to a concrete formatting call to the consuming backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FormatStyle {
     /// User-facing display formatting (`{value}`).
@@ -3678,6 +3764,68 @@ pub enum Callee {
     ProviderOperation(Box<ProviderOperationPlan>),
     /// A pure compiler-generated operation on a checked type, preserving its binder until instantiation.
     TypeMetadata(TypeMetadataTarget),
+    /// One source-selected C symbol whose exact descriptor passed target verification.
+    CheckedForeign(Box<CheckedForeignCall>),
+    /// A checked compiler-managed bridge operation, with its declaration authority and result storage retained.
+    CheckedBridge(Box<CheckedBridgeCall>),
+}
+
+/// The checked bridge operation selected before lowering; none is inferred from a method spelling downstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckedBridgeOperation {
+    /// Validate input text and create owned NUL-terminated storage.
+    MakeCString,
+    /// Borrow a validated input buffer's pointer for one raw call.
+    CStringPointer,
+    /// Copy a foreign view within an explicit byte bound and validate UTF-8.
+    CopyUtf8,
+    /// Allocate a fresh output position whose semantic initialized state remains unavailable.
+    NewOutputSlot,
+    /// Allocate an output position initialized from the caller's exact scalar value.
+    NewInOutSlot,
+    /// Read one output position after the checker proved its declared initialization condition.
+    TakeOutputSlot,
+    /// Move an owned `bytes` or `list[f32]` buffer into a typed span without copying its elements.
+    MakeSpan,
+    /// Borrow a span's buffer as a constant element pointer for one raw call.
+    SpanConstPointer,
+    /// Borrow a mutable span's buffer as a mutable element pointer for one raw call.
+    SpanMutPointer,
+    /// Read a span's element count, or a mutable span's capacity, as a `usize`.
+    SpanCount,
+    /// Keep a mutable span's first `written` elements, refusing a count outside its capacity.
+    FinishSpan,
+}
+
+/// A checked foreign bridge operation, independent of source class layouts or backend helper names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedBridgeCall {
+    /// The actual standard namespace or verified binding declaration authorizing this operation.
+    pub authority: CanonicalSymbolId,
+    /// Exact operation selected by checking and slot-state analysis.
+    pub operation: CheckedBridgeOperation,
+    /// The already selected native result storage, including private pointer and buffer carriers.
+    pub return_type: IncanType,
+}
+
+/// An unsafe C call selected by the checker and verified against the declared target header.
+/// This is a foreign ABI boundary, independent of the source declaration's class-shaped projection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedForeignCall {
+    /// Canonical source binding declaration that owns the symbol.
+    pub binding: CanonicalSymbolId,
+    /// Exact source member selected within the verified binding.
+    pub member: String,
+    /// Physical linker symbol, without casing or namespace reconstruction.
+    pub symbol: String,
+    /// Explicit system library accepted by declaration checking.
+    pub library: String,
+    /// Verified header retained as declaration provenance.
+    pub header: String,
+    /// Exact native parameter carriers in declaration order.
+    pub parameters: Vec<IncanType>,
+    /// Exact native result carrier, without semantic widening.
+    pub return_type: IncanType,
 }
 
 /// A generated type member selected by the checker, never a same-spelled source method.
@@ -3700,6 +3848,8 @@ pub enum TypeMetadataOperation {
     ClassName,
     /// The length of the generated reflection-visible field table; no table elements escape this operation.
     FieldCount,
+    /// The immutable table of reflection-visible field metadata for the concrete nominal type.
+    Fields,
 }
 
 impl Callee {
@@ -3715,9 +3865,12 @@ impl Callee {
                 match target.operation {
                     TypeMetadataOperation::ClassName => "class_name",
                     TypeMetadataOperation::FieldCount => "field_count",
+                    TypeMetadataOperation::Fields => "fields",
                 },
                 target.receiver_type
             ),
+            Self::CheckedForeign(target) => format!("checked-c:{}::{}", target.binding.declaration_name, target.member),
+            Self::CheckedBridge(target) => format!("checked-c-bridge:{:?}", target.operation),
         }
     }
 }
@@ -4033,6 +4186,10 @@ pub struct MethodTarget {
     /// Calls without checked trait dispatch into a Loaf retain None.
     #[serde(default)]
     pub loaf_trait: Option<LoafTraitCall>,
+    /// Source trait arguments selected by checking, distinct from method binders and native delegation metadata.
+    /// An absent fact cannot distinguish multiple adoptions of the same slot.
+    #[serde(default)]
+    pub trait_arguments: Option<Vec<IncanType>>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -4079,6 +4236,7 @@ impl MethodTarget {
             intrinsic_carrier: None,
             reflection: None,
             loaf_trait: None,
+            trait_arguments: None,
             canonical: None,
             type_args: Vec::new(),
             native_trait_delegation: None,
@@ -4224,12 +4382,9 @@ impl std::fmt::Display for CallableTarget {
 /// a machine instruction. Represented here as an explicit Body IR operation rather than inferred later from
 /// generated Rust call shapes.
 ///
-/// Most of these mirror a helper the existing Rust-emission backend already generates for string and list operators
-/// (see `loaves/compiler/incan_emit/src/conversions.rs::determine_binop_plan`). The membership helpers do not: that
-/// backend reaches containment through a `contains` method call rather than a binary-operator plan, so every
-/// `*_contains` name here states a runtime requirement Body IR needs and the runtime must satisfy, not a call shape
-/// read back out of emitted Rust. Each variant's [`Self::as_str`] name *is* that requirement's name; it is not a
-/// promise that a Rust function of exactly that signature already exists.
+/// Every membership operation states a runtime requirement Body IR needs and the runtime must satisfy. Each variant's
+/// [`Self::as_str`] name is that requirement's name; it is not a promise that a Rust function of exactly that signature
+/// already exists.
 ///
 /// Membership and concatenation are named per operand type rather than shared across collections. One `Contains`
 /// helper would oblige a consumer to re-derive string-versus-list-versus-set-versus-dict from operand types, which
@@ -4366,6 +4521,11 @@ pub enum HelperOp {
     TextCodecEncodingValid,
     /// Test a builtin decoder's error policy after its encoding guard and before its receiver.
     TextCodecErrorsValid,
+    /// Register a checked native function pointer as the standard panic hook; the native boundary boxes it.
+    InstallPanicHook,
+    /// Fill a list comprehension's scalar literal over a checked zero-based, unit-step range.
+    /// Its arguments retain the literal and exact nonnegative cardinality; the source span remains the comprehension's.
+    RangeListFill,
 }
 
 impl HelperOp {
@@ -4409,6 +4569,7 @@ impl HelperOp {
             Self::RaiseValueError => "raise_value_error",
             Self::TextCodecEncodingValid => "text_codec_encoding_valid",
             Self::TextCodecErrorsValid => "text_codec_errors_valid",
+            Self::InstallPanicHook => "install_panic_hook",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",
@@ -4427,6 +4588,7 @@ impl HelperOp {
             Self::StrNotContains => "str_not_contains",
             Self::ListConcat => "list_concat",
             Self::ListRepeat => "list_repeat",
+            Self::RangeListFill => "range_list_fill",
             Self::ListContains => "list_contains",
             Self::ListNotContains => "list_not_contains",
             Self::SetContains => "set_contains",
@@ -4451,26 +4613,29 @@ pub struct Block {
 impl Block {
     /// Check each direct acknowledgment against this block's existing scope before a consumer lowers its operations.
     /// Nested control-flow blocks are checked when consumed, and nested acknowledgment regions recurse here.
-    pub fn unsafe_acknowledgments_valid(&self, module: &CompilerNodeId) -> bool {
+    ///
+    /// `module_path` is the path of the source module whose body holds this block, which minted its receipts; for a
+    /// body imported from another module it is not the unit's entry module.
+    pub fn unsafe_acknowledgments_valid(&self, module_path: &str) -> bool {
         self.stmts.iter().all(|statement| match &statement.kind {
             StatementKind::UnsafeRegion { acknowledgment, body } => {
-                acknowledgment.matches_region(module, &statement.span, self.scope)
+                acknowledgment.matches_region(module_path, &statement.span, self.scope)
                     && body.scope == self.scope
-                    && body.unsafe_acknowledgments_valid(module)
+                    && body.unsafe_acknowledgments_valid(module_path)
             }
             _ => true,
         })
     }
 }
 
-/// Source acknowledgment of one `unsafe:` region, binding its receipt to the module, byte span, and enclosing scope.
+/// Source acknowledgment of one `unsafe:` region, binding its receipt to the module, full span, and enclosing scope.
 ///
 /// This records source syntax, not a capability grant or an authority decision. The enclosing
 /// [`StatementKind::UnsafeRegion`] retains the exact operations being acknowledged; a consumer must validate this
 /// receipt before admitting them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnsafeAcknowledgment {
-    /// Compiler-owned statement identity minted from the source module and the region's byte span.
+    /// Compiler-owned statement identity minted from the source module and the region's range and expansion context.
     pub receipt: CompilerNodeId,
     /// Original region span; generated operations retain their individual spans inside this boundary.
     pub span: HirSourceSpan,
@@ -4481,12 +4646,10 @@ pub struct UnsafeAcknowledgment {
 impl UnsafeAcknowledgment {
     /// Validate the source receipt against its owning module, enclosing scope, and statement span before admission.
     ///
-    /// A matching receipt does not authorize a provider operation or admit an otherwise unsupported nested statement.
-    pub fn matches_region(&self, module: &CompilerNodeId, span: &HirSourceSpan, scope: ScopeId) -> bool {
-        module == &CompilerNodeId::module(module.path())
-            && self.span == *span
-            && self.scope == scope
-            && self.receipt == CompilerNodeId::statement_span(module.path(), span.start, span.end)
+    /// `module_path` is the path of the source module that minted the receipt. A matching receipt does not authorize
+    /// a provider operation or admit an otherwise unsupported nested statement.
+    pub fn matches_region(&self, module_path: &str, span: &HirSourceSpan, scope: ScopeId) -> bool {
+        self.span == *span && self.scope == scope && self.receipt == CompilerNodeId::statement_at(module_path, *span)
     }
 }
 
@@ -4522,20 +4685,7 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
             callee,
             args,
             may_panic,
-        } => {
-            let dest = destination
-                .as_ref()
-                .map(|p| format!("{} = ", p.render_snapshot()))
-                .unwrap_or_default();
-            let args_str: Vec<String> = args.iter().map(ArgumentElement::render_snapshot).collect();
-            let panic_marker = if *may_panic { " may_panic" } else { "" };
-            let _ = writeln!(
-                out,
-                "{indent}{dest}call {}({}){panic_marker}",
-                callee.render_snapshot(),
-                args_str.join(", ")
-            );
-        }
+        } => render_call(out, destination.as_ref(), callee, args, *may_panic, indent),
         StatementKind::Await { destination, awaited } => {
             let dest = destination
                 .as_ref()
@@ -4544,16 +4694,7 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
             let _ = writeln!(out, "{indent}{dest}await {}", awaited.render_snapshot());
         }
         StatementKind::Race { destination, arms } => {
-            let dest = destination
-                .as_ref()
-                .map(|place| format!("{} = ", place.render_snapshot()))
-                .unwrap_or_default();
-            let _ = writeln!(out, "{indent}{dest}race:");
-            for arm in arms {
-                let _ = writeln!(out, "{indent}  {}", arm.render_header());
-                render_block(out, &arm.body, depth + 2);
-                let _ = writeln!(out, "{indent}  -> {}", arm.result.render_snapshot());
-            }
+            render_race(out, destination.as_ref(), arms, indent, depth);
         }
         StatementKind::Drop { local } => {
             let _ = writeln!(out, "{indent}drop _{}", local.0);
@@ -4635,16 +4776,48 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
     }
 }
 
-/// How [`StatementKind::IterNext`] should poll one iteration, mirroring the two paths the existing Rust-emission
-/// backend already branches on for general-iterable `for` (`loaves/compiler/incan_ir/src/lower/stmt.rs`'s
-/// `ast::Statement::For` arm, keyed by `TypeCheckInfo::protocol_iteration`): a builtin collection needs no named method
-/// dispatch at all, while a user-defined iterable resolves concrete `__iter__`/`__next__`-shaped method names through
-/// the typechecker's iteration-protocol resolution.
+/// Render a call's optional destination, ordered arguments and retained panic marker.
+fn render_call(
+    out: &mut String,
+    destination: Option<&Place>,
+    callee: &Callee,
+    args: &[ArgumentElement],
+    may_panic: bool,
+    indent: &str,
+) {
+    let dest = destination
+        .map(|place| format!("{} = ", place.render_snapshot()))
+        .unwrap_or_default();
+    let args_str: Vec<String> = args.iter().map(ArgumentElement::render_snapshot).collect();
+    let panic_marker = if may_panic { " may_panic" } else { "" };
+    let _ = writeln!(
+        out,
+        "{indent}{dest}call {}({}){panic_marker}",
+        callee.render_snapshot(),
+        args_str.join(", ")
+    );
+}
+
+/// Render race arms at their existing nested depth, including each arm's result after its body.
+fn render_race(out: &mut String, destination: Option<&Place>, arms: &[RaceArm], indent: &str, depth: usize) {
+    let dest = destination
+        .map(|place| format!("{} = ", place.render_snapshot()))
+        .unwrap_or_default();
+    let _ = writeln!(out, "{indent}{dest}race:");
+    for arm in arms {
+        let _ = writeln!(out, "{indent}  {}", arm.render_header());
+        render_block(out, &arm.body, depth + 2);
+        let _ = writeln!(out, "{indent}  -> {}", arm.result.render_snapshot());
+    }
+}
+
+/// How [`StatementKind::IterNext`] should poll one iteration, as selected by checked protocol facts: a builtin
+/// collection needs no named method dispatch at all, while a user-defined iterable resolves concrete
+/// `__iter__`/`__next__`-shaped method names through the typechecker's iteration-protocol resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IterProtocol {
     /// Iterate a builtin collection (`List`/`Dict`/`String`) or a range with no explicit method dispatch. How to
-    /// concretely advance such an iterator is left to the consuming backend, matching how a plain `for` doesn't
-    /// manually unroll `IntoIterator` at the existing Rust-emission backend's own IR level either.
+    /// concretely advance such an iterator is left to the consuming backend.
     Builtin,
     /// Iterate through a resolved user-defined iterator-protocol dispatch (`__iter__`/`__next__`-shaped magic
     /// methods).
@@ -4681,6 +4854,29 @@ impl IterProtocol {
 pub struct Statement {
     pub kind: StatementKind,
     pub span: HirSourceSpan,
+}
+
+impl Statement {
+    /// Copy a call with a selected callee and argument vector while preserving its destination, source span and
+    /// panic fact. Non-call statements return None. This record projection lets Incan normalization use ordinary
+    /// native calls without reconstructing a Rust enum's named fields through the frozen bootstrap (#2256).
+    pub fn with_call(&self, callee: Callee, args: Vec<ArgumentElement>) -> Option<Self> {
+        let StatementKind::Call {
+            destination, may_panic, ..
+        } = &self.kind
+        else {
+            return None;
+        };
+        Some(Self {
+            kind: StatementKind::Call {
+                destination: destination.clone(),
+                callee,
+                args,
+                may_panic: *may_panic,
+            },
+            span: self.span,
+        })
+    }
 }
 
 /// Canonical statement vocabulary for Body IR v0.
@@ -4771,15 +4967,10 @@ pub enum StatementKind {
     ///
     /// Only the statement-position form with a value is modeled -- see the module docs and
     /// [`Body::is_generator`]. A bare `yield` (no value) and expression-position `yield` (the two-way send/receive
-    /// protocol, e.g. `x = yield val`) are out of scope for v0: both are stubs even in the existing Rust-emission
-    /// backend today (`ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown)` in
-    /// `loaves/compiler/incan_ir/src/lower/expr/mod.rs`), so there is no real, delivered behavior for this variant to
-    /// preserve. A generator function's body needs no separate top-level state-machine node: it lowers through this
-    /// same statement vocabulary, while the target runtime owns the concrete suspension mechanism. The existing
-    /// generated-Rust path uses `incan_std_core::iter::Generator`'s channel-backed spawn bridge for `yield`-based
-    /// functions; generator expressions instead carry their own deferred [`Rvalue::Generator`] body and use the
-    /// iterator-adapter runtime path. Neither representation asks a consumer to infer a suspension point from a
-    /// target-language closure shape.
+    /// protocol, e.g. `x = yield val`) are out of scope for v0. A generator function's body needs no separate top-level
+    /// state-machine node: it lowers through this same statement vocabulary, while the target runtime owns the concrete
+    /// suspension mechanism. Generator expressions instead carry their own deferred [`Rvalue::Generator`] body. Neither
+    /// representation asks a consumer to infer a suspension point from a target-language closure shape.
     Yield { value: Operand },
     /// One RFC 018 assertion in any of its three source forms, with the optional failure message and panic marker
     /// every form shares.
@@ -4956,10 +5147,13 @@ impl PanicReason {
     }
 }
 
+/// The prefix every [`nominal_carrier_key`] starts with; a name without it is no carrier key.
+pub const NOMINAL_CARRIER_KEY_PREFIX: &str = "__incan_carrier_";
+
 /// Encode one checked source nominal's complete owning module and declaration into an identifier-safe carrier key.
 ///
-/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. SDK and
-/// foreign storage keep their native names. A key grants no declaration lookup or layout without that identity.
+/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Standard
+/// and foreign storage keep their native names. A key grants no declaration lookup or layout without that identity.
 pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
     if identity.namespace != SymbolNamespace::OrdinaryLexical || identity.scope_discriminant.is_some() {
         return None;
@@ -4968,6 +5162,7 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         SemanticSourceTargetKind::Model => "model",
         SemanticSourceTargetKind::Class => "class",
         SemanticSourceTargetKind::Newtype => "newtype",
+        SemanticSourceTargetKind::Enum => "enum",
         _ => return None,
     };
     match &identity.origin {
@@ -4979,22 +5174,54 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         _ => return None,
     }
     let module = crate::canonical_module_identity(identity)?;
-    let encoded_module: String = module.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
-    let encoded_name: String = identity
-        .declaration_name
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    Some(format!(
-        "__incan_carrier_{kind}_{}_{}_{}_{}_{}_{}",
-        module.len(),
-        encoded_module,
-        identity.declaration_name.len(),
-        encoded_name,
-        identity.declaration_span.start,
-        identity.declaration_span.end
-    ))
+    // Carrier keys are retained in checked scopes and native plans. Reserve their exact spelling rather than a
+    // worst-case suffix for every ordinary declaration; spare capacity otherwise survives in every owned key.
+    let mut capacity = NOMINAL_CARRIER_KEY_PREFIX.len()
+        + kind.len()
+        + 6
+        + 2 * (module.len() + identity.declaration_name.len())
+        + carrier_decimal_digits(module.len())
+        + carrier_decimal_digits(identity.declaration_name.len())
+        + carrier_decimal_digits(identity.declaration_span.start)
+        + carrier_decimal_digits(identity.declaration_span.end);
+    if identity.declaration_span.expansion.is_some() {
+        capacity += "_expansion_".len() + 64;
+    }
+    let mut key = String::with_capacity(capacity);
+    write!(key, "{NOMINAL_CARRIER_KEY_PREFIX}{kind}_{}_", module.len()).ok()?;
+    append_carrier_hex(&mut key, module.as_bytes());
+    write!(key, "_{}_", identity.declaration_name.len()).ok()?;
+    append_carrier_hex(&mut key, identity.declaration_name.as_bytes());
+    write!(
+        key,
+        "_{}_{}",
+        identity.declaration_span.start, identity.declaration_span.end
+    )
+    .ok()?;
+    if let Some(expansion) = identity.declaration_span.expansion {
+        key.push_str("_expansion_");
+        append_carrier_hex(&mut key, &expansion);
+    }
+    Some(key)
+}
+
+/// Count the decimal digits of an unsigned carrier component without allocating a temporary string.
+fn carrier_decimal_digits(mut value: usize) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
+}
+
+/// Append identifier-safe lowercase hex without allocating a formatting buffer for each UTF-8 byte.
+fn append_carrier_hex(output: &mut String, bytes: &[u8]) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for byte in bytes {
+        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        output.push(char::from(DIGITS[usize::from(byte & 15)]));
+    }
 }
 
 impl NominalDeclaration {
@@ -5057,8 +5284,70 @@ impl NominalDeclaration {
     }
 }
 
+impl EnumDeclaration {
+    /// Read the source enum's identity-bound carrier independently of its diagnostic name. Closed instances retain
+    /// their specialization symbol; native Rust enums keep their metadata-selected name. The validated layout's own
+    /// canonical identity attests its owner; payload type bindings need not redundantly retain that identity.
+    pub fn carrier_name(&self) -> String {
+        if !self.native_type_arguments.is_empty() {
+            return self.name.clone();
+        }
+        nominal_carrier_key(&self.canonical).unwrap_or_else(|| self.name.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// Carrier bytes remain identical to the original formatting, including UTF-8 owners and expanded declarations.
+    #[test]
+    fn nominal_carrier_encoding_preserves_identity_bytes() -> Result<(), String> {
+        for (module, name) in [("types", "Pair"), ("módulo.类型", "Élément"), ("", "_")] {
+            for (kind, spelling) in [
+                (crate::SemanticSourceTargetKind::Model, "model"),
+                (crate::SemanticSourceTargetKind::Class, "class"),
+                (crate::SemanticSourceTargetKind::Newtype, "newtype"),
+                (crate::SemanticSourceTargetKind::Enum, "enum"),
+            ] {
+                let mut identity = crate::CanonicalSymbolId::module_declaration(
+                    vec![module.into()],
+                    name,
+                    kind,
+                    crate::HirSourceSpan::new(17, 103),
+                );
+                for (start, end, expansion) in [
+                    (0, 0, None),
+                    (17, 103, None),
+                    (17, 103, Some([0xab; 32])),
+                    (usize::MAX, usize::MAX, Some([0xab; 32])),
+                ] {
+                    identity.declaration_span.start = start;
+                    identity.declaration_span.end = end;
+                    identity.declaration_span.expansion = expansion;
+                    let owner = crate::canonical_module_identity(&identity).ok_or("missing owner")?;
+                    let encode = |value: &str| value.bytes().map(|byte| format!("{byte:02x}")).collect::<String>();
+                    let suffix = expansion
+                        .map(|value| format!("_expansion_{}", hex::encode(value)))
+                        .unwrap_or_default();
+                    let expected = format!(
+                        "__incan_carrier_{spelling}_{}_{}_{}_{}_{start}_{end}{suffix}",
+                        owner.len(),
+                        encode(&owner),
+                        name.len(),
+                        encode(name)
+                    );
+                    let actual = super::nominal_carrier_key(&identity).ok_or("missing carrier")?;
+                    assert_eq!(actual, expected);
+                    assert_eq!(
+                        actual.capacity(),
+                        actual.len(),
+                        "carrier keys must not retain spare capacity"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Named leaves keep structural identity paths while aliases remain diagnostic spelling.
     #[test]
     fn result_type_identity_paths_are_complete_and_reject_extra_or_missing_leaves() {
@@ -5140,6 +5429,8 @@ mod tests {
         let local_y = LocalId(1);
         let local_tmp = LocalId(2);
         Body {
+            nominal_instantiation: Vec::new(),
+            trait_default_instantiation: None,
             type_parameters: Vec::new(),
             decl_id: decl_id.clone(),
             direct_call_id,
@@ -5181,6 +5472,7 @@ mod tests {
             params: vec![
                 CallableParam {
                     mutable: false,
+                    native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_x,
                     name: "x".to_string(),
@@ -5190,6 +5482,7 @@ mod tests {
                 },
                 CallableParam {
                     mutable: false,
+                    native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_y,
                     name: "y".to_string(),
@@ -5444,6 +5737,7 @@ mod tests {
         assert_eq!(
             CallableParam {
                 mutable: false,
+                native_owned: false,
                 kind: IncanCallableParamKind::Normal,
                 local: LocalId(7),
                 name: "suffix".to_string(),
@@ -5464,6 +5758,7 @@ mod tests {
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
             mutable: false,
+            native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(1),
             name: "limit".to_string(),
@@ -5483,6 +5778,7 @@ mod tests {
         };
         let preset = CallableParam {
             mutable: false,
+            native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(2),
             name: "method".to_string(),
@@ -5492,6 +5788,7 @@ mod tests {
         };
         let unsupported = CallableParam {
             mutable: false,
+            native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(4),
             name: "payload".to_string(),
@@ -5732,6 +6029,7 @@ mod tests {
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
                             mutable: false,
+                            native_owned: false,
                             kind: IncanCallableParamKind::Normal,
                             local: param_local,
                             name: "z".to_string(),
@@ -5745,6 +6043,7 @@ mod tests {
                             false,
                         )],
                         body: Box::new(ClosureBody {
+                            native_storage: None,
                             original_callable: None,
                             function_item: false,
                             consumes_environment: false,
@@ -5906,8 +6205,10 @@ mod tests {
     }
 
     #[test]
+    /// Retain stable module snapshots when consumer-only facade bindings are absent.
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
+            runtime_callable_bindings: Vec::new(),
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
             program_entrypoints: Vec::new(),

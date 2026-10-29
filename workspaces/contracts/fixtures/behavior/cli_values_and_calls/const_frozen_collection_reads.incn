@@ -1,4 +1,4 @@
-# behavior: a const FrozenDict answers indexing and contains_key, and a comprehension over a const FrozenList[str] yields str items
+# behavior: frozen dictionaries support borrowed text probes; frozen list comprehensions yield owned text
 # expect-stdout:
 #   2
 #   true
@@ -9,6 +9,11 @@
 #   9
 #   ex
 #   ex
+#   2
+#   true
+#   false
+
+"""Observe frozen reads, text comprehension results and computed borrowed dictionary probes."""
 
 const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}
 const NAMES: FrozenList[str] = ["alpha", "beta"]
@@ -18,6 +23,8 @@ const LABELS: FrozenDict[str, str] = {"x": "ex"}
 
 
 def main() -> None:
+    """Read nested frozen values and then check a computed text probe without consuming the dictionary."""
+    # 1. Retain nested collections and owned text values from the original frozen declarations.
     names = TABLE["names"]
     println(len(names))
     println(TABLE.contains_key("names"))
@@ -30,3 +37,8 @@ def main() -> None:
     println(LABELS["x"])
     label: str = LABELS["x"]
     println(label)
+    # 2. A computed string probes FrozenStr storage through exact borrowed text identity.
+    dynamic_key = "".join(["b"])
+    println(CODES[dynamic_key])
+    println(CODES.contains_key(dynamic_key))
+    println(CODES.contains_key("missing"))

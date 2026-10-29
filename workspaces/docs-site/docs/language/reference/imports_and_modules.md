@@ -1,6 +1,6 @@
 # Imports and modules (reference)
 
-This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, exports and re-exports, package namespaces, the `std` root, soft keywords, Rust crate imports, `import python`, and `import this`. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
+This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, exports and re-exports, package namespaces, the `std` root, soft keywords, Rust crate imports, `import python`, and `import this`. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds with `INCAN-C0001`, unless a rule below names another code.
 
 ## Import forms
 
@@ -201,11 +201,11 @@ def main() -> None:
     println(b_calculate(41))    # accepted
 ```
 
-`incan build --lib` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
+`incan build src/lib.incn` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
 
 ## Package namespaces
 
-`incan build --lib` publishes the library's modules under `pub::package`, following its source files below the source root.
+`incan build src/lib.incn` publishes the library's modules under `pub::package`, following its source files below the source root.
 
 - Each source module path, and each directory prefix of one, is a namespace: `src/hyperquant/index.incn` gives `pub::pkg.hyperquant` and `pub::pkg.hyperquant.index`.
 - A namespace exposes the `pub` declarations of its own module and of its immediate child modules. Deeper modules stay in their own namespaces.
@@ -261,11 +261,10 @@ from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
 - Annotations are refused on a crate that `loaf.toml` configures.
 - Across files, one crate's versions match, and its features are unioned.
 - Annotations apply to `rust::` imports only.
-- A crate that `loaf.toml` declares under `[dependencies]`, the table of Incan library dependencies, and under neither `[rust-dependencies]` nor `[rust-dev-dependencies]`, is refused.
-- A crate that `loaf.toml` declares only under `[rust-dev-dependencies]` is refused outside a test file (see [`[rust-dev-dependencies]`](../../tooling/reference/project_configuration.md#rust-dev-dependencies)).
+- In a project, a `rust::` import may name `std`, a Rust dependency declared under `[rust-dependencies]`, a registry Loaf declared under `[dependencies]` with a `crates-io/<package>` identity, or a sibling path dependency whose Rust facet the package links. Dependency aliases replace `-` with `_` in the crate name. Using an item from any other crate is refused (`INCAN-T0001`).
 - An empty `@ ""` version requirement, and one that is not a Cargo SemVer requirement, are refused.
 
-These refusals are reported when the project builds or locks (`INCAN-C0001`). `rust::core` and `rust::alloc` are refused (`INCAN-I0001`).
+These refusals are reported when the project builds (`INCAN-C0001`). `rust::core` and `rust::alloc` are refused (`INCAN-I0001`).
 
 ```incan
 import rust::my_crate @ "1.0"

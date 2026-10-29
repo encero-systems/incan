@@ -1,6 +1,9 @@
 """A provider inspected from its checked source without requiring a native library."""
 
+from payload import Choice, NUMBER
+
 
 pub def checked_helper() -> int:
     """Return a value that the importing unit can check using the inspection interface."""
-    return 11
+    match Choice.Value(NUMBER):
+        Choice.Value(value) => return value

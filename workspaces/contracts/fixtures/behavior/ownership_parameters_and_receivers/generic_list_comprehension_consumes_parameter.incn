@@ -1,11 +1,18 @@
-# behavior: a generic list comprehension consumes a last-use source without Clone, while a reused source with Clone is copied and remains available
+# behavior: a generic list comprehension consumes a last-use source without Clone, in a nested block too, while a reused source with Clone is copied and remains available (rust-22ac)
 # expect-stdout:
+#   3
 #   3
 #   3
 #   3
 
 def copy_all[T](items: list[T]) -> list[T]:
     return [item for item in items]
+
+
+def copy_when[T](items: list[T], take: bool) -> list[T]:
+    if take:
+        return [item for item in items]
+    return []
 
 
 def copy_and_keep[T with Clone](items: list[T]) -> list[T]:
@@ -16,4 +23,5 @@ def copy_and_keep[T with Clone](items: list[T]) -> list[T]:
 
 def main() -> None:
     println(len(copy_all([1, 2, 3])))
+    println(len(copy_when([1, 2, 3], True)))
     println(len(copy_and_keep([1, 2, 3])))

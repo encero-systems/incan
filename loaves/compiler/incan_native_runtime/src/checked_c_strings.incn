@@ -1,0 +1,37 @@
+"""Owned UTF-8 buffers at the checked C bridge; no raw pointer escapes or unsafe Rust operations are authored here."""
+
+from rust::std::string import String as RustString
+from rust::std::vec import Vec as RustVec
+from rust::std::str import from_utf8
+
+
+pub def checked_c_string(value: &RustString) -> Result[list[u8], str]:
+    """
+    Create owned NUL-terminated UTF-8 storage with the checked bridge's explicit byte-element carrier.
+
+    1. Copy the source's encoded bytes.
+    2. Reject every interior NUL before foreign access becomes possible.
+    3. Append the single terminator and transfer the buffer to its caller.
+    """
+    # 1. RustString stores validated UTF-8; the bridge owns this separate allocation.
+    owned: RustString = value.clone()
+    mut encoded: RustVec[u8] = owned.into_bytes()
+    # 2. No raw pointer exists while the input is being validated.
+    if encoded.contains(0u8):
+        return Err("C string input contains an interior NUL")
+    # 3. The caller's checked bridge keeps this allocation alive through its raw call.
+    encoded.push(0u8)
+    return Ok(encoded)
+
+
+pub def checked_c_utf8(value: &RustVec[u8]) -> Result[str, str]:
+    """
+    Validate and own the bytes copied within a checked foreign-view bound.
+
+    1. Validate UTF-8 without reading outside the owned byte vector.
+    2. Return a new owned string only after that validation succeeds.
+    """
+    # 1. Validate once; 2. copy only the successfully validated borrowed text.
+    match from_utf8(value.as_slice()):
+        Ok(text) => return Ok(RustString.from(text))
+        Err(error) => return Err(str(error))

@@ -119,7 +119,11 @@ pub def parameter_storage_type(ty: PlanType, mutable: bool) -> PlanType:
     """
     A source parameter's frame storage: the collection and iterable references above, and for a `mut` text, model,
     enum or tuple parameter the exclusive borrow of the caller's value, which is how legacy passes it.
+
+    An explicit exclusive reference carries its checked contract even without a source `mut` parameter marker.
     """
+    if is_exclusive_borrow(ty):
+        return ty
     if mutable:
         match ty:
             PlanType.String => return PlanType.StringMutRef
@@ -158,6 +162,7 @@ pub def is_exclusive_borrow(ty: PlanType) -> bool:
     if is_mutable_list_reference(ty):
         return true
     match ty:
+        PlanType.GeneratorMutRef(_leaf, _depth) => return true
         PlanType.StringMutRef => return true
         PlanType.ModelMutRef(_owner, _name) => return true
         PlanType.EnumMutRef(_owner, _name) => return true

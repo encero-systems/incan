@@ -1,13 +1,18 @@
-# behavior: Rust function facts and standard module facts coexist in one checked unit
+# behavior: Rust function facts and standard module facts coexist in one checked unit, and an imported Rust trait's methods come from its ABI facts alone (rust-47)
 # expect-accepted:
 
 """Rust and standard imports retain their signatures in the same compilation session."""
 
 from rust::std::convert import identity
+from rust::std::io import Cursor, Read
 from std.testing import assert_eq
 
 
 def main() -> None:
-    """Check an inferred Rust result with a standard assertion."""
+    """Check an inferred Rust result with a standard assertion, then a trait method from ABI facts."""
     value: int = identity(7)
     assert_eq(value, 7)
+    mut cursor = Cursor.new(b"text")
+    mut text = ""
+    count = cursor.read_to_string(text).unwrap()
+    assert count == 4
