@@ -138,10 +138,12 @@ verify_lsp() {
 }
 
 # Run all families under one worker budget. Existing failures are allowed; lost PASS keys are not.
+# Each case compiles on its own: a fresh runner has no group hints, and discovering shared compilations against a fixed
+# deadline split groups repeatedly and exhausted a 16 GB runner's memory (#2484 adds most of the rest).
 run_contracts() {
     local status=0
     "$runner" "$oven" "$ROOT/workspaces/contracts/fixtures" \
-        --scratch "$run/scratch" --jobs "${CI_DEV8_JOBS:-2}" --timeout "${CI_DEV8_TIMEOUT:-120}" \
+        --scratch "$run/scratch" --isolated --jobs "${CI_DEV8_JOBS:-2}" --timeout "${CI_DEV8_TIMEOUT:-120}" \
         behavior check library interop testing project format graph > "$run/contracts.log" 2>&1 || status=$?
     [[ $status -le 1 ]] || fail "contract runner exited $status; evidence: $run"
     "$ROOT/scripts/check-dev8-baseline.sh" "$ROOT/workspaces/contracts/dev8-pass-baseline.txt" \
