@@ -110,9 +110,6 @@ impl TypeChecker {
             .entered();
             self.reset_program_check(program, preserve_dependency_semantics);
         }
-        if let Some(reuse) = self.callable_body_reuse.take() {
-            reuse.install(program, self);
-        }
         {
             let _trace = tracing::trace_span!(
                 target: "incan::invocation",
@@ -154,6 +151,9 @@ impl TypeChecker {
             )
             .entered();
             self.prepare_program_body_facts();
+        }
+        if let Some(reuse) = self.callable_body_reuse.take() {
+            reuse.install(program, self);
         }
         {
             let _trace = tracing::trace_span!(
@@ -344,7 +344,7 @@ impl TypeChecker {
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
-                if self.type_info.reused_callable_bodies.contains_key(&decl.span) {
+                if self.callable_body_matches_current_scope(decl.span) {
                     self.symbols.enter_scope(crate::symbols::ScopeKind::Function);
                     self.symbols.exit_scope();
                     continue;
@@ -361,6 +361,24 @@ impl TypeChecker {
         }
         #[cfg(not(test))]
         self.settle_body_checks(program);
+    }
+
+    /// Keep a retained scalar body only at its original physical lexical scope. Earlier unsupported bodies may
+    /// introduce different scopes after an edit; that invalidates this product rather than renumbering identities.
+    fn callable_body_matches_current_scope(&mut self, span: Span) -> bool {
+        let Some(scope) = self.type_info.reused_callable_scopes.get(&span) else {
+            return false;
+        };
+        if scope.is_none_or(|scope| scope == self.symbols.next_scope_index()) {
+            return self.type_info.reused_callable_bodies.contains_key(&span);
+        }
+        self.type_info.reused_callable_scopes.remove(&span);
+        if let Some(body) = self.type_info.reused_callable_bodies.remove(&span) {
+            self.type_info
+                .reused_callable_contexts
+                .retain(|(_, owner, _)| Some(owner) != body.canonical.as_ref());
+        }
+        false
     }
 
     /// Retain layout and trait facts after body checking without publishing a nominal snapshot yet. Native module
