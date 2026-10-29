@@ -2,7 +2,6 @@
 # environment:
 #   INCAN_BAKERY=target/case-bakery
 # cli-commands:
-#   bakery gc --keep-days 0
 #   build src/main.incn
 #   build other/src/main.incn
 # expect-exit: 0
