@@ -365,7 +365,7 @@ impl Callbacks<'_> {
 
 impl rustc_driver::Callbacks for Callbacks<'_> {
     /// Install the source-free root and the MIR query override. `INCAN_NATIVE_TIMING` opts into rustc's phase timings
-    /// on stderr without enabling unstable command-line options or changing compilation policy.
+    /// into the trace sink without enabling unstable command-line options or changing compilation policy.
     /// The source map owns one filename copied from the plan's shared file handle.
     fn config(&mut self, config: &mut interface::Config) {
         self.timing.mark("rustc_options");
@@ -904,7 +904,9 @@ pub fn compile(
         loaded: Vec::new(),
         timing,
     };
+    let capture = crate::native_timing::Capture::begin();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
+    drop(capture);
     callbacks.timing.mark("rustc_codegen_link_teardown");
     *PLAN.lock().map_err(|_| DriverError::State)? = None;
     if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
