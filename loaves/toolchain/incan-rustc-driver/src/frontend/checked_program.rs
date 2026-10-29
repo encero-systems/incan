@@ -109,11 +109,13 @@ pub(super) fn checked_modules(
         .map_err(|error| error.to_string())?;
     let tests = crate::test_unit::collect(unit, &session)?;
     let package_identity = unit.package.as_str();
+    let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
             .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
+                callable_products.observe(module, checker);
                 if let Some(publication) = publication.as_mut() {
                     publication.visit(module, checker, module.file_path == path);
                 }
@@ -161,6 +163,7 @@ pub(super) fn checked_modules(
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
+    let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let graph = if library {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,
@@ -181,6 +184,7 @@ pub(super) fn checked_modules(
     entry_module.runtime_callable_bindings = runtime_callable_bindings;
     let program = complete_dependency_context(
         CheckedProgram {
+            cacheable_bodies,
             dependencies: RuntimeDependencyContext {
                 loaves: std::sync::Arc::clone(session.loaves()),
                 requested: requested.clone(),
