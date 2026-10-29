@@ -357,8 +357,10 @@ def unicode_environment(value: OsString) -> Result[str, str]:
 
 
 def launch(toolchain: Toolchain, endpoint: Endpoint, idle: int) -> Result[None, str]:
-    """Start the exact driver detached from the owner, with protocol and console on separate streams; it retires after
-    `idle` seconds without a request."""
+    """
+    Start the exact driver detached from the owner, with protocol and console on separate streams; it retires after
+    `idle` seconds without a request.
+    """
     mut listener = listen(f"{endpoint.ready}", false)?
     mut command = driver_command(toolchain)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")

@@ -1271,8 +1271,6 @@ pub struct DeclarationArtifacts {
     /// `Path.__truediv__` or `OrdinalMap.nbytes` even when the alias was declared in stdlib or a dependency module
     /// rather than the current source file.
     pub type_method_rebindings: HashMap<String, HashMap<String, String>>,
-    /// RFC 036: Module-visible function names whose declaration was rebound through a user-defined decorator chain.
-    pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
     /// RFC 036: Decorated function bindings keyed by declaration span, preserving same-name overloads.
     pub decorated_function_bindings_by_span: HashMap<crate::ast::Span, DecoratedFunctionBindingInfo>,
     /// Checked decorator applications whose sole parameter and result are the same generic type variable.
@@ -2282,7 +2280,7 @@ pub struct DecoratedFunctionBindingInfo {
     pub ty: ResolvedType,
     /// Original callable type before decorators are applied.
     pub original_ty: ResolvedType,
-    /// Source-declared type parameters preserved for explicit call-site generic arguments.
+    /// Source-declared type parameters preserved for explicit and inferred call-site generic arguments.
     pub type_params: Vec<String>,
     /// Explicit source-declared bounds per type parameter.
     pub type_param_bounds: HashMap<String, Vec<String>>,
