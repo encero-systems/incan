@@ -100,8 +100,9 @@ fn shared_callable_receiver(mut shape: IncanType) -> IncanType {
 }
 
 /// Admit checked source callables without conflating closed cached originals with signatures using declaration binders.
-/// Open signatures preserve their return type and use the invocation wrapper. The measured closed generic profile
-/// remains a synchronous zero-argument string callable with its own initializer template. Factories retain their
+/// Open signatures preserve their return type and use the invocation wrapper. A closed generic signature, one that
+/// names none of its type parameters, such as an overload keyed on a type bound (`cast[T with Int](expr: Col)`,
+/// #1033), preserves its return type and keeps its own initializer template per instantiation. Factories retain their
 /// validated closed applications; extern delegations cannot bypass the visible replacement.
 /// A nongeneric replacement may change required ordinary input types and passing modes; the wrapper retains the
 /// original as a separate callable and receives the replacement's checked signature.
@@ -128,13 +129,8 @@ pub(super) fn supports_function(
         .iter()
         .map(|parameter| parameter.name.clone())
         .collect::<Vec<_>>();
-    let signature = parameter_types::checked_parameter_type(&binding.ty, facts.type_info, &type_parameters);
-    let profile = type_parameters.is_empty()
-        || (original_return == replacement_return
-            && (bir::decorated_signature_uses_parameters(&signature, &type_parameters)
-                || matches!(&signature, IncanType::Function { params, return_type }
-                    if params.is_empty()
-                        && **return_type == IncanType::Primitive(IncanPrimitiveType::Str))));
+    // Open and closed generic signatures alike must keep the original return type.
+    let profile = type_parameters.is_empty() || original_return == replacement_return;
     let preserves_inputs = original
         .iter()
         .zip(replacement)

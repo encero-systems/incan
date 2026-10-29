@@ -2151,8 +2151,7 @@ pub fn callable_marker_not_supported(
 pub enum GenericBoundTarget {
     /// The bound names a trait (source, builtin, or imported Rust), so a type argument can satisfy it.
     Trait,
-    /// The bound names a type such as `float` or a model. A `with` bound names a trait, so no type argument
-    /// satisfies this bound; the declaration needs a different shape, not a different call.
+    /// The bound names a type such as `float` or a model, which only that type satisfies (#1033).
     Type,
 }
 
@@ -2169,7 +2168,7 @@ pub enum TypeArgumentOrigin {
 ///
 /// The hint names the type that failed rather than "the argument type", because with an explicit bracket list the
 /// value arguments are not what is wrong, and it branches on what the bound names: a trait can be implemented or the
-/// bound widened, while a type in bound position cannot be satisfied by any argument. See #1373.
+/// bound widened, while a type in bound position is satisfied only by that type. See #1373 and #1033.
 pub fn generic_bound_not_satisfied(
     function_name: &str,
     type_param: &str,
@@ -2188,9 +2187,8 @@ pub fn generic_bound_not_satisfied(
     );
     match (bound_target, actual_origin) {
         (GenericBoundTarget::Type, _) => error.with_hint(format!(
-            "'{bound}' is a type, not a trait, so no type argument satisfies this bound; a `with` bound names a \
-             trait the type argument must implement. To accept only '{bound}', declare the parameter as '{bound}' \
-             instead of '{type_param}'"
+            "'{bound}' is a type, so only '{bound}' itself satisfies this bound; pass '{bound}' as the type \
+             argument for '{type_param}', or call an overload whose bound accepts '{actual}'"
         )),
         (GenericBoundTarget::Trait, TypeArgumentOrigin::Explicit) => error.with_hint(format!(
             "Type argument '{actual}' for '{type_param}' must implement '{bound}'; pass a type that implements it \
