@@ -410,6 +410,7 @@ mod tests {
         declaration_fingerprint_edits(source)?;
         scalar_body_product_edits()?;
         scalar_call_product_edits()?;
+        scalar_local_product_edits()?;
         Ok(())
     }
 
@@ -760,6 +761,88 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// Replay documented scalar bodies with immutable locals, retaining both local canonical identities and calls.
+    /// Mutable/shadowing bindings, forward reads and generated local names remain outside this product.
+    fn scalar_local_product_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def first(value: int) -> int:\n    \"\"\"Compute the first value.\"\"\"\n    doubled = value * 2\n    result = doubled + 1\n    return result\n\ndef second(value: int) -> int:\n    \"\"\"Compute the second value.\"\"\"\n    result: int = value + 3\n    return result\n\ndef third(value: int) -> int:\n    \"\"\"Compute the third value.\"\"\"\n    result = value - 4\n    return result\n\npub def answer(value: int) -> int:\n    \"\"\"Combine the private results.\"\"\"\n    initial = first(value)\n    remaining = second(value) + third(value)\n    return initial + remaining\n";
+        let (program, checker) = checked(source, "lib")?;
+        let products =
+            CallableBodyProducts::from_checked(&program, source, &checker, &scalar_module(&program, &checker))?;
+        let products = CallableBodyProducts::from_bytes(&products.to_bytes()?)?;
+        let edited = source.replace("value * 2", "value * 7");
+        let (current, cold) = checked(&edited, "lib")?;
+        let mut warm = TypeChecker::new();
+        warm.set_current_module_path(Some(vec!["lib".to_owned()]));
+        warm.set_current_package_identity(Some("interface_test".to_owned()));
+        let selected = products.select(&current, &edited, "interface_test", &["lib".to_owned()])?;
+        assert_eq!(selected.len(), 3);
+        warm.set_callable_body_reuse(selected);
+        warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(warm.type_info().reused_callable_bodies.len(), 3);
+        assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
+        let current_products =
+            CallableBodyProducts::from_checked(&current, &edited, &warm, &scalar_module(&current, &warm))?;
+        assert_eq!(
+            current_products
+                .select(&current, &edited, "interface_test", &["lib".to_owned()])?
+                .len(),
+            4
+        );
+
+        // ---- Refusals: isolate grammar guards while retaining the exact old physical input ----
+        for kind in [crate::ast::BindingKind::Mutable, crate::ast::BindingKind::Reassign] {
+            let mut changed = program.clone();
+            let assignment = first_local_assignment(&mut changed)?;
+            assignment.binding = kind;
+            assert!(
+                products
+                    .select(&changed, source, "interface_test", &["lib".to_owned()])?
+                    .is_empty()
+            );
+        }
+        let mut generated = program.clone();
+        let assignment = first_local_assignment(&mut generated)?;
+        assignment.name_span = crate::ast::Span::default();
+        assert!(
+            products
+                .select(&generated, source, "interface_test", &["lib".to_owned()])?
+                .is_empty()
+        );
+        let forward = source.replace("doubled = value * 2", "doubled = missing");
+        let tokens = crate::lexer::lex(&forward).map_err(|errors| format!("{errors:?}"))?;
+        let parsed = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut rejected = TypeChecker::new();
+        rejected.set_current_module_path(Some(vec!["lib".to_owned()]));
+        rejected.set_current_package_identity(Some("interface_test".to_owned()));
+        if let Ok(selected) = products.select(&parsed, &forward, "interface_test", &["lib".to_owned()]) {
+            rejected.set_callable_body_reuse(selected);
+        }
+        assert!(rejected.check_program(&parsed).is_err());
+        Ok(())
+    }
+
+    /// Locate the first scalar local fixture binding without depending on its documentation's statement position.
+    fn first_local_assignment(
+        program: &mut Program,
+    ) -> Result<&mut crate::ast::AssignmentStmt, Box<dyn std::error::Error>> {
+        program
+            .declarations
+            .iter_mut()
+            .find_map(|declaration| {
+                let Declaration::Function(function) = &mut declaration.node else {
+                    return None;
+                };
+                function
+                    .body
+                    .iter_mut()
+                    .find_map(|statement| match &mut statement.node {
+                        crate::ast::Statement::Assignment(assignment) => Some(assignment),
+                        _ => None,
+                    })
+            })
+            .ok_or_else(|| "local fixture has no assignment".into())
     }
 
     /// Build the same scalar test module through the ordinary Body IR producer, including its complete context.

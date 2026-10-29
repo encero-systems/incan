@@ -8369,8 +8369,9 @@ def lower_ordinary_frame(
     original_intrinsics = len(intrinsics)
     if let Some(directory) = products:
         if let Some(witness) = inputs:
-            if let Some(function) = retained_scalar(directory, witness):
-                return Ok((function, [], [], []))
+            if let Some(product) = retained_scalar(directory, witness):
+                function, runtime = product
+                return Ok((function, runtime, [], []))
     function, runtime, pending, synthesized = lower_function(
         context,
         program,
@@ -8382,10 +8383,10 @@ def lower_ordinary_frame(
         [],
         DecoratorFrame.Normal,
     )?
-    if len(runtime) == 0 and len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
+    if len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
         if let Some(directory) = products:
             if let Some(witness) = inputs:
-                retain_scalar(directory, witness, function)
+                retain_scalar(directory, witness, function, runtime)
     return Ok((function, runtime, pending, synthesized))
 
 

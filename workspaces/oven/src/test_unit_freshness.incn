@@ -396,6 +396,52 @@ def verify_observed_library_bytes(unit: UnitDescription, toolchain: Toolchain, p
 
 
 def verify_callable_item_products(project: Path) -> Result[None, str]:
+    """Require the same private-edit reuse for direct scalar expressions and documented immutable locals."""
+    original = "\n\n".join(
+        [
+            "def first() -> int:\n    return 1",
+            "def second() -> int:\n    return 2",
+            "def third() -> int:\n    return 3",
+            "pub def answer() -> int:\n    return first() + second() + third()",
+        ],
+    ) + "\n"
+    verify_callable_product_source(project, original, "return 1")?
+    verify_callable_product_source(project.joinpath("locals"), documented_local_source(), "value = 1")?
+    return Ok(None)
+
+
+def documented_local_source() -> str:
+    """The same call graph with leading documentation and distinct immutable scalar bindings."""
+    return "\n\n".join(
+        [
+            "\n".join(
+                ["def first() -> int:", "    \"\"\"Return the first value.\"\"\"", "    value = 1", "    return value"],
+            ),
+            "\n".join(
+                [
+                    "def second() -> int:",
+                    "    \"\"\"Return the second value.\"\"\"",
+                    "    value: int = 2",
+                    "    return value",
+                ],
+            ),
+            "\n".join(
+                ["def third() -> int:", "    \"\"\"Return the third value.\"\"\"", "    value = 3", "    return value"],
+            ),
+            "\n".join(
+                [
+                    "pub def answer() -> int:",
+                    "    \"\"\"Combine the private results.\"\"\"",
+                    "    initial = first()",
+                    "    remaining = second() + third()",
+                    "    return initial + remaining",
+                ],
+            ),
+        ],
+    ) + "\n"
+
+
+def verify_callable_product_source(project: Path, original: str, needle: str) -> Result[None, str]:
     """
     Require real checked-body, Body IR and native function hits after a private scalar implementation changes.
 
@@ -409,14 +455,8 @@ def verify_callable_item_products(project: Path) -> Result[None, str]:
     toolchain = load_toolchain()?
     source = project.joinpath("src/lib.incn")
     write(project.joinpath("loaf.toml"), "[project]\nname='scalar_item_products'\nversion='0.1.0'\n")?
-    original = "\n\n".join(
-        [
-            "def first() -> int:\n    return 1",
-            "def second() -> int:\n    return 2",
-            "def third() -> int:\n    return 3",
-            "pub def answer() -> int:\n    return first() + second() + third()",
-        ],
-    ) + "\n"
+    edited_source = original.replace(needle, needle.replace("1", "9"))
+    damaged_source = original.replace(needle, needle.replace("1", "8"))
     write(source, original)?
     mut unit = describe(source, "release", FeatureRequest(), selected_toolchain=Some(toolchain))?
     unit.kind = "library"
@@ -426,7 +466,7 @@ def verify_callable_item_products(project: Path) -> Result[None, str]:
     assert cold_counts["checking/declaration"] == 4, f"cold source checks: {cold_counts}"
     assert cold_counts["body_ir/built"] == 4, f"cold source Body IR: {cold_counts}"
     # 2. The source coordinates and signatures remain fixed; only one private implementation changes.
-    write(source, original.replace("return 1", "return 9"))?
+    write(source, edited_source)?
     edited = retain_checked_source(unit, toolchain)?
     assert initial.checked_context is not None, "ordinary scalar library has no checked context"
     assert edited.checked_context == initial.checked_context, "a private body edit changed the semantic context"
@@ -448,7 +488,7 @@ def verify_callable_item_products(project: Path) -> Result[None, str]:
     assert products == cold_products, "item replay changed a native or governed library product"
     # 4. Both checked-body and native product damage are misses, never acceptance or native-code authority.
     corrupt_item_products(edited)?
-    write(source, original.replace("return 1", "return 8"))?
+    write(source, damaged_source)?
     damaged = retain_checked_source(unit, toolchain)?
     damaged_counts, damaged_native, damaged_products = observe_item_library(damaged, toolchain, project, "damaged")?
     assert damaged_counts["checking/declaration"] == 4, f"damaged source products were reused: {damaged_counts}"
@@ -456,7 +496,7 @@ def verify_callable_item_products(project: Path) -> Result[None, str]:
     assert damaged_native == cold_native, f"damaged native products were reused: {damaged_native}"
     _counts, _native, damaged_cold = observe_item_library(independent, toolchain, project, "cold-damaged")?
     assert damaged_products == damaged_cold, "damaged private products changed a compiled library"
-    write(source, original.replace("return 1", "return 9"))?
+    write(source, edited_source)?
     # 5. An unchanged public caller must observe the new private implementation through the compiled Loaf.
     consumer = project.joinpath("consumer")
     manifest = "\n".join(

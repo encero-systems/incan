@@ -8,6 +8,7 @@ from pub::incan_mir_plan import (
     Callee,
     CalleeKind,
     Constant,
+    ExternalFunction,
     Function,
     Local,
     Operand,
@@ -49,12 +50,13 @@ model StoredPlace:
 
 @derive(Serialize, Deserialize)
 enum StoredConstant:
-    """The exact scalar literal variants admitted by this codec."""
+    """The exact primitive and borrowed static text literals admitted by this codec."""
 
     Int(int)
     Float(float)
     Bool(bool)
     Unit
+    Text(str)
 
 
 @derive(Serialize, Deserialize)
@@ -114,15 +116,24 @@ enum StoredUnwind:
 
 @derive(Serialize, Deserialize)
 enum StoredExit:
-    """Scalar control flow and checked source calls; external calls, coroutines and drops refuse this codec."""
+    """Scalar/text control flow, direct calls and explicit drops; coroutines refuse this codec."""
 
     Goto(int)
     Switch(StoredOperand, int, int)
-    Call(str, StoredSpan, list[StoredOperand], StoredPlace, int, StoredUnwind)
+    Call(StoredTarget, StoredSpan, list[StoredOperand], StoredPlace, int, StoredUnwind)
+    Drop(StoredPlace, int, StoredUnwind)
     Overflow(StoredOperand, int, StoredOperand, StoredOperand, int, StoredUnwind)
     Return
     Unreachable
     Resume
+
+
+@derive(Serialize, Deserialize)
+enum StoredTarget:
+    """Retain planned and explicitly recorded dependency call targets without resolving their names again."""
+
+    Planned(str)
+    External(str)
 
 
 @derive(Serialize, Deserialize)
@@ -166,9 +177,65 @@ model StoredFunction:
     lifetimes: list[list[str]]
 
 
+@derive(Serialize, Deserialize)
+model StoredExternal:
+    """Every field of one dependency signature used by a retained function."""
+
+    path: str
+    arguments: list[int]
+    parameters: list[int]
+    result: int
+    span: StoredSpan
+
+
+@derive(Serialize, Deserialize)
+model StoredProduct:
+    """A complete function and its dependency requirements, authenticated together by the store owner."""
+
+    schema: int
+    function: str
+    runtime: list[StoredExternal]
+
+
+pub def encode_product(function: &Function, runtime: &list[ExternalFunction]) -> Result[str, str]:
+    """
+    Retain a complete function and its dependency requirements.
+
+    1. Loss-check the function and encode every external signature field.
+    2. Restore the requirements and require exact equality before publication.
+    """
+    # 1. Unsupported carriers still refuse capture rather than omit dependency facts.
+    stored = StoredProduct(
+        schema=1,
+        function=encode_scalar(function)?,
+        runtime=[store_external(value)? for value in runtime],
+    )
+    text = to_string(stored).map_err((error) => str(error))?
+    # 2. Requirements are part of the native product, not an assumed side effect of lowering again.
+    _function, restored = decode_product(text)?
+    if not same_runtime(restored, runtime):
+        return Err("native product round trip changed its dependency requirements")
+    return Ok(text)
+
+
+pub def decode_product(text: str) -> Result[tuple[Function, list[ExternalFunction]], str]:
+    """
+    Restore both parts of a native product without repeating dependency selection.
+
+    1. Decode and validate the producer's private schema.
+    2. Restore the complete function and every dependency signature.
+    """
+    # 1. An unknown schema remains an ordinary cache miss at the store boundary.
+    stored = decode_product_record(text).map_err((error) => str(error))?
+    if stored.schema != 1:
+        return Err("unknown native product schema")
+    # 2. Both parts cross the private product boundary explicitly.
+    return Ok((decode_scalar(stored.function)?, [restore_external(value)? for value in stored.runtime]))
+
+
 pub def encode_scalar(function: &Function) -> Result[str, str]:
     """
-    Retain one complete self-contained scalar function.
+    Retain one complete scalar/text function; the enclosing product retains its dependency requirements.
 
     1. Refuse attributes, coroutine state and generic loan provenance this codec cannot preserve.
     2. Encode all native storage, control flow and source locations.
@@ -249,6 +316,52 @@ def decode_record(text: str) -> Result[StoredFunction, JsonError]:
     return from_str(text)
 
 
+def decode_product_record(text: str) -> Result[StoredProduct, JsonError]:
+    """Give the existing serde decoder the complete product's expected wire type."""
+    return from_str(text)
+
+
+def same_runtime(left: &list[ExternalFunction], right: &list[ExternalFunction]) -> bool:
+    """Compare borrowed dependency records individually; collection equality currently loses its shared read."""
+    if len(left) != len(right):
+        return false
+    for index in range(len(left)):
+        if not same_external(left[index], right[index]):
+            return false
+    return true
+
+
+def same_external(left: &ExternalFunction, right: &ExternalFunction) -> bool:
+    """Compare every field through the plan owner's structural equality without copying either record."""
+    return left == right
+
+
+def store_external(value: ExternalFunction) -> Result[StoredExternal, str]:
+    """Retain every dependency signature field; owner-dependent carrier layouts refuse capture."""
+    return Ok(
+        StoredExternal(
+            path=value.path,
+            arguments=[store_type(ty)? for ty in value.type_arguments],
+            parameters=[store_type(ty)? for ty in value.parameters],
+            result=store_type(value.return_type)?,
+            span=store_span(value.span),
+        ),
+    )
+
+
+def restore_external(value: StoredExternal) -> Result[ExternalFunction, str]:
+    """Restore the canonical path, complete carriers and source provenance from the accepted producer."""
+    return Ok(
+        ExternalFunction(
+            path=value.path,
+            type_arguments=[restore_type(ty)? for ty in value.arguments],
+            parameters=[restore_type(ty)? for ty in value.parameters],
+            return_type=restore_type(value.result)?,
+            span=restore_span(value.span),
+        ),
+    )
+
+
 def store_span(span: SourceSpan) -> StoredSpan:
     """Retain file text and both one-based coordinates without exposing an allocation identity."""
     return StoredSpan(file=str(span.file), line=span.line, column=span.column)
@@ -273,6 +386,9 @@ def store_type(ty: PlanType) -> Result[int, str]:
         PlanType.Unit => return Ok(3)
         PlanType.CheckedInt => return Ok(4)
         PlanType.Never => return Ok(5)
+        PlanType.String => return Ok(6)
+        PlanType.StrRef => return Ok(7)
+        PlanType.StringRef => return Ok(8)
         _ => return Err("scalar function products refuse this native carrier")
 
 
@@ -285,6 +401,9 @@ def restore_type(tag: int) -> Result[PlanType, str]:
         3 => return Ok(PlanType.Unit)
         4 => return Ok(PlanType.CheckedInt)
         5 => return Ok(PlanType.Never)
+        6 => return Ok(PlanType.String)
+        7 => return Ok(PlanType.StrRef)
+        8 => return Ok(PlanType.StringRef)
         _ => return Err("unknown scalar carrier tag")
 
 
@@ -317,6 +436,7 @@ def store_constant(value: Constant) -> Result[StoredConstant, str]:
         Constant.Float(value) => return Ok(StoredConstant.Float(value))
         Constant.Bool(value) => return Ok(StoredConstant.Bool(value))
         Constant.Unit => return Ok(StoredConstant.Unit)
+        Constant.Text(value) => return Ok(StoredConstant.Text(value))
         _ => return Err("scalar function products refuse this native constant")
 
 
@@ -327,6 +447,7 @@ def restore_constant(value: StoredConstant) -> Constant:
         StoredConstant.Float(value) => return Constant.Float(value)
         StoredConstant.Bool(value) => return Constant.Bool(value)
         StoredConstant.Unit => return Constant.Unit
+        StoredConstant.Text(value) => return Constant.Text(value)
 
 
 def store_operand(operand: Operand) -> Result[StoredOperand, str]:
@@ -474,12 +595,14 @@ def restore_unwind(unwind: StoredUnwind) -> Unwind:
 
 
 def store_exit(exit: TerminatorKind) -> Result[StoredExit, str]:
-    """Retain scalar branches, planned source calls and overflow checks; owner-dependent cleanup refuses."""
+    """Retain scalar/text branches, direct calls, explicit drops and overflow checks."""
     match exit:
         TerminatorKind.Goto(block) => return Ok(StoredExit.Goto(block))
         TerminatorKind.SwitchBool(operand, no, yes) => return Ok(StoredExit.Switch(store_operand(operand)?, no, yes))
         TerminatorKind.Call(callee, args, destination, target, unwind) =>
             return store_call(callee, args, destination, target, unwind)
+        TerminatorKind.Drop(place, target, unwind) =>
+            return Ok(StoredExit.Drop(store_place(place)?, target, store_unwind(unwind)))
         TerminatorKind.AssertOverflow(flag, op, left, right, target, unwind) =>
             return Ok(
                 StoredExit.Overflow(
@@ -502,8 +625,10 @@ def restore_exit(exit: StoredExit) -> Result[TerminatorKind, str]:
     match exit:
         StoredExit.Goto(block) => return Ok(TerminatorKind.Goto(block))
         StoredExit.Switch(operand, no, yes) => return Ok(TerminatorKind.SwitchBool(restore_operand(operand)?, no, yes))
-        StoredExit.Call(name, span, args, destination, target, unwind) =>
-            return restore_call(name, span, args, destination, target, unwind)
+        StoredExit.Call(callee, span, args, destination, target, unwind) =>
+            return restore_call(callee, span, args, destination, target, unwind)
+        StoredExit.Drop(place, target, unwind) =>
+            return Ok(TerminatorKind.Drop(restore_place(place)?, target, restore_unwind(unwind)))
         StoredExit.Overflow(flag, op, left, right, target, unwind) =>
             return Ok(
                 TerminatorKind.AssertOverflow(
@@ -527,24 +652,21 @@ def store_call(
     target: int,
     unwind: Unwind,
 ) -> Result[StoredExit, str]:
-    """Retain every field of a witnessed source call; external and dynamic references refuse capture."""
-    match callee.kind:
-        CalleeKind.Planned(name) =>
-            return Ok(
-                StoredExit.Call(
-                    name,
-                    store_span(callee.span),
-                    [store_operand(value)? for value in arguments],
-                    store_place(destination)?,
-                    target,
-                    store_unwind(unwind),
-                ),
-            )
-        _ => return Err("scalar function products refuse unwitnessed external or dynamic callees")
+    """Retain every call field; its external requirements are separately retained by the complete product."""
+    return Ok(
+        StoredExit.Call(
+            store_target(callee.kind)?,
+            store_span(callee.span),
+            [store_operand(value)? for value in arguments],
+            store_place(destination)?,
+            target,
+            store_unwind(unwind),
+        ),
+    )
 
 
 def restore_call(
-    name: str,
+    callee: StoredTarget,
     span: StoredSpan,
     arguments: list[StoredOperand],
     destination: StoredPlace,
@@ -554,13 +676,28 @@ def restore_call(
     """Restore the exact planned target, arguments, destination, successors and source provenance."""
     return Ok(
         TerminatorKind.Call(
-            Callee(kind=CalleeKind.Planned(name), span=restore_span(span)),
+            Callee(kind=restore_target(callee), span=restore_span(span)),
             [restore_operand(value)? for value in arguments],
             restore_place(destination)?,
             target,
             restore_unwind(unwind),
         ),
     )
+
+
+def store_target(target: CalleeKind) -> Result[StoredTarget, str]:
+    """Retain only direct planned or recorded dependency references; dynamic and generic targets refuse."""
+    match target:
+        CalleeKind.Planned(name) => return Ok(StoredTarget.Planned(name))
+        CalleeKind.External(path) => return Ok(StoredTarget.External(path))
+        _ => return Err("native products refuse dynamic or owner-dependent callees")
+
+
+def restore_target(target: StoredTarget) -> CalleeKind:
+    """Restore the exact reference kind without inferring it from the path text."""
+    match target:
+        StoredTarget.Planned(name) => return CalleeKind.Planned(name)
+        StoredTarget.External(path) => return CalleeKind.External(path)
 
 
 def store_block(block: BasicBlock) -> Result[StoredBlock, str]:
