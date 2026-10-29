@@ -8,7 +8,7 @@ review_target: 0.6.0-dev.9
 sources:
   - Maintainer design review, 2026-10-29
   - https://github.com/encero-systems/incan/issues/1346
-  - RFC 102, RFC 106, RFC 120
+  - RFC 102, RFC 106, RFC 120, RFC 124, RFC 125
   - DD-0007
 ---
 
@@ -26,7 +26,7 @@ On 0.6.0-dev.8, a one-body edit to the compiler's lowering library (37,000 Incan
 
 --8<-- "design_records/0012_semantic_store_architecture.svg"
 
-1. **One semantic store per project.** It holds typed records keyed by canonical identity (RFC 120). The code-graph record kinds are its public model, and the JSONL export is a projection of it. The compiler's own results are records in the same store: signatures, layouts, default expressions, checked bodies, Body IR, generic instances, plan functions and codegen-unit membership.
+1. **One store per Incan home: the bakery.** It holds typed records keyed by canonical identity (RFC 120). The code-graph record kinds are its public model, and the JSONL export is a projection of it. The compiler's own results are records in the same store: signatures, layouts, default expressions, checked bodies, Body IR, generic instances, plan functions and codegen-unit membership. Compiled units live in it under RFC 124's unit identity. Oven only asks the bakery, and a missing fact is baked once and found by every later ask, so cold and warm builds take one path. Toolchain bundles and registry assets (RFC 125) arrive as inserts.
 2. **Records form a per-declaration graph of typed reads.** Each record is one facet of one declaration. Each read it makes is recorded, and its type is the type of record it reads: a signature, a body (a generic instance reads its body), a layout, or a name.
 3. **Namespaces are graph nodes.**
    - A namespace holds name slots, and each slot is present or absent. A lookup that finds nothing reads an absent slot, so adding the name later invalidates exactly that lookup.
