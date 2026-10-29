@@ -4,6 +4,14 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
+[rust]
+name = "incan_std_system"
+type = "lib"
+edition = "2024"
+
+[rust.source]
+root = "rust"
+
 [dependencies]
 byteorder = { loaf = "crates-io/byteorder", version = "1", features = [], default-features = true }
 memmap2 = { loaf = "crates-io/memmap2", version = "=0.9.11", features = [], default-features = true }
