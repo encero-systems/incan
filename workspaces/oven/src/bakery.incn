@@ -1,0 +1,601 @@
+"""
+The home bakery: one content-named store per Incan home that every project, test and CI step asks for its units.
+
+Layout, under `<home>/bakery/`:
+
+- `facts/sha256/<aa>/<identity>/`: one immutable directory per unit identity. It holds the payload files, `fact.json`
+  (identity, kind, name, the identities it reaches, each payload file's size and digest, provenance) and `sealed`,
+  written last. A directory without `sealed` is not a fact, and a sealed fact is read-only and never modified.
+- `claims/<identity>`: the claim a baker holds while it bakes. The claim is an exclusive advisory lock, which the kernel
+  releases when its holder exits, so a killed baker never leaves a claim behind.
+- `names/log` and `names/index`: which identity a name (package, version, kind, profile, features) last resolved to.
+  For lookups and inspection only; no identity depends on it.
+- `roots/<project>/<identity>`: the identities each project's builds use. Collection keeps what a root reaches.
+
+Asking is one path for cold and warm builds: find a sealed fact, or claim its identity, bake into a private staging
+directory beside it, seal it and rename it into place. Concurrent askers wait on the claim and then find the fact.
+Collection is explicit (`incan bakery gc`) and by reachability only; the store has no size ceiling.
+"""
+
+from rust::std::fs import OpenOptions, Permissions, copy as copy_file, metadata, rename, set_permissions
+from rust::std::os::unix::fs import MetadataExt, PermissionsExt
+from rust::std::process import id
+from std.encoding.hex import hexlify
+from std.environ import get_or
+from std.fs import Path
+from std.fs.locking import FileLock
+from std.hash import file_digest
+from std.json import JsonValue
+from files import json_text, make_directory, read, read_json
+from home import home
+from json_fields import array_value, required_items, required_text, string_value
+from observation import now_seconds, trace
+from publication import publish
+from unit import UnitDescription
+from unit_freshness import Key, fingerprint
+
+const FACT_SCHEMA: str = "incan.bakery.fact/1"
+const SEALED: str = "sealed"
+const RECORD: str = "fact.json"
+const SECONDS_PER_DAY: int = 86400
+# Sealed payload files keep only their read and execute bits; views and removals open them again. Fact directories
+# stay writable by their owner so that removing a home or a scratch directory (`rm -r`) still works.
+const READ_ONLY_FILE: u32 = 292
+const READ_ONLY_PROGRAM: u32 = 365
+const FACT_DIRECTORY: u32 = 493
+const OPEN_FILE: u32 = 420
+const OPEN_DIRECTORY: u32 = 493
+const OPEN_PROGRAM: u32 = 493
+# The facts this process has verified byte for byte; it trusts them from then on.
+static verified: dict[str, bool] = {}
+
+
+pub model Collected:
+    """What one collection did: facts kept and removed, roots dropped, dead staging directories cleared."""
+
+    pub kept: int
+    pub removed: int
+    pub roots_dropped: int
+    pub staging_cleared: int
+
+
+pub def unit_identity(key: Key) -> str:
+    """The identity a unit is stored under. Today it is the unit's key; RFC 124's unit identity replaces it here."""
+    return key.digest
+
+
+pub def unit_name(unit: UnitDescription) -> str:
+    """The name a unit's fact is indexed under: package, version, kind, profile and active features."""
+    features = ",".join(unit.active_features)
+    return f"{unit.package}\t{unit.version}\t{unit.kind}\t{unit.profile}\t{features}"
+
+
+pub def bakery() -> Result[Path, str]:
+    """This home's bakery: `<home>/bakery`, or the directory `INCAN_BAKERY` names (a cache volume, or a case's own)."""
+    configured = get_or("INCAN_BAKERY", "")
+    if configured != "":
+        return Path(configured).absolute().map_err((error) => error.message())
+    return Ok(home()?.joinpath("bakery"))
+
+
+pub def facts_root(store: Path) -> Result[Path, str]:
+    """Where the bakery's facts live."""
+    return Ok(store.joinpath("facts").joinpath("sha256"))
+
+
+pub def fact_directory(store: Path, identity: str) -> Result[Path, str]:
+    """The directory the fact of `identity` is sealed in, fanned out by its first two characters."""
+    return Ok(facts_root(store)?.joinpath(identity[:2]).joinpath(identity))
+
+
+pub def find(store: Path, identity: str) -> Result[Option[Path], str]:
+    """
+    The sealed fact of `identity`, or nothing.
+
+    A fact counts once `sealed` exists. The first time a process finds it, every payload file is checked against its
+    recorded size and digest; the process then trusts it. A damaged fact is refused loudly: it is moved aside to
+    `quarantine/`, so the next ask bakes it again, and the refusal names the fact and what failed.
+    """
+    directory = fact_directory(store, identity)?
+    if not directory.joinpath(SEALED).is_file():
+        return Ok(None)
+    if verified.get(identity, false):
+        return Ok(Some(directory))
+    failure = payload_failure(directory)?
+    if failure != "":
+        moved = quarantine(store, identity, directory)?
+        return Err(
+            f"bakery fact {identity} is damaged: {failure}; it was moved to {moved.0}, and the next build bakes it again",
+        )
+    verified[identity] = true
+    return Ok(Some(directory))
+
+
+def payload_failure(directory: Path) -> Result[str, str]:
+    """What is wrong with a sealed fact's payload: a missing file, another size or other bytes; empty when intact."""
+    document = read_json(directory.joinpath(RECORD))?
+    for entry in required_items(document, "payload")?:
+        relative = required_text(entry, "path")?
+        path = directory.joinpath(relative)
+        if not path.is_file():
+            return Ok(f"payload file {relative} is missing")
+        size = path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        match entry.get("size"):
+            Some(recorded) =>
+                if recorded.as_int() != Some(size):
+                    return Ok(f"payload file {relative} has {size} bytes, not the recorded {recorded.as_int()}")
+            None => return Ok(f"payload file {relative} has no recorded size")
+        digest = hexlify(file_digest(path, "sha256").map_err((error) => f"{path.0}: {error.message()}")?)
+        if digest != required_text(entry, "sha256")?:
+            return Ok(f"payload file {relative} does not match its recorded digest")
+    return Ok("")
+
+
+def quarantine(store: Path, identity: str, directory: Path) -> Result[Path, str]:
+    """Move a damaged fact out of the facts tree, keeping it for inspection; returns where it went."""
+    aside = store.joinpath("quarantine")
+    make_directory(aside)?
+    moved = aside.joinpath(f"{identity}-{now_seconds()}-{id()}")
+    writable(directory)?
+    rename(directory.0, moved.0).map_err((error) => f"{directory.0}: {error}")?
+    trace(f"bakery {identity[:12]}: damaged fact quarantined at {moved.0}")
+    return Ok(moved)
+
+
+def writable(directory: Path) -> Result[None, str]:
+    """Give the owner write access to a sealed tree's directories again, so it can be moved or removed."""
+    set_permissions(directory.0, Permissions.from_mode(OPEN_DIRECTORY)).map_err((error) => f"{directory.0}: {error}")?
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.is_dir() and not entry.is_symlink():
+            writable(entry)?
+    return Ok(None)
+
+
+def remove_sealed(directory: Path) -> Result[None, str]:
+    """Remove a fact tree, sealed or not."""
+    writable(directory)?
+    return directory.remove_tree().map_err((error) => f"{directory.0}: {error.message()}")
+
+
+def read_only(directory: Path) -> Result[None, str]:
+    """Seal a staged tree's permissions: files lose their write bits and keep their execute bits."""
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.is_dir() and not entry.is_symlink():
+            read_only(entry)?
+        elif entry.is_file():
+            mode = int(metadata(entry.0).map_err((error) => f"{entry.0}: {error}")?.permissions().mode())
+            mut sealed_mode = READ_ONLY_FILE
+            if mode // 64 % 2 == 1:
+                sealed_mode = READ_ONLY_PROGRAM
+            set_permissions(entry.0, Permissions.from_mode(sealed_mode)).map_err((error) => f"{entry.0}: {error}")?
+    set_permissions(directory.0, Permissions.from_mode(FACT_DIRECTORY)).map_err((error) => f"{directory.0}: {error}")?
+    return Ok(None)
+
+
+pub def claim(store: Path, identity: str) -> Result[FileLock, str]:
+    """
+    Claim `identity` for baking; blocks while another process holds the claim. The claim lasts as long as the lock.
+
+    The caller checks `find` again once it holds the claim, because the previous holder may have sealed the fact.
+    """
+    claims = store.joinpath("claims")
+    make_directory(claims)?
+    return claims.joinpath(identity).lock_exclusive().map_err((error) => error.message())
+
+
+pub def staging(store: Path, identity: str) -> Result[Path, str]:
+    """
+    A fresh, empty staging directory for baking `identity`; the caller holds its claim.
+
+    Under the claim, any other staging directory of this identity belongs to a baker that died, as does an unsealed
+    or damaged directory at the fact's own place, so both are removed first.
+    """
+    final = fact_directory(store, identity)?
+    parent = final.parent()
+    make_directory(parent)?
+    for entry in parent.iterdir().map_err((error) => error.message())?:
+        if entry.name().startswith(f"{identity}.staging-"):
+            remove_sealed(entry)?
+    if final.is_dir():
+        retired = parent.joinpath(f"{identity}.staging-retired")
+        rename(final.0, retired.0).map_err((error) => f"{final.0}: {error}")?
+        remove_sealed(retired)?
+    directory = parent.joinpath(f"{identity}.staging-{id()}")
+    make_directory(directory)?
+    return Ok(directory)
+
+
+pub def seal(
+    store: Path,
+    identity: str,
+    staged: Path,
+    kind: str,
+    name: str,
+    reaches: list[str],
+    provenance: str,
+) -> Result[Path, str]:
+    """
+    Seal a completed bake of `identity` and publish it under its name; the caller holds its claim.
+
+    1. Record every payload file with its size and digest, and the identities the fact reaches.
+    2. Write `sealed` last, then rename the staging directory into place in one step.
+    3. Record the name it was baked for.
+    """
+    # 1. The record describes exactly the files the bake left.
+    mut payload: list[JsonValue] = []
+    for relative in payload_files(staged, "")?:
+        payload.append(payload_entry(staged, relative)?)
+    document = JsonValue.object(
+        {"schema": JsonValue.string(FACT_SCHEMA), "identity": JsonValue.string(identity), "kind": JsonValue.string(kind), "name": JsonValue.string(
+            name,
+        ), "reaches": JsonValue.array([JsonValue.string(item) for item in reaches]), "payload": JsonValue.array(payload), "provenance": JsonValue.string(
+            provenance,
+        )},
+    )
+    staged
+        .joinpath(RECORD)
+        .write_text(json_text(document)?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    # 2. A reader sees either no fact or the whole sealed one.
+    staged.joinpath(SEALED).write_text(identity, "utf-8", "strict", None).map_err((error) => error.message())?
+    final = fact_directory(store, identity)?
+    read_only(staged)?
+    rename(staged.0, final.0).map_err((error) => f"{final.0}: {error}")?
+    verified[identity] = true
+    # 3. The name index only answers lookups; a failure to record it never fails the bake.
+    _ = record_name(store, name, identity)
+    trace(f"bakery {identity[:12]}: sealed {kind} {name}")
+    return Ok(final)
+
+
+def payload_entry(staged: Path, relative: str) -> Result[JsonValue, str]:
+    """One payload file's record: its path inside the fact, its size and the digest of its bytes."""
+    path = staged.joinpath(relative)
+    size = path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    digest = hexlify(file_digest(path, "sha256").map_err((error) => f"{path.0}: {error.message()}")?)
+    return Ok(
+        JsonValue.object(
+            {"path": JsonValue.string(relative), "size": JsonValue.int(size), "sha256": JsonValue.string(digest)},
+        ),
+    )
+
+
+def payload_files(directory: Path, prefix: str) -> Result[list[str], str]:
+    """Every regular file under `directory`, as sorted paths relative to the staging root."""
+    mut files: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        mut relative = entry.name()
+        if prefix != "":
+            relative = f"{prefix}/{entry.name()}"
+        if entry.is_dir() and not entry.is_symlink():
+            files = files + payload_files(entry, relative)?
+        elif entry.is_file():
+            files.append(relative)
+    return Ok(sorted(files))
+
+
+pub def reached(store: Path, directories: list[str]) -> Result[list[str], str]:
+    """The identities of the facts that `directories` (artifact directories that are views of facts) were viewed from."""
+    _ = store
+    mut identities: list[str] = []
+    for directory in directories:
+        record = Path(directory).joinpath(RECORD)
+        if record.is_file():
+            identity = required_text(read_json(record)?, "identity")?
+            if identity not in identities:
+                identities.append(identity)
+    return Ok(identities)
+
+
+pub def view(fact: Path, relative: str, destination: Path) -> Result[None, str]:
+    """
+    Make `destination` a view of one payload file of `fact` that its user may run, edit or strip.
+
+    The view is a copy-on-write clone where the filesystem has one (APFS `clonefile`; reflinking `copy_file_range` on
+    Linux) and a full copy otherwise, renamed into place so the destination is never half written. The clone gets the
+    owner's write bit back, and editing it never changes the fact.
+    """
+    if same_file(fact.joinpath(relative), destination):
+        return Ok(None)
+    make_directory(destination.parent())?
+    staged = Path(f"{destination.0}.view-{id()}")
+    clone(fact.joinpath(relative), staged)?
+    rename(staged.0, destination.0).map_err((error) => f"{destination.0}: {error}")?
+    return Ok(None)
+
+
+def clone(source: Path, destination: Path) -> Result[None, str]:
+    """Clone one file and give the copy back its owner's write bit."""
+    copy_file(source.0, destination.0).map_err((error) => f"{destination.0}: {error}")?
+    mode = int(metadata(destination.0).map_err((error) => f"{destination.0}: {error}")?.permissions().mode())
+    mut open_mode = OPEN_FILE
+    if mode // 64 % 2 == 1:
+        open_mode = OPEN_PROGRAM
+    set_permissions(destination.0, Permissions.from_mode(open_mode)).map_err((error) => f"{destination.0}: {error}")?
+    # A clone keeps the fact's modification time, so an unchanged view is recognized without reading it.
+    modified = metadata(source.0).map_err((error) => f"{source.0}: {error}")?.modified().map_err(
+        (error) => f"{source.0}: {error}",
+    )?
+    mut options = OpenOptions.new()
+    options.write(true)
+    opened = options.open(destination.0).map_err((error) => f"{destination.0}: {error}")?
+    opened.set_modified(modified).map_err((error) => f"{destination.0}: {error}")?
+    return Ok(None)
+
+
+pub def view_directory(fact: Path, destination: Path) -> Result[None, str]:
+    """
+    Make the directory `destination` a view of a whole fact: a clone of every file but `sealed`.
+
+    The new view is assembled beside the destination and swapped in, so it is never half written.
+    The view keeps `fact.json`, which names the fact it was viewed from.
+    """
+    files = [relative for relative in payload_files(fact, "")? if relative != SEALED]
+    if not destination.is_symlink() and destination.is_dir() and all_same(fact, files, destination):
+        return Ok(None)
+    make_directory(destination.parent())?
+    staged = Path(f"{destination.0}.view-{id()}")
+    if staged.is_dir():
+        staged.remove_tree().map_err((error) => f"{staged.0}: {error.message()}")?
+    make_directory(staged)?
+    for relative in files:
+        make_directory(staged.joinpath(relative).parent())?
+        clone(fact.joinpath(relative), staged.joinpath(relative))?
+    swap_in(staged, destination, fact, files)?
+    return Ok(None)
+
+
+def swap_in(staged: Path, destination: Path, fact: Path, files: list[str]) -> Result[None, str]:
+    """
+    Replace `destination` with the assembled view. A concurrent command may swap in its own view of the same fact
+    meanwhile; a destination that already holds a current view is kept and this one discarded.
+    """
+    if destination.is_symlink():
+        _ = destination.unlink()
+    elif destination.is_dir():
+        retired = Path(f"{destination.0}.retired-{id()}")
+        match rename(destination.0, retired.0):
+            Ok(_) => _ = retired.remove_tree()
+            Err(_) => pass
+    match rename(staged.0, destination.0):
+        Ok(_) => return Ok(None)
+        Err(error) =>
+            if destination.is_dir() and all_same(fact, files, destination):
+                _ = staged.remove_tree()
+                return Ok(None)
+            return Err(f"{destination.0}: {error}")
+
+
+pub def record_name(store: Path, name: str, identity: str) -> Result[None, str]:
+    """
+    Append `name -> identity` to the name log, under the index's lock.
+
+    When the log grows past the snapshot, the snapshot is rebuilt from both, keeping the latest identity per name, and
+    the log starts empty again.
+    """
+    names = store.joinpath("names")
+    make_directory(names)?
+    held = names.joinpath("index").lock_exclusive().map_err((error) => error.message())?
+    log = names.joinpath("log")
+    match log.open("a"):
+        Err(error) => return Err(f"{log.0}: {error.message()}")
+        Ok(opened) =>
+            mut sink = opened
+            _ = sink.write(f"{identity} {now_seconds()} {name}\n")
+    if size_of(log) > size_of(names.joinpath("index")):
+        compact(names)?
+    return Ok(None)
+
+
+def size_of(path: Path) -> int:
+    """A file's size, zero while it does not exist."""
+    match path.stat():
+        Err(_) => return 0
+        Ok(info) =>
+            match info.size():
+                Ok(size) => return size
+                Err(_) => return 0
+
+
+def compact(names: Path) -> Result[None, str]:
+    """Rebuild the snapshot from the snapshot and the log, then empty the log; the caller holds the index's lock."""
+    latest = name_entries(names)?
+    mut lines: list[str] = []
+    for name in sorted([name for name in latest.keys()]):
+        lines.append(f"{latest[name]} 0 {name}")
+    publish(names.joinpath("index"), "\n".join(lines) + "\n")?
+    publish(names.joinpath("log"), "")?
+    return Ok(None)
+
+
+def name_entries(names: Path) -> Result[Dict[str, str], str]:
+    """The latest identity of every name, from the snapshot and then the log."""
+    mut latest: Dict[str, str] = {}
+    for file in ["index", "log"]:
+        path = names.joinpath(file)
+        if path.is_file():
+            for line in read(path)?.split("\n"):
+                fields = line.split(" ")
+                if len(fields) >= 3:
+                    latest[" ".join(fields[2:])] = fields[0]
+    return Ok(latest)
+
+
+pub def lookup(store: Path, name: str) -> Result[Option[str], str]:
+    """The identity `name` last resolved to, if any build recorded one."""
+    latest = name_entries(store.joinpath("names"))?
+    if name in latest:
+        return Ok(Some(latest[name]))
+    return Ok(None)
+
+
+pub def register_root(store: Path, project: str, identity: str) -> Result[None, str]:
+    """Record that builds of `project` use `identity`, so collection keeps it; the marker's time is its last use."""
+    directory = store.joinpath("roots").joinpath(fingerprint([project])?[:32])
+    make_directory(directory)?
+    owner = directory.joinpath("project")
+    if not owner.is_file():
+        publish(owner, project)?
+    publish(directory.joinpath(identity), "")?
+    return Ok(None)
+
+
+pub def collect(store: Path, keep_days: int) -> Result[Collected, str]:
+    """
+    Remove every fact no root reaches. Nothing runs automatically; this is `incan bakery gc`.
+
+    1. Drop roots not used within the last `keep_days` days (all roots are kept when it is negative).
+    2. Mark every identity a root reaches, through the identities each fact records.
+    3. Remove unmarked facts, and staging directories whose baker no longer holds the claim.
+    """
+    # 1. A root's age is the time of its last use.
+    roots = store.joinpath("roots")
+    mut dropped = 0
+    mut pending: list[str] = []
+    if roots.is_dir():
+        for project in roots.iterdir().map_err((error) => error.message())?:
+            for marker in project.iterdir().map_err((error) => error.message())?:
+                if marker.name() == "project":
+                    continue
+                if keep_days >= 0 and age_seconds(marker) >= keep_days * SECONDS_PER_DAY:
+                    marker.unlink().map_err((error) => error.message())?
+                    dropped += 1
+                else:
+                    pending.append(marker.name())
+    # 2. Reachability follows the identities each sealed fact records.
+    marked = reachable(store, pending)?
+    # 3. Only what nothing reaches is removed.
+    return sweep(store, marked, dropped)
+
+
+def age_seconds(path: Path) -> int:
+    """Seconds since `path` was last modified."""
+    match path.stat():
+        Err(_) => return 0
+        Ok(info) =>
+            match info.modified_unix():
+                Ok(modified) => return now_seconds() - modified
+                Err(_) => return 0
+
+
+def reachable(store: Path, roots: list[str]) -> Result[set[str], str]:
+    """Every identity reachable from `roots`."""
+    mut marked: set[str] = set()
+    mut pending = roots
+    while len(pending) > 0:
+        identity = pending.pop()
+        if identity in marked:
+            continue
+        marked.add(identity)
+        record = fact_directory(store, identity)?.joinpath(RECORD)
+        if record.is_file():
+            for item in array_value(required_value(read_json(record)?, "reaches")?)?:
+                pending.append(string_value(item)?)
+    return Ok(marked)
+
+
+def required_value(document: JsonValue, key: str) -> Result[JsonValue, str]:
+    """The value at `key` of an object."""
+    match document.get(key):
+        Some(value) => return Ok(value)
+        None => return Err(f"`{key}` is missing")
+
+
+def sweep(store: Path, marked: set[str], dropped: int) -> Result[Collected, str]:
+    """Remove unmarked facts and dead staging directories; a staging directory under a live claim stays."""
+    mut collected = Collected(kept=0, removed=0, roots_dropped=dropped, staging_cleared=0)
+    root = facts_root(store)?
+    if not root.is_dir():
+        return Ok(collected)
+    claims = store.joinpath("claims")
+    make_directory(claims)?
+    for fan in root.iterdir().map_err((error) => error.message())?:
+        for entry in fan.iterdir().map_err((error) => error.message())?:
+            name = entry.name()
+            identity = name.split(".")[0]
+            # The claim is held while collecting this identity, so no baker seals it meanwhile.
+            match claims.joinpath(identity).try_lock_exclusive().map_err((error) => error.message())?:
+                None => collected.kept += 1
+                Some(held) =>
+                    if "." in name:
+                        remove_sealed(entry)?
+                        collected.staging_cleared += 1
+                    elif identity in marked:
+                        collected.kept += 1
+                    else:
+                        remove_sealed(entry)?
+                        collected.removed += 1
+    return Ok(collected)
+
+
+pub def parse_bakery(arguments: list[str]) -> Result[int, str]:
+    """Parse `incan bakery gc [--keep-days N]`: the days of root history to keep, or -1 to keep every root."""
+    if len(arguments) == 0:
+        return Err("a subcommand is required: gc")
+    if arguments[0] != "gc":
+        return Err(f"unknown command `{arguments[0]}`")
+    rest = arguments[1:]
+    if len(rest) == 0:
+        return Ok(-1)
+    if rest[0] != "--keep-days":
+        if rest[0].startswith("-"):
+            return Err(f"unknown option `{rest[0]}`")
+        return Err(f"unexpected argument `{rest[0]}`")
+    if len(rest) != 2 or len(rest[1]) == 0 or len(rest[1]) > 6:
+        return Err("`--keep-days` needs a number of days")
+    for character in rest[1]:
+        if character not in "0123456789":
+            return Err("`--keep-days` needs a number of days")
+    return Ok(int(rest[1]))
+
+
+pub def bakery_command(keep_days: int) -> Result[i32, str]:
+    """Collect this home's bakery and say what was kept and removed."""
+    collected = collect(bakery()?, keep_days)?
+    println(
+        f"kept {collected.kept} facts, removed {collected.removed}, dropped {collected.roots_dropped} roots, " + f"cleared {collected.staging_cleared} staging directories",
+    )
+    return Ok(0)
+
+
+def same_file(source: Path, view: Path) -> bool:
+    """Whether a view still has its fact file's size and modification time; a clone keeps both, an edit does not."""
+    match metadata(source.0):
+        Err(_) => return false
+        Ok(original) =>
+            match metadata(view.0):
+                Err(_) => return false
+                Ok(copied) =>
+                    return original.len() == copied.len() and original.mtime() == copied.mtime() and original.mtime_nsec() == copied.mtime_nsec()
+
+
+def all_same(fact: Path, files: list[str], view: Path) -> bool:
+    """Whether a directory view still holds an unchanged clone of each of the fact's files."""
+    for relative in files:
+        if not same_file(fact.joinpath(relative), view.joinpath(relative)):
+            return false
+    return true
+
+
+pub def forget_verified() -> None:
+    """Forget which facts this process verified, as a new process would; the next find verifies them again."""
+    for identity in [name for name in verified.keys()]:
+        verified[identity] = false
+
+
+pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
+    """
+    The fact a directory view was cloned from, for readers that should read the fact rather than the view.
+
+    A view whose files were changed or removed is cloned again from its fact. A view whose fact is gone is not one, and
+    a damaged fact is refused (see `find`).
+    """
+    record = directory.joinpath(RECORD)
+    if not record.is_file():
+        return Ok(None)
+    identity = required_text(read_json(record)?, "identity")?
+    match find(bakery()?, identity)?:
+        None => return Ok(None)
+        Some(fact) =>
+            view_directory(fact, directory)?
+            return Ok(Some(fact))
