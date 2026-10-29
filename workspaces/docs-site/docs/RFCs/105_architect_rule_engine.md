@@ -1,4 +1,4 @@
-# RFC 105: `incan architect` rule engine for design, safety, idiom, maintainability, and risk findings
+# RFC 105: `oven architect` rule engine for design, safety, idiom, maintainability, and risk findings
 
 - **Status:** Draft
 - **Created:** 2026-05-24
@@ -22,15 +22,15 @@
 
 ## Summary
 
-This RFC proposes `incan architect` as a deterministic code-advice command for direct Incan source and for Oven-managed projects authored in Incan, Rust, or both. The command reports evidence-backed findings across architecture, safety, idiom usage, maintainability, and deterministic risk signals by running maintainable rules over the shared compiler-backed codegraph defined by RFC 106. The central goal is not to create a broad subjective linter, but to create a durable rule authoring surface where new advice can be added cheaply, tested precisely, calibrated against real projects, and consumed by humans, agents, editors, and CI without relying on model inference for core detection.
+This RFC proposes `oven architect` as a deterministic code-advice command for direct Incan source and for Oven-managed projects authored in Incan, Rust, or both. The command reports evidence-backed findings across architecture, safety, idiom usage, maintainability, and deterministic risk signals by running maintainable rules over the shared compiler-backed codegraph defined by RFC 106. The central goal is not to create a broad subjective linter, but to create a durable rule authoring surface where new advice can be added cheaply, tested precisely, calibrated against real projects, and consumed by humans, agents, editors, and CI without relying on model inference for core detection.
 
 ## Core model
 
-1. **Oven selects project scope:** Inside a Loaf, `incan architect` obtains the selected workspace members, source facets, dependencies, targets, generated inputs, and source roles from Oven. It must not recreate project discovery or infer a project graph from nearby files.
+1. **Oven selects project scope:** Inside a Loaf, `oven architect` obtains the selected workspace members, source facets, dependencies, targets, generated inputs, and source roles from Oven. It must not recreate project discovery or infer a project graph from nearby files.
 2. **Language frontends own semantic facts:** Incan's compiler owns checked Incan facts. Rust inspection and compiler infrastructure own checked or resolved Rust facts. Both enter the shared RFC 106 graph as ordinary declarations, references, calls, modules, and relationships carrying a `language` attribute.
 3. **Provenance is preserved:** Every source-backed fact and finding retains whether the source is authored, generated, external, or projected, plus its source facet and selected project authority. Generated Rust is not an independently authored implementation merely because it is visible to the graph.
 4. **Rules interpret facts:** Each rule consumes typed fact views and emits findings with qualified rule names, priorities, categories, confidence, evidence, suggestions, and risks. A rule declares the fact capabilities and languages it supports rather than assuming every source owner is Incan.
-5. **Findings are advisory by default:** Architect findings are not compiler errors. They describe design pressure or code-shape opportunities with enough evidence for a human or agent to decide whether to act. RFC 127 assigns catalog levels (`allow`, `warn`, `deny`, and `forbid`) that may make selected findings fail `incan architect`; that enforcement remains tooling policy and never turns the finding into a compiler error.
+5. **Findings are advisory by default:** Architect findings are not compiler errors. They describe design pressure or code-shape opportunities with enough evidence for a human or agent to decide whether to act. RFC 127 assigns catalog levels (`allow`, `warn`, `deny`, and `forbid`) that may make selected findings fail `oven architect`; that enforcement remains tooling policy and never turns the finding into a compiler error.
 6. **Categories are explicit:** Architecture findings, safety findings, idiom findings, maintainability findings, and risk findings remain separate in qualified rule names and profiles even when they share one command.
 7. **Broad collection, precise classification:** The command should scan the requested scope broadly and emit evidence-backed findings across categories. Confidence, category, profile, baseline, and priority decide presentation and action pressure; they should not erase valid findings up front merely because the finding is local, optional, or not architectural.
 8. **Rule authoring is a product surface:** The feature is only maintainable if adding a rule means using stable typed facts and reusable queries, not hand-parsing raw graph nodes or reimplementing per-language syntax walks.
@@ -45,11 +45,11 @@ The first experiments with an architecture-advice command showed that determinis
 
 Without a formal rule engine, each new check risks becoming a one-off command-private or language-private syntax walk with custom parsing, inconsistent output, and ad hoc severity. That path does not scale, especially when the same project can contain authored Incan and Rust. The value is in a shared substrate: one Oven-selected project graph, one bilingual codegraph, one typed query layer, one finding model, one de-duplication path, and many small rules that are easy to review and calibrate.
 
-This feature also matters for agent workflows. Agents can already make broad refactoring suggestions, but those suggestions are often expensive to verify and easy to overfit. `incan architect` should provide deterministic evidence that an agent can use as grounding: exact files, lines, matched domains, shared patterns, call sites, usage counts, and counterexample risks. A model may later summarize or prioritize findings, but the core detection should remain inspectable and reproducible.
+This feature also matters for agent workflows. Agents can already make broad refactoring suggestions, but those suggestions are often expensive to verify and easy to overfit. `oven architect` should provide deterministic evidence that an agent can use as grounding: exact files, lines, matched domains, shared patterns, call sites, usage counts, and counterexample risks. A model may later summarize or prioritize findings, but the core detection should remain inspectable and reproducible.
 
 ## Goals
 
-- Define `incan architect` as the umbrella command for deterministic design, safety, idiom, maintainability, and risk-signal advice.
+- Define `oven architect` as the umbrella command for deterministic design, safety, idiom, maintainability, and risk-signal advice.
 - Provide a stable finding model with qualified rule name, category, priority, confidence, evidence, pressure, suggestions, risks, and machine-readable output.
 - Provide direct Incan file and directory scanning outside a Loaf, and Oven-selected package or workspace scanning inside a Loaf, with deterministic source, module, and finding de-duplication across Incan and Rust facets. The same finding model should later support PR-diff and graph-snapshot scopes.
 - Treat Rust-only, Incan-only, and mixed Loaves as first-class project analysis scopes.
@@ -77,23 +77,23 @@ This feature also matters for agent workflows. Agents can already make broad ref
 - This RFC does not make a similarity score, inferred peer membership, or outlier classification an architectural finding by itself.
 - This RFC does not allow an exploratory baseline to fail CI by default, silently update itself from a scan, or promote an observed pattern into a deterministic rule automatically.
 - This RFC does not require every possible maintainability rule or risk signal to ship in the first version.
-- This RFC does not itself define automatic rewrites or apply fixes. RFC 127 defines the separate `incan architect --fix` mode over catalog findings.
+- This RFC does not itself define automatic rewrites or apply fixes. RFC 127 defines the separate `oven architect --fix` mode over catalog findings.
 - This RFC does not itself decide whether a reported finding should be fixed in the current change. RFC 127 preserves that separation through explicit `--fix` invocation and per-rule fix policy; other findings remain decisions for the user, CI, or a fix loop.
 - This RFC does not define a public plugin ABI for third-party binary rule packages.
-- This RFC does not require every codegraph fact to be part of a permanently stable external schema in the first release; only the JSON findings format and documented command behavior need v0.7 stability.
+- This RFC does not require every codegraph fact to be part of a permanently stable external schema in the first release; the public typed finding contract, its documented projections and command behavior need 0.7 stability; the exact serialization schema is not selected here.
 
 ## Guide-level explanation
 
-Users run `incan architect` on direct Incan source or on an Oven-managed project. In a Loaf, the default scope is the selected project graph, including every authored Incan and Rust facet in that selection.
+Users run `oven architect` on direct Incan source or on an Oven-managed project. In a Loaf, the default scope is the selected project graph, including every authored Incan and Rust facet in that selection.
 
 ```bash
-incan architect .
-incan architect src/lib.incn --format json
-incan architect . --profile architecture
-incan architect . --profile maintainability
+oven architect .
+oven architect src/lib.incn --format json
+oven architect . --profile architecture
+oven architect . --profile maintainability
 ```
 
-The command remains on the `incan` semantic-tooling surface defined by RFC 118. Inside a Loaf it asks Oven for project selection and source authority, then analyzes the resulting graph; it does not become a second workspace resolver. A Rust-only Loaf is still a valid Architect scope. A mixed Loaf is analyzed as one project rather than as unrelated per-language scans.
+Oven owns the canonical command and selected analysis scope. `incan architect` may remain an Incan-only convenience that delegates to the same Oven operation; it does not accept Rust input or own a second planner. Language frontends remain the authorities for checked facts. This is an explicit command-ownership amendment to RFC 118. A Rust-only Loaf is still a valid Architect scope. A mixed Loaf is analyzed as one project rather than as unrelated per-language scans.
 
 Rules may be language-neutral, language-specific, or cross-language:
 
@@ -204,25 +204,27 @@ The finding can suggest `parsed.map(clean)` because one branch transforms the `O
 
 ### Command behavior
 
-`incan architect [PATH] [OPTIONS]` must accept a source file or directory. When `PATH` is omitted, the command should analyze the current directory.
+`oven architect [PATH] [OPTIONS]` must accept a source file or directory. When `PATH` is omitted, the command should analyze the current directory.
 
 When `PATH` is an Incan file outside a Loaf, the command must scan the file and the modules needed to resolve its imports according to ordinary Incan module rules.
 
 When `PATH` is within a discovered Loaf, the command must delegate project and workspace selection to Oven and analyze the selected source graph. That graph may contain authored Incan, authored Rust, or both. The command must use Oven's selected members, facets, dependencies, generated inputs, and source roles rather than recursively treating every nearby source file as part of the project.
 
-When `PATH` is a directory outside a Loaf, the command may retain the direct-source behavior of recursively scanning `.incn` files. Direct standalone Rust-file and non-Loaf Rust-directory behavior is unresolved by this RFC; Rust-only project analysis is required for Rust facets selected by a Loaf.
+Direct Incan and Rust files or directories must be admitted through `oven architect`, using the owning frontend and explicit source selection. Outside a Loaf, the selection must not discover a Cargo project or infer dependency authority from nearby manifests. Required project facts that cannot be established from the explicit input must be reported as unavailable, with guidance to select a Loaf when necessary. The same capability gates apply to both languages.
 
 Every scan must be deterministic. A source owner imported through multiple roots or visible through both an authored declaration and a generated projection must contribute according to its graph identity and provenance, not as duplicated text.
 
+Default scope must follow documented Oven member, environment, target and source-role selection rules. Project customization belongs in `loaf.toml` under checked tooling metadata; the exact table grammar must be documented by its owning project contract. A scan must report its effective selection and exclusions. It must not silently broaden its closure because of the current working directory, a neighboring manifest or an undeclared environment value.
+
 The requested scope is the scan boundary. Maintainability findings are not limited to code that happens to be near another edit. Profiles, baselines, suppressions, and output filters decide which findings are shown or acted on.
 
-The command must provide `--format text` and `--format json`. Text output is for humans. JSON output is the integration surface for agents, editors, CI, dashboards, and future baselining tools.
+The report must have one typed Incan model contract independent of its rendering. The command must provide text and JSON renderers; JSON is one projection, not the semantic authority or the required representation for every consumer. Other explicit renderers may use YAML or TOML without changing findings, rule identities or coverage. This RFC defines required information and compatibility semantics, not an exact serialization schema.
 
 The command should provide `--profile` with at least `architecture`, `safety`, `idioms`, `maintainability`, `risk`, `experimental`, and `all`. The default profile must include all stable supported rule categories, with category, profile and priority filters explicit. Experimental rules remain opt-in, including when all is selected. A missing frontend capability must be visible as missing coverage rather than silently dropping the affected rule family. `experimental` is opt-in and may contain peer-baseline review candidates; `all` excludes it unless the user requests it explicitly.
 
 ### Finding model
 
-Every finding must have a qualified rule name, namespaced by category. A catalog entry additionally has RFC 127's stable diagnostic code, which does not change when a rule moves between categories or groups.
+Every finding must have a qualified rule name, namespaced by category. A catalog entry additionally has RFC 127's stable diagnostic code, which does not change when a rule moves between categories or groups. Published catalog rules must have numbered diagnostic identities allocated by RFC 127's catalog, alongside their descriptive names. Renaming or regrouping a rule must not silently reassign its number; this RFC does not allocate a competing numbering system.
 
 ```text
 arch.repeated_match_dispatch
@@ -281,7 +283,7 @@ Maintainability rules describe local readability, cleanup, or code-shape pressur
 
 Risk rules describe deterministic prioritization evidence rather than recommendations by themselves. Untested hotspots, churn, ownership spread, co-change without structural edges, decision staleness, and code-age volatility belong here when the required local inputs are available. Risk findings must expose raw contributing measures and caveats rather than only a composite score.
 
-Rules must not be categorized as architecture findings merely because they are emitted by `incan architect`.
+Rules must not be categorized as architecture findings merely because they are emitted by `oven architect`.
 
 Every rule must declare its applicability independently of category:
 
@@ -328,6 +330,10 @@ Rules must consume typed fact views rather than raw serialized facts. A rule tha
 Rules should be small and independently testable. Each rule should have positive and negative fixtures. Negative fixtures are required for common counterexamples named in the rule's risk text.
 
 Rules must not require typechecked metadata when a syntactic fact is sufficient. Rules may use type facts when precision depends on type information, such as recognizing `Result[T, E]` match shapes.
+
+Trusted-constant versus caller-input advice must use shared checked origin and dataflow facts. A proved literal invariant may lower action pressure; a public input or unknown origin must retain its actual classification. Names, comments and source execution must not serve as trust evidence. Unknown origin analysis must be exposed as missing coverage, not a zero-risk score.
+
+Stable maintainability rules must start from narrow shapes with positive fixtures, observable counterexamples and corpus calibration. A single append-only eager list accumulator is a candidate; a superficially similar loop with logging or other work is not an equivalent mechanical rewrite. Broad style judgments remain experimental until their evidence supports a stronger contract.
 
 Rules should prefer narrow body-shape facts over broad textual heuristics. For example, a comprehension candidate should be based on an append-only list-builder shape, not the mere presence of a `for` loop and `append`.
 
@@ -466,7 +472,7 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 - **Stdlib / Runtime (`incan_stdlib`)**: No required runtime impact, though stdlib feature surfaces such as Result combinators and iterator adapters inform idiom rules.
 - **Formatter**: RFC 105 itself requires no formatter changes. RFC 127 requires the formatter to remain callable as a library after Architect applies safe fixes; the formatter still owns canonical representation rather than lint evaluation.
 - **LSP / Tooling**: The JSON findings format should be usable by editors, agents, CI, and future diagnostics-style surfaces. Editor consumers must see the same selected source authority and language provenance as the CLI.
-- **CLI / Project tooling**: `incan architect` needs direct-source and Oven-selected scope handling, profiles, stable text/JSON output, suppression support, and baseline support. Future peer-baseline tooling needs opt-in invocation and schema-, compiler-, Oven-plan-, and graph-versioned snapshots.
+- **CLI / Project tooling**: `oven architect` needs direct-source and Oven-selected scope handling, profiles, stable text/JSON output, suppression support, and baseline support. Future peer-baseline tooling needs opt-in invocation and schema-, compiler-, Oven-plan-, and graph-versioned snapshots.
 - **Documentation**: The CLI reference must document direct-source versus Loaf-selected behavior, Incan/Rust/mixed coverage, source-role provenance, profiles, categories, priorities, confidence, suppressions, peer-context provenance, and examples.
 
 ## Design Decisions
@@ -480,13 +486,8 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 - Selecting and calibrating concrete risk rules is implementation work. The evidence and coverage requirements remain binding; missing inputs are not zero risk.
 - Rule registration for 0.7 is repository/catalog-owned. External rule-package loading requires a separately reviewed capability/versioning contract; typed rule interfaces remain extensible.
 
-## Unresolved questions
-
-- Which finding fields are stable enough to commit as v0.7 JSON output, and which should remain experimental?
-- Which maintainability rules belong in the first stable profile, and which should remain experimental until enough corpus evidence exists?
-- Should a Loaf-selected project scan include every test, example, benchmark, and tool role by default, or should Oven environments and target roles determine the default analysis closure?
-- Should `incan architect path/to/file.rs` support standalone Rust outside a Loaf, or should first-class Rust analysis require an Oven-selected project graph?
-- How should architect distinguish trusted-constant fail-fast calls from caller-input fail-fast calls in a deterministic, maintainable way?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Oven owns `oven architect`; the Incan-only convenience delegates. Direct Incan and Rust input use the same capability and explicit-selection rules.
+- Project scope follows documented Oven selection and checked `loaf.toml` customization, with effective exclusions visible and no ambient Cargo discovery.
+- Findings are typed Incan records with numbered RFC 127 catalog identities. JSON is one renderer; exact serialization layout is not a language-design vote.
+- Stable local rules require calibrated narrow shapes and counterexamples; broad judgments stay experimental.
+- Input-origin facts distinguish proved constants from caller input, retaining unknown origins and missing coverage honestly.

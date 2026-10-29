@@ -79,6 +79,10 @@ incan architect src/
 
 These commands are about source, language behavior, and semantic facts. A direct-file invocation does not require a `loaf.toml` project. When a semantic command is given a Loaf project, it may ask Oven for the selected dependency/provider context, but the compiler remains the authority for semantic results.
 
+### Architect command ownership amendment
+
+RFC 105's reviewed command direction makes `oven architect` the canonical analysis command for direct Incan, direct Rust, and mixed Loaf scopes. Oven selects the analysis inputs and invokes language-owned semantic services; it does not reimplement their facts. `incan architect` may remain an Incan-only pass-through to the same operation, retaining one planner, catalog and report contract. The earlier examples of that convenience do not authorize Rust analysis through the Incan CLI or a second source-discovery path. Other semantic commands retain their ownership rules.
+
 ### Use shallow Incan conveniences inside a Loaf
 
 Within a discovered `loaf.toml` project, project-scale execution is not a second build system:
