@@ -122,10 +122,13 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
 /// still refer to the selected artifact. Private provider aliases enter only native compilation, after source
 /// checking; transitive imports remain private, and conflicting artifacts require rebuilding and publishing a
 /// coherent dependency closure.
+/// Ambient standard packages contribute bindings only when the checked executable declaration closure reaches
+/// them. Explicit non-standard providers retain their existing exact-binding authority.
 pub(crate) fn link_externs(
     plan: &crate::plan::Plan,
     direct: &[(String, PathBuf)],
     loaves: &[UnitLoaf],
+    reached: &BTreeSet<String>,
 ) -> Result<Vec<(String, PathBuf)>, String> {
     let roots = native_roots(plan)
         .into_iter()
@@ -133,6 +136,7 @@ pub(crate) fn link_externs(
         .collect::<BTreeSet<_>>();
     let closures = loaves
         .iter()
+        .filter(|loaf| !loaf.standard || reached.contains(&loaf.name))
         .map(|loaf| {
             LoafArtifact::read(&loaf.dir, &loaf.name)
                 .and_then(|artifact| artifact.native_closure())

@@ -1,11 +1,12 @@
 """Rust facets use their test dependencies and report both passing and failing unit tests."""
 
 from std.fs import Path
+from std.testing import fail
 from files import make_directory, write
 from rust_testing import build_rust_tests
 from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, identity, read_registry_units, rust_output
+from rust_units import RustBuild, identity, ordered, read_registry_units, rust_output
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
 from toolchain import load_toolchain, rust_compiler
@@ -92,14 +93,42 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
 
 
 def verify_macro_domains(macro: Path, helper: Path, request: RustBuild) -> Result[None, str]:
-    """Require one host macro producer and a target-domain test dependency, using canonical project identities."""
+    """
+    Require one host macro producer and a target-domain test dependency, named by their Loaves, not their checkout.
+
+    1. Each producer directory carries the identity of its Loaf's name, version and domain.
+    2. The same Loaf in another checkout has the same identity; two Loaves declaring one name and version refuse.
+    """
+    # 1. Both fixtures declare version 1.0.0.
     roles = [(macro, DependencyDomain.Host, "macro_fixture"), (helper, DependencyDomain.Target, "helper")]
     for project, domain, name in roles:
         root = project.resolve().map_err((error) => error.message())?
-        facet = LocalFacet(project=root.0, domain=domain, features=[], local=[], registry=[], registry_aliases=[])
+        facet = local_facet(root.0, domain, name)
         directory = rust_output(macro, request.profile).joinpath(f"{name}-{identity(facet, request.profile)}")
         assert directory.is_dir(), f"{name} must retain its {domain.value()} producer identity"
+    # 2. A relocated checkout keeps the identity; a different Loaf with the same declaration is refused.
+    here = local_facet(helper.0, DependencyDomain.Target, "helper")
+    elsewhere = local_facet("/another/checkout/helper", DependencyDomain.Target, "helper")
+    assert identity(here, request.profile) == identity(elsewhere, request.profile)
+    match ordered([here, elsewhere]):
+        Ok(_) => fail("two local Loaves declaring one name and version were compiled as one unit")
+        Err(reason) =>
+            assert "both declare helper 1.0.0" in reason
     return Ok(None)
+
+
+def local_facet(project: str, domain: DependencyDomain, name: str) -> LocalFacet:
+    """A dependency-free facet of a Loaf that declares `name` at version 1.0.0."""
+    return LocalFacet(
+        project=project,
+        domain=domain,
+        features=[],
+        local=[],
+        registry=[],
+        registry_aliases=[],
+        package=name,
+        version="1.0.0",
+    )
 
 
 def incan_fixture(header: str, body: str) -> str:
