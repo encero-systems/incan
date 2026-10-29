@@ -1,8 +1,9 @@
 //! Accepted scalar bodies and checked source-module calls under the callable interface's existing identities.
 //!
 //! Calls retain their complete checked candidate/signature witnesses and exact current header inputs. Imports,
-//! nominal types, defaults, mutable storage and scope-changing bodies refuse capture. Physical locators must match
-//! too; a semantic digest alone never grants a hit.
+//! nominal types, defaults and scope-changing bodies refuse capture. Primitive mutable storage retains its checked
+//! mutation contract and complete assignment operations. Physical locators must also match; a semantic digest alone
+//! never grants a hit.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -431,8 +432,9 @@ fn admitted_functions(program: &Program) -> Result<(), LibraryManifestError> {
     Ok(())
 }
 
-/// Enumerate a straight-line scalar body's reads, admitting an initial literal docstring and distinct immutable
-/// locals. No admitted statement creates a nested scope, so skipped functions preserve physical scope numbering.
+/// Enumerate a straight-line scalar body's reads, admitting an initial literal docstring and primitive bindings.
+/// Reassignment targets must already be bound; ordinary checking owns mutation acceptance before publication.
+/// No admitted statement creates a nested scope, so skipped functions preserve physical scope numbering.
 fn admitted_reads(function: &FunctionDecl, names: &BTreeSet<String>) -> Option<BTreeSet<String>> {
     let Some((statement, prefix)) = function.body.split_last() else {
         return None;
@@ -462,9 +464,14 @@ fn admitted_reads(function: &FunctionDecl, names: &BTreeSet<String>) -> Option<B
         let Statement::Assignment(assignment) = &statement.node else {
             return None;
         };
-        if !matches!(assignment.binding, BindingKind::Inferred | BindingKind::Let)
+        let existing = bindings.contains(&assignment.name);
+        let admitted_target = match assignment.binding {
+            BindingKind::Inferred => !existing || assignment.ty.is_none(),
+            BindingKind::Let | BindingKind::Mutable => !existing,
+            BindingKind::Reassign => existing && assignment.ty.is_none(),
+        };
+        if !admitted_target
             || is_synthetic_span(assignment.name_span)
-            || bindings.contains(&assignment.name)
             || assignment
                 .ty
                 .as_ref()
@@ -488,8 +495,7 @@ fn scalar_signature(function: &FunctionDecl) -> bool {
         || !scalar_type(&function.return_type.node)
         || is_synthetic_span(function.return_type.span)
         || function.params.iter().any(|parameter| {
-            parameter.node.is_mut
-                || is_synthetic_span(parameter.span)
+            is_synthetic_span(parameter.span)
                 || is_synthetic_span(parameter.node.ty.span)
                 || parameter.node.kind != ParamKind::Normal
                 || parameter.node.default.is_some()
