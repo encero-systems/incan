@@ -16,7 +16,7 @@
 
 ## Summary
 
-Propose compiler-visible deprecation metadata for declarations and fields: optional since and planned retirement text, checked replacement identity, migration message and typed diagnostic severity. Editor guidance, compiler use diagnostics, bounded runtime warnings and generated documentation consume the same checked facts. Replacements remain guidance rather than an automatic rewrite, and version text does not remove code automatically. The exact richer field spelling and final replacement-guidance review remain open.
+Propose compiler-visible deprecation metadata for declarations and fields: optional since and planned retirement text, checked replacement identity, migration message and typed diagnostic severity. Editor guidance, compiler use diagnostics, bounded runtime warnings and generated documentation consume the same checked facts. Replacements remain guidance rather than an automatic rewrite, and version text does not remove code automatically. The exact richer field spelling remains open.
 
 ## Motivation
 
@@ -47,7 +47,7 @@ pub def checked_limit(value: int) -> Result[int, str]:
     return Ok(value)
 
 
-@deprecated(since="0.7", message="use checked_limit and handle its Result")
+@deprecated(since="0.7", replacement=checked_limit, message="use checked_limit and handle its Result")
 pub def unchecked_limit(value: int) -> int:
     return value
 ```
@@ -68,7 +68,7 @@ Fields must reuse RFC 085 deprecated bool/text metadata as the compact deprecati
 - Import aliases must not erase the warning. A re-export must not reset the defining module's identity.
 - Version text must not cause automatic removal or alter callable resolution.
 - Diagnostics and generated documentation must consume the same checked facts.
-- An automatic replacement must not be offered solely because a message contains another symbol's spelling.
+- An automatic replacement must not be offered solely because a message contains another symbol's spelling. A checked replacement reference must identify the target in diagnostics alongside the supplied migration message. It must not be treated as proof of equal arguments, effects or result types, and must not authorize a tool to invent error recovery.
 - Field warnings must distinguish authored field access from unrelated runtime mapping keys and wire names.
 
 ## Design details
@@ -100,6 +100,8 @@ Warnings can become noisy across heavily used compatibility APIs. Defining-modul
 - Editor import/reference guidance, compiler consuming-use warnings and one runtime warning per executed canonical identity per process are distinct. Imports alone, dead code and compile-time-only metadata do not execute deprecated code. Diagnostics must preserve secrecy.
 - std.diagnostics.DeprecationSeverity.Warning is the default; Error rejects the use at compilation. Project policy may strengthen warnings without weakening an author-declared Error.
 - Aliases and re-exports retain canonical policy and an inspectable authored route. Generated references deduplicate at their responsible source operation; a real wrapper has its own declaration policy.
+
+- A checked replacement and migration message must be shown together; neither authorizes an automatic rewrite when call contracts differ.
 
 ## Unresolved questions
 

@@ -17,7 +17,7 @@
 
 ## Summary
 
-Propose compiler-defined `@must_use` annotations on value types and callable declarations, with source-level diagnostics when an expression statement discards a protected result. `@may_discard` is the callable-specific exemption. The proposal covers discarded expressions; it does not claim that a bound resource was finalized or that a variable was subsequently used. Violating a declared obligation is an Incan source error by default; deliberate `_ = expression` discards and narrow callable exemptions are explicit, while built-in defaults remain open.
+Propose compiler-defined `@must_use` annotations on value types and callable declarations, with source-level diagnostics when an expression statement discards a protected result. `@may_discard` is the callable-specific exemption. The proposal covers discarded expressions; it does not claim that a bound resource was finalized or that a variable was subsequently used. Violating a declared obligation is an Incan source error by default; deliberate `_ = expression` discards and narrow callable exemptions are explicit, and Result and Option are protected by default.
 
 ## Motivation
 
@@ -86,19 +86,19 @@ Here the returned Price matters because the method constructs a replacement. The
 - The obligation must follow canonical declaration identity across imports, aliases, and package metadata.
 - RFC 163 compilation selection must happen before must-use annotation checks, regardless of annotation order. An excluded declaration, type, member or statement must contribute no must-use obligation. Calls retained in selected method or function bodies must receive the same discard checks as ordinary calls. A retained declaration must follow this RFC unchanged; the compilation predicate namespace must not change ordinary metadata argument lookup.
 - A container must not implicitly become must-use because its element or field type is marked.
-- Result and Option are proposed built-in must-use types; this default requires an explicit compatibility decision before acceptance.
+- Result and Option must be built-in must-use result types. Other non-None callables must not automatically acquire this obligation, and obligations must not propagate through arbitrary containers.
 - If both a callable and its result type carry an obligation, one diagnostic must identify both relevant declarations rather than emitting duplicates.
 - An explicit-discard form must suppress this obligation at that expression only. It must not convert Err into success.
 
 ## Design details
 
-The recommended starting policy is opt-in obligations plus built-in Result and Option protection. A compiler-defined callable-specific `@may_discard` exempts an obligation inherited from the outer result type at that call boundary only. It must not hide obligations on unrelated expressions or failures produced inside the body. Combining `@must_use` and `@may_discard` on the same callable must be rejected with both annotation locations; source order must not choose precedence. Canonical callable identity must preserve this contract through aliases and imports. Coincident callable/type obligations must produce one diagnostic identifying their declarations.
+The required policy is explicit obligations plus built-in Result and Option protection. A compiler-defined callable-specific `@may_discard` exempts an obligation inherited from the outer result type at that call boundary only. It must not hide obligations on unrelated expressions or failures produced inside the body. Combining `@must_use` and `@may_discard` on the same callable must be rejected with both annotation locations; source order must not choose precedence. Canonical callable identity must preserve this contract through aliases and imports. Coincident callable/type obligations must produce one diagnostic identifying their declarations.
 
-Compiler diagnostics and editor hovers should expose the reason and declaration location as structured facts. The generated Rust lint is insufficient as the public diagnostic boundary. Rust's [diagnostic attributes](https://doc.rust-lang.org/reference/attributes/diagnostics.html) provide prior art for declaration-carried must-use obligations; Incan's exact defaults remain its own decision.
+Compiler diagnostics and editor hovers should expose the reason and declaration location as structured facts. The generated Rust lint is insufficient as the public diagnostic boundary. Rust's [diagnostic attributes](https://doc.rust-lang.org/reference/attributes/diagnostics.html) provide prior art for declaration-carried must-use obligations; Incan explicitly selects Result and Option protection and an error-level source diagnostic.
 
 ## Alternatives considered
 
-- Make every non-None function must-use by default: broader protection, with a much larger compatibility and noise cost. Retain this as a policy alternative for review.
+- Make every non-None function must-use by default: broader protection, with a much larger compatibility and noise cost. Rejected in favor of built-in Result/Option protection and explicit obligations on other APIs.
 - Require resource consumption tracking: valuable, but it answers a different question from expression discard.
 - Rely on generated Rust warnings: loses the source-level explanation and stable Incan diagnostic contract.
 
@@ -114,16 +114,10 @@ Built-in Result and Option protection will surface existing silent discards. An 
 
 ## Design Decisions
 
-- **Default diagnostic severity:** discarding a declared must-use result is an Incan source error, with the deliberate local escape `_ = expression`. This does not choose built-in obligations or imply that a bound value was handled.
+- **Default diagnostic severity:** discarding a declared must-use result is an Incan source error, with the deliberate local escape `_ = expression`. A named binding still does not prove that the value was handled.
 
-- **Composition with compile-time selection:** RFC 163's `@when(condition)` and `when condition:` select declarations before annotation semantics. `@must_use` applies only to retained declarations and types. This ordering does not decide the diagnostic defaults or discard mechanisms still open below.
+- **Composition with compile-time selection:** RFC 163's `@when(condition)` and `when condition:` select declarations before annotation semantics. `@must_use` applies only to retained declarations and types. Retained expressions follow the same built-in defaults and explicit discard rules.
 
 - **Deliberate discard:** `_ = expression` evaluates once and discards the outer value without a readable local binding or implicit await, recovery or success conversion. Wildcard pattern scope is unchanged.
 - **Narrow callable exemption:** compiler-defined `@may_discard` exempts an outer result-type obligation at that callable boundary. Conflicting callable `@must_use` and `@may_discard` annotations are rejected; aliases retain canonical policy and coincident obligations are diagnosed once.
-
-## Unresolved questions
-
-- Should Result and Option be protected by default, or should every non-None callable be protected?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Built-in obligations:** Result and Option are protected automatically. Other non-None returns and arbitrary containers acquire no blanket obligation; a binding, return or argument is not a directly discarded expression.
