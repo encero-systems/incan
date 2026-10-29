@@ -396,7 +396,7 @@ def verify_observed_library_bytes(unit: UnitDescription, toolchain: Toolchain, p
 
 
 def verify_callable_item_products(project: Path) -> Result[None, str]:
-    """Require the same private-edit reuse for direct scalar expressions and documented primitive storage."""
+    """Require private-edit reuse for scalar storage and import-bearing modules with exact source witnesses."""
     original = "\n\n".join(
         [
             "def first() -> int:\n    return 1",
@@ -408,6 +408,45 @@ def verify_callable_item_products(project: Path) -> Result[None, str]:
     verify_callable_product_source(project, original, "return 1")?
     verify_callable_product_source(project.joinpath("locals"), documented_local_source(), "value = 1")?
     verify_callable_product_source(project.joinpath("mutable"), mutable_scalar_source(), "value * 1")?
+    imported = project.joinpath("imports")
+    write(imported.joinpath("src/neighbor.incn"), "pub model Marker:\n    pub value: int\n")?
+    verify_callable_product_source(imported, "from neighbor import Marker\n\n" + original, "return 1")?
+    verify_unread_import_source_change(imported)?
+    return Ok(None)
+
+
+def verify_unread_import_source_change(project: Path) -> Result[None, str]:
+    """
+    Retain scalar products across an imported declaration change that none of them reads.
+
+    1. Change an imported declaration without changing this module's scalar inputs.
+    2. Check only the changed imported declaration, then compare every product to an independent cold build.
+    """
+    # 1. This source change is outside the source-independent compiler/dependency context.
+    toolchain = load_toolchain()?
+    mut unit = describe(
+        project.joinpath("src/lib.incn"),
+        "release",
+        FeatureRequest(),
+        selected_toolchain=Some(toolchain),
+    )?
+    unit.kind = "library"
+    ready = prepare_native(unit, toolchain)?
+    baseline = retain_checked_source(ready, toolchain)?
+    _prime_counts, _prime_native, _prime_products = observe_item_library(baseline, toolchain, project, "import-prime")?
+    write(project.joinpath("src/neighbor.incn"), "pub model Marker:\n    pub value: f64\n")?
+    edited = retain_checked_source(ready, toolchain)?
+    # 2. Accepted primitive signatures and complete local-call witnesses prove these bodies do not read the model.
+    counts, _native, products = observe_item_library(edited, toolchain, project, "import-edited")?
+    assert counts["checking/declaration"] == 1, f"unread import change repeated scalar checks: {counts}"
+    assert "body_ir/built" not in counts, f"unread import change repeated scalar Body IR: {counts}"
+    mut independent = edited
+    independent.checked_context = None
+    independent.checked_artifact = None
+    independent.checked_key = None
+    independent.checked_products = None
+    _cold_counts, _cold_native, cold = observe_item_library(independent, toolchain, project, "import-cold")?
+    assert products == cold, "changed imported source produced stale library products"
     return Ok(None)
 
 
@@ -506,7 +545,7 @@ def verify_callable_product_source(project: Path, original: str, needle: str) ->
     unit = prepare_native(unit, toolchain)?
     initial = retain_checked_source(unit, toolchain)?
     cold_counts, cold_native, _before = observe_item_library(initial, toolchain, project, "initial")?
-    assert cold_counts["checking/declaration"] == 4, f"cold source checks: {cold_counts}"
+    assert cold_counts["checking/declaration"] >= 4, f"cold source checks: {cold_counts}"
     assert cold_counts["body_ir/built"] == 4, f"cold source Body IR: {cold_counts}"
     # 2. The source coordinates and signatures remain fixed; only one private implementation changes.
     write(source, edited_source)?
@@ -515,7 +554,7 @@ def verify_callable_product_source(project: Path, original: str, needle: str) ->
     assert edited.checked_context == initial.checked_context, "a private body edit changed the semantic context"
     # The installed interop vocabulary can refuse whole-source snapshots while authored item products remain safe.
     counts, native, products = observe_item_library(edited, toolchain, project, "edited")?
-    assert counts["checking/declaration"] == 1, f"unexpected item checking work: {counts}"
+    assert counts["checking/declaration"] == cold_counts["checking/declaration"] - 3, f"item checks: {counts}"
     assert counts["body_ir/built"] == 1, f"unexpected item Body IR work: {counts}"
     assert native == cold_native - 3, f"native function products did not reuse three frames: {cold_native} -> {native}"
     # 3. Cache placement and permission are the only differences from a full compilation of the edited source.
@@ -525,7 +564,7 @@ def verify_callable_product_source(project: Path, original: str, needle: str) ->
     independent.checked_key = None
     independent.checked_products = None
     full_counts, full_native, cold_products = observe_item_library(independent, toolchain, project, "cold-edited")?
-    assert full_counts["checking/declaration"] == 4, f"cold edited source checks: {full_counts}"
+    assert full_counts["checking/declaration"] == cold_counts["checking/declaration"], f"cold checks: {full_counts}"
     assert full_counts["body_ir/built"] == 4, f"cold edited source Body IR: {full_counts}"
     assert full_native == cold_native, f"cold native work changed: {full_native} vs {cold_native}"
     assert products == cold_products, "item replay changed a native or governed library product"
@@ -534,7 +573,7 @@ def verify_callable_product_source(project: Path, original: str, needle: str) ->
     write(source, damaged_source)?
     damaged = retain_checked_source(unit, toolchain)?
     damaged_counts, damaged_native, damaged_products = observe_item_library(damaged, toolchain, project, "damaged")?
-    assert damaged_counts["checking/declaration"] == 4, f"damaged source products were reused: {damaged_counts}"
+    assert damaged_counts["checking/declaration"] == cold_counts["checking/declaration"], f"damaged items: {damaged_counts}"
     assert damaged_counts["body_ir/built"] == 4, f"damaged Body IR products were reused: {damaged_counts}"
     assert damaged_native == cold_native, f"damaged native products were reused: {damaged_native}"
     _counts, _native, damaged_cold = observe_item_library(independent, toolchain, project, "cold-damaged")?

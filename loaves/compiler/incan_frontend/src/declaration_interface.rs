@@ -1,8 +1,9 @@
 //! Producer-owned callable headers and admitted private body products.
 //!
 //! Callable headers preserve accepted declaration facts without retaining a mutable checker. Body products add an
-//! explicitly bounded acceptance for authored scalar expressions and witnessed source calls. Import overlays, general
-//! resolution witnesses, generated syntax and unsupported effects retain ordinary source checking. A header alone
+//! explicitly bounded acceptance for authored scalar expressions and witnessed local source calls. Exact import and
+//! mixed declaration inputs are guarded; imported calls, general resolution witnesses, generated syntax and
+//! unsupported effects retain ordinary source checking. A header alone
 //! never authorizes skipping a body check.
 
 use std::collections::BTreeMap;
@@ -411,6 +412,7 @@ mod tests {
         scalar_body_product_edits()?;
         scalar_call_product_edits()?;
         scalar_local_product_edits()?;
+        mixed_scalar_product_edits()?;
         Ok(())
     }
 
@@ -647,7 +649,7 @@ mod tests {
             let tokens = crate::lexer::lex(&invalid).map_err(|errors| format!("{errors:?}"))?;
             let parsed = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
             if let Ok(selection) = products.select(&parsed, &invalid, "interface_test", &["lib".to_owned()]) {
-                assert!(selection.is_empty());
+                assert_eq!(selection.len(), if invalid.contains("missing()") { 2 } else { 0 });
             }
         }
         let mut damaged = products.to_bytes()?;
@@ -661,10 +663,11 @@ mod tests {
                 }
             }
         }
-        assert!(
+        assert_eq!(
             products
                 .select(&expanded, source, "interface_test", &["lib".to_owned()])?
-                .is_empty()
+                .len(),
+            2
         );
         let mut sourceless = program.clone();
         if let Some(declaration) = sourceless.declarations.first_mut() {
@@ -676,10 +679,11 @@ mod tests {
                 }
             }
         }
-        assert!(
+        assert_eq!(
             products
                 .select(&sourceless, source, "interface_test", &["lib".to_owned()])?
-                .is_empty()
+                .len(),
+            2
         );
         Ok(())
     }
@@ -815,19 +819,21 @@ mod tests {
                 "unbound"
             }
             .to_owned();
-            assert!(
+            assert_eq!(
                 products
                     .select(&changed, source, "interface_test", &["lib".to_owned()])?
-                    .is_empty()
+                    .len(),
+                3
             );
         }
         let mut generated = program.clone();
         let assignment = first_local_assignment(&mut generated)?;
         assignment.name_span = crate::ast::Span::default();
-        assert!(
+        assert_eq!(
             products
                 .select(&generated, source, "interface_test", &["lib".to_owned()])?
-                .is_empty()
+                .len(),
+            3
         );
         let forward = source.replace("value * 2", "missing");
         let tokens = crate::lexer::lex(&forward).map_err(|errors| format!("{errors:?}"))?;
@@ -839,6 +845,61 @@ mod tests {
             rejected.set_callable_body_reuse(selected);
         }
         assert!(rejected.check_program(&parsed).is_err());
+        Ok(())
+    }
+
+    /// Reuse independent scalar functions after imported/mixed declarations and unsupported bodies, while refusing
+    /// changed environment inputs and shifted physical scopes. All retained IR must match independent checking.
+    fn mixed_scalar_product_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let prefix = "from neighbor import unused\n\nmodel Marker:\n    value: int\n\ndef text(value: str) -> str:\n    return value\n\n";
+        let scalar = "def first(value: int) -> int:\n    return value * 2\n\ndef second(value: int) -> int:\n    return value + 3\n\npub def answer(value: int) -> int:\n    return first(value) + second(value)\n";
+        let source = format!("{prefix}{scalar}");
+        let (program, checker) = checked(&source, "lib")?;
+        let products =
+            CallableBodyProducts::from_checked(&program, &source, &checker, &scalar_module(&program, &checker))?;
+        let edited = source.replace("value * 2", "value * 7");
+        let (current, cold) = checked(&edited, "lib")?;
+        let mut warm = TypeChecker::new();
+        warm.set_current_module_path(Some(vec!["lib".to_owned()]));
+        warm.set_current_package_identity(Some("interface_test".to_owned()));
+        warm.set_callable_body_reuse(products.select(&current, &edited, "interface_test", &["lib".to_owned()])?);
+        warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(warm.type_info().reused_callable_bodies.len(), 2);
+        assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
+        for changed in [
+            source.replace("unused", "absent"),
+            source.replace("value: int\n", "value: f64\n"),
+        ] {
+            let (parsed, _) = checked(&changed, "lib")?;
+            assert!(
+                products
+                    .select(&parsed, &changed, "interface_test", &["lib".to_owned()])?
+                    .is_empty()
+            );
+        }
+
+        // ---- Scope correspondence: keep byte locators fixed while an earlier body gains a lexical scope ----
+        let scope = "    if true:\n        pass\n";
+        let padding = format!("    #{}\n", " ".repeat(scope.len() - 6));
+        let source = format!("def prefix(value: int) -> int:\n{padding}    return value\n\n{scalar}");
+        let (program, checker) = checked(&source, "lib")?;
+        let products =
+            CallableBodyProducts::from_checked(&program, &source, &checker, &scalar_module(&program, &checker))?;
+        let edited = source.replace(&padding, scope);
+        let (current, cold) = checked(&edited, "lib")?;
+        let selected = products.select(&current, &edited, "interface_test", &["lib".to_owned()])?;
+        assert_eq!(
+            selected.len(),
+            3,
+            "later unchanged inputs remain candidates before their scope is known"
+        );
+        let mut warm = TypeChecker::new();
+        warm.set_current_module_path(Some(vec!["lib".to_owned()]));
+        warm.set_current_package_identity(Some("interface_test".to_owned()));
+        warm.set_callable_body_reuse(selected);
+        warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+        assert!(warm.type_info().reused_callable_bodies.is_empty());
+        assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
         Ok(())
     }
 

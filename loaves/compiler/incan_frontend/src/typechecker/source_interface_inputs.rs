@@ -59,6 +59,24 @@ impl SourceInterfaceInputs {
 }
 
 impl TypeChecker {
+    /// Keep a retained scalar body only at its original physical lexical scope. Earlier unsupported bodies may
+    /// introduce different scopes after an edit; that invalidates this product rather than renumbering identities.
+    pub(super) fn callable_body_matches_current_scope(&mut self, span: Span) -> bool {
+        let Some(scope) = self.type_info.reused_callable_scopes.get(&span) else {
+            return false;
+        };
+        if scope.is_none_or(|scope| scope == self.symbols.next_scope_index()) {
+            return self.type_info.reused_callable_bodies.contains_key(&span);
+        }
+        self.type_info.reused_callable_scopes.remove(&span);
+        if let Some(body) = self.type_info.reused_callable_bodies.remove(&span) {
+            self.type_info
+                .reused_callable_contexts
+                .retain(|(_, owner, _)| Some(owner) != body.canonical.as_ref());
+        }
+        false
+    }
+
     /// Install producer-validated bodies for one exact program. Declaration collection and final publication still
     /// run; only admitted scalar bodies with complete source-call witnesses skip checking and feed Body IR directly.
     pub fn set_callable_body_reuse(&mut self, products: crate::declaration_interface::ValidatedCallableBodies) {

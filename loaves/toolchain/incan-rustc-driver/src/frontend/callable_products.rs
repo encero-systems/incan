@@ -1,9 +1,9 @@
 //! Native source-item products selected by Oven's source-independent semantic context.
 //!
 //! A module product contains independent checked bodies, not a replacement checking route. Its frontend owner
-//! admits only scalar expressions with complete source-call witnesses and validates exact current locators. Every other
-//! module falls back to ordinary source checking; a missing, corrupt or concurrently replaced product is an ordinary
-//! miss.
+//! admits only scalar expressions with complete local-call witnesses and validates exact current locators. Imported
+//! calls and other bodies fall back to ordinary source checking; a missing, corrupt or concurrently replaced product
+//! is an ordinary miss.
 
 use std::collections::BTreeMap;
 use std::io::Write;

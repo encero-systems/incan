@@ -1,7 +1,8 @@
-//! Complete candidate inventories for modules containing only checked free functions.
+//! Complete candidate inventories for checked local free-function names.
 //!
-//! Inert module docstrings are ignored; other declaration kinds and imports refuse capture. A lookup witness applies to
-//! this exact admitted namespace, never to a member, builtin or dependency overlay. These records do not replace the
+//! Other declarations remain outside this inventory. A lookup witness applies to a local free-function name only
+//! when its live binding contains exactly the retained candidates, never to a member, builtin or dependency overlay.
+//! These records do not replace the
 //! checker's lookup recorder or authorize selective body checking; they provide a checked replay boundary for its
 //! callable candidate sets.
 
@@ -15,6 +16,7 @@ use super::{CheckedCallableInterface, encode_record, invalid};
 use crate::ast::{Declaration, Program};
 use crate::library_exports::CheckedNamedExport;
 use crate::library_manifest::LibraryManifestError;
+use crate::symbols::SymbolKind;
 use crate::typechecker::TypeChecker;
 
 /// One accepted source-only callable namespace, retaining private declarations and every overload candidate.
@@ -56,22 +58,48 @@ pub(crate) struct CheckedCallableRead {
 }
 
 impl CheckedCallableModule {
-    /// Capture every callable from an accepted module with no imports, nominal declarations or module directive.
-    /// Unsupported declarations refuse the entire namespace rather than making a negative lookup unsound.
+    /// Capture local free functions from an accepted ordinary module. Every retained name must resolve to exactly
+    /// those checked declarations; an imported candidate or ambiguous overlay refuses capture of this inventory.
     pub fn from_checked(program: &Program, checker: &TypeChecker) -> Result<Self, LibraryManifestError> {
+        Self::capture(program, checker, None)
+    }
+
+    /// Capture complete live candidate sets for explicitly requested local names only. Other names make no negative
+    /// lookup claim and remain outside this private product's read authority.
+    pub(super) fn from_checked_names(
+        program: &Program,
+        checker: &TypeChecker,
+        names: &BTreeSet<String>,
+    ) -> Result<Self, LibraryManifestError> {
+        let module = Self::capture(program, checker, Some(names))?;
+        for entry in &module.callables {
+            if !super::body_products::resolved_scalar_header(&entry.header)? {
+                return Err(invalid(
+                    "scalar candidate inventory contains a nonprimitive checked signature",
+                ));
+            }
+        }
+        Ok(module)
+    }
+
+    /// Encode the ordinary checked headers for every requested name, without copying unrelated declaration shapes.
+    /// All overloads of a requested name are retained and checked against the live lookup at the producer boundary.
+    fn capture(
+        program: &Program,
+        checker: &TypeChecker,
+        names: Option<&BTreeSet<String>>,
+    ) -> Result<Self, LibraryManifestError> {
         if program.rust_module_path.is_some() || !checker.errors.is_empty() {
             return Err(invalid("callable module requires an accepted source-only namespace"));
         }
         let mut callables = Vec::new();
         for declaration in &program.declarations {
-            if matches!(declaration.node, Declaration::Docstring(_)) {
+            let Declaration::Function(function) = &declaration.node else {
+                continue;
+            };
+            if names.is_some_and(|names| !names.contains(&function.name)) {
                 continue;
             }
-            let Declaration::Function(function) = &declaration.node else {
-                return Err(invalid(
-                    "callable module does not encode this declaration kind or import",
-                ));
-            };
             let header = CheckedCallableInterface::from_checked(function, declaration.span, checker)?;
             let signature = header.signature_digest(
                 &checker.type_info().declarations.named_type_identities,
@@ -93,10 +121,16 @@ impl CheckedCallableModule {
             callables,
         };
         module.validate()?;
+        for (name, read) in module.read_inventory()? {
+            if !current_candidates_match(checker, &name, &read) {
+                return Err(invalid("local callable inventory has an imported or changed binding"));
+            }
+        }
         Ok(module)
     }
 
-    /// Record all candidates of this namespace, retaining absence as a real read dependency.
+    /// Record all local free-function candidates, retaining absence within this inventory as a real dependency.
+    /// Absence does not establish a negative lookup in the module's imported, nominal or builtin namespaces.
     pub fn lookup(&self, name: &str) -> CallableLookupWitness {
         CallableLookupWitness {
             origin: self.origin.clone(),
@@ -209,6 +243,36 @@ impl CheckedCallableModule {
         }
         Ok(())
     }
+}
+
+/// Compare a live callable lookup's complete canonical candidate set with the producer's accepted local read.
+/// Unknown bindings and imported overload additions are misses; source spellings never stand in for identities.
+pub(super) fn current_candidates_match(checker: &TypeChecker, name: &str, read: &CheckedCallableRead) -> bool {
+    let Some(id) = checker.symbols.lookup(name) else {
+        return false;
+    };
+    let Some(symbol) = checker.symbols.get(id) else {
+        return false;
+    };
+    let candidates = match &symbol.kind {
+        SymbolKind::Function(_) => checker.symbols.identity_of(id).cloned().map(|identity| vec![identity]),
+        SymbolKind::FunctionOverloads(overloads) => overloads
+            .iter()
+            .map(|overload| overload.identity.clone())
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
+    let Some(mut candidates) = candidates else {
+        return false;
+    };
+    candidates.sort();
+    let mut accepted = read
+        .signatures
+        .iter()
+        .map(|(identity, _)| identity.clone())
+        .collect::<Vec<_>>();
+    accepted.sort();
+    candidates == accepted
 }
 
 /// Accept the semantic digest owner's exact representation, never a missing or truncated signature witness.

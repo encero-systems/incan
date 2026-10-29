@@ -7134,11 +7134,11 @@ impl TypeChecker {
         preserve_dependency_semantics: bool,
     ) -> Result<(), Vec<CompileError>> {
         self.reset_program_check(program, preserve_dependency_semantics);
+        self.collect_program_check_declarations(program);
+        self.prepare_program_body_facts();
         if let Some(reuse) = self.callable_body_reuse.take() {
             reuse.install(program, self);
         }
-        self.collect_program_check_declarations(program);
-        self.prepare_program_body_facts();
         self.check_program_declaration_bodies(program);
         self.record_program_lowering_facts(program);
         self.finish_program_check(program)
@@ -7273,7 +7273,7 @@ impl TypeChecker {
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
-                if self.type_info.reused_callable_bodies.contains_key(&decl.span) {
+                if self.callable_body_matches_current_scope(decl.span) {
                     self.symbols.enter_scope(crate::symbols::ScopeKind::Function);
                     self.symbols.exit_scope();
                     continue;
