@@ -361,6 +361,9 @@ fn lower_source_bodies(program: &ast::Program, facts: &BodyIrLoweringFacts<'_, '
                     Vec::new()
                 }
                 ast::Declaration::Function(function) => {
+                    if let Some(body) = facts.type_info.reused_callable_bodies.get(&decl.span) {
+                        return vec![body.clone()];
+                    }
                     vec![lower_function_body(function, decl.span, facts)]
                 }
                 ast::Declaration::Model(model) => lower_owner_member_bodies(

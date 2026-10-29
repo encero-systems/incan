@@ -88,6 +88,8 @@ pub struct CompilationSession {
     desugar_diagnostics: Arc<Mutex<BTreeMap<PathBuf, Vec<diagnostics::CompileError>>>>,
     /// The unit as Oven describes it.
     unit: UnitDescription,
+    /// Native-only accepted scalar body products; checking and graph sessions leave this inventory empty.
+    callable_body_reuse: BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies>,
     /// The unit's source root, copied from its description.
     pub source_root: PathBuf,
     /// The compiled Loaves the program imports from: its dependencies and the standard packages.
@@ -114,8 +116,9 @@ impl CompilationSession {
         Self::open(unit, false)
     }
 
-    /// Open a native program session with admitted inventories and first-use manifest demand. Source analysis,
-    /// declaration closure and lowering run anew; no previous source footprint supplies negative lookup facts.
+    /// Open a native program session with admitted inventories and first-use manifest demand. No previous source
+    /// footprint supplies negative lookup facts. A native producer may separately install explicit scalar-body
+    /// products after parsing and vocabulary expansion have established their current source provenance.
     pub fn for_native_program(unit: &UnitDescription) -> CliResult<Self> {
         Self::open(unit, false)
     }
@@ -174,12 +177,22 @@ impl CompilationSession {
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,
             unit: unit.clone(),
+            callable_body_reuse: BTreeMap::new(),
         })
     }
 
     /// The unit as Oven describes it.
     pub fn unit(&self) -> &UnitDescription {
         &self.unit
+    }
+
+    /// Install products selected against this session's exact parsed inputs. General analysis and inspection do not
+    /// call this method; the frontend validates each selection again before skipping accepted scalar bodies.
+    pub fn set_callable_body_reuse(
+        &mut self,
+        products: BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies>,
+    ) {
+        self.callable_body_reuse = products;
     }
 
     /// The compiled Loaves the program imports from.
@@ -275,6 +288,7 @@ impl CompilationSession {
             package,
             None,
             visit,
+            &self.callable_body_reuse,
         );
         let mut expansion_errors = self.expansion_failures(modules);
         match checked {

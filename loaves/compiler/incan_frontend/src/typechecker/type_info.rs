@@ -51,6 +51,11 @@ use super::{ConstValue, const_eval};
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct TypeCheckInfo {
+    /// Complete accepted scalar bodies selected before checking, consumed only by the native Body IR bridge.
+    /// Inspection never installs products, so semantic graph generation always retains full current source facts.
+    pub(crate) reused_callable_bodies: BTreeMap<Span, incan_semantics_core::body_ir::Body>,
+    /// Exact parameter ownership retained beside reused scalar bodies for subsequent product publication.
+    pub(crate) reused_callable_contexts: Vec<(CanonicalSymbolId, CanonicalSymbolId, u32)>,
     /// Trait hierarchy metadata consumed by trait impl and default-method lowering.
     pub traits: TraitArtifacts,
     /// Derive expansion metadata imported from dependency modules and manifests.

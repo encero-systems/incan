@@ -21,6 +21,8 @@ The file reads top to bottom:
 # ---- The plan, re-exported so the driver reads one surface ----
 from pub::incan_mir_plan import source_span as plan_span
 from redo_counts import record_lowering
+from scalar_store import scalar_inputs, retained_scalar, retain_scalar
+from rust::serde_json import to_string as native_json
 from pub::incan_mir_plan import (
     semantic_type_matches,
     BasicBlock,
@@ -107,6 +109,7 @@ from rust::incan_semantics_core import (
     generic,
     encode_incan_symbol_identity,
     CanonicalSymbolId as RustCanonicalSymbolId,
+    CompilerNodeId,
 )
 from rust::incan_semantics_core::body_ir import (
     NativeUnionDeclaration,
@@ -213,7 +216,7 @@ from program_context import ProgramContext, body_at, retain_nominal_tables
 from native_type_identity import ConstructorIndex, constructor_index as index_constructors
 from pub::incan_mir_plan import ZipCarrier
 from rust::std::sync import Arc
-from rust::std::collections import BTreeMap
+from rust::std::collections import BTreeMap, BTreeSet
 from foreign_calls import lower_foreign_call
 from c_bridges import lower_checked_bridge
 from nominal_instances import (
@@ -7741,11 +7744,27 @@ pub def unit_plan(
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool = true,
+    scalar_products: Option[str] = None,
+    scalar_bodies: list[CompilerNodeId] = [],
 ) -> Result[Option[Plan], str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
-    return lowered_plan(modules, sources, files, entry, kind, tests, published, overflow_checks)
+    mut scalar_index: BTreeSet[CompilerNodeId] = BTreeSet.new()
+    for identity in scalar_bodies:
+        _ = scalar_index.insert(identity)
+    return lowered_plan(
+        modules,
+        sources,
+        files,
+        entry,
+        kind,
+        tests,
+        published,
+        overflow_checks,
+        scalar_products,
+        scalar_index,
+    )
 
 
 def program_context(
@@ -7786,6 +7805,8 @@ def lowered_plan(
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool,
+    scalar_products: Option[str],
+    scalar_bodies: BTreeSet[CompilerNodeId],
 ) -> Result[Option[Plan], str]:
     """Lower a checked unit: 1. Prepare layouts. 2. Lower bodies and instances. 3. Publish the completed plan."""
     trace_key: str = "INCAN_TRACE_LOWERING"
@@ -7846,6 +7867,8 @@ def lowered_plan(
         unions,
         retained_nominals,
         trace,
+        scalar_products,
+        scalar_bodies,
     )?
     retained_constructors = program.constructors.as_ref()
     original_constructors = constructors.as_ref()
@@ -8023,6 +8046,8 @@ def lower_plan_frames(
     unions: list[RustType],
     mut retained_nominals: list[NominalInstance],
     trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: &BTreeSet[CompilerNodeId],
 ) -> Result[tuple[list[StaticCell], int], str]:
     """Lower ordinary frames, then retain request layouts and the nominal length for source restoration."""
     lower_ordinary_bodies(
@@ -8041,6 +8066,8 @@ def lower_plan_frames(
         emitted_frames,
         unions,
         trace,
+        scalar_products,
+        scalar_bodies,
     )?
     original_nominal_count = len(context.nominal_declarations)
     statics = lower_requested_frames(
@@ -8264,6 +8291,8 @@ def lower_ordinary_bodies(
     mut emitted_frames: EmittedFrames,
     unions: list[RustType],
     trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: &BTreeSet[CompilerNodeId],
 ) -> Result[None, str]:
     """Lower selected source frames in module order, retaining synthesized callees and checked instance requests."""
     for index in range(len(checked)):
@@ -8278,7 +8307,7 @@ def lower_ordinary_bodies(
             if trace:
                 println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
             diagnostic_owner = f" in {body.name} at {files[index]}"
-            function, runtime, pending, synthesized = lower_function(
+            function, runtime, pending, synthesized = lower_ordinary_frame(
                 context,
                 program,
                 body,
@@ -8286,8 +8315,8 @@ def lower_ordinary_bodies(
                 sources[index],
                 files[index],
                 intrinsics,
-                [],
-                DecoratorFrame.Normal,
+                scalar_products,
+                scalar_bodies,
             ).map_err((reason) => reason + diagnostic_owner)?
             merge_instance_requests(instances, pending)
             for retained_position in range(len(functions)):
@@ -8322,6 +8351,63 @@ def lower_ordinary_bodies(
             )?
             _ = merge_externals(externals, runtime)?
     return Ok(None)
+
+
+def lower_ordinary_frame(
+    context: &BodyIrModule,
+    program: ProgramContext,
+    body: &RustBody,
+    unions: list[RustType],
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    products: Option[str],
+    admitted: &BTreeSet[CompilerNodeId],
+) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
+    """Read only producer-admitted scalar products, or lower normally and retain an exact self-contained result."""
+    inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted)
+    original_intrinsics = len(intrinsics)
+    if let Some(directory) = products:
+        if let Some(witness) = inputs:
+            if let Some(function) = retained_scalar(directory, witness):
+                return Ok((function, [], [], []))
+    function, runtime, pending, synthesized = lower_function(
+        context,
+        program,
+        body,
+        unions,
+        source,
+        file,
+        intrinsics,
+        [],
+        DecoratorFrame.Normal,
+    )?
+    if len(runtime) == 0 and len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
+        if let Some(directory) = products:
+            if let Some(witness) = inputs:
+                retain_scalar(directory, witness, function)
+    return Ok((function, runtime, pending, synthesized))
+
+
+def ordinary_product_inputs(
+    context: &BodyIrModule,
+    body: &RustBody,
+    source: str,
+    file: str,
+    overflow_checks: bool,
+    products: Option[str],
+    admitted: &BTreeSet[CompilerNodeId],
+) -> Option[list[str]]:
+    """Retain exact checked input only for frames whose empty nonlocal read set the source producer proved."""
+    if products is None:
+        return None
+    if not admitted.contains(body.direct_call_id):
+        return None
+    match native_json(body):
+        Err(_) => return None
+        Ok(input) =>
+            span = location(body.span, source, file)
+            return Some(scalar_inputs(input, evaluator_name(context, body), span, overflow_checks))
 
 
 def validate_program_entry_selection(modules: &list[BodyIrModule], entry: int) -> Result[None, str]:

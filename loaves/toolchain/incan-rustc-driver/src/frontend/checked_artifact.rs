@@ -215,6 +215,7 @@ fn decode(bytes: &[u8]) -> Result<CheckedProgram, Box<dyn std::error::Error>> {
         _ => return Err("checked Rust fact inventory differs".into()),
     }
     Ok(CheckedProgram {
+        cacheable_bodies: Vec::new(),
         modules: snapshot
             .modules
             .into_iter()

@@ -59,6 +59,12 @@ impl SourceInterfaceInputs {
 }
 
 impl TypeChecker {
+    /// Install producer-validated bodies for one exact program. Declaration collection and final publication still
+    /// run; only the admitted parameter-only scalar bodies skip checking and are consumed directly by Body IR.
+    pub fn set_callable_body_reuse(&mut self, products: crate::declaration_interface::ValidatedCallableBodies) {
+        self.callable_body_reuse = Some(products);
+    }
+
     /// Use the immutable parse inputs of this collected unit. The index supplies source only; all semantic checking
     /// still runs, and declarations generated outside this index retain their ordinary owned fallback.
     pub fn set_source_interface_inputs(&mut self, inputs: Arc<SourceInterfaceInputs>) {

@@ -20,6 +20,7 @@ use incan_mir_lowering::{SourceInputs, program_refusals, unit_plan};
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
+mod callable_products;
 mod checked_artifact;
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
@@ -96,6 +97,8 @@ fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
 
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
+    /// Invocation-local producer evidence for self-contained scalar native function products.
+    cacheable_bodies: Vec<incan_semantics_core::CompilerNodeId>,
     modules: Vec<BodyIrModule>,
     sources: Vec<String>,
     files: Vec<String>,
@@ -209,11 +212,13 @@ fn checked_modules(
         .map_err(|error| error.to_string())?;
     let tests = crate::test_unit::collect(unit, &session)?;
     let package_identity = unit.package.as_str();
+    let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
             .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
+                callable_products.observe(module, checker);
                 if let Some(publication) = publication.as_mut() {
                     publication.visit(module, checker, module.file_path == path);
                 }
@@ -259,6 +264,7 @@ fn checked_modules(
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
+    let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     sources.extend(modules.into_iter().map(|module| module.source));
     let program_entrypoints = program_entrypoints(unit, &bodies, &files)?;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
@@ -267,6 +273,7 @@ fn checked_modules(
     entry_module.runtime_callable_bindings = runtime_callable_bindings;
     let program = complete_dependency_context(
         CheckedProgram {
+            cacheable_bodies,
             modules: bodies,
             sources,
             files,
@@ -1104,10 +1111,10 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
     compile_unit(arguments, true)
 }
 
-/// Compile one unit with its immutable-input policy and Oven's optional checked-source witness; native lowering and
-/// compilation remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a
-/// refusal that unchanged inputs reproduce writes its receipt. Checking, lowering and native compilation retain their
-/// separate refusal boundaries; only successful compilation publishes library artifacts.
+/// Compile one unit with its immutable-input policy and Oven's optional checked-source and scalar-item witnesses.
+/// Checking and lowering restore only explicitly admitted products; rustc compilation runs fresh. A leading `--certify
+/// PATH` option names where a refusal that unchanged inputs reproduce writes its receipt. Checking, lowering and native
+/// compilation retain their separate refusal boundaries; only successful compilation publishes library artifacts.
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
@@ -1143,6 +1150,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let loaf_links: std::collections::BTreeSet<String> =
         unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
+    let native_products = callable_products::native_directory(&unit);
     let mut program = check_compilation_source(unit, rust, resident, receipt.clone())?;
     if census_complete(&program, kind, overflow_checks)? {
         return Ok(());
@@ -1155,6 +1163,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &source_path,
         &receipt,
         &mut published_unions,
+        native_products,
     )?;
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
 
@@ -1236,6 +1245,7 @@ fn lower_compilation_plan(
     source: &Path,
     receipt: &RefusalReceipt,
     published_unions: &mut Vec<NativeUnionDeclaration>,
+    native_products: Option<String>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
         module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
@@ -1244,6 +1254,8 @@ fn lower_compilation_plan(
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let entry = program.entry.try_into()?;
         let inputs = SourceInputs {
+            scalar_products: native_products,
+            scalar_bodies: std::mem::take(&mut program.cacheable_bodies),
             sources: std::mem::take(&mut program.sources),
             files: std::mem::take(&mut program.files),
             tests: program.tests.iter().map(|test| test.name.clone()).collect(),
@@ -1267,7 +1279,8 @@ fn lower_compilation_plan(
 }
 
 /// Lower authored modules from their checked facts and the canonical provider catalog. Dependency bodies already
-/// present in `bodies` supply context; every source body is built anew and remains outside immutable worker caches.
+/// present in `bodies` supply context; validated scalar products supply complete unchanged source bodies while the
+/// ordinary Body IR producer builds dirty and unsupported bodies.
 fn lower_authored_modules(
     modules: &[ParsedModule],
     analysis: &CompilationAnalysis,
@@ -1303,6 +1316,8 @@ fn census_complete(
     let refusals = program_refusals(
         &program.modules,
         SourceInputs {
+            scalar_products: None,
+            scalar_bodies: Vec::new(),
             sources: program.sources.clone(),
             files: program.files.clone(),
             tests: Vec::new(),

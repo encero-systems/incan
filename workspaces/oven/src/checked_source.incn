@@ -3,7 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, read_json
-from home import unit_ledger
+from home import loaf_build_dir, unit_ledger
 from json_fields import array_value, required_items, string_value
 from loaf_local_graph import unique
 from observation import Ledger, SETTLE_SECONDS, load_ledger, trace
@@ -16,18 +16,20 @@ const CHECKED_DOMAIN: str = "incan.oven.checked-source/2"
 
 pub def retain_checked_source(unit: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
     """
-    Select a private checked-source snapshot while leaving native profile policy and linking fresh.
+    Select private checked products while leaving native profile policy and linking fresh.
 
-    1. Refuse reuse for executable vocabulary whose environment is not a semantic input witness.
+    1. Refuse owned vocabulary and C headers without an admitted item producer.
     2. Reconcile source, interfaces, target, features and the complete selected native closure.
-    3. Name the snapshot by that equivalence key in the producer's shared profile-independent directory.
+    3. Name item products by their context, granting a whole snapshot only when vocabulary is inert.
     """
-    # 1. Executable vocabulary can observe more than its source and admitted native artifacts.
-    if not reusable_vocabulary(unit)?:
+    # 1. Owned vocabulary and C headers have no admitted item producer in this slice.
+    if unit.vocab is not None or unit.vocabulary or unit.vocab_desugarer or len(unit.c_headers) != 0:
         trace(f"{unit.package}: checked-source reuse refused for executable vocabulary or C headers")
         mut refused = unit
         refused.checked_artifact = None
         refused.checked_key = None
+        refused.checked_context = None
+        refused.checked_products = None
         return Ok(refused)
     # 2. Profile flags never enter checked-source equivalence, but every semantic input does.
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-source"), SETTLE_SECONDS)
@@ -48,11 +50,21 @@ pub def retain_checked_source(unit: UnitDescription, toolchain: Toolchain) -> Re
     trace(f"{unit.package}: checked-source components {" ".join(parts)}")
     key = fingerprint(parts)?
     ledger.save()?
-    # 3. Output placement belongs to Oven; the compiler reads and writes only this explicit artifact.
+    # 3. Expanded nodes never enter scalar products, and executable vocabulary still forbids whole snapshots.
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("checked-source")
     mut selected = unit
-    selected.checked_artifact = Some(directory.joinpath(f"{key}.incnchecked").0)
-    selected.checked_key = Some(key)
+    context = fingerprint([parts[0], parts[1], parts[2], parts[4], parts[5], parts[6]])?
+    selected.checked_context = Some(context)
+    selected.checked_products = Some(
+        loaf_build_dir(unit.project_root, unit.package).joinpath(".products").joinpath(context).0,
+    )
+    selected.checked_artifact = None
+    selected.checked_key = None
+    if reusable_vocabulary(unit)?:
+        selected.checked_artifact = Some(directory.joinpath(f"{key}.incnchecked").0)
+        selected.checked_key = Some(key)
+    else:
+        trace(f"{unit.package}: whole checked-source reuse refused for executable vocabulary")
     return Ok(selected)
 
 
@@ -75,6 +87,8 @@ def semantic_description(unit: UnitDescription) -> Result[str, str]:
     fields["debug_info"] = JsonValue.int(0)
     fields["checked_artifact"] = JsonValue.null()
     fields["checked_key"] = JsonValue.null()
+    fields["checked_context"] = JsonValue.null()
+    fields["checked_products"] = JsonValue.null()
     mut loaves: list[JsonValue] = []
     for loaf in unit.loaves:
         mut item = loaf.to_json().expect_object().map_err((error) => error.message())?

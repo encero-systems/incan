@@ -195,6 +195,7 @@ def verify_checked_source_profiles(setup: Fixture) -> Result[None, str]:
         write(Path(loaf.dir).joinpath(f"{loaf.name}.incngraph"), "one requested checked graph")?
     first = retain_checked_source(debug, setup.toolchain)?
     assert first.checked_key is not None
+    assert first.checked_context is not None
     assert first.checked_key == absent.checked_key
     assert retain_checked_source(first, setup.toolchain)?.checked_key == first.checked_key
     mut release = debug
@@ -213,6 +214,7 @@ def verify_checked_source_profiles(setup: Fixture) -> Result[None, str]:
     # 2. Semantic equivalence does not authorize reusing profile-dependent native results.
     shared = retain_checked_source(release, setup.toolchain)?
     assert shared.checked_key == first.checked_key
+    assert shared.checked_context == first.checked_context
     for loaf in release.loaves:
         write(Path(loaf.dir).joinpath(f"{loaf.name}.incngraph"), "a different requested graph")?
     assert retain_checked_source(release, setup.toolchain)?.checked_key == first.checked_key
@@ -227,11 +229,13 @@ def verify_checked_source_profiles(setup: Fixture) -> Result[None, str]:
     original = read(source)?
     write(source, original + "# a source edit\n")?
     assert retain_checked_source(release, setup.toolchain)?.checked_key != first.checked_key
+    assert retain_checked_source(release, setup.toolchain)?.checked_context == first.checked_context
     write(source, original)?
     interface = Path(release.loaves[0].dir).joinpath("dep.incnbody")
     body = read(interface)?
     write(interface, body + "changed")?
     assert retain_checked_source(release, setup.toolchain)?.checked_key != first.checked_key
+    assert retain_checked_source(release, setup.toolchain)?.checked_context != first.checked_context
     write(interface, body)?
     closure = Path(release.loaves[0].dir).joinpath("dep.native.json")
     original_closure = read(closure)?
@@ -322,6 +326,7 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     verify_private_body_execution(scratch.path().joinpath("execution"))?
     # 5. A private fresh project has four source frames, regardless of linked retained bodies.
     verify_work_observations(scratch.path().joinpath("work"))?
+    verify_callable_item_products(scratch.path().joinpath("items"))?
     return Ok(None)
 
 
@@ -388,6 +393,139 @@ def verify_observed_library_bytes(unit: UnitDescription, toolchain: Toolchain, p
         else:
             baseline = produced
     return Ok(None)
+
+
+def verify_callable_item_products(project: Path) -> Result[None, str]:
+    """
+    Require real checked-body, Body IR and native function hits after a private scalar implementation changes.
+
+    1. Compile an ordinary library with three private scalar helpers and one public caller.
+    2. Edit one helper and require exactly two fewer source checks, Body IR builds and native lowerings.
+    3. Compare every library product with a cold compilation using identical material compiler arguments.
+    4. Corrupt private products, require full work and compare against a cold build again.
+    5. Execute an ordinary consumer and require the edited result.
+    """
+    # 1. All candidate bodies precede the ordinary caller, whose complete checking and lowering still run.
+    toolchain = load_toolchain()?
+    source = project.joinpath("src/lib.incn")
+    write(project.joinpath("loaf.toml"), "[project]\nname='scalar_item_products'\nversion='0.1.0'\n")?
+    original = "\n\n".join(
+        [
+            "def first() -> int:\n    return 1",
+            "def second() -> int:\n    return 2",
+            "def third() -> int:\n    return 3",
+            "pub def answer() -> int:\n    return first() + second() + third()",
+        ],
+    ) + "\n"
+    write(source, original)?
+    mut unit = describe(source, "release", FeatureRequest(), selected_toolchain=Some(toolchain))?
+    unit.kind = "library"
+    unit = prepare_native(unit, toolchain)?
+    initial = retain_checked_source(unit, toolchain)?
+    cold_counts, cold_native, _before = observe_item_library(initial, toolchain, project, "initial")?
+    assert cold_counts["checking/declaration"] == 4, f"cold source checks: {cold_counts}"
+    assert cold_counts["body_ir/built"] == 4, f"cold source Body IR: {cold_counts}"
+    # 2. The source coordinates and signatures remain fixed; only one private implementation changes.
+    write(source, original.replace("return 1", "return 9"))?
+    edited = retain_checked_source(unit, toolchain)?
+    assert initial.checked_context is not None, "ordinary scalar library has no checked context"
+    assert edited.checked_context == initial.checked_context, "a private body edit changed the semantic context"
+    # The installed interop vocabulary can refuse whole-source snapshots while authored item products remain safe.
+    counts, native, products = observe_item_library(edited, toolchain, project, "edited")?
+    assert counts["checking/declaration"] == 2, f"unexpected item checking work: {counts}"
+    assert counts["body_ir/built"] == 2, f"unexpected item Body IR work: {counts}"
+    assert native == cold_native - 2, f"native function products did not reuse two frames: {cold_native} -> {native}"
+    # 3. Cache placement and permission are the only differences from a full compilation of the edited source.
+    mut independent = edited
+    independent.checked_context = None
+    independent.checked_artifact = None
+    independent.checked_key = None
+    independent.checked_products = None
+    full_counts, full_native, cold_products = observe_item_library(independent, toolchain, project, "cold-edited")?
+    assert full_counts["checking/declaration"] == 4, f"cold edited source checks: {full_counts}"
+    assert full_counts["body_ir/built"] == 4, f"cold edited source Body IR: {full_counts}"
+    assert full_native == cold_native, f"cold native work changed: {full_native} vs {cold_native}"
+    assert products == cold_products, "item replay changed a native or governed library product"
+    # 4. Both checked-body and native product damage are misses, never acceptance or native-code authority.
+    corrupt_item_products(edited)?
+    write(source, original.replace("return 1", "return 8"))?
+    damaged = retain_checked_source(unit, toolchain)?
+    damaged_counts, damaged_native, damaged_products = observe_item_library(damaged, toolchain, project, "damaged")?
+    assert damaged_counts["checking/declaration"] == 4, f"damaged source products were reused: {damaged_counts}"
+    assert damaged_counts["body_ir/built"] == 4, f"damaged Body IR products were reused: {damaged_counts}"
+    assert damaged_native == cold_native, f"damaged native products were reused: {damaged_native}"
+    _counts, _native, damaged_cold = observe_item_library(independent, toolchain, project, "cold-damaged")?
+    assert damaged_products == damaged_cold, "damaged private products changed a compiled library"
+    write(source, original.replace("return 1", "return 9"))?
+    # 5. An unchanged public caller must observe the new private implementation through the compiled Loaf.
+    consumer = project.joinpath("consumer")
+    manifest = "\n".join(
+        [
+            "[project]",
+            "name='scalar_item_consumer'",
+            "version='0.1.0'",
+            "[project.scripts]",
+            "main='src/main.incn'",
+            "[dependencies]",
+            "values={path='..'}",
+        ],
+    ) + "\n"
+    write(consumer.joinpath("loaf.toml"), manifest)?
+    write(
+        consumer.joinpath("src/main.incn"),
+        "from pub::values import answer\n\ndef main() -> None:\n    println(answer())\n",
+    )?
+    actual = body_program_output(consumer, toolchain)?
+    assert actual == "14\n", f"edited scalar consumer: {actual}"
+    return Ok(None)
+
+
+def corrupt_item_products(unit: UnitDescription) -> Result[None, str]:
+    """Damage only this test producer's private checked and native product files, retaining complete artifacts."""
+    if let Some(root) = unit.checked_products:
+        for directory in [Path(root), Path(root).joinpath(unit.profile)]:
+            for path in directory.iterdir().map_err((error) => error.message())?:
+                if path.name().endswith(".incnitems") or path.name().endswith(".incnfunction"):
+                    write(path, "damaged private product")?
+        return Ok(None)
+    return Err("item test has no private product directory")
+
+
+def observe_item_library(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    project: Path,
+    label: str,
+) -> Result[tuple[Dict[str, int], int, list[bytes]], str]:
+    """
+    Observe one real library compile with the same output paths across source generations.
+
+    1. Invoke the ordinary driver with private child-local work observations.
+    2. Retain actual phase counts and every material library product.
+    """
+    # 1. This direct invocation bypasses executable reuse while preserving ordinary compiler inputs.
+    compiled = crate_name(unit)
+    path = write_unit(unit, compiled)?
+    artifact = project.joinpath(f"lib{compiled}.rlib")
+    trace = project.joinpath(f"trace-{label}")
+    mut command = driver_command(toolchain)?
+    command.env("INCAN_NATIVE_TIMING", "1")
+    command.env("INCAN_TRACE_DIR", trace.0)
+    arguments = ["--unit", path.0, compiled, artifact.0, toolchain.sysroot] + driver_arguments(unit.profile)
+    for argument in arguments:
+        command.arg(argument)
+    output = command.output().map_err((error) => f"cannot observe item products: {error}")?
+    diagnostics = decoded(output.stderr)
+    assert output.status.success(), diagnostics
+    # 2. Native lowering counts include linked frames; only two covered source frames should disappear.
+    mut native = 0
+    for line in diagnostics.split("\n"):
+        if line.startswith("redo-item: lowering\t"):
+            native += 1
+    mut products: list[bytes] = []
+    for name in [artifact.name(), f"{unit.package}.incnlib", f"{unit.package}.incnbody"]:
+        products.append(project.joinpath(name).read_bytes().map_err((error) => error.message())?)
+    return Ok((checked_work_counts(trace)?, native, products))
 
 
 def checked_work_counts(directory: Path) -> Result[Dict[str, int], str]:

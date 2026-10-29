@@ -80,6 +80,8 @@ pub model UnitDescription:
     # Private checked-source reuse selected by Oven, separate from profile-specific executable artifacts.
     pub checked_artifact: Option[str] = None
     pub checked_key: Option[str] = None
+    pub checked_context: Option[str] = None
+    pub checked_products: Option[str] = None
     # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
     pub facets: list[LocalFacet] = []
     # Source readings belong to this preparation and are not part of the compiler's public description.
@@ -114,6 +116,10 @@ pub model UnitDescription:
             _ = document.set("checked_artifact", JsonValue.string(path))
         if let Some(key) = self.checked_key:
             _ = document.set("checked_key", JsonValue.string(key))
+        if let Some(context) = self.checked_context:
+            _ = document.set("checked_context", JsonValue.string(context))
+        if let Some(products) = self.checked_products:
+            _ = document.set("checked_products", JsonValue.string(products))
         return document
 
 

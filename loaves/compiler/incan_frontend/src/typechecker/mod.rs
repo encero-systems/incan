@@ -656,6 +656,8 @@ pub struct TypeChecker {
     pub local_function_decls: HashMap<String, Arc<FunctionDecl>>,
     /// Immutable parsed declarations of this collected unit, shared by its interface and body consumers.
     source_interface_inputs: Option<Arc<SourceInterfaceInputs>>,
+    /// Accepted scalar-body products selected for one exact parsed input by the native producer.
+    callable_body_reuse: Option<crate::declaration_interface::ValidatedCallableBodies>,
     /// Names of the declarations the program being checked marks `pub`.
     ///
     /// A public library carries a parameter default that constructs a model or class to its consumers only when they
@@ -1036,6 +1038,7 @@ impl TypeChecker {
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
             source_interface_inputs: None,
+            callable_body_reuse: None,
             current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
             body_ir_decorator_factory_span: None,
@@ -7131,6 +7134,9 @@ impl TypeChecker {
         preserve_dependency_semantics: bool,
     ) -> Result<(), Vec<CompileError>> {
         self.reset_program_check(program, preserve_dependency_semantics);
+        if let Some(reuse) = self.callable_body_reuse.take() {
+            reuse.install(program, self);
+        }
         self.collect_program_check_declarations(program);
         self.prepare_program_body_facts();
         self.check_program_declaration_bodies(program);
@@ -7267,6 +7273,11 @@ impl TypeChecker {
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
+                if self.type_info.reused_callable_bodies.contains_key(&decl.span) {
+                    self.symbols.enter_scope(crate::symbols::ScopeKind::Function);
+                    self.symbols.exit_scope();
+                    continue;
+                }
                 self.check_declaration(decl);
             }
         }

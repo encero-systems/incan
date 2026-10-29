@@ -77,6 +77,14 @@ pub struct UnitDescription {
     /// Complete semantic input identity supplied by Oven for `checked_artifact`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked_key: Option<String>,
+    /// Source-independent semantic context of private callable products, owned and reconciled by Oven.
+    /// Individual products additionally require exact current declaration inputs and producer-owned read evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_context: Option<String>,
+    /// Explicit private item-product directory. An executable vocabulary provider can forbid whole-source snapshots
+    /// while authored, expansion-free scalar declarations retain independently validated products here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_products: Option<PathBuf>,
     /// Every feature the package declares, which `when feature(...)` may name.
     pub declared_features: BTreeSet<String>,
     /// The features active for this unit.

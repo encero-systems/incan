@@ -2,6 +2,7 @@
 
 from assertions import lower_assertion
 from rust::incan_semantics_core::body_ir import NativeUnionDeclaration
+from rust::incan_semantics_core import CompilerNodeId
 from async_ import future_type, validate_futures, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
@@ -69,6 +70,9 @@ pub model SourceInputs:
     pub tests: list[str]
     # Ordinary integer operations follow the selected unit's profile; explicit helpers keep their own policies.
     pub overflow_checks: bool = true
+    # Producer-owned empty-read-set evidence; absence preserves ordinary lowering.
+    pub scalar_products: Option[str] = None
+    pub scalar_bodies: list[CompilerNodeId] = []
 
 
 pub def unit_plan(
@@ -88,6 +92,8 @@ pub def unit_plan(
         inputs.tests,
         published,
         inputs.overflow_checks,
+        inputs.scalar_products,
+        inputs.scalar_bodies,
     )
 
 

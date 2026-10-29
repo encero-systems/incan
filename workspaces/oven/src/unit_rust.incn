@@ -33,6 +33,7 @@ from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from unit_compiler import compile_prepared_unit
+from checked_source import retain_checked_source
 from unit_freshness import Key, artifact_files, install_all, record, staleness, unit_key
 from publication import publish_binary
 from vocabulary import prepare_vocabulary, stage_vocabulary
@@ -110,6 +111,21 @@ pub def compile_library_unit(
     toolchain: Toolchain,
     output: Path,
     compiler: str = "",
+) -> Result[i32, str]:
+    """Prepare private source products for ordinary libraries, then publish through the complete native key."""
+    mut ready = library
+    if ready.checked_context is None:
+        match retain_checked_source(library, toolchain):
+            Ok(retained) => ready = retained
+            Err(reason) => trace(f"{library.package}: private source products unavailable: {reason}")
+    return compile_retained_library(ready, toolchain, output, compiler)
+
+
+def compile_retained_library(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    compiler: str,
 ) -> Result[i32, str]:
     """
     Reuse or replace a prepared library and record all published artifacts.

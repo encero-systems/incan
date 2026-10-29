@@ -47,12 +47,12 @@ pub def standard_artifact_dir(package: str, profile: str) -> Result[Path, str]:
 
 pub def dependency_artifact_dir(root_project: str, package: str, profile: str) -> Path:
     """The artifact directory of a path dependency `package`, reached from the project at `root_project`."""
-    return Path(root_project)
-        .joinpath("target")
-        .joinpath("incan")
-        .joinpath("loaves")
-        .joinpath(package)
-        .joinpath(profile)
+    return loaf_build_dir(root_project, package).joinpath(profile)
+
+
+pub def loaf_build_dir(root_project: str, package: str) -> Path:
+    """The producer's Loaf build directory shared by native profiles and private checked item products."""
+    return Path(root_project).joinpath("target").joinpath("incan").joinpath("loaves").joinpath(package)
 
 
 pub def unit_ledger(project_root: str, name: str) -> Path:
