@@ -1,0 +1,126 @@
+"""Segment store contracts: snapshots that never change, one delta per publication, misses for damage, canonical bases."""
+
+from rust::std::string import String as RustString
+from std.fs import Path
+from scratch import scratch_directory
+from segment_store import (
+    claim,
+    compact,
+    get,
+    keys,
+    payload_intact,
+    payload_path,
+    publish,
+    put_payload,
+    snapshot,
+    sweep_payloads,
+    sweep_segments,
+    text_key,
+)
+
+
+def entry(name: str, value: str) -> Dict[str, bytes]:
+    """One entry keyed by the text key of `name`."""
+    mut entries: Dict[str, bytes] = {}
+    entries[text_key([name])] = value.encode("utf-8")
+    return entries
+
+
+def value_of(found: Option[bytes]) -> str:
+    """The text of a found value; absent is the empty string."""
+    match found:
+        Some(value) =>
+            match RustString.from_utf8(value):
+                Ok(text) => return str(text)
+                Err(_) => return ""
+        None => return ""
+
+
+pub def test_a_snapshot_keeps_its_generation_while_later_publications_add_deltas() -> Result[None, str]:
+    """
+    A reader's snapshot does not change when a baker publishes; a new snapshot sees the new delta.
+
+    1. An empty store is generation 0 and every key is a miss.
+    2. Each publication adds one generation; the newest value of a key wins.
+    3. A snapshot taken earlier still answers from its own generation.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    empty = snapshot(root)?
+    assert empty.generation == 0
+    assert value_of(get(empty, text_key(["a"]))) == ""
+    first = publish(root, empty, entry("a", "one"))?
+    second = publish(root, first, entry("a", "two"))?
+    assert first.generation == 1
+    assert second.generation == 2
+    assert value_of(get(second, text_key(["a"]))) == "two"
+    assert value_of(get(first, text_key(["a"]))) == "one"
+    assert len(keys(second)) == 1
+    return Ok(None)
+
+
+pub def test_bakers_that_extend_an_old_generation_keep_each_other_s_entries() -> Result[None, str]:
+    """Two bakers publishing from the same base both land; neither delta is dropped."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    base = snapshot(root)?
+    held = claim(root, text_key(["a"]))?
+    left = publish(root, base, entry("a", "one"))?
+
+    right = publish(root, base, entry("b", "two"))?
+    assert left.generation == 1 and right.generation == 2
+    latest = snapshot(root)?
+    assert latest.generation == 2
+    assert value_of(get(latest, text_key(["a"]))) == "one"
+    assert value_of(get(latest, text_key(["b"]))) == "two"
+    return Ok(None)
+
+
+pub def test_a_damaged_segment_or_payload_is_a_miss() -> Result[None, str]:
+    """A truncated segment answers nothing, and a changed payload is no longer intact; neither is ever read as a value."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    published = publish(root, snapshot(root)?, entry("a", "one"))?
+    segment = root.joinpath("segments").joinpath(f"{published.segments[0].name}.seg")
+    segment.write_bytes(b"INCSEG").map_err((error) => error.message())?
+    assert value_of(get(snapshot(root)?, text_key(["a"]))) == ""
+    source = scratch.path().joinpath("artifact")
+    source.write_bytes(b"program").map_err((error) => error.message())?
+    digest = put_payload(root, source)?
+    assert payload_intact(root, digest)
+    stored = payload_path(root, digest)
+    stored.chmod(false).map_err((error) => error.message())?
+    stored.write_bytes(b"damaged").map_err((error) => error.message())?
+    assert not payload_intact(root, digest)
+    return Ok(None)
+
+
+pub def test_compaction_gives_a_byte_identical_base_and_collection_keeps_only_what_is_live() -> Result[None, str]:
+    """
+    Compacting equal contents in two stores gives the same base, and collection removes unkept keys and files.
+
+    1. Two stores receive the same entries in different publication orders.
+    2. Their compacted bases have the same content name.
+    3. Unkept keys, unnamed segments and unreachable payloads are removed.
+    """
+    scratch = scratch_directory()?
+    one = scratch.path().joinpath("one")
+    two = scratch.path().joinpath("two")
+    assert publish(one, snapshot(one)?, entry("a", "x"))?.generation > 0
+    assert publish(one, snapshot(one)?, entry("b", "y"))?.generation > 0
+    assert publish(two, snapshot(two)?, entry("b", "y"))?.generation > 0
+    assert publish(two, snapshot(two)?, entry("a", "x"))?.generation > 0
+    assert publish(two, snapshot(two)?, entry("c", "z"))?.generation > 0
+    keep = set([text_key(["a"]), text_key(["b"])])
+    left = compact(one, keep)?
+    right = compact(two, keep)?
+    assert len(left.segments) == 1
+    assert left.segments[0].name == right.segments[0].name
+    assert value_of(get(right, text_key(["c"]))) == ""
+    assert sweep_segments(two)? > 0
+    assert value_of(get(snapshot(two)?, text_key(["a"]))) == "x"
+    source = scratch.path().joinpath("artifact")
+    source.write_bytes(b"program").map_err((error) => error.message())?
+    assert put_payload(two, source)? != ""
+    assert sweep_payloads(two, set())? == 1
+    return Ok(None)
