@@ -1,6 +1,6 @@
 # RFC 163: Cross-target builds and toolchain target support
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-25
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -17,7 +17,7 @@
     - RFC 148 (must-use values and deliberate discard)
     - RFC 159 (Cloves and the managed C toolchain)
     - RFC 160 (vocabulary in Incan and native desugarers)
-- **Issue:** —
+- **Issue:** [#2480](https://github.com/encero-systems/incan/issues/2480)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —
