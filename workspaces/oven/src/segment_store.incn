@@ -22,7 +22,7 @@ payload is a miss: the asker bakes it again.
 from rust::std::process import id
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
-from std.fs import Path
+from std.fs import File, Path
 from std.fs.locking import FileLock
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError, _BytesIO
@@ -32,22 +32,39 @@ const KEY_BYTES: int = 32
 const INDEX_ENTRY_BYTES: int = 48
 const HEADER_BYTES: int = 16
 const MANIFEST_SCHEMA: str = "incan.segment-manifest/1"
+const MAX_DELTAS: int = 16
 
 
 pub model Segment:
-    """One mapped segment: its content name and the bytes the mapping exposes."""
+    """One open segment: its content name, the handle reads go through, and how many entries its index holds."""
 
     pub name: str
-    pub data: bytes
+    pub handle: File
     pub count: int
 
 
 pub model Snapshot:
-    """One manifest generation and its segments, base first; it never changes after it is taken."""
+    """
+    One manifest generation and its open segments, base first; it never changes after it is taken.
+
+    A snapshot is a handle, not a cache: it holds no decoded records, and each read touches only the index entries a
+    binary search visits and the one value it finds.
+    """
 
     pub root: Path
     pub generation: int
     pub segments: list[Segment]
+
+
+pub model ReadCounts:
+    """What this process read from segments so far: records found and segment bytes read."""
+
+    pub records: int
+    pub bytes: int
+
+
+# Reads this process made, for measuring what a compile reads; nothing is cached by them.
+static counted: dict[str, int] = {}
 
 
 pub def fingerprint(data: bytes) -> str:
@@ -63,9 +80,25 @@ pub def text_key(parts: list[str]) -> str:
     return fingerprint(framed.encode("utf-8"))
 
 
-pub def map_read(path: Path) -> Result[bytes, str]:
-    """The read-only view of one immutable file; the single place the store obtains segment bytes."""
-    return path.read_bytes().map_err((error) => error.message())
+pub def read_counts() -> ReadCounts:
+    """The records and segment bytes this process has read."""
+    return ReadCounts(records=counted.get("records", 0), bytes=counted.get("bytes", 0))
+
+
+def read_range(segment: Segment, offset: int, length: int) -> Option[bytes]:
+    """
+    The `length` bytes at `offset` of one segment: the single place the store reads segment bytes.
+
+    Reads go through the segment's open handle and touch only the bytes asked for; a short read is absent.
+    """
+    match segment.handle.seek(offset, 0):
+        Err(_) => return None
+        Ok(_) => pass
+    match segment.handle.read_exact(length):
+        Err(_) => return None
+        Ok(data) =>
+            counted["bytes"] = counted.get("bytes", 0) + length
+            return Some(data)
 
 
 # ---- Snapshots ----
@@ -79,6 +112,13 @@ pub def snapshot(root: Path) -> Result[Snapshot, str]:
         if let Some(segment) = open_segment(root, name):
             segments.append(segment)
     return Ok(Snapshot(root=root, generation=generation, segments=segments))
+
+
+pub def current(view: Snapshot) -> Result[Snapshot, str]:
+    """`view` while its generation is still current, otherwise a new snapshot; a long-lived process keeps only this."""
+    if current_generation(view.root) == view.generation:
+        return Ok(view)
+    return snapshot(view.root)
 
 
 def current_generation(root: Path) -> int:
@@ -105,78 +145,91 @@ def manifest_segments(root: Path, generation: int) -> list[str]:
 
 
 def open_segment(root: Path, name: str) -> Option[Segment]:
-    """Map one segment and check its header and index bounds; anything else is treated as absent."""
-    match map_read(root.joinpath("segments").joinpath(f"{name}.seg")):
+    """Open one segment and check its header and index bounds; anything else is treated as absent."""
+    path = root.joinpath("segments").joinpath(f"{name}.seg")
+    match path.open("rb"):
         Err(_) => return None
-        Ok(data) =>
-            if len(data) < HEADER_BYTES or data[:8] != segment_magic():
-                return None
-            match read_u64_at(data, 8):
+        Ok(handle) =>
+            size = file_size(path)
+            mut segment = Segment(name=name, handle=handle, count=0)
+            match read_range(segment, 0, HEADER_BYTES):
                 None => return None
-                Some(count) =>
-                    if HEADER_BYTES + count * INDEX_ENTRY_BYTES > len(data):
+                Some(header) =>
+                    if header[:8] != segment_magic():
                         return None
-                    return Some(Segment(name=name, data=data, count=count))
+                    match u64_in(header, 8):
+                        None => return None
+                        Some(count) =>
+                            if HEADER_BYTES + count * INDEX_ENTRY_BYTES > size:
+                                return None
+                            segment.count = count
+                            return Some(segment)
 
 
 pub def get(view: Snapshot, key: str) -> Option[bytes]:
-    """The newest value of `key` in the snapshot: deltas are searched newest first, then the base."""
+    """
+    The newest record of `key` in the snapshot: deltas are searched newest first, then the base.
+
+    This is the store's typed-read primitive: one key gives one record, and the read touches only that record's bytes
+    and the index entries on its search path.
+    """
     mut index = len(view.segments) - 1
     while index >= 0:
         if let Some(value) = segment_value(view.segments[index], key):
+            counted["records"] = counted.get("records", 0) + 1
             return Some(value)
         index -= 1
     return None
 
 
 def segment_value(segment: Segment, key: str) -> Option[bytes]:
-    """Binary search of one segment's sorted index; an entry whose bounds fall outside the segment is a miss."""
+    """Binary search of one segment's sorted index; an entry whose bounds cannot be read is a miss."""
     mut low = 0
     mut high = segment.count
     while low < high:
         middle = (low + high) // 2
-        entry = HEADER_BYTES + middle * INDEX_ENTRY_BYTES
-        found = key_at(segment.data, entry)
-        if found == key:
-            return value_at(segment.data, entry)
-        if found < key:
-            low = middle + 1
-        else:
-            high = middle
+        match read_range(segment, HEADER_BYTES + middle * INDEX_ENTRY_BYTES, INDEX_ENTRY_BYTES):
+            None => return None
+            Some(entry) =>
+                found = key_in(entry)
+                if found == key:
+                    return value_of(segment, entry)
+                if found < key:
+                    low = middle + 1
+                else:
+                    high = middle
     return None
 
 
 pub def keys(view: Snapshot) -> list[str]:
-    """Every distinct key visible in the snapshot, sorted."""
+    """Every distinct key visible in the snapshot, sorted; reads only the segments' indexes."""
     mut seen: set[str] = set()
     for segment in view.segments:
         for position in range(segment.count):
-            seen.add(key_at(segment.data, HEADER_BYTES + position * INDEX_ENTRY_BYTES))
+            if let Some(entry) = read_range(segment, HEADER_BYTES + position * INDEX_ENTRY_BYTES, INDEX_ENTRY_BYTES):
+                seen.add(key_in(entry))
     return sorted([key for key in seen])
 
 
-def key_at(data: bytes, entry: int) -> str:
-    """The key of the index entry at byte `entry`; keys are 32 ASCII hexadecimal digits."""
-    match RustString.from_utf8(data[entry:entry + KEY_BYTES]):
+def key_in(entry: bytes) -> str:
+    """The key of one index entry; keys are 32 ASCII hexadecimal digits."""
+    match RustString.from_utf8(entry[:KEY_BYTES]):
         Ok(text) => return str(text)
         Err(_) => return ""
 
 
-def value_at(data: bytes, entry: int) -> Option[bytes]:
-    """The value an index entry points at, when it lies inside the segment."""
-    match read_u64_at(data, entry + KEY_BYTES):
+def value_of(segment: Segment, entry: bytes) -> Option[bytes]:
+    """The value one index entry points at."""
+    match u64_in(entry, KEY_BYTES):
         None => return None
         Some(offset) =>
-            match read_u64_at(data, entry + KEY_BYTES + 8):
+            match u64_in(entry, KEY_BYTES + 8):
                 None => return None
-                Some(length) =>
-                    if offset + length > len(data):
-                        return None
-                    return Some(data[offset:offset + length])
+                Some(length) => return read_range(segment, offset, length)
 
 
-def read_u64_at(data: bytes, offset: int) -> Option[int]:
-    """One little-endian u64 at `offset`, when eight bytes are there."""
+def u64_in(data: bytes, offset: int) -> Option[int]:
+    """One little-endian u64 at `offset` of `data`, when eight bytes are there."""
     if offset + 8 > len(data):
         return None
     reader = BytesIO(data[offset:offset + 8])
@@ -190,6 +243,15 @@ def read_u64(reader: _BytesIO) -> Result[u64, IoError]:
     value: u64 = reader.read(Endian.Little)?
     return Ok(value)
 
+
+def file_size(path: Path) -> int:
+    """A file's size, zero when it cannot be read."""
+    match path.stat():
+        Err(_) => return 0
+        Ok(info) =>
+            match info.size():
+                Ok(size) => return size
+                Err(_) => return 0
 
 # ---- Segments ----
 
@@ -260,19 +322,29 @@ pub def publish(root: Path, base: Snapshot, entries: Dict[str, bytes]) -> Result
     1. Write the delta under its content name; readers cannot see it yet.
     2. Under the manifest lock, switch only if `CURRENT` still names the generation the manifest extends.
     3. Another baker's switch since then is extended instead: claims keep the bakers' keys apart.
+    4. When the deltas outnumber `MAX_DELTAS`, merge them into the base, so a snapshot opens few segments.
     """
     if len(entries) == 0:
         return Ok(base)
     # 1. An unpublished segment is invisible to every reader.
     delta = write_segment(root, entries)?
-    # 2. The switch is the only step that takes the manifest lock; readers never take it.
+    # 2. and 3. The switch is the only step that takes the manifest lock; readers never take it.
+    segments = switch_in(root, delta)?
+    # 4. Merging keeps every key; only collection drops keys.
+    if segments > MAX_DELTAS + 1:
+        merged = snapshot(root)?
+        return compact(root, set(keys(merged)))
+    return snapshot(root)
+
+
+def switch_in(root: Path, delta: str) -> Result[int, str]:
+    """Extend the newest generation by `delta` under the manifest lock; returns its segment count."""
     ensure_directory(root)?
     held = root.joinpath("manifest").lock_exclusive().map_err((error) => error.message())?
-    # 3. The newest generation is the one extended, so no other baker's delta is dropped.
     generation = current_generation(root)
     segments = manifest_segments(root, generation) + [delta]
     switch(root, generation, segments)?
-    return snapshot(root)
+    return Ok(len(segments))
 
 
 def switch(root: Path, base: int, segments: list[str]) -> Result[None, str]:
@@ -346,7 +418,7 @@ pub def put_payload(root: Path, source: Path) -> Result[str, str]:
         return Ok(digest)
     ensure_directory(target.parent())?
     temporary = Path(f"{target.0}.{id()}.tmp")
-    source.copy(temporary, true, false).map_err((error) => error.message())?
+    source.copy(temporary, true, true).map_err((error) => error.message())?
     temporary.chmod(true).map_err((error) => error.message())?
     temporary.replace(target).map_err((error) => error.message())?
     return Ok(digest)

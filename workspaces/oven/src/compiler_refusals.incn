@@ -16,7 +16,7 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from std.io import BytesIO
-from bakery import claim, find, lookup, seal, staging, unit_name
+from bakery import claim, fact_file, find, lookup, seal, staging, unit_name
 from driver_command import driver_command
 from compiler_worker import Completion, captured_resident
 from files import open_stream
@@ -244,9 +244,9 @@ def retain_outcome(store: Path, identity: str, kind: str, name: str, outcome: Co
 
 
 pub def outcome_record(store: Path, identity: str) -> Result[Option[Path], str]:
-    """The retained outcome file of `identity`, when its fact is sealed."""
+    """The retained outcome file of `identity`, when it is baked."""
     match find(store, identity)?:
-        Some(directory) => return Ok(Some(directory.joinpath(OUTCOME)))
+        Some(fact) => return Ok(fact_file(store, fact, OUTCOME))
         None => return Ok(None)
 
 
@@ -266,7 +266,7 @@ def save_outcome(path: Path, identity: str, outcome: Completion) -> Result[None,
 
 
 def load_outcome(store: Path, identity: str) -> Result[Option[Completion], str]:
-    """A retained outcome; a missing or malformed record is a miss, and a damaged fact is refused (see `find`)."""
+    """A retained outcome; a missing, malformed or damaged record is a miss (see `find`)."""
     match outcome_record(store, identity)?:
         None => return Ok(None)
         Some(record) =>
