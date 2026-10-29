@@ -143,13 +143,13 @@ pub def compile_library_unit(
     register_root(store, library.project_root, identity)?
     label = f"unit {library.package} library"
     if let Some(fact) = find(store, identity)?:
-        view_directory(fact, directory)?
+        view_directory(store, fact, directory)?
         trace(f"{label}: reused")
         return Ok(0)
     # 2. A concurrent bake of the same identity is waited for, not repeated.
     held = claim(store, identity)?
     if let Some(fact) = find(store, identity)?:
-        view_directory(fact, directory)?
+        view_directory(store, fact, directory)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(0)
     # 3. A failed compilation publishes nothing.
@@ -178,7 +178,7 @@ pub def compile_library_unit(
             record_payload(artifact, key.digest, key.provenance)?
     reaches = reached(store, [loaf.dir for loaf in library.loaves])?
     fact = seal(store, identity, staged, "library", unit_name(library), reaches, f"incan library {library.profile}")?
-    view_directory(fact, directory)?
+    view_directory(store, fact, directory)?
     return Ok(0)
 
 
