@@ -6,7 +6,7 @@ This page specifies `incan inspect codegraph` retrieval, context packing and sna
 
 ```text
 incan inspect codegraph PATH [--format json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]...
-incan inspect codegraph PATH --query KIND TERM [--limit N] [--strict] [--substitute NAME=DIR]...
+incan inspect codegraph PATH --query KIND TERM [--limit N] [--format json|jsonl] [--strict] [--substitute NAME=DIR]...
 incan inspect codegraph PATH --task TASK [--budget N] [--format compact|json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]...
 incan inspect codegraph PATH --stale SNAPSHOT [--strict] [--risk] [--substitute NAME=DIR]...
 incan mcp PATH
@@ -15,8 +15,8 @@ incan mcp PATH
 | Argument | Type and default | Contract |
 | --- | --- | --- |
 | `PATH` | Required path string | An existing path. A `.incn` file selects that source. A directory without `src/lib.rs` selects its `src/lib.incn`, else its `src/main.incn`. Any other directory selects its Rust facet, and any other file the Rust facet of the nearest directory with a `loaf.toml`. The MCP server fixes this selection for its lifetime. |
-| `--format` | `jsonl` by default | Raw export: JSON array or one JSON object per line. Task output: compact text, JSON array or JSONL header/nodes/edges. `compact` requires `--task`. |
-| `--query KIND TERM` | Two strings | `KIND` is `defs`, `refs`, `callers`, `callees` or `imports`. For `defs`, `refs`, `callers` and `callees`, `TERM` is an exact short name, qualified name or exported record ID; for `imports`, it selects the modules whose name or ID contains it. Output is text. |
+| `--format` | `jsonl` by default | Raw export: JSON array or one JSON object per line. A `defs` query with `json` returns a header and the selected declarations, up to `--limit`; other queries retain text output. Task output: compact text, JSON array or JSONL header/nodes/edges. `compact` requires `--task`. |
+| `--query KIND TERM` | Two strings | `KIND` is `defs`, `refs`, `callers`, `callees` or `imports`. For `defs`, `refs`, `callers` and `callees`, `TERM` is an exact short name, qualified name or exported record ID; for `imports`, it selects the modules whose name or ID contains it. Output is text except for `defs` with `--format json`. Queries resolve dependency identities through their published graphs. |
 | `--limit N` | Integer, default `20`, minimum `0` | Maximum query hits, followed by a remaining-hit count when truncated. `0` suppresses hit lines. It does not set the task budget. |
 | `--task TASK` | Nonempty string | Declaration ID, name, qualified name or free task text. Cannot be combined with `--query` or `--stale`. |
 | `--budget N` | Integer, default `8000`, range `128..1000000` | Conservative token upper bound: the complete UTF-8 response, including its final newline, must fit in this many bytes. The MCP JSON-RPC envelope is outside this bound. |

@@ -154,6 +154,7 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
     4. A unit that fails checking costs its siblings nothing, and a published provider graph is read as published.
     """
     # 1. The JSON export answers identity queries consistently, built no Incan library, and links its Rust facts.
+    check_owned_export(document(incan, project, "jsonl")?)?
     original = document(incan, project, "json")?
     original_records = items(parse_json(original)?)?
     snapshot = string_field(original_records[0], "snapshot_id")
@@ -183,6 +184,31 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
     check_lsp(incan, project)?
     check_process(incan, project)?
     return Ok(failures)
+
+
+def check_owned_export(document: str) -> Result[None, str]:
+    """An export references dependency graphs by content identity and carries none of their source records."""
+    mut roots: list[str] = []
+    for line in document.split("\n"):
+        if line == "":
+            continue
+        record = parse_json(line)?
+        if string_field(record, "record") == "header":
+            for dependency in items(required(record, "dependencies")?)?:
+                if not required_text(dependency, "id")?.startswith("graph:sha256:"):
+                    return Err("a dependency graph has no content identity")
+                if not Path(required_text(dependency, "graph")?).is_file():
+                    return Err("a dependency graph reference names no published graph")
+                roots.append(required_text(dependency, "root_path")? + "/")
+            continue
+        span = record.get("span").unwrap_or(JsonValue.null())
+        mut path = string_field(span, "file")
+        if string_field(record, "record") == "file":
+            path = string_field(record, "path")
+        for root in roots:
+            if path.startswith(root):
+                return Err(f"an export copied a dependency-owned record: {path}")
+    return Ok(None)
 
 
 def json_lines(text: str) -> Result[list[JsonValue], str]:
@@ -353,7 +379,8 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     source = provider.joinpath("src").joinpath("lib.incn")
     if not source.is_file():
         return Ok(None)
-    checked = invoke(incan, ["inspect", "codegraph", provider.0, "--format", "json"], project)?
+    selection = ["--query", "defs", "checked_helper", "--format", "json"]
+    checked = invoke(incan, ["inspect", "codegraph", provider.0] + selection, project)?
     if checked.code != Some(0):
         return Err(f"provider inspection failed: {checked.stderr}")
     checked_digest = helper_digest(checked.stdout)?
@@ -368,8 +395,8 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     if len(publications) == 0:
         return Err("provider build published no graph")
     check_binary_graph(read_bytes(publications[0])?, project)?
-    compiled = document(incan, project, "json")?
-    if helper_digest(compiled)? != checked_digest:
+    compiled = invoke(incan, ["inspect", "codegraph", "."] + selection, project)?
+    if compiled.code != Some(0) or helper_digest(compiled.stdout)? != checked_digest:
         return Err("the inspected cross-module library body differs from its compiled publication")
     # 2. A consumer reads the published graph, though the provider's source has since become invalid.
     arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
