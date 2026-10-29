@@ -1,0 +1,39 @@
+"""Discovery bounds the size of each materialized shared program independently of corpus size."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from batch import run_batches
+from files import make_directory, write
+from fixture import discover_family
+
+
+pub def test_bounded_discovery() -> Result[None, str]:
+    """A corpus larger than two batches never materializes more than 64 entries in one compilation."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    area = root.joinpath("fixtures/behavior/shared")
+    make_directory(area)?
+    source = "# behavior: selected output\n# expect-exit: 0\n\ndef main() -> None:\n    pass\n"
+    for index in range(129):
+        write(area.joinpath(f"case_{index}.incn"), source)?
+    oven = root.joinpath("incan")
+    write(oven, compiler(root.joinpath("oversized")))?
+    status = Command.new("/bin/chmod").arg("+x").arg(oven.0).status().map_err((error) => str(error))?
+    assert status.success()
+    fixtures = discover_family(root.joinpath("fixtures"), "behavior")?
+    batch = run_batches(oven.0, root.joinpath("scratch"), fixtures, 2)
+    assert not root.joinpath("oversized").is_file()
+    for fixture in fixtures:
+        match batch.outcomes[fixture.case_name()]:
+            Err(error) => return Err(error)
+            Ok(outcome) =>
+                assert outcome.code == Some(0)
+    return Ok(None)
+
+
+def compiler(oversized: Path) -> str:
+    """Record an oversized compilation without making the mock compiler refuse or force a split."""
+    count = "count=0\nfor value do\n [ \"$value\" != --program-entry ] || count=$((count + 1))\ndone\n"
+    record = f"if [ $count -gt 64 ]; then printf oversized > '{oversized.0}'; fi\n"
+    return "#!/bin/sh\n" + count + record

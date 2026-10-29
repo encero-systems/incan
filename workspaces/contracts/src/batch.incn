@@ -6,13 +6,29 @@ from files import make_directory, read, write
 from fixture import MINIMAL_MANIFEST, Fixture, fixture_files, materialize, materialize_files
 from group_hints import retain_hint
 from run import Outcome, built_program, clear_trace, trace_file, unit_notes
+from timing import elapsed_hint
 from timing_hints import Costs, load_costs, retain_costs
 from workers import Invocation, invoke_many
 
 # The largest partition file read back; a bigger one is discarded and discovered again.
 const MAX_PLAN_BYTES: int = 2_000_000
-# An expensive shared attempt can split without limiting any case's original command.
-const GROUP_COMPILATION_SECONDS: int = 5
+# Bound one speculative program's input, independently of the corpus and the host's compilation speed.
+const MAX_GROUP_ENTRIES: int = 64
+
+
+model CompilationBudget:
+    """Measured per-case compilation cost for scheduling, never evidence that a live build has stalled."""
+
+    milliseconds_per_case: int = 0
+
+    def estimate(self, project: Path, count: int, costs: Costs) -> int:
+        """Prefer retained whole-group cost while allowing a successful batch to inform unseen partitions."""
+        return max([costs.duration(project), self.milliseconds_per_case * count])
+
+    def observe(mut self, project: Path, count: int) -> None:
+        """Retain the measured per-case high-water mark only after a successful compilation."""
+        duration = elapsed_hint(project)
+        self.milliseconds_per_case = max([self.milliseconds_per_case, (duration + count - 1) // count])
 
 
 model Entry:
@@ -137,7 +153,7 @@ def load_groups(plan: Path, hint: Option[Path], entries: list[Entry]) -> tuple[l
 def initial_groups(entries: list[Entry], jobs: int) -> list[list[Entry]]:
     """Start discovery with balanced optimistic groups so one refused giant compilation cannot serialize workers."""
     mut groups: list[list[Entry]] = []
-    width = max([1, (len(entries) + max([1, jobs]) - 1) // max([1, jobs])])
+    width = min([MAX_GROUP_ENTRIES, max([1, (len(entries) + max([1, jobs]) - 1) // max([1, jobs])])])
     mut offset = 0
     while offset < len(entries):
         groups.append(entries[offset:min([offset + width, len(entries)])])
@@ -169,11 +185,11 @@ def planned_groups(plan: Path, entries: list[Entry]) -> tuple[list[list[Entry]],
         for index in sorted([index for index in indices]):
             group.append(entries[index])
         if len(group) > 0:
-            groups.append(group)
+            groups.extend(initial_groups(group, 1))
     # 2. The cases no row names form one group more, so none is left out.
     remaining = [candidate for candidate in entries if candidate.fixture.case_name() not in assigned]
     if len(remaining) > 0:
-        groups.append(remaining)
+        groups.extend(initial_groups(remaining, 1))
     # 3. The partition is reusable only when some row named a case.
     return (groups, len(assigned) > 0)
 
@@ -297,6 +313,7 @@ def compile_groups(
     """
     mut pending = groups
     mut isolated = separate
+    mut budget = CompilationBudget()
     while len(pending) > 0 or len(isolated) > 0:
         mut requests: list[Invocation] = []
         mut attempts: list[GroupProject] = []
@@ -321,8 +338,7 @@ def compile_groups(
                             arguments=group_arguments("build", group.project, entries),
                             project=group.project,
                             selector=None,
-                            deadline_seconds=GROUP_COMPILATION_SECONDS,
-                            duration_hint=costs.duration(group.project),
+                            duration_hint=budget.estimate(group.project, len(entries), costs),
                         ),
                     )
                     attempts.append(group)
@@ -355,6 +371,7 @@ def compile_groups(
                 notes.append(note)
             refusal, evidence = compilation_refusal(results[index])
             if refusal == "":
+                budget.observe(group.project, len(group.entries))
                 built.append(group)
                 first, selected = executions[index]
                 for offset in range(len(selected)):

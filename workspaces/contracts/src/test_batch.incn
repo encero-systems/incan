@@ -1,0 +1,90 @@
+"""Shared compilation must preserve completed work and each selected process's observable result."""
+
+from rust::std::process import Command
+from std.environ import get_or
+from std.tempfile import TemporaryDirectory
+from batch import run_batches
+from files import make_directory, read, write
+from fixture import discover_family, materialize
+from families import command, read_program
+from run import invoke, set_timeout
+
+
+pub def test_slow_shared_compilation() -> Result[None, str]:
+    """A quiet compilation taking more than five seconds still releases every selected entry."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    area = root.joinpath("fixtures/behavior/shared")
+    make_directory(area)?
+    for name in ["first", "second"]:
+        source = "# behavior: selected output\n# expect-stdout:\n#   selected\n\ndef main() -> None:\n    pass\n"
+        write(area.joinpath(f"{name}.incn"), source)?
+    oven = root.joinpath("incan")
+    write(oven, slow_compiler())?
+    status = Command.new("/bin/chmod").arg("+x").arg(oven.0).status().map_err((error) => str(error))?
+    assert status.success()
+    set_timeout(0)
+    fixtures = discover_family(root.joinpath("fixtures"), "behavior")?
+    batch = run_batches(oven.0, root.joinpath("scratch"), fixtures, 1)
+    for fixture in fixtures:
+        match batch.outcomes[fixture.case_name()]:
+            Err(error) => return Err(error)
+            Ok(outcome) =>
+                assert outcome.stdout == "selected\n"
+                assert outcome.stderr == ""
+                assert outcome.code == Some(0)
+    set_timeout(1)
+    limited = run_batches(oven.0, root.joinpath("limited"), fixtures, 1)
+    set_timeout(0)
+    for fixture in fixtures:
+        match limited.outcomes[fixture.case_name()]:
+            Err(error) => return Err(error)
+            Ok(outcome) =>
+                assert outcome.stdout == "isolated\n"
+    return Ok(None)
+
+
+def slow_compiler() -> str:
+    """An observable fake compiler distinguishes completed sharing from singleton fallback."""
+    shared = " build) sleep 6 ;;\n _run-built) printf 'selected\\n' ;;\n"
+    return "#!/bin/sh\ncase \"$1\" in\n" + shared + " *) printf 'isolated\\n' ;;\nesac\n"
+
+
+pub def test_shared_process_outcomes() -> Result[None, str]:
+    """Panic, signal, exit code and captured streams are byte-identical to original commands."""
+    oven = get_or("BATCH_TEST_OVEN", "incan")
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    area = root.joinpath("fixtures/behavior/shared")
+    make_directory(area)?
+    sources = process_sources()
+    for name in sorted([name for name in sources.keys()]):
+        header = "# behavior: process outcome parity\n# expect-exit: 0\n\n"
+        write(area.joinpath(f"{name}.incn"), header + sources[name])?
+    fixtures = discover_family(root.joinpath("fixtures"), "behavior")?
+    batch = run_batches(oven, root.joinpath("shared"), fixtures, 2)
+    partition = read(root.joinpath("shared/batch-behavior-groups.tsv"))?
+    assert "\t" in partition
+    for fixture in fixtures:
+        project = materialize(fixture, root.joinpath("shared"))?
+        program = read_program(fixture)?
+        isolated = invoke(oven, command(fixture, program.header), project)?
+        match batch.outcomes[fixture.case_name()]:
+            Err(error) => return Err(error)
+            Ok(shared) =>
+                assert shared.code == isolated.code
+                assert shared.stdout == isolated.stdout
+                assert shared.stderr == isolated.stderr
+    return Ok(None)
+
+
+def process_sources() -> dict[str, str]:
+    """Keep process termination and both output streams observable without depending on runner expectations."""
+    mut sources: dict[str, str] = {}
+    sources["panic"] = "def main() -> None:\n    println(\"before panic\")\n    assert false, \"selected failure\"\n"
+    sources["signal"] = "from rust::std::process import abort\n\ndef main() -> None:\n    abort()\n"
+    sources["status"] = "def main() -> int:\n    println(\"before exit\")\n    return 7\n"
+    streams = "from rust::std::io import Write, stderr\n\ndef main() -> None:\n"
+    sources["streams"] = streams + "    println(\"out\")\n    _ = stderr().write_all(b\"err\\n\")\n"
+    sources["refusal"] = "def main() -> None:\n    _ = missing_name\n"
+    return sources
