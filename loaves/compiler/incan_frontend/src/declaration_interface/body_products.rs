@@ -2,7 +2,8 @@
 //!
 //! Calls retain their complete checked candidate/signature witnesses and exact current header inputs. Import and
 //! nominal declarations remain exact environment inputs; their bodies and calls stay outside this scalar product.
-//! Defaults and scope-changing bodies refuse capture. Primitive mutable storage retains its checked
+//! Closed primitive literal defaults are retained; computed defaults and scope-changing bodies refuse capture.
+//! Primitive mutable storage retains its checked
 //! mutation contract and complete assignment operations. Physical locators must also match; a semantic digest alone
 //! never grants a hit.
 
@@ -522,7 +523,8 @@ fn admitted_reads(function: &FunctionDecl, names: &BTreeSet<String>) -> Option<B
     parameter_expression(value, &bindings, names, &mut reads).then_some(reads)
 }
 
-/// Admit only unexpanded primitive signatures without declaration-time effects or generic/default environments.
+/// Admit unexpanded primitive signatures with closed literal defaults. Computed defaults and generic environments
+/// require additional read and instantiation witnesses and remain outside this product.
 fn scalar_signature(function: &FunctionDecl) -> bool {
     if !function.decorators.is_empty()
         || numerics::from_str(&function.name).is_some()
@@ -534,13 +536,27 @@ fn scalar_signature(function: &FunctionDecl) -> bool {
             is_synthetic_span(parameter.span)
                 || is_synthetic_span(parameter.node.ty.span)
                 || parameter.node.kind != ParamKind::Normal
-                || parameter.node.default.is_some()
+                || parameter
+                    .node
+                    .default
+                    .as_ref()
+                    .is_some_and(|default| !literal_default(default))
                 || !scalar_type(&parameter.node.ty.node)
         })
     {
         return false;
     }
     true
+}
+
+/// A literal default has no resolution reads, nested scopes or declaration-time effects. Successful ordinary
+/// checking still owns its type acceptance, and the complete retained callable contract preserves its exact value.
+fn literal_default(expression: &Spanned<Expr>) -> bool {
+    !is_synthetic_span(expression.span)
+        && matches!(
+            expression.node,
+            Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_))
+        )
 }
 
 /// Retain the complete physical declaration inventory as a replay guard, never as a second semantic identity.
