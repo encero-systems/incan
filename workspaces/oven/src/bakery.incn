@@ -11,45 +11,48 @@ progress, and `roots/<project>/<identity>` for the identities each project's bui
 
 Asking is one path for cold and warm builds: find the record, or claim its identity, look again, bake into a private
 staging directory, store the payloads and publish the record. Concurrent askers wait on the claim and then find the
-record. A missing or damaged record or payload is a miss: it is baked again. Collection is explicit
-(`incan bakery gc`) and by reachability only; the store has no size ceiling.
+record. The store reports a damaged record or payload; this adapter bakes such a unit again. Collection is
+disabled until it honors live snapshot leases; the store has no size ceiling.
 """
 
 from rust::std::fs import OpenOptions, Permissions, copy as copy_file, metadata, rename, set_permissions
 from rust::std::os::unix::fs import MetadataExt, PermissionsExt
 from rust::std::process import id
 from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
 from std.environ import get_or
+from std.hash import sha256
 from std.fs import Path
 from std.fs.locking import FileLock
 from std.json import JsonValue
 from files import json_text, make_directory, read_json
 from home import home
 from json_fields import required_items, required_text, string_value
-from observation import now_seconds, trace
+from observation import trace
 from publication import publish
 from segment_store import (
-    Snapshot,
+    EXPECT_ABSENT,
+    EXPECT_REPAIR,
+    Lookup,
+    StoreError,
+    begin,
     claim as claim_key,
-    compact,
-    drop_payload,
+    commit,
+    drop_damaged_payload,
     get,
     keys,
+    lookup as store_lookup,
     payload_intact,
     payload_path,
-    publish as publish_entries,
+    put,
     put_payload,
     snapshot,
-    sweep_payloads,
-    sweep_segments,
-    text_key,
 )
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
 
 const UNIT_SCHEMA: str = "incan.bakery.unit/1"
 const VIEW_RECORD: str = "fact.json"
-const SECONDS_PER_DAY: int = 86400
 const VERIFY: int = -2
 const OPEN_FILE: u32 = 420
 const OPEN_PROGRAM: u32 = 493
@@ -106,13 +109,18 @@ pub def bakery() -> Result[Path, str]:
 
 
 def record_key(identity: str) -> str:
-    """The store key of a unit record."""
-    return text_key(["unit", identity])
+    """The full store key of a unit record: its complete unit identity."""
+    return f"incan.bakery.unit\t{identity}"
 
 
 def name_key(name: str) -> str:
-    """The store key of the record naming the latest identity of `name`."""
-    return text_key(["name", name])
+    """The full store key of the record naming the latest identity of `name`."""
+    return f"incan.bakery.name\t{name}"
+
+
+def store_failure(error: StoreError) -> str:
+    """A store error as an Oven message."""
+    return error.message()
 
 
 # ---- Asking ----
@@ -122,25 +130,40 @@ pub def find(store: Path, identity: str) -> Result[Option[Fact], str]:
     """
     The baked unit of `identity`, or nothing.
 
-    A record that cannot be decoded, or a payload file that is missing or no longer matches its digest, is a miss: the
-    damaged payload is dropped and the caller bakes the unit again. Each payload is read in full once per process.
+    The store reports a damaged record as an integrity error, and so does this adapter's payload check. A compiled
+    unit is reproducible from its complete inputs, so this adapter treats either as a unit to bake again: it says so,
+    drops a damaged payload, and the caller recomputes and republishes the record. Any other store error is refused.
     """
-    match get(snapshot(store)?, record_key(identity)):
-        None => return Ok(None)
-        Some(value) =>
-            match decode_fact(value):
-                None =>
-                    trace(f"bakery {identity[:12]}: unreadable record, baked again")
+    view = snapshot(store).map_err(store_failure)?
+    match store_lookup(view, record_key(identity)):
+        Err(error) =>
+            if error.kind != "integrity":
+                return Err(error.message())
+            trace(f"bakery {identity[:12]}: {error.message()}; baked again")
+            return Ok(None)
+        Ok(found) =>
+            match found:
+                Lookup.Found(value) => return checked_fact(store, identity, value)
+                Lookup.Deleted => return Ok(None)
+                Lookup.Absent => return Ok(None)
+
+
+def checked_fact(store: Path, identity: str, value: bytes) -> Result[Option[Fact], str]:
+    """A decoded unit record whose payload files are intact; otherwise the unit is baked again."""
+    match decode_fact(value):
+        None =>
+            trace(f"bakery {identity[:12]}: unit record is not a unit, baked again")
+            return Ok(None)
+        Some(fact) =>
+            if fact.identity != identity:
+                trace(f"bakery {identity[:12]}: unit record names another identity, baked again")
+                return Ok(None)
+            for file in fact.files:
+                if not payload_current(store, file):
+                    trace(f"bakery {identity[:12]}: payload {file.path} is damaged, baked again")
+                    _ = drop_damaged_payload(store, file.digest)
                     return Ok(None)
-                Some(fact) =>
-                    if fact.identity != identity:
-                        return Ok(None)
-                    for file in fact.files:
-                        if not payload_current(store, file):
-                            trace(f"bakery {identity[:12]}: payload {file.path} is damaged, baked again")
-                            _ = drop_payload(store, file.digest)
-                            return Ok(None)
-                    return Ok(Some(fact))
+            return Ok(Some(fact))
 
 
 def payload_current(store: Path, file: FactFile) -> bool:
@@ -166,7 +189,7 @@ pub def claim(store: Path, identity: str) -> Result[FileLock, str]:
     The caller asks `find` again once it holds the claim, because the previous holder may have published the unit. A
     holder that died released its lock with its process, so its claim is a miss for the next asker.
     """
-    return claim_key(store, record_key(identity))
+    return claim_key(store, record_key(identity)).map_err(store_failure)
 
 
 pub def staging(store: Path, identity: str) -> Result[Path, str]:
@@ -199,22 +222,34 @@ pub def seal(
     for relative in staged_files(staged, "")?:
         files.append(stored_file(store, staged, relative)?)
     fact = Fact(identity=identity, kind=kind, name=name, reaches=reaches, files=files)
-    # 2. A reader's snapshot holds either no record or the whole unit.
-    mut entries: Dict[str, bytes] = {}
-    entries[record_key(identity)] = encode_fact(fact, provenance)?.encode("utf-8")
-    entries[name_key(name)] = identity.encode("utf-8")
-    published = publish_entries(store, snapshot(store)?, entries)?
+    # 2. A reader's snapshot holds either no record or the whole unit; a damaged older record is replaced.
+    base = snapshot(store).map_err(store_failure)?
+    mut transaction = begin(base)
+    record = encode_fact(fact, provenance)?.encode("utf-8")
+    transaction = put(transaction, record_key(identity), record, replace_expectation(store, identity)?)
+    transaction = put(transaction, name_key(name), identity.encode("utf-8"))
+    published = commit(transaction).map_err(store_failure)?
     # 3. Staging belongs to this bake only.
     _ = staged.remove_tree()
     trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
     return Ok(fact)
 
 
+def replace_expectation(store: Path, identity: str) -> Result[int, str]:
+    """
+    What a new record of `identity` may replace: nothing intact, so two different bakes of one identity conflict; or a
+    record whose own bytes or payload files are damaged, which this bake repairs.
+    """
+    match find(store, identity)?:
+        Some(_) => return Ok(EXPECT_ABSENT)
+        None => return Ok(EXPECT_REPAIR)
+
+
 def stored_file(store: Path, staged: Path, relative: str) -> Result[FactFile, str]:
     """Store one staged file as a payload and describe it."""
     path = staged.joinpath(relative)
     info = metadata(path.0).map_err((error) => f"{path.0}: {error}")?
-    digest = put_payload(store, path)?
+    digest = put_payload(store, path).map_err(store_failure)?
     verified[digest] = true
     program = int(info.permissions().mode()) // 64 % 2 == 1
     return Ok(FactFile(path=relative, digest=digest, size=int(info.len()), program=program))
@@ -329,12 +364,17 @@ def fact_file_entry(entry: JsonValue) -> Result[FactFile, str]:
 
 pub def lookup(store: Path, name: str) -> Result[Option[str], str]:
     """The identity `name` was last baked under, if any bake recorded one."""
-    match get(snapshot(store)?, name_key(name)):
-        None => return Ok(None)
-        Some(value) =>
-            match RustString.from_utf8(value):
-                Ok(text) => return Ok(Some(str(text)))
-                Err(_) => return Ok(None)
+    match get(snapshot(store).map_err(store_failure)?, name_key(name)):
+        Err(error) =>
+            trace(f"bakery name {name}: {error.message()}")
+            return Ok(None)
+        Ok(found) =>
+            match found:
+                None => return Ok(None)
+                Some(value) =>
+                    match RustString.from_utf8(value):
+                        Ok(text) => return Ok(Some(str(text)))
+                        Err(_) => return Ok(None)
 
 
 # ---- Views ----
@@ -513,105 +553,11 @@ pub def register_root(store: Path, project: str, identity: str) -> Result[None, 
 
 pub def collect(store: Path, keep_days: int) -> Result[Collected, str]:
     """
-    Remove every unit no root reaches. Nothing runs automatically; this is `incan bakery gc`.
-
-    1. Drop roots not used within the last `keep_days` days (all roots are kept when it is negative).
-    2. Mark every identity a root reaches, through the identities each unit records.
-    3. Compact the store to the marked units and their names, then remove unnamed segments, unreachable payloads and
-       staging directories no baker holds.
+    Collection by reachability. It is disabled: removing objects is safe only once collection honors every live
+    snapshot lease and root under the store's lifecycle protocol, so until then nothing is ever removed.
     """
-    # 1. A root's age is the time of its last use.
-    roots = store.joinpath("roots")
-    mut dropped = 0
-    mut pending: list[str] = []
-    if roots.is_dir():
-        for project in roots.iterdir().map_err((error) => error.message())?:
-            for marker in project.iterdir().map_err((error) => error.message())?:
-                if marker.name() == "project":
-                    continue
-                if keep_days >= 0 and age_seconds(marker) >= keep_days * SECONDS_PER_DAY:
-                    marker.unlink().map_err((error) => error.message())?
-                    dropped += 1
-                else:
-                    pending.append(marker.name())
-    # 2. Reachability follows the identities each unit records.
-    current = snapshot(store)?
-    marked = reachable(current, pending)
-    # 3. Only what nothing reaches is removed.
-    return sweep(store, current, marked, dropped)
-
-
-def age_seconds(path: Path) -> int:
-    """Seconds since `path` was last modified."""
-    match path.stat():
-        Err(_) => return 0
-        Ok(info) =>
-            match info.modified_unix():
-                Ok(modified) => return now_seconds() - modified
-                Err(_) => return 0
-
-
-def reachable(current: Snapshot, roots: list[str]) -> Dict[str, Fact]:
-    """Every baked unit reachable from `roots`, by identity."""
-    mut marked: Dict[str, Fact] = {}
-    mut pending = roots
-    while len(pending) > 0:
-        identity = pending.pop()
-        if identity in marked:
-            continue
-        if let Some(value) = get(current, record_key(identity)):
-            if let Some(fact) = decode_fact(value):
-                marked[identity] = fact
-                for item in fact.reaches:
-                    pending.append(item)
-    return marked
-
-
-def sweep(store: Path, current: Snapshot, marked: Dict[str, Fact], dropped: int) -> Result[Collected, str]:
-    """Compact to the marked units, then remove what no kept record names."""
-    mut keep: set[str] = set()
-    mut live: set[str] = set()
-    for identity in marked.keys():
-        fact = marked[identity]
-        keep.add(record_key(identity))
-        keep.add(name_key(fact.name))
-        for file in fact.files:
-            live.add(file.digest)
-    units = unit_count(current)
-    compacted = compact(store, keep)?
-    removed_segments = sweep_segments(store)?
-    removed_payloads = sweep_payloads(store, live)?
-    trace(f"bakery gc: generation {compacted.generation}, {removed_segments} segment files, {removed_payloads} payloads")
-    cleared = clear_staging(store)?
-    return Ok(Collected(kept=len(marked), removed=units - len(marked), roots_dropped=dropped, staging_cleared=cleared))
-
-
-def unit_count(current: Snapshot) -> int:
-    """How many unit records the snapshot holds."""
-    mut count = 0
-    for key in keys(current):
-        if let Some(value) = get(current, key):
-            if let Some(fact) = decode_fact(value):
-                count += 1
-    return count
-
-
-def clear_staging(store: Path) -> Result[int, str]:
-    """Remove staging directories whose baker no longer holds the claim of their identity."""
-    directory = store.joinpath("staging")
-    if not directory.is_dir():
-        return Ok(0)
-    mut cleared = 0
-    for entry in directory.iterdir().map_err((error) => error.message())?:
-        identity = entry.name().split(".")[0]
-        lock = store.joinpath("claims").joinpath(record_key(identity))
-        make_directory(lock.parent())?
-        match lock.try_lock_exclusive().map_err((error) => error.message())?:
-            None => pass
-            Some(held) =>
-                if removed_tree(entry):
-                    cleared += 1
-    return Ok(cleared)
+    trace(f"bakery {store.0}: collection requested, keeping roots of the last {keep_days} days")
+    return Err("bakery collection is disabled until it honors live snapshot leases; nothing was removed")
 
 
 # ---- Verification ----
@@ -621,17 +567,22 @@ pub def verify_all(store: Path) -> Result[list[str], str]:
     """
     Read every byte of every unit's payloads and compare them with their digests; return what was damaged.
 
-    A damaged payload is dropped, so its unit is a miss and the next build bakes it again.
+    A damaged record is named. A damaged payload is named and dropped, so its unit is baked again by the next build.
     """
-    current = snapshot(store)?
+    current = snapshot(store).map_err(store_failure)?
     mut damaged: list[str] = []
-    for key in keys(current):
-        if let Some(value) = get(current, key):
-            if let Some(fact) = decode_fact(value):
-                for file in fact.files:
-                    if not payload_intact(store, file.digest):
-                        damaged.append(f"bakery unit {fact.identity}: payload file {file.path} is damaged")
-                        _ = drop_payload(store, file.digest)
+    for key in keys(current).map_err(store_failure)?:
+        if not key.startswith("incan.bakery.unit\t"):
+            continue
+        match get(current, key):
+            Err(error) => damaged.append(error.message())
+            Ok(found) =>
+                if let Some(value) = found:
+                    if let Some(fact) = decode_fact(value):
+                        for file in fact.files:
+                            if not payload_intact(store, file.digest):
+                                damaged.append(f"bakery unit {fact.identity}: payload file {file.path} is damaged")
+                                _ = drop_damaged_payload(store, file.digest)
     return Ok(damaged)
 
 
@@ -673,7 +624,7 @@ pub def bakery_command(request: int) -> Result[i32, str]:
         damaged = verify_all(store)?
         for reason in damaged:
             println(reason)
-        println(f"{len(damaged)} damaged payload files")
+        println(f"{len(damaged)} damaged objects")
         if len(damaged) > 0:
             return Ok(1)
         return Ok(0)
@@ -685,16 +636,9 @@ pub def bakery_command(request: int) -> Result[i32, str]:
     return Ok(0)
 
 
-def removed_tree(directory: Path) -> bool:
-    """Remove a directory tree; false when it could not be removed."""
-    match directory.remove_tree():
-        Ok(_) => return true
-        Err(_) => return false
-
-
 pub def claim_file(store: Path, identity: str) -> Path:
     """The lock file whose exclusive lock is the claim of `identity`."""
-    return store.joinpath("claims").joinpath(record_key(identity))
+    return store.joinpath("claims").joinpath(hexlify(sha256.digest(record_key(identity).encode("utf-8"))))
 
 
 pub def staging_root(store: Path) -> Path:
