@@ -11,6 +11,7 @@ from std.hash import sha256
 from std.io import BytesIO
 from std.json import JsonValue
 from pub::incan_platform.trace import flush as flush_trace
+from toolchain_archive import safe_member
 from installation_check import verify_runtime
 from installation_page import recall as recall_installation
 from installation_codec import decode as decode_installation, encode as encode_installation
@@ -1662,6 +1663,11 @@ def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str
 
 def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
     """A selected toolchain admits transported native, standard and registry payloads and refuses changed bytes."""
+    # Archive admission reserves the host link only at the root; bundled C sysroots stay inside staging.
+    for member in ["c/sysroot/usr/include/stdio.h", "./c/sysroot", "nested/sysroot/library.a", "./bin/driver"]:
+        assert safe_member(member), member
+    for member in ["sysroot", "./sysroot", "././sysroot/lib", "/c/sysroot", "c/../sysroot", "nested/../../escape"]:
+        assert not safe_member(member), member
     original = scratch.joinpath("producer/runtime.incnlib")
     write(original, "runtime interface")?
     record_payload(original, "runtime producer")?
