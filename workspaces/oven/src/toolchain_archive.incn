@@ -22,6 +22,7 @@ from toolchain import (
 )
 from rust_units import decoded, read_registry_units
 from observation import file_digest
+from unit_publication import publication, published_identity, record_path, record_payload
 from cli_help import render, unknown_option
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
@@ -156,7 +157,16 @@ def stage_externs(externs: list[NativeCrate], stage: Path) -> Result[list[JsonVa
     mut staged: list[JsonValue] = []
     for native in externs:
         relative = stage_artifact(Path(native.path), stage)?
-        staged.append(NativeCrate(name=native.name, path=relative).to_json())
+        mut declared = NativeCrate(name=native.name, path=relative).to_json()
+        match publication(Path(native.path)):
+            Err(reason) =>
+                if "linked unit has no recorded producer identity" not in reason:
+                    return Err(reason)
+            Ok(recorded) =>
+                identity, payload = recorded
+                declared = replaced(declared, "unit_identity", JsonValue.string(identity))?
+                declared = replaced(declared, "payload_digest", JsonValue.string(payload))?
+        staged.append(declared)
     return Ok(staged)
 
 
@@ -284,7 +294,7 @@ def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
                 continue
             for artifact in profile.iterdir().map_err((error) => error.message())?:
                 name = artifact.name()
-                if not artifact.is_file() or ".unit.json" in name:
+                if not artifact.is_file() or ".unit.json" in name or name.endswith(".native.json.oven-unit"):
                     continue
                 destination = stage.joinpath("loaves").joinpath(package.name()).joinpath(profile.name()).joinpath(name)
                 if name.endswith(".native.json"):
@@ -338,6 +348,9 @@ def stage_native(source: Path, destination: Path, stage: Path, prefix: str) -> R
     # 4. Everything else the document says is kept as it was.
     rewritten = replaced(macros, "search", JsonValue.array([JsonValue.string(path) for path in search]))?
     write_json(destination, rewritten)?
+    if record_path(source).is_file():
+        record_payload(destination, published_identity(source)?)?
+        stage_publication(record_path(destination), record_path(destination))?
     return Ok(None)
 
 
@@ -441,7 +454,10 @@ def stage_profile(source: Path, stage: Path) -> Result[str, str]:
         return Ok(relative)
     make_directory(destination)?
     for name in names:
-        link_file(source.joinpath(name), destination.joinpath(name))?
+        file = source.joinpath(name)
+        link_file(file, destination.joinpath(name))?
+        if record_path(file).is_file():
+            link_file(record_path(file), record_path(destination.joinpath(name)))?
     return Ok(relative)
 
 
@@ -455,6 +471,8 @@ def is_native_library(name: str) -> bool:
 
 def link_file(source: Path, destination: Path) -> Result[None, str]:
     """Deduplicate equal named artifacts and use staging links that tar dereferences without retaining builder paths."""
+    if source.name().endswith(".oven-unit"):
+        return stage_publication(source, destination)
     absolute = source.resolve().map_err((error) => error.message())?
     if destination.is_file():
         if file_digest(absolute)? != file_digest(destination)?:
@@ -463,6 +481,15 @@ def link_file(source: Path, destination: Path) -> Result[None, str]:
     make_directory(destination.parent())?
     symlink(absolute.0, destination.0).map_err((error) => str(error))?
     return Ok(None)
+
+
+def stage_publication(source: Path, destination: Path) -> Result[None, str]:
+    """Keep producer identity and payload proof while expressing provenance from the transported artifact's root."""
+    document = read_json(source)?
+    mut portable = replaced(document, "provenance", JsonValue.string(destination.name()))?
+    portable = replaced(portable, "source_provenance", JsonValue.array([JsonValue.string(".")]))?
+    portable = replaced(portable, "observation", JsonValue.string(""))?
+    return write_json(destination, portable)
 
 
 def replaced(document: JsonValue, key: str, value: JsonValue) -> Result[JsonValue, str]:

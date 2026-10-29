@@ -3,12 +3,12 @@
 from rust::std::env import VarError, var as env_var
 from std.fs import Path
 from files import read, write
-from observation import load_ledger, observe, skipped_directory, SETTLE_SECONDS
-from toolchain import Toolchain, located
-from unit_freshness import Key, artifact_identity, compiler_fingerprint, fingerprint
-
-# How a key spells the project directory, so the same sources key alike in any checkout.
-const PROJECT: str = "<project>"
+from observation import Ledger, load_ledger, observe, skipped_directory, SETTLE_SECONDS
+from toolchain import Toolchain
+from unit_freshness import Key, compiler_fingerprint, fingerprint
+from unit_publication import published_identity, source_origins
+from invocation_identity import invocation_facts
+from source_identity import source_inputs
 
 
 pub def library_key(
@@ -21,6 +21,25 @@ pub def library_key(
     toolchain: Toolchain,
     compiler: str = "",
 ) -> Result[Key, str]:
+    """Identify admitted Rust inputs, or explicitly refuse portable identity while allowing an uncached local bake."""
+    match observed_library_key(project, directory, dependencies, arguments, environment, linked, toolchain, compiler):
+        Ok(key) => return Ok(key)
+        Err(reason) =>
+            if "unit identity refused:" in reason:
+                return Ok(Key(digest="", parts=[], provenance=[project.0], refusal=reason))
+            return Err(reason)
+
+
+def observed_library_key(
+    project: Path,
+    directory: Path,
+    dependencies: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    linked: list[str],
+    toolchain: Toolchain,
+    compiler: str,
+) -> Result[Key, str]:
     """
     Key the actual compiler inputs; unavailable dependency evidence prevents reuse.
 
@@ -31,80 +50,118 @@ pub def library_key(
     # 1. Read the files and environment keys rustc recorded, in whichever checkout it compiled.
     text = read(dependencies)?
     paths, variables = dependency_inputs(text)?
-    recorded = recorded_project(paths, project, crate_root(arguments))
+    selected = source_paths(project, dependencies, arguments, paths)?
     mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
-    mut sources: list[str] = []
-    # 2. A source is keyed by where it sits relative to its project and by the bytes this checkout holds there.
-    for relative in sorted([relative_path(path, recorded) for path in paths] + ["loaf.toml"]):
-        sources.extend([relative, ledger.digest(Path(located(project, relative)))?])
-    mut artifacts: list[str] = []
-    for path in sorted(linked + extern_paths(arguments)):
-        artifacts.extend([path, artifact_identity(Path(path))?])
-    ledger.save()?
-    # 3. Bind them to the compiler, arguments and package environment.
     mut selected_compiler = compiler
     if selected_compiler == "":
         selected_compiler = compiler_fingerprint(toolchain)?
-    command = fingerprint([project_argument(argument, project) for argument in arguments])?
-    authored = fingerprint(sources)?
-    native = fingerprint(artifacts)?
-    ambient = fingerprint(environment_inputs(variables, keyed_environment(environment, variables, project))?)?
-    digest = fingerprint(["incan.oven.rust-library/2", selected_compiler, command, authored, native, ambient])?
+    # 2. Reconcile the exact observed inputs through the same unit identity function for libraries and binaries.
+    key = reconciled_rust_key(
+        project,
+        directory,
+        selected,
+        variables,
+        arguments,
+        environment,
+        linked,
+        selected_compiler,
+        ledger,
+    )?
+    # 3. Retain observations separately from the portable identity.
+    ledger.save()?
+    return Ok(key)
+
+
+def source_paths(project: Path, dependencies: Path, arguments: list[str], paths: list[str]) -> Result[list[str], str]:
+    """
+    Locate a producer's retained dependency inventory in the selected checkout without identifying by provenance.
+
+    Fresh dep-info names the actual entry already. A relocated proof preserves its original source root; paths outside
+    that root require an explicit logical mapping rather than accidentally checking another checkout's files.
+    """
+    if relative_dependencies(paths):
+        return Ok([dependency_location(project, path).0 for path in paths])
+    if len(arguments) > 0 and arguments[0] in paths:
+        return Ok(paths)
+    origins = source_origins(dependencies)?
+    if len(origins) == 0:
+        if len(arguments) > 0 and arguments[0].startswith(project.0 + "/"):
+            return Err("unit identity refused: relocated dependency evidence has no source provenance")
+        return Ok(paths)
+    if origins[0] == project.0:
+        return Ok(paths)
+    prefix = origins[0] + "/"
+    mut selected: list[str] = []
+    for path in paths:
+        if not path.startswith(prefix):
+            return Err("unit identity refused: relocated external source has no logical mapping")
+        selected.append(project.joinpath(path[len(prefix):]).0)
+    return Ok(selected)
+
+
+def relative_dependencies(paths: list[str]) -> bool:
+    """Whether every dependency is already named from its source project, as transported dep-info requires."""
+    for path in paths:
+        if path.startswith("/"):
+            return false
+    return true
+
+
+pub def reconciled_rust_key(
+    project: Path,
+    directory: Path,
+    paths: list[str],
+    variables: list[str],
+    arguments: list[str],
+    environment: Dict[str, str],
+    linked: list[str],
+    compiler: str,
+    mut ledger: Ledger,
+) -> Result[Key, str]:
+    """
+    Identify one Rust unit from its observed source, invocation, environment and linked-unit facts.
+
+    1. Reconcile source contents and read the recorded identities of linked units.
+    2. Frame effective invocation and observed environment facts independently of locations.
+    3. Keep the input dimensions and publication provenance beside the completed identity.
+    """
+    # 1. Naming a linked artifact never hashes its bytes.
+    sources = source_inputs(paths, project, ledger)?
+    mut artifacts: list[str] = []
+    for path in sorted(linked + extern_paths(arguments)):
+        artifacts.append(published_identity(Path(path)).map_err((error) => f"artifacts: {error}")?)
+    artifacts.extend(extern_identities(arguments)?)
+    # 2. Only compilation facts, not output directories or manifest publication metadata, decide identity.
+    command = fingerprint(invocation_facts(arguments, project, directory))?
+    authored = fingerprint(sorted(sources))?
+    native = fingerprint(sorted(artifacts))?
+    ambient = fingerprint(environment_inputs(variables, environment)?)?
+    digest = "sha256:" + fingerprint(["incan.oven.rust-unit/1", compiler, command, authored, native, ambient])?
+    # 3. Provenance is recorded but deliberately absent from the digest above.
     return Ok(
         Key(
             digest=digest,
             parts=[
-                f"compiler {selected_compiler}",
+                f"compiler {compiler}",
                 f"command {command}",
                 f"sources {authored}",
                 f"artifacts {native}",
                 f"environment {ambient}",
             ],
+            provenance=[project.0],
         ),
     )
 
 
-def crate_root(arguments: list[str]) -> str:
-    """The crate root a producer command compiles: its first argument, ahead of every option."""
-    if len(arguments) == 0 or arguments[0].startswith("-"):
-        return ""
-    return arguments[0]
-
-
-def recorded_project(paths: list[str], project: Path, root: str) -> str:
-    """The project directory rustc's evidence was recorded in, found through the crate root path it names."""
-    if not root.startswith(project.0 + "/"):
-        return project.0
-    suffix = root[len(project.0):]
-    for path in paths:
-        if path.endswith(suffix):
-            return path[:len(path) - len(suffix)]
-    return project.0
-
-
-pub def relative_path(path: str, base: str) -> str:
-    """`path` as seen from the directory `base`, so one layout spells it alike in any checkout."""
-    if not path.startswith("/"):
-        return path
-    directories = [part for part in base.split("/") if part != ""]
-    parts = [part for part in path.split("/") if part != ""]
-    mut common = 0
-    while common < len(directories) and common < len(parts) and directories[common] == parts[common]:
-        common += 1
-    return "/".join([".." for _ in range(len(directories) - common)] + parts[common:])
-
-
-pub def project_argument(argument: str, project: Path) -> str:
-    """Spell a path inside the project from the project, so a command keys alike in any checkout."""
-    return argument.replace(project.0 + "/", PROJECT + "/")
-
-
-def keyed_environment(environment: Dict[str, str], variables: list[str], project: Path) -> Dict[str, str]:
-    """The package environment as keyed: the manifest directory stays a location unless the crate reads it."""
-    mut keyed = environment
-    if "CARGO_MANIFEST_DIR" in keyed and "CARGO_MANIFEST_DIR" not in variables:
-        keyed["CARGO_MANIFEST_DIR"] = PROJECT
-    return keyed
+def extern_identities(arguments: list[str]) -> Result[list[str], str]:
+    """Bind each extern alias to its selected producer identity so swapping providers cannot preserve a key."""
+    mut identities: list[str] = []
+    for index in range(1, len(arguments)):
+        if arguments[index - 1] == "--extern" and "=" in arguments[index]:
+            binding = arguments[index].split("=")
+            producer = published_identity(Path("=".join(binding[1:]))).map_err((error) => f"artifacts: {error}")?
+            identities.append(f"{binding[0]}={producer}")
+    return Ok(sorted(identities))
 
 
 pub def producer_arguments(arguments: list[str]) -> list[str]:
@@ -175,7 +232,7 @@ pub def compilation_observations(
                     Err(_) => pass
                     Ok(inputs) =>
                         external, _ = inputs
-                        paths.extend([dependency_location(project, path).0 for path in external])
+                        paths.extend(source_paths(project, dependencies, arguments, external)?)
     # 2. Retain their metadata before the compiler can read them.
     mut observations: Dict[str, str] = {}
     for path in paths:
@@ -183,7 +240,12 @@ pub def compilation_observations(
     return Ok(observations)
 
 
-pub def inputs_unchanged(dependencies: Path, observations: Dict[str, str], project: Path) -> Result[bool, str]:
+pub def inputs_unchanged(
+    dependencies: Path,
+    observations: Dict[str, str],
+    project: Option[Path] = None,
+    arguments: list[str] = [],
+) -> Result[bool, str]:
     """
     Allow publication only for files captured before compilation and still unchanged afterward.
 
@@ -194,9 +256,12 @@ pub def inputs_unchanged(dependencies: Path, observations: Dict[str, str], proje
     # 1. Read the compiler's complete dependency list.
     text = read(dependencies)?
     paths, _ = dependency_inputs(text)?
+    mut selected = paths
+    if let Some(root) = project:
+        selected = source_paths(root, dependencies, arguments, paths)?
     # 2. Require every recorded dependency to have been observed before compilation.
-    for path in paths:
-        if dependency_location(project, path).0 not in observations:
+    for path in selected:
+        if path not in observations:
             return Ok(false)
     # 3. Refuse proof for any changed source, compiler or linked artifact.
     for path in observations.keys():
@@ -272,13 +337,13 @@ pub def extern_paths(arguments: list[str]) -> list[str]:
 def environment_inputs(names: list[str], environment: Dict[str, str]) -> Result[list[str], str]:
     """Observe tracked variables with package overrides, distinguishing unset from empty Unicode values."""
     mut inputs: list[str] = []
-    for name in sorted(names + [key for key in environment.keys()]):
+    for name in sorted(names):
         inputs.append(name)
         if name in environment:
-            inputs.extend(["set", environment[name]])
+            inputs.extend(observed_environment_value(name, environment[name])?)
             continue
         match env_var(name):
-            Ok(value) => inputs.extend(["set", str(value)])
+            Ok(value) => inputs.extend(observed_environment_value(name, str(value))?)
             Err(error) =>
                 match error:
                     VarError.NotPresent => inputs.append("unset")
@@ -342,3 +407,10 @@ def dependency_target(target: str, prefixes: list[str]) -> str:
     if target.startswith("/"):
         return Path(target).name()
     return target
+
+
+def observed_environment_value(name: str, value: str) -> Result[list[str], str]:
+    """Refuse an embedded physical location rather than give location-dependent programs equal identities."""
+    if value.startswith("/") or value.startswith("\\\\") or (len(value) > 2 and value[1:3] in [":/", ":\\"]):
+        return Err(f"unit identity refused: Rust observes location-bearing environment {name}")
+    return Ok(["set", value])
