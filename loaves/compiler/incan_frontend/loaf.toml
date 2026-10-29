@@ -4,7 +4,7 @@ hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_format = { loaf = "incan_format", path = "../incan_format" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
-incan_semantics_stdlib = { loaf = "incan_semantics_stdlib", optional = true, path = "../incan_semantics_stdlib" }
+incan_semantics_stdlib = { loaf = "incan_semantics_stdlib", path = "../incan_semantics_stdlib" }
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.6.0-dev.8" }
 quote = { loaf = "crates-io/quote", version = "1.0" }
@@ -13,7 +13,6 @@ serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
 syn = { features = ["full", "parsing", "printing"], loaf = "crates-io/syn", version = "2.0" }
-tempfile = { loaf = "crates-io/tempfile", optional = true, version = "3" }
 thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
 toml = { loaf = "crates-io/toml", version = "0.9" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
@@ -25,33 +24,11 @@ name = "incan_frontend"
 private = true
 version = "0.6.0-dev.8"
 
-[project.features]
-default = [
-    "std_testing",
-    "std_async",
-    "std_decorators",
-]
-std_async = [
-    "dep:incan_semantics_stdlib",
-    "incan_semantics_stdlib/std_async",
-]
-std_decorators = [
-    "dep:incan_semantics_stdlib",
-    "incan_semantics_stdlib/std_decorators",
-]
-std_testing = [
-    "dep:incan_semantics_stdlib",
-    "incan_semantics_stdlib/std_testing",
-]
-test_support = [
-    "dep:tempfile",
-]
-
 [rust]
 edition = "2024"
 name = "incan_frontend"
 type = "lib"
 
-# Test-only dependencies and helper features; production defaults are unchanged.
+# Filesystem fixtures belong to the frontend's own test harness, not its library artifact.
 [envs.test.dependencies]
-tempfile = { optional = false }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
