@@ -43,3 +43,4 @@ Start from the [design-record template](TEMPLATE.md) when proposing a new decisi
 | [DD-0008](0008_one_oven_in_incan.md)                     | One Oven, written in Incan                                                       | Draft     | v0.6          |
 | [DD-0009](0009_rust_facts_from_rustc_metadata.md)        | Rust facts are ABI caches read from rustc's metadata                             | Accepted  | v0.6          |
 | [DD-0010](0010_dev8_toolchain_and_ci.md)                 | Publish the completed dev.8 toolchain for CI and later development               | Accepted  | v0.6          |
+| [DD-0012](0012_incremental_compilation_over_a_semantic_store.md) | Incremental compilation over a persistent semantic store | Accepted | 0.6.0-dev.9 |

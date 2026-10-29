@@ -366,6 +366,7 @@ nav:
           - "DD-0008: One Oven, written in Incan": design_records/0008_one_oven_in_incan.md
           - "DD-0009: Rust facts from rustc metadata": design_records/0009_rust_facts_from_rustc_metadata.md
           - "DD-0010: The dev.8 release toolchain and CI": design_records/0010_dev8_toolchain_and_ci.md
+          - "DD-0012: Incremental compilation over a semantic store": design_records/0012_incremental_compilation_over_a_semantic_store.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md

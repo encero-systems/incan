@@ -1,0 +1,190 @@
+<svg viewBox="0 0 1280 776" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="semantic-store-architecture-title semantic-store-architecture-desc">
+<title id="semantic-store-architecture-title">Incremental compilation over a persistent semantic store</title>
+<desc id="semantic-store-architecture-desc">Changed project files and dependency Loaves are diffed into seeds that enter a ranked record graph, arranged as namespaces in import order by phase, where only changed records are recomputed in one sweep with early cutoff and frozen Loaf facts are read but never recomputed; the graph reads and writes a persistent semantic store that serves the LSP, MCP and graph readers, gives Oven version evidence, compacts into the published Loaf, and feeds rustc incremental through stable codegen units.</desc>
+<defs>
+  <marker id="dd0012-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+  <marker id="dd0012-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ffc15a"/></marker>
+  <marker id="dd0012-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#48f0ef"/></marker>
+</defs>
+
+<rect width="100%" height="100%" fill="#030304"/>
+
+<rect x="24" y="88" width="192" height="288" rx="8" fill="rgba(196,126,54,0.07)" stroke="rgba(196,126,54,0.38)" stroke-width="0.8"/>
+<rect x="36" y="92" width="56" height="12" rx="2" fill="#030304"/>
+<text x="64" y="101" fill="rgba(228,235,242,0.55)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">INPUTS</text>
+
+<path d="M200,152 H216 Q224,152 224,160 V260 Q224,268 232,268 H248" fill="none" stroke="#c1c8d0" stroke-width="1.2" marker-end="url(#dd0012-arrow)"/>
+<path d="M200,320 H216 Q224,320 224,312 V308 Q224,300 232,300 H248" fill="none" stroke="#48f0ef" stroke-width="1.2" marker-end="url(#dd0012-arrow-link)"/>
+<path d="M120,352 V572 Q120,580 128,580 H680 Q688,580 688,572 V564" fill="none" stroke="#48f0ef" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#dd0012-arrow-link)"/>
+<rect x="196" y="560" width="44" height="12" rx="2" fill="#030304"/>
+<text x="218" y="569" fill="#98a2ad" font-size="8" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.06em">BASES</text>
+
+<rect x="432" y="168" width="824" height="244" rx="8" fill="rgba(255,193,90,0.04)" stroke="rgba(255,193,90,0.55)" stroke-width="1" stroke-dasharray="4,4"/>
+<rect x="444" y="172" width="300" height="12" rx="2" fill="#030304"/>
+<text x="594" y="181" fill="#ffc15a" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">RECORD GRAPH · RANKED DAG · ONE SWEEP · EARLY CUTOFF</text>
+<rect x="448" y="206" width="792" height="40" rx="6" fill="rgba(72,240,239,0.04)" stroke="rgba(72,240,239,0.35)" stroke-width="0.8" stroke-dasharray="2,3"/>
+<text x="1132" y="230" fill="#48f0ef" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">FROZEN · LOAF FACTS</text>
+<text x="644" y="204" fill="rgba(228,235,242,0.55)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">NAMES</text>
+<text x="752" y="204" fill="rgba(228,235,242,0.55)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">SIGNATURES</text>
+<text x="860" y="204" fill="rgba(228,235,242,0.55)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">BODIES</text>
+<text x="968" y="204" fill="rgba(228,235,242,0.55)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">BODY IR</text>
+<text x="1076" y="204" fill="rgba(228,235,242,0.55)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">PLANS</text>
+<text x="1184" y="204" fill="rgba(228,235,242,0.55)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.14em">UNITS</text>
+<text x="456" y="230" fill="#48f0ef" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif">std.collections</text>
+<text x="456" y="282" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif">app.queue</text>
+<text x="456" y="334" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif">app.main</text>
+<path d="M644,264 V240" fill="none" stroke="#c1c8d0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#dd0012-arrow)"/>
+<path d="M836,264 V260 Q836,252 828,252 H784 Q776,252 776,244 V240" fill="none" stroke="#c1c8d0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#dd0012-arrow)"/>
+<path d="M1052,264 V260 Q1052,252 1044,252 H868 Q860,252 860,244 V240" fill="none" stroke="#c1c8d0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#dd0012-arrow)"/>
+<path d="M836,316 V312 Q836,304 828,304 H784 Q776,304 776,296 V292" fill="none" stroke="#c1c8d0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#dd0012-arrow)"/>
+<rect x="596" y="212" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="596" y="212" width="96" height="28" rx="4" fill="rgba(228,235,242,0.05)" stroke="rgba(72,240,239,0.50)" stroke-width="1"/>
+<text x="644" y="230" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">slot Deque</text>
+<rect x="704" y="212" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="704" y="212" width="96" height="28" rx="4" fill="rgba(228,235,242,0.05)" stroke="rgba(72,240,239,0.50)" stroke-width="1"/>
+<text x="752" y="230" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">sig Deque</text>
+<rect x="812" y="212" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="812" y="212" width="96" height="28" rx="4" fill="rgba(228,235,242,0.05)" stroke="rgba(72,240,239,0.50)" stroke-width="1"/>
+<text x="860" y="230" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">body extend</text>
+<rect x="920" y="212" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="920" y="212" width="96" height="28" rx="4" fill="rgba(228,235,242,0.05)" stroke="rgba(72,240,239,0.50)" stroke-width="1"/>
+<text x="968" y="230" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">IR extend</text>
+<rect x="596" y="264" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="596" y="264" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="644" y="282" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">bind Deque</text>
+<rect x="704" y="264" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="704" y="264" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="752" y="282" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">sig push_all</text>
+<rect x="812" y="264" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="812" y="264" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="860" y="282" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">body push_all</text>
+<rect x="920" y="264" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="920" y="264" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="968" y="282" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">IR push_all</text>
+<rect x="1028" y="264" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="1028" y="264" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="1076" y="282" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">extend[int]</text>
+<rect x="1136" y="264" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="1136" y="264" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="1184" y="282" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">unit 2</text>
+<rect x="596" y="316" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="596" y="316" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="644" y="334" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">bind push_all</text>
+<rect x="704" y="316" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="704" y="316" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="752" y="334" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">sig main</text>
+<rect x="812" y="316" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="812" y="316" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="860" y="334" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">body main</text>
+<rect x="920" y="316" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="920" y="316" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="968" y="334" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">IR main</text>
+<rect x="1028" y="316" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="1028" y="316" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="1076" y="334" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">plan main</text>
+<rect x="1136" y="316" width="96" height="28" rx="4" fill="#030304"/>
+<rect x="1136" y="316" width="96" height="28" rx="4" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<text x="1184" y="334" fill="#e4ebf2" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">unit 1</text>
+<text x="456" y="376" fill="#c1c8d0" font-size="14" font-style="italic" font-family="Brawler, Georgia, 'Times New Roman', serif">Rows are namespaces in import order. Reads point only up or left, so the graph stays acyclic.</text>
+<text x="456" y="398" fill="#c1c8d0" font-size="14" font-style="italic" font-family="Brawler, Georgia, 'Times New Roman', serif">Loaf rows are frozen: reads pass into them, but nothing inside a Loaf is ever recomputed.</text>
+
+<line x1="408" y1="284" x2="440" y2="284" stroke="#ffc15a" stroke-width="1.2" marker-end="url(#dd0012-arrow-accent)"/>
+<rect x="404" y="260" width="40" height="12" rx="2" fill="#030304"/>
+<text x="424" y="269" fill="#98a2ad" font-size="8" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SEEDS</text>
+
+<line x1="736" y1="412" x2="736" y2="468" stroke="#c1c8d0" stroke-width="1.2" marker-end="url(#dd0012-arrow)"/>
+<rect x="688" y="432" width="40" height="12" rx="2" fill="#030304"/>
+<text x="708" y="441" fill="#98a2ad" font-size="8" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.06em">WRITE</text>
+<line x1="784" y1="468" x2="784" y2="412" stroke="#c1c8d0" stroke-width="1.2" marker-end="url(#dd0012-arrow)"/>
+<rect x="792" y="432" width="32" height="12" rx="2" fill="#030304"/>
+<text x="808" y="441" fill="#98a2ad" font-size="8" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.06em">READ</text>
+
+<line x1="1184" y1="344" x2="1184" y2="468" stroke="#c1c8d0" stroke-width="1.2" marker-end="url(#dd0012-arrow)"/>
+<rect x="1192" y="420" width="36" height="12" rx="2" fill="#030304"/>
+<text x="1210" y="429" fill="#98a2ad" font-size="8" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.06em">UNITS</text>
+
+<line x1="640" y1="516" x2="544" y2="516" stroke="#c1c8d0" stroke-width="1.2" marker-end="url(#dd0012-arrow)"/>
+<rect x="562" y="496" width="60" height="12" rx="2" fill="#030304"/>
+<text x="592" y="505" fill="#98a2ad" font-size="8" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SNAPSHOTS</text>
+
+<line x1="760" y1="564" x2="760" y2="628" stroke="#c1c8d0" stroke-width="1.2" marker-end="url(#dd0012-arrow)"/>
+<rect x="768" y="588" width="56" height="12" rx="2" fill="#030304"/>
+<text x="796" y="597" fill="#98a2ad" font-size="8" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EVIDENCE</text>
+
+<line x1="880" y1="516" x2="912" y2="516" stroke="#c1c8d0" stroke-width="1.2" marker-end="url(#dd0012-arrow)"/>
+<rect x="40" y="120" width="160" height="64" rx="6" fill="#030304"/>
+<rect x="40" y="120" width="160" height="64" rx="6" fill="rgba(193,200,208,0.10)" stroke="#98a2ad" stroke-width="1"/>
+<rect x="48" y="126" width="28" height="12" rx="2" fill="none" stroke="rgba(152,162,173,0.40)" stroke-width="0.8"/>
+<text x="62" y="135" fill="rgba(152,162,173,0.85)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SRC</text>
+<text x="120" y="160" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Project sources</text>
+<text x="120" y="176" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">stat · content hash</text>
+
+<rect x="40" y="288" width="160" height="64" rx="6" fill="#030304"/>
+<rect x="40" y="288" width="160" height="64" rx="6" fill="rgba(228,235,242,0.05)" stroke="rgba(228,235,242,0.30)" stroke-width="1"/>
+<rect x="48" y="294" width="32" height="12" rx="2" fill="none" stroke="rgba(72,240,239,0.50)" stroke-width="0.8"/>
+<text x="64" y="303" fill="#48f0ef" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LOAF</text>
+<text x="120" y="328" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Dependency Loaves</text>
+<text x="120" y="344" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">frozen facts · hashes</text>
+
+<rect x="248" y="252" width="160" height="64" rx="6" fill="#030304"/>
+<rect x="248" y="252" width="160" height="64" rx="6" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<rect x="256" y="258" width="28" height="12" rx="2" fill="none" stroke="rgba(228,235,242,0.40)" stroke-width="0.8"/>
+<text x="270" y="267" fill="rgba(228,235,242,0.8)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DIFF</text>
+<text x="328" y="292" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Change detection</text>
+<text x="328" y="308" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">digests → seeds</text>
+
+<rect x="640" y="468" width="240" height="96" rx="6" fill="#030304"/>
+<rect x="640" y="468" width="240" height="96" rx="6" fill="rgba(228,235,242,0.05)" stroke="#c1c8d0" stroke-width="1"/>
+<rect x="648" y="474" width="40" height="12" rx="2" fill="none" stroke="rgba(193,200,208,0.40)" stroke-width="0.8"/>
+<text x="668" y="483" fill="rgba(193,200,208,0.85)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+<text x="760" y="508" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Semantic store</text>
+<text x="760" y="524" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">mmap segments · change log</text>
+<text x="760" y="540" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">edges both ways · fingerprints</text>
+<text x="760" y="556" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">IncQL-DB substrate</text>
+
+<rect x="344" y="484" width="200" height="64" rx="6" fill="#030304"/>
+<rect x="344" y="484" width="200" height="64" rx="6" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<rect x="352" y="490" width="32" height="12" rx="2" fill="none" stroke="rgba(228,235,242,0.40)" stroke-width="0.8"/>
+<text x="368" y="499" fill="rgba(228,235,242,0.8)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.08em">READ</text>
+<text x="444" y="524" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">LSP · MCP · graph</text>
+<text x="444" y="540" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">read-only snapshots</text>
+
+<rect x="660" y="628" width="200" height="64" rx="6" fill="#030304"/>
+<rect x="660" y="628" width="200" height="64" rx="6" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<rect x="668" y="634" width="32" height="12" rx="2" fill="none" stroke="rgba(228,235,242,0.40)" stroke-width="0.8"/>
+<text x="684" y="643" fill="rgba(228,235,242,0.8)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.08em">OVEN</text>
+<text x="760" y="668" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Oven</text>
+<text x="760" y="684" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">version ranges · hot swap</text>
+
+<rect x="912" y="484" width="160" height="64" rx="6" fill="#030304"/>
+<rect x="912" y="484" width="160" height="64" rx="6" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<rect x="920" y="490" width="28" height="12" rx="2" fill="none" stroke="rgba(228,235,242,0.40)" stroke-width="0.8"/>
+<text x="934" y="499" fill="rgba(228,235,242,0.8)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.08em">OUT</text>
+<text x="992" y="524" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Published Loaf</text>
+<text x="992" y="540" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">compacted base</text>
+
+<rect x="1112" y="468" width="144" height="64" rx="6" fill="#030304"/>
+<rect x="1112" y="468" width="144" height="64" rx="6" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>
+<rect x="1120" y="474" width="44" height="12" rx="2" fill="none" stroke="rgba(228,235,242,0.40)" stroke-width="0.8"/>
+<text x="1142" y="483" fill="rgba(228,235,242,0.8)" font-size="7" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NATIVE</text>
+<text x="1184" y="508" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">rustc incremental</text>
+<text x="1184" y="524" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">tracked fingerprints</text>
+
+
+<line x1="32" y1="724" x2="1248" y2="724" stroke="rgba(228,235,242,0.22)" stroke-width="0.8"/>
+<text x="40" y="748" fill="#c1c8d0" font-size="8" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="112" y="740" width="20" height="12" rx="2" fill="rgba(255,193,90,0.04)" stroke="rgba(255,193,90,0.55)" stroke-width="1" stroke-dasharray="4,4"/>
+<text x="140" y="749" fill="#c1c8d0" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace">record graph (focal)</text>
+<rect x="276" y="740" width="20" height="12" rx="2" fill="rgba(72,240,239,0.04)" stroke="rgba(72,240,239,0.35)" stroke-width="0.8" stroke-dasharray="2,3"/>
+<text x="304" y="749" fill="#c1c8d0" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace">frozen Loaf facts</text>
+<rect x="420" y="740" width="20" height="12" rx="2" fill="rgba(228,235,242,0.05)" stroke="#c1c8d0" stroke-width="1"/>
+<text x="448" y="749" fill="#c1c8d0" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace">store</text>
+<line x1="500" y1="746" x2="532" y2="746" stroke="#48f0ef" stroke-width="1.2" marker-end="url(#dd0012-arrow-link)"/>
+<text x="540" y="749" fill="#c1c8d0" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace">from dependency Loaves</text>
+<line x1="696" y1="746" x2="728" y2="746" stroke="#ffc15a" stroke-width="1.2" marker-end="url(#dd0012-arrow-accent)"/>
+<text x="736" y="749" fill="#c1c8d0" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace">only changed records enter</text>
+<line x1="912" y1="746" x2="944" y2="746" stroke="#c1c8d0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#dd0012-arrow)"/>
+<text x="952" y="749" fill="#c1c8d0" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace">reads</text>
+<line x1="1012" y1="746" x2="1044" y2="746" stroke="#c1c8d0" stroke-width="1.2" marker-end="url(#dd0012-arrow)"/>
+<text x="1052" y="749" fill="#c1c8d0" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace">data flow</text>
+    </svg>
