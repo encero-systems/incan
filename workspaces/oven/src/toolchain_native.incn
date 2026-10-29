@@ -5,7 +5,7 @@ from std.fs import Path
 from std.json import JsonValue
 from std.environ import get_or
 from features import FeatureRequest
-from files import json_text, read_json
+from files import json_text, read_json, read
 from home import home, standard_artifact_dir, standard_packages
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, local_facet_session, unique
 from publication import publish
@@ -16,7 +16,7 @@ from rust_units import (
     RustBuild,
     compile_library,
     facet_bindings,
-    identity,
+    artifact_context,
     ordered,
     native_artifacts,
     prepared_build,
@@ -28,7 +28,10 @@ from rust_units import (
 from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
 from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import add_extern, prepare_linked
-from vocabulary import stage_vocabulary
+from vocabulary import published_workers, stage_vocabulary
+from unit_reading import read_unit
+from unit_freshness import artifact_files, record, unit_key
+from codegen import compiled_arguments
 
 
 def main() -> Result[None, str]:
@@ -41,6 +44,8 @@ def main() -> Result[None, str]:
     """
     # 1. Only support production and a package/profile description are accepted.
     arguments = [argument for argument in args()]
+    if len(arguments) >= 4 and arguments[2] in ["identify", "publish"]:
+        return publish_prepared(arguments)
     if len(arguments) != 2 and len(arguments) != 4:
         return Err("usage: toolchain_native REPOSITORY [PACKAGE|runtime PROFILE]")
     # 2. Both modes use the same selected source tree and native generation.
@@ -52,6 +57,40 @@ def main() -> Result[None, str]:
             return describe_runtime(repository, arguments[3], toolchain)
         return describe_standard(repository, arguments[2], arguments[3], toolchain)
     return publish_support(repository)
+
+
+def publish_prepared(arguments: list[str]) -> Result[None, str]:
+    """
+    Identify a prepared native build before compilation, then publish its outputs under that same identity.
+
+    1. Read the exact compiler unit and select its metadata-only emission mode when requested.
+    2. Retain its identity before compilation or refuse input changes after compilation.
+    3. Record completed output payloads separately from their producer identity.
+    """
+    # 1. The script supplies the same unit JSON the compiler consumes, including checked source interfaces.
+    if (arguments[2] == "identify" and len(arguments) != 4) or (arguments[2] == "publish" and len(arguments) != 5):
+        return Err("usage: toolchain_native REPOSITORY identify UNIT | publish UNIT DIRECTORY")
+    path = Path(arguments[3])
+    mut unit = read_unit(read_json(path)?)?
+    if get_or("SELFBUILD_METADATA_ONLY", "") == "1":
+        unit.kind = "metadata-only"
+    # 2. An input edit during compilation cannot be certified as the completed producer's identity.
+    key = unit_key(unit, load_toolchain()?)?
+    identity = Path(f"{path.0}.identity")
+    if arguments[2] == "identify":
+        publish(identity, key.digest)?
+        return publish(
+            Path(f"{path.0}.arguments"),
+            "\n".join(compiled_arguments(unit.profile, key.digest, unit.project_root)),
+        )
+    if read(identity)? != key.digest:
+        return Err("prepared unit inputs changed while compiling")
+    # 3. Checking-only interfaces have no native library; their emission mode already distinguishes their identity.
+    directory = Path(arguments[4])
+    outputs = [artifact for artifact in artifact_files(directory, unit.package)? if artifact.is_file()]
+    if len(outputs) == 0:
+        return Err("native compilation published no unit payloads")
+    return record(directory.joinpath(".oven-inputs.sha256"), key, outputs, published_workers(unit, directory)?)
 
 
 def publish_support(repository: Path) -> Result[None, str]:
@@ -219,7 +258,7 @@ def installed_support(
         if declared.crate_name not in artifacts or len(artifacts[declared.crate_name]) != 1:
             return Err(f"native support generation has no unique {declared.crate_name} artifact")
         artifact = Path(artifacts[declared.crate_name][0])
-        expected = f"lib{declared.crate_name}-{identity(facet, "release")}."
+        expected = f"lib{declared.crate_name}-{artifact_context(facet, declared, "release")?}."
         if not artifact.name().startswith(expected):
             return Err(f"native support generation does not match {facet.project}'s selected features")
         if not artifact.is_file():

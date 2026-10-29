@@ -31,7 +31,8 @@ from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from unit_compiler import compile_prepared_unit
 from unit_freshness import artifact_files, record, staleness, unit_key
-from vocabulary import prepare_vocabulary, stage_vocabulary
+from compiler_facts import admit_fact
+from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
 
 
 pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
@@ -137,7 +138,7 @@ pub def compile_library_unit(
     for artifact in completed:
         if not artifact.is_file():
             return Err(f"compiler did not publish {artifact.0}")
-    record(stamp, key, completed)?
+    record(stamp, key, completed, published_workers(library, directory)?)?
     return Ok(0)
 
 
@@ -199,6 +200,8 @@ pub def prepare_linked(
                 directories.append(directory)
     # 3. The directories are sorted and distinct, as the compiler merges them with the index.
     unit.search = unique(directories)
+    for cache in unit.rust_abi:
+        admit_fact(Path(cache))?
     return prepare_vocabulary(unit, toolchain)
 
 
