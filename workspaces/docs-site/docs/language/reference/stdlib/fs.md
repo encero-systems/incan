@@ -3,7 +3,7 @@
 `std.fs` is the standard-library module for filesystem paths, directory operations, metadata, and file handles.
 
 ```incan
-from std.fs import DirEntry, DiskUsage, File, FileLock, IoError, OpenFileMode, OpenOptions, Path, PathStat
+from std.fs import DirEntry, DiskUsage, File, FileLock, IoError, MappedFile, OpenFileMode, OpenOptions, Path, PathStat
 ```
 
 The public surface is path-centric. Construct a `Path`, then call path or file-handle methods from there. Host failures return `Result[..., IoError]`; the error includes the affected `path`, a normalized `kind`, and a human-readable `message()`.
@@ -126,6 +126,8 @@ target.parent().sync_directory()?
 ```
 
 Use `path.lock_shared()` or `path.lock_exclusive()` to acquire a blocking advisory `FileLock`; `try_lock_shared()` and `try_lock_exclusive()` return `Ok(None)` when a conflicting lock is held. Locks apply to a stable sibling lock entry and are released when their guard leaves scope. They coordinate cooperative processes only, so they are not an authorization or mandatory-locking mechanism. Do not hold a blocking file lock across unrelated work or asynchronous suspension.
+
+`path.map_read()` maps a whole file read-only and returns `Result[MappedFile, IoError]`. `MappedFile.len()` is the number of mapped bytes. `MappedFile.read(offset, length)` returns `Some` copy of the `length` bytes at `offset`, or `None` when the range is not inside the mapping. A read touches only the pages that hold its bytes, and processes that map the same file share its pages. The file must not change while it is mapped; files replaced by rename keep the mapped generation.
 
 See [Publish a file without exposing partial contents](../../how-to/file_io.md#publish-a-file-without-exposing-partial-contents) for the complete workflow, failure behavior, and portability limits.
 
