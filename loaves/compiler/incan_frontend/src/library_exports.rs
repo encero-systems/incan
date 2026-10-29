@@ -27,6 +27,7 @@ mod members;
 mod partials_and_defaults;
 mod public_exports;
 
+pub(crate) use declaration_exports::checked_function_export;
 use declaration_exports::*;
 pub use members::*;
 use partials_and_defaults::*;
