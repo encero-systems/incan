@@ -52,6 +52,7 @@ mod native_shared;
 mod native_timing;
 mod panic_hooks;
 mod plan;
+mod plan_spike;
 mod program_entries;
 mod rust_codegraph;
 mod rust_facts;
@@ -99,6 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.first().map(String::as_str) {
         #[cfg(unix)]
         Some("--resident") => worker::serve(&args[1..]),
+        Some("--spike-plan") => plan_spike::run(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--source-interface") => frontend::source_interface(&args[1..]),
         Some("--check") => exit_with(check(&args[1..])?),

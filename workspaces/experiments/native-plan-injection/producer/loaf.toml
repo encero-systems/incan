@@ -1,0 +1,7 @@
+[project]
+name = "native_plan_spike"
+version = "0.1.0"
+private = true
+
+[dependencies]
+incan_mir_plan = { path = "../../../../loaves/compiler/incan_mir_plan" }

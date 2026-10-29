@@ -1,0 +1,344 @@
+"""Construct native programs as typed data, without parsing their source or invoking the Incan frontend."""
+
+from pub::incan_mir_plan import (
+    BasicBlock,
+    BinaryOp,
+    Callee,
+    CalleeKind,
+    Constant,
+    ExternalFunction,
+    Function,
+    Local,
+    ModelDeclaration,
+    Operand,
+    OperandKind,
+    Parameter,
+    Place,
+    Projection,
+    Plan,
+    PlanType,
+    Rvalue,
+    RvalueKind,
+    SourceSpan,
+    Statement,
+    StatementKind,
+    Terminator,
+    TerminatorKind,
+    Unwind,
+    place,
+    source_span,
+)
+
+
+@derive(Clone, PartialEq)
+pub enum Scenario:
+    """Closed test scenarios shared with the adapter's Rust entry through ordinary native type identity."""
+
+    Constant
+    InvalidReturn
+    Arithmetic
+    Branch
+    Record
+
+
+pub def build_plan(mode: Scenario, value: int, source: str) -> Plan:
+    """Build a complete program from data: 1. Select its declarations. 2. Attach its runtime calls and provenance."""
+    # 1. Select declarations directly, without a source parser or semantic frontend.
+    span = source_span(source, 1, 1)
+    mut models: list[ModelDeclaration] = []
+    if mode == Scenario.Record:
+        models.append(
+            ModelDeclaration(
+                name="Pair",
+                public=false,
+                fields=[
+                    Parameter(name="left", ty=PlanType.Int, span=span),
+                    Parameter(name="right", ty=PlanType.Int, span=span),
+                ],
+                field_public=[true, true],
+                # The current native adapter requires these ordinary Incan model contracts.
+                derives=["Clone", "FieldInfo", "IncanClass"],
+                span=span,
+            ),
+        )
+    # 2. The existing runtime supplies printing; the producer supplies all program behavior.
+    return Plan(
+        enums=[],
+        models=models,
+        functions=[selected_answer(mode, value, span), entry(mode, value, span)],
+        externals=[
+            ExternalFunction(
+                path="incan_native_runtime::format_int",
+                parameters=[PlanType.Int],
+                return_type=PlanType.String,
+                span=span,
+            ),
+            ExternalFunction(
+                path="incan_native_runtime::println_text",
+                parameters=[PlanType.String],
+                return_type=PlanType.Unit,
+                span=span,
+            ),
+        ],
+        span=span,
+    )
+
+
+def selected_answer(mode: Scenario, value: int, span: SourceSpan) -> Function:
+    """Choose a body shape, including the deliberately malformed negative control."""
+    if mode == Scenario.Arithmetic:
+        return arithmetic_answer(span)
+    if mode == Scenario.Branch:
+        return branch_answer(span)
+    if mode == Scenario.Record:
+        return record_answer(span)
+    return answer(mode, value, span)
+
+
+def answer(mode: Scenario, value: int, span: SourceSpan) -> Function:
+    """Declare an integer result; the negative control intentionally declares an incompatible boolean result."""
+    mut returned = PlanType.Int
+    if mode == Scenario.InvalidReturn:
+        returned = PlanType.Bool
+    assignment = Statement(
+        kind=StatementKind.Assign(
+            place(0, span),
+            Rvalue(kind=RvalueKind.Use(Operand(kind=OperandKind.Literal(Constant.Int(value)), span=span)), span=span),
+        ),
+        span=span,
+    )
+    return Function(
+        name="answer",
+        parameters=[],
+        return_type=returned,
+        locals=[Local(ty=PlanType.Int, span=span)],
+        blocks=[
+            BasicBlock(
+                statements=[assignment],
+                terminator=Terminator(kind=TerminatorKind.Return, span=span),
+                cleanup=false,
+                span=span,
+            ),
+        ],
+        span=span,
+    )
+
+
+def entry(mode: Scenario, value: int, span: SourceSpan) -> Function:
+    """Call the planned answer, format its actual result through the existing runtime, then print it."""
+    mut arguments: list[Operand] = []
+    if mode == Scenario.Arithmetic or mode == Scenario.Branch or mode == Scenario.Record:
+        arguments.append(Operand(kind=OperandKind.Literal(Constant.Int(value)), span=span))
+    return Function(
+        name="main",
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[
+            Local(ty=PlanType.Unit, span=span),
+            Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.String, span=span),
+        ],
+        blocks=[
+            call_block(CalleeKind.Planned("answer"), arguments, 1, 1, span),
+            call_block(
+                CalleeKind.External("incan_native_runtime::format_int"),
+                [Operand(kind=OperandKind.Copy(place(1, span)), span=span)],
+                2,
+                2,
+                span,
+            ),
+            call_block(
+                CalleeKind.External("incan_native_runtime::println_text"),
+                [Operand(kind=OperandKind.Move(place(2, span)), span=span)],
+                0,
+                3,
+                span,
+            ),
+            BasicBlock(
+                statements=[],
+                terminator=Terminator(kind=TerminatorKind.Return, span=span),
+                cleanup=false,
+                span=span,
+            ),
+        ],
+        span=span,
+    )
+
+
+def call_block(
+    callee: CalleeKind,
+    arguments: list[Operand],
+    destination: int,
+    next: int,
+    span: SourceSpan,
+) -> BasicBlock:
+    """Keep the explicit call destination and continuation visible in each block."""
+    return BasicBlock(
+        statements=[],
+        terminator=Terminator(
+            kind=TerminatorKind.Call(
+                Callee(kind=callee, span=span),
+                arguments,
+                place(destination, span),
+                next,
+                Unwind.Continue,
+            ),
+            span=span,
+        ),
+        cleanup=false,
+        span=span,
+    )
+
+
+def arithmetic_answer(span: SourceSpan) -> Function:
+    """Add two to the argument with an explicit checked result and overflow edge."""
+    left = Operand(kind=OperandKind.Copy(place(1, span)), span=span)
+    right = Operand(kind=OperandKind.Literal(Constant.Int(2)), span=span)
+    return Function(
+        name="answer",
+        parameters=[Parameter(name="value", ty=PlanType.Int, span=span)],
+        return_type=PlanType.Int,
+        locals=[
+            Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.CheckedInt, span=span),
+        ],
+        blocks=[
+            checked_sum([], left, right, 2, span),
+            return_value(
+                Operand(kind=OperandKind.Copy(Place(local=2, projection=Projection.Value, span=span)), span=span),
+                span,
+            ),
+        ],
+        span=span,
+    )
+
+
+def branch_answer(span: SourceSpan) -> Function:
+    """Return zero for nonpositive arguments and the unchanged argument otherwise."""
+    value = Operand(kind=OperandKind.Copy(place(1, span)), span=span)
+    zero = Operand(kind=OperandKind.Literal(Constant.Int(0)), span=span)
+    comparison = Statement(
+        kind=StatementKind.Assign(
+            place(2, span),
+            Rvalue(kind=RvalueKind.Binary(BinaryOp.Greater, value, zero), span=span),
+        ),
+        span=span,
+    )
+    condition = Operand(kind=OperandKind.Copy(place(2, span)), span=span)
+    return Function(
+        name="answer",
+        parameters=[Parameter(name="value", ty=PlanType.Int, span=span)],
+        return_type=PlanType.Int,
+        locals=[
+            Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.Bool, span=span),
+        ],
+        blocks=[
+            BasicBlock(
+                statements=[comparison],
+                terminator=Terminator(kind=TerminatorKind.SwitchBool(condition, 1, 2), span=span),
+                cleanup=false,
+                span=span,
+            ),
+            return_value(zero, span),
+            return_value(value, span),
+        ],
+        span=span,
+    )
+
+
+def record_answer(span: SourceSpan) -> Function:
+    """Construct Pair(value, 2), project both fields, and add them with checked arithmetic."""
+    record = Statement(
+        kind=StatementKind.Assign(
+            place(2, span),
+            Rvalue(
+                kind=RvalueKind.Model(
+                    0,
+                    [
+                        Operand(kind=OperandKind.Copy(place(1, span)), span=span),
+                        Operand(kind=OperandKind.Literal(Constant.Int(2)), span=span),
+                    ],
+                ),
+                span=span,
+            ),
+        ),
+        span=span,
+    )
+    left = Operand(
+        kind=OperandKind.Copy(Place(local=2, projection=Projection.Field(0, PlanType.Int), span=span)),
+        span=span,
+    )
+    right = Operand(
+        kind=OperandKind.Copy(Place(local=2, projection=Projection.Field(1, PlanType.Int), span=span)),
+        span=span,
+    )
+    return Function(
+        name="answer",
+        parameters=[Parameter(name="value", ty=PlanType.Int, span=span)],
+        return_type=PlanType.Int,
+        locals=[
+            Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.Model(0, "Pair"), span=span),
+            Local(ty=PlanType.CheckedInt, span=span),
+        ],
+        blocks=[
+            checked_sum([record], left, right, 3, span),
+            return_value(
+                Operand(kind=OperandKind.Copy(Place(local=3, projection=Projection.Value, span=span)), span=span),
+                span,
+            ),
+        ],
+        span=span,
+    )
+
+
+def checked_sum(
+    prefix: list[Statement],
+    left: Operand,
+    right: Operand,
+    destination: int,
+    span: SourceSpan,
+) -> BasicBlock:
+    """Assign the value/overflow pair, then assert the flag before entering the return block."""
+    mut statements = prefix
+    statements.append(
+        Statement(
+            kind=StatementKind.Assign(
+                place(destination, span),
+                Rvalue(kind=RvalueKind.Binary(BinaryOp.Add, left, right), span=span),
+            ),
+            span=span,
+        ),
+    )
+    overflow = Operand(
+        kind=OperandKind.Copy(Place(local=destination, projection=Projection.Overflow, span=span)),
+        span=span,
+    )
+    return BasicBlock(
+        statements=statements,
+        terminator=Terminator(
+            kind=TerminatorKind.AssertOverflow(overflow, BinaryOp.Add, left, right, 1, Unwind.Continue),
+            span=span,
+        ),
+        cleanup=false,
+        span=span,
+    )
+
+
+def return_value(value: Operand, span: SourceSpan) -> BasicBlock:
+    """Assign the result place and return; callers retain the operand's explicit ownership choice."""
+    return BasicBlock(
+        statements=[
+            Statement(
+                kind=StatementKind.Assign(place(0, span), Rvalue(kind=RvalueKind.Use(value), span=span)),
+                span=span,
+            ),
+        ],
+        terminator=Terminator(kind=TerminatorKind.Return, span=span),
+        cleanup=false,
+        span=span,
+    )

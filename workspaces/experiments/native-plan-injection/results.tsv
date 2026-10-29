@@ -1,0 +1,13 @@
+case	status	observed
+constant_42	PASS	42
+constant_73	PASS	73
+argument_add	PASS	42
+branch_true	PASS	42
+branch_false	PASS	0
+branch_zero	PASS	0
+record_fields	PASS	42
+record_negative	PASS	-1
+invalid_return	PASS	refused before artifact publication
+diagnostic_source	GAP	preflight error loses supplied source span
+checked_overflow	PASS	runtime overflow refused
+runtime_source	PASS	supplied file and coordinates retained
