@@ -164,7 +164,7 @@ impl TypeChecker {
     }
 
     /// Install producer-validated bodies for one exact program. Declaration collection and final publication still
-    /// run; only admitted scalar bodies skip checking and are consumed directly by Body IR.
+    /// run; only admitted scalar bodies with complete source-call witnesses skip checking and feed Body IR directly.
     pub fn set_callable_body_reuse(&mut self, products: crate::declaration_interface::ValidatedCallableBodies) {
         self.callable_body_reuse = Some(products);
     }
