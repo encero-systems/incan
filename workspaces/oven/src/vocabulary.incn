@@ -14,7 +14,8 @@ from rust_units import decoded
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import compile_prepared_unit
-from unit_freshness import Key, record, reusable, unit_key
+from unit_freshness import Key, fingerprint, unit_key
+from bakery import bakery, claim, find, register_root, seal, staging, view
 from unit_publication import record_payload, record_verified_payload
 from vocabulary_policy import admit_vocabulary
 
@@ -48,12 +49,14 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
     key = unit_key(registration, toolchain)?
     output = directory.joinpath("register")
     metadata = directory.joinpath("registration.json")
-    stamp = directory.joinpath("registration.inputs")
-    # 2. Descriptor reuse is bound to native inputs, source imports and the produced descriptor's identity.
-    registration_lock = metadata.lock_exclusive().map_err((error) => error.message())?
-    if reusable(registration_artifacts(metadata, directory), stamp, key)?:
-        unit.vocab = Some(metadata.0)
-        return Ok(unit)
+    # 2. Descriptors are a bakery unit bound to native inputs, source imports and the produced descriptor's identity.
+    store = bakery()?
+    identity = fingerprint(["incan.vocabulary-registration/1", key.digest])?
+    held = claim(store, identity)?
+    if key.refusal == "":
+        if view_registration(store, identity, directory)?:
+            unit.vocab = Some(metadata.0)
+            return Ok(unit)
     code = compile_prepared_unit(registration, toolchain, output, Some(key))?
     if code != 0:
         return Err(f"vocabulary entry for {unit.package} was refused (exit {code})")
@@ -76,9 +79,32 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
         ), "unit_identity": JsonValue.string(wire_digest(key)?), "metadata": payload, "worker": worker},
     )
     publish(metadata, json_text(prepared)?)?
-    record(stamp, key, registration_artifacts(metadata, directory), [directory.joinpath("desugar")])?
+    if key.refusal == "":
+        bake_registration(store, identity, directory, unit)?
     unit.vocab = Some(metadata.0)
     return Ok(unit)
+
+
+def view_registration(store: Path, identity: str, directory: Path) -> Result[bool, str]:
+    """View baked descriptors, and their worker when there is one, into `directory`; false when not baked."""
+    match find(store, identity)?:
+        None => return Ok(false)
+        Some(fact) =>
+            for file in fact.files:
+                view(store, fact, file.path, directory.joinpath(file.path))?
+            return Ok(true)
+
+
+def bake_registration(store: Path, identity: str, directory: Path, unit: UnitDescription) -> Result[None, str]:
+    """Bake the produced descriptors and worker, so every later ask in any project views them."""
+    staged = staging(store, identity)?
+    for artifact in registration_artifacts(directory.joinpath("registration.json"), directory):
+        artifact.copy(staged.joinpath(artifact.name()), true, true).map_err((error) => error.message())?
+    fact = seal(store, identity, staged, "vocabulary", f"vocabulary\t{unit.package}", [], "vocabulary registration")?
+    register_root(store, unit.project_root, identity)?
+    for file in fact.files:
+        view(store, fact, file.path, directory.joinpath(file.path))?
+    return Ok(None)
 
 
 pub def stage_vocabulary(unit: UnitDescription, directory: Path) -> Result[None, str]:
