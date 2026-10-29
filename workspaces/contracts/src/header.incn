@@ -17,6 +17,7 @@ const DIRECTIVES: FrozenList[str] = [
     "retires",
     "expect-stdout",
     "expect-stdout-contains",
+    "expect-stderr",
     "expect-stderr-contains",
     "expect-exit",
     "expect-diagnostic",
@@ -37,6 +38,7 @@ const BLOCKS: FrozenList[str] = [
     "expect-formatted",
     "expect-stdout",
     "expect-stdout-contains",
+    "expect-stderr",
     "expect-stderr-contains",
     "expect-dependencies",
     "expect-std-packages",
@@ -280,10 +282,12 @@ def finish(header: Header) -> Result[Header, str]:
             return Err(f"line {line}: `expect-stderr-contains:` lists an empty substring, which checks nothing")
     if header.declares("expect-stdout") and header.declares("expect-stdout-contains"):
         return Err("`expect-stdout:` and `expect-stdout-contains:` cannot both be declared; pick one")
+    if header.declares("expect-stderr") and header.declares("expect-stderr-contains"):
+        return Err("`expect-stderr:` and `expect-stderr-contains:` cannot both be declared; pick one")
     refused = len(header.diagnostics) > 0
     run = header.declares("expect-stdout") or header.declares("expect-stdout-contains") or header.declares(
-        "expect-stderr-contains",
-    ) or header.declares("expect-exit")
+        "expect-stderr",
+    ) or header.declares("expect-stderr-contains") or header.declares("expect-exit")
     if refused and (run or header.accepted):
         return Err(
             "`expect-diagnostic:` means the program is refused at check time and never run; it cannot be declared beside a run expectation or `expect-accepted:`",

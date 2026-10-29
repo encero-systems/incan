@@ -64,6 +64,7 @@ The header is the unbroken run of `#` comment lines at the top of the program.
 | `# retires: <path>.rs::<fn>` | The retired test the case replaces. Repeatable. |
 | `# expect-stdout:` | The whole stdout, one indented line per line. Exact; an empty block means nothing is printed. |
 | `# expect-stdout-contains:` | Lines that must each appear as a whole stdout line. Not with `expect-stdout`. |
+| `# expect-stderr:` | The whole stderr, one indented line per line. Exact; an empty block means nothing is printed. |
 | `# expect-stderr-contains:` | Substrings that must each appear in stderr. |
 | `# expect-exit: <n>` | The exit code, `0` to `255`. Default `0`. |
 | `# expect-diagnostic: <CODE>` | The program is refused at check time with this code. Repeatable. Never with a run expectation. |

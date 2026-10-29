@@ -4,7 +4,8 @@
 //! A panic, or a console that cannot be restored after a request, retires the process instead of exposing possibly
 //! poisoned native state to another request, and so does a physical footprint above [`RETIREMENT_FOOTPRINT`] after a
 //! request: only exiting returns a heavy compile's peak heap to the system. A retiring worker withdraws its endpoint,
-//! then sends its last reply with `"retired": true`.
+//! then sends its last reply with `"retired": true`. A caller that leaves while its request runs ends the worker, as it
+//! would have ended the short-lived command.
 
 use std::fs::{self, Permissions};
 use std::io::{self, Read, Write};
@@ -35,6 +36,7 @@ const RETIREMENT_FOOTPRINT: u64 = 1 << 30;
 const RETIREMENT_FOOTPRINT_SETTING: &str = "INCAN_WORKER_FOOTPRINT_BOUND";
 
 /// Remove only the socket inode this worker created, leaving any replacement untouched.
+#[derive(Clone)]
 struct SocketFile {
     path: PathBuf,
     device: u64,
@@ -83,9 +85,10 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
         &json!({"schema": SCHEMA, "generation": generation, "status": "ready", "pid": std::process::id()}),
     )?;
     while waiting(&listener, Duration::from_secs(idle))? {
-        let Some((mut stream, mut reply, poisoned)) = answer(&listener, generation)? else {
+        let Some((mut stream, mut reply, poisoned)) = answer(&listener, generation, Some(&socket_file))? else {
             continue;
         };
+        release_free_memory();
         if !poisoned && !over_bound(bound) {
             // A disconnected caller cannot publish a completed-output witness. Never replay its compilation here.
             let _ = send(&mut stream, &reply);
@@ -107,7 +110,11 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
 
 /// Accept one connection and run its request, returning the stream, the reply and whether the request poisoned the
 /// process (a panic or a failed console restoration). A connection whose caller already left is dropped unanswered.
-fn answer(listener: &UnixListener, generation: &str) -> io::Result<Option<(UnixStream, serde_json::Value, bool)>> {
+fn answer(
+    listener: &UnixListener,
+    generation: &str,
+    endpoint: Option<&SocketFile>,
+) -> io::Result<Option<(UnixStream, serde_json::Value, bool)>> {
     let (mut stream, _) = listener.accept()?;
     // A caller killed while it waited in the queue leaves a connection whose options can no longer be set (EINVAL on
     // macOS). Only that connection is dropped; the requests queued behind it are still served.
@@ -117,7 +124,10 @@ fn answer(listener: &UnixListener, generation: &str) -> io::Result<Option<(UnixS
         return Ok(None);
     }
     let (reply, poisoned) = match receive(&mut stream) {
-        Ok(request) => execute(request, generation),
+        Ok(request) => {
+            let _watch = endpoint.and_then(|socket| Abandonment::watch(&stream, socket));
+            execute(request, generation)
+        }
         Err(error) => (json!({"schema": SCHEMA, "exit": 1, "reason": error.to_string()}), false),
     };
     Ok(Some((stream, reply, poisoned)))
@@ -126,7 +136,7 @@ fn answer(listener: &UnixListener, generation: &str) -> io::Result<Option<(UnixS
 /// Answer every request already queued when a retiring worker withdrew its endpoint, each reply marked retired.
 fn drain(listener: &UnixListener, generation: &str) -> io::Result<()> {
     while waiting(listener, Duration::ZERO)? {
-        let Some((mut stream, mut reply, poisoned)) = answer(listener, generation)? else {
+        let Some((mut stream, mut reply, poisoned)) = answer(listener, generation, None)? else {
             continue;
         };
         reply["retired"] = json!(true);
@@ -163,7 +173,8 @@ fn physical_footprint() -> io::Result<u64> {
     if unsafe { libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V4, buffer) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(info.ri_phys_footprint)
+    // Resident pages include the mapped crate metadata a heavy compile leaves behind, which also holds memory.
+    Ok(info.ri_phys_footprint.max(info.ri_resident_size))
 }
 
 /// The process's current resident memory in bytes: its resident pages in `/proc/self/statm` times the page size.
@@ -186,6 +197,30 @@ fn physical_footprint() -> io::Result<u64> {
 fn physical_footprint() -> io::Result<u64> {
     Err(io::Error::other("no physical footprint reading on this system"))
 }
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    /// libmalloc: return free pages of `zone` (every zone when null) to the system, up to `goal` bytes (all when zero).
+    fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: libc::size_t) -> libc::size_t;
+}
+
+/// Return the heap a request freed to the system, so an idle worker holds only what it retains.
+#[cfg(target_os = "macos")]
+fn release_free_memory() {
+    // SAFETY: a null zone and a zero goal ask libmalloc to release every free page; no memory is touched.
+    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+}
+
+/// Return the heap a request freed to the system, so an idle worker holds only what it retains.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn release_free_memory() {
+    // SAFETY: malloc_trim only returns free heap pages to the system.
+    unsafe { libc::malloc_trim(0) };
+}
+
+/// No heap release on other systems.
+#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+fn release_free_memory() {}
 
 /// Sleep in the kernel until a client arrives or Oven's idle period elapses, without a polling thread per worker.
 fn waiting(listener: &UnixListener, idle: Duration) -> io::Result<bool> {
@@ -320,4 +355,69 @@ fn send(stream: &mut UnixStream, reply: &serde_json::Value) -> io::Result<()> {
     }
     stream.write_all(format!("{:08}", bytes.len()).as_bytes())?;
     stream.write_all(&bytes)
+}
+
+/// Watches a request's caller while the request runs. A caller that leaves (a runner deadline kills its process
+/// group) can no longer receive the result, so the worker withdraws its endpoint and exits instead of finishing a
+/// compilation nobody waits for, just as the short-lived command would have been killed.
+struct Abandonment {
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Abandonment {
+    /// Start watching the caller of `stream`; without a second handle on the connection nothing is watched.
+    fn watch(stream: &UnixStream, socket: &SocketFile) -> Option<Self> {
+        let caller = stream.try_clone().ok()?;
+        let socket = socket.clone();
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watching = done.clone();
+        let thread = std::thread::spawn(move || {
+            while !watching.load(std::sync::atomic::Ordering::Acquire) {
+                if caller_left(&caller) {
+                    drop(socket);
+                    std::process::exit(PANIC_STATUS);
+                }
+            }
+            // The endpoint stays: only the serving loop withdraws it when the worker retires.
+            std::mem::forget(socket);
+        });
+        Some(Self {
+            done,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for Abandonment {
+    /// Stop watching once the request has completed, before its reply is sent.
+    fn drop(&mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Wait up to 100 ms for the caller's side of the connection to close; a caller sends nothing more while it waits.
+fn caller_left(caller: &UnixStream) -> bool {
+    let mut descriptor = libc::pollfd {
+        fd: caller.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: the descriptor is initialized and remains valid for the duration of this synchronous call.
+    if unsafe { libc::poll(&mut descriptor, 1, 100) } <= 0 {
+        return false;
+    }
+    if descriptor.revents & libc::POLLHUP != 0 {
+        return true;
+    }
+    let mut byte = [0_u8; 1];
+    // SAFETY: the buffer is one writable byte and the descriptor is the caller's open connection.
+    let read = unsafe { libc::recv(caller.as_raw_fd(), byte.as_mut_ptr().cast(), 1, libc::MSG_PEEK) };
+    if read > 0 {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    read == 0
 }
