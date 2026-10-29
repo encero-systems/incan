@@ -39,6 +39,17 @@ pub struct CheckedExportReplay {
 }
 
 impl CheckedExportReplay {
+    /// Borrow the validated manifest callable contract for a private signature fingerprint. The manifest encoder
+    /// remains the authority for defaults, keyword roles, bounds and ownership markers; callers must project typed
+    /// nominal leaves before using this contract across source generations.
+    pub(crate) fn callable_contract(&self) -> Result<FunctionExport, LibraryManifestError> {
+        self.to_checked()?;
+        let [function] = self.projection.exports.functions.as_slice() else {
+            return Err(invalid("checked replay is not one callable contract"));
+        };
+        Ok(function.clone())
+    }
+
     /// Project one already checked export through the canonical manifest encoder, retaining overload association.
     pub fn from_checked(
         package: &str,
