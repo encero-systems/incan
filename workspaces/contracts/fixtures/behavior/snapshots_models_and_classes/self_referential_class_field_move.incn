@@ -1,0 +1,35 @@
+# behavior: a self-referential class moves its Option link out into a binding, a return value and a constructor argument (#2475)
+# expect-stdout:
+#   2
+#   2
+#   3
+
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+
+def take_next(node: Node) -> Option[Node]:
+    return node.next
+
+
+def value_of(link: Option[Node]) -> int:
+    match link:
+        Some(n) => return n.value
+        None => return 0
+
+
+def main() -> None:
+    head = Node(value=1, next=Some(Node(value=2, next=None)))
+    rest = take_next(head)
+    println(value_of(rest))
+    other = Node(value=1, next=Some(Node(value=2, next=Some(Node(value=3, next=None)))))
+    moved = other.next
+    match moved:
+        Some(n) =>
+            println(n.value)
+            spliced = Node(value=0, next=n.next)
+            match spliced.next:
+                Some(m) => println(m.value)
+                None => println("none")
+        None => println("none")

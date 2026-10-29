@@ -9,7 +9,14 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
-from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, semantic_type_matches
+from pub::incan_mir_plan import (
+    PlanType,
+    ListLeaf,
+    EnumDeclaration,
+    TupleElement,
+    semantic_type_matches,
+    tuple_element_type,
+)
 from models import model_type, hashed_element
 from tuples import tuple_element
 from enums import enum_type
@@ -227,14 +234,70 @@ pub def stored_field_type(
     slot: int,
     intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Use the Body IR field's owning callable fact at every construction and projection of its closed owner."""
+    """
+    Use the Body IR field's owning callable fact at every construction and projection of its closed owner.
+
+    A class field whose layout reaches its own class by value, as `next: Option[Node]` does, is stored boxed; the
+    checker has already refused a class that holds itself with no `Option` in between.
+    """
     ty = native_source_type(constructors, nominals, enums, unions, declaration.field_types[slot], intrinsics)?
     owned: bool = declaration.owns_callable_field(slot)
     if owned:
         match ty:
             PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
             _ => return Err("invalid Body IR owned callable field without a function signature")
+    if declaration.canonical.kind == SemanticSourceTargetKind.Class:
+        if layout_reaches(constructors, nominals, enums, unions, intrinsics, declaration, ty, []):
+            return Ok(PlanType.Boxed([ty]))
     return Ok(ty)
+
+
+def layout_reaches(
+    constructors: &ConstructorIndex,
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+    owner: &NominalDeclaration,
+    ty: PlanType,
+    mut path: list[int],
+) -> bool:
+    """
+    Whether a stored value holds `owner` inline: through nominal fields, standard enum payloads and tuple elements.
+
+    Collections, references and boxes hold their values elsewhere and end the walk; `path` holds the nominals already
+    entered on the way here.
+    """
+    match ty:
+        PlanType.Model(index, _name) =>
+            reached = nominals[index]
+            if reached.canonical == owner.canonical:
+                return true
+            if index in path:
+                return false
+            path.append(index)
+            for field in reached.field_types:
+                match native_source_type(constructors, nominals, enums, unions, field, intrinsics):
+                    Ok(stored) =>
+                        if layout_reaches(constructors, nominals, enums, unions, intrinsics, owner, stored, path):
+                            return true
+                    Err(_reason) => pass
+            return false
+        PlanType.Enum(index, _name) =>
+            if index < len(enums) or index >= len(enums) + len(intrinsics):
+                return false
+            for variant in intrinsics[index - len(enums)].variants:
+                for payload in variant.fields:
+                    if layout_reaches(constructors, nominals, enums, unions, intrinsics, owner, payload, path):
+                        return true
+            return false
+        PlanType.Tuple(elements) =>
+            for element in elements:
+                stored = tuple_element_type(element)
+                if layout_reaches(constructors, nominals, enums, unions, intrinsics, owner, stored, path):
+                    return true
+            return false
+        _ => return false
 
 
 def is_native_str(ty: &RustType) -> bool:
