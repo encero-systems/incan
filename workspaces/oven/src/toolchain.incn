@@ -9,7 +9,8 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
   installed toolchain names its `sysroot` link, which points at the machine's Rust installation.
 - `rust_abi`: the ABI caches of the toolchain's Rust crates (`std`, `core`, `alloc`): the Rust facts checking reads.
 - `externs`: the crates every unit may name, each `{"name", "path"}`: the runtime and its support crates. An explicit
-  manifest dependency takes precedence over a support crate's ambient alias.
+  manifest dependency takes precedence over a support crate's ambient alias. Packed references also carry
+  `unit_identity` and `payload_digest` for admission without deriving a producer identity from its bytes.
 - `search`: the directories the dependencies of those crates live in.
 - `registry_units`: the prepared registry closure (`incan.oven.closure/1`) available to this toolchain.
 - `registry_lock`: an optional producer closure whose exact entries decide registry root selection.
@@ -22,8 +23,12 @@ from std.fs import Path
 from std.json import JsonValue
 from files import read_json
 from home import TOOLCHAIN, home
-from json_fields import array, field, strings, text_field
+from json_fields import array, field, strings, text_field, required_items, required_text
 from native_closure_input import NativeClosureInput
+from unit_publication import import_payload, import_publication, record_path
+from compiler_facts import admit_fact
+from apple_sdk import selected_sdk
+from std.environ import get_or
 
 pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
 
@@ -57,6 +62,8 @@ pub model Toolchain:
     # Published linking fields are read once within this selection, never retained across owner requests blindly.
     pub native_closures: NativeClosureInput = NativeClosureInput()
     pub registry_lock: str = ""
+    # Explicit target facts for synthetic or cross-target toolchains; empty selects rustc's reported host.
+    pub target: str = ""
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
@@ -85,8 +92,62 @@ pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
         return Err(f"no toolchain {TOOLCHAIN} is installed: {path.0} does not exist")
     document = read_json(path)?
     match toolchain_of(document, directory):
-        Ok(toolchain) => return Ok(toolchain)
+        Ok(toolchain) =>
+            admit_toolchain(document, directory)?
+            admit_compiler_facts(toolchain)?
+            return Ok(toolchain)
         Err(failed) => return Err(f"{path.0}: `{".".join(failed)}` is missing or malformed")
+
+
+pub def admit_compiler_facts(toolchain: Toolchain) -> Result[None, str]:
+    """Admit compiler, Rust fact caches and SDK settings before any unit asks for their content identities."""
+    for path in [toolchain.driver] + toolchain.rust_abi:
+        admit_fact(Path(path))?
+    compiler = Path(toolchain.sysroot).joinpath("bin/rustc")
+    if compiler.is_file():
+        admit_fact(compiler)?
+    mut sdk = selected_sdk(toolchain.sysroot)?
+    if sdk == "":
+        sdk = get_or("SDKROOT", "")
+    if sdk != "":
+        admit_fact(Path(sdk).joinpath("SDKSettings.json"))?
+    return Ok(None)
+
+
+def admit_toolchain(document: JsonValue, directory: Path) -> Result[None, str]:
+    """
+    Admit transported payloads at installation selection, before unit identification reads only producer identities.
+
+    1. Verify native artifacts and their checked interfaces against transported publication records.
+    2. Verify each standard provider's published artifact set after an installation moves.
+    """
+    # 1. Packed native references carry both identities even when their registry store is read-only.
+    for native in required_items(document, "externs")?:
+        path = Path(located(directory, required_text(native, "path")?))
+        if native.get("unit_identity") != None:
+            import_payload(path, required_text(native, "unit_identity")?, required_text(native, "payload_digest")?)?
+        elif record_path(path).is_file():
+            import_publication(path)?
+        admit_provider(path.parent())?
+    # 2. Standard native libraries and checked interfaces both retain their producers after transport.
+    loaves = directory.joinpath("loaves")
+    if not loaves.is_dir():
+        return Ok(None)
+    for package in loaves.iterdir().map_err((error) => error.message())?:
+        if not package.is_dir():
+            continue
+        for profile in package.iterdir().map_err((error) => error.message())?:
+            if profile.is_dir():
+                admit_provider(profile)?
+    return Ok(None)
+
+
+def admit_provider(directory: Path) -> Result[None, str]:
+    """Admit every transported payload with a producer record before a consumer names its identity."""
+    for record in directory.iterdir().map_err((error) => error.message())?:
+        if record.is_file() and record.name().endswith(".oven-unit"):
+            import_publication(Path(record.0[:-10]))?
+    return Ok(None)
 
 
 pub def located(directory: Path, path: str) -> str:

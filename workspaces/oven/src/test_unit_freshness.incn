@@ -8,18 +8,20 @@ from files import json_text, make_directory, read, remove, write as write_file
 from compiler_refusals import check_or_replay, compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
 from intake import ManifestReader
-from observation import load_ledger
+from observation import file_digest, load_ledger
+from vocabulary import published_workers, stage_vocabulary
 from native_closure_input import NativeClosureInput, native_bindings
 from standalone_rust import published_bindings
 from scratch import scratch_directory
-from rust_freshness import compilation_observations, inputs_unchanged, library_key
+from shared_link import linkage_key
+from rust_freshness import compilation_observations, inputs_unchanged, library_key, reconciled_rust_key
 from rust_units import (
     BuiltUnit,
     RegistryUnits,
     RustBuild,
     RustFacet,
     compile_rust_library,
-    identity,
+    artifact_context,
     library_compile_arguments,
     linking,
     native_artifacts,
@@ -29,21 +31,24 @@ from rust_units import (
 )
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
-from toolchain import NativeCrate, Toolchain
+from toolchain import NativeCrate, Toolchain, admit_compiler_facts, read_toolchain
+from compiler_facts import admit_fact
 from unit import UnitDescription, UnitLoaf
 from unit_rust import add_extern, compile_library_unit
+from unit_compiler import described_by, write_unit
+from unit_publication import admit_payload, published_identity, record_path, record_payload
 from unit_freshness import (
     Key,
     artifact_files,
     artifact_identity,
-    compiler_fingerprint,
+    compiler_fingerprint as selected_compiler_fingerprint,
     reusable,
     record,
-    rust_key,
     description_digest,
     unit_key_with,
     staleness,
-    unit_key,
+    unit_key as selected_unit_key,
+    fingerprint,
 )
 
 
@@ -63,10 +68,32 @@ model Pass:
     listed: int
 
 
+def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
+    """Admit this fixture's freshly written compiler facts before asking for their identities."""
+    admit_compiler_facts(toolchain)?
+    return selected_compiler_fingerprint(toolchain)
+
+
+def unit_key(unit: UnitDescription, toolchain: Toolchain) -> Result[Key, str]:
+    """Admit this fixture's current compiler generation before identifying its prepared unit."""
+    admit_compiler_facts(toolchain)?
+    return selected_unit_key(unit, toolchain)
+
+
 def write(path: Path, text: str) -> Result[None, str]:
     """Create or replace a file, making its directory first."""
     make_directory(path.parent())?
-    return write_file(path, text)
+    write_file(path, text)?
+    if path.name() == "driver":
+        admit_fact(path)?
+    return Ok(None)
+
+
+def make_executable(path: Path) -> Result[None, str]:
+    """Complete a synthetic compiler publication, including the executable mode in its admission guard."""
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().map_err((error) => str(error))?.success()
+    return admit_fact(path)
 
 
 def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
@@ -89,6 +116,7 @@ def publish_loaf(directory: Path, name: str, text: str) -> Result[None, str]:
         if artifact.name().endswith(".incnlib"):
             content = JsonValue.object({"fixture": JsonValue.string(text)}).to_json().unwrap_or("{}")
         write(artifact, content)?
+        record_payload(artifact, fingerprint([text])?)?
     return Ok(None)
 
 
@@ -103,6 +131,7 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
     publish_loaf(standard, "std", "standard")?
     write(scratch.joinpath("toolchain").joinpath("driver"), "driver one")?
     write(scratch.joinpath("toolchain").joinpath("libruntime.rlib"), "runtime one")?
+    record_payload(scratch.joinpath("toolchain/libruntime.rlib"), fingerprint(["runtime one"])?)?
     write(scratch.joinpath("toolchain").joinpath("std.rustabi"), "abi one")?
     toolchain = Toolchain(
         driver=scratch.joinpath("toolchain").joinpath("driver").0,
@@ -111,6 +140,7 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
         externs=[NativeCrate(name="runtime", path=scratch.joinpath("toolchain").joinpath("libruntime.rlib").0)],
         search=[],
         registry_units="",
+        target="aarch64-apple-darwin",
     )
     unit = UnitDescription(
         source=root.joinpath("src").joinpath("main.incn").0,
@@ -131,6 +161,7 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
         externs=toolchain.externs,
         rust_abi=toolchain.rust_abi,
     )
+    admit_compiler_facts(toolchain)?
     return Ok(Fixture(unit=unit, toolchain=toolchain, root=root))
 
 
@@ -153,6 +184,111 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     assert second.key == first.key
     assert second.hashed == 0
     assert second.listed == 0
+    # RFC 124: checkout, target and installed-home locations are publication provenance.
+    relocated = fixture(scratch.path().joinpath("another-checkout"))?
+    assert reconcile(scratch.path().joinpath("another-checkout"), relocated)?.key == first.key
+    verify_source_move(scratch.path().joinpath("moved-entry"))?
+    verify_project_entries(scratch.path().joinpath("project-entries"))?
+    verify_invocation_identity(setup)?
+    verify_descriptor_selection(setup)?
+    verify_published_identity(scratch.path().joinpath("publication"))?
+    return Ok(None)
+
+
+def verify_source_move(scratch: Path) -> Result[None, str]:
+    """Moving or renaming the root source without changing code or invocation facts preserves identity."""
+    setup = fixture(scratch)?
+    before = reconcile(scratch, setup)?
+    mut moved = setup
+    moved.unit.source_root = setup.root.joinpath("moved-sources").0
+    moved.unit.source = Path(moved.unit.source_root).joinpath("another-name.incn").0
+    write(Path(moved.unit.source), read(Path(setup.unit.source))?)?
+    remove(Path(setup.unit.source))?
+    assert reconcile(scratch, moved)?.key == before.key
+    return Ok(None)
+
+
+def verify_project_entries(scratch: Path) -> Result[None, str]:
+    """Project-relative program and vocabulary entries retain identity across checkouts and track content edits."""
+    mut setup = fixture(scratch.joinpath("first"))?
+    setup.unit.program_entries = ["src/main.incn"]
+    setup.unit.vocab_entry = Some("vocabulary/registration.incn")
+    registration = setup.root.joinpath("vocabulary/registration.incn")
+    write(registration, "pub def registration() -> int:\n    return 1\n")?
+    before = reconcile(scratch.joinpath("first"), setup)?
+    mut moved = fixture(scratch.joinpath("second"))?
+    moved.unit.program_entries = setup.unit.program_entries
+    moved.unit.vocab_entry = setup.unit.vocab_entry
+    write(moved.root.joinpath("vocabulary/registration.incn"), read(registration)?)?
+    assert reconcile(scratch.joinpath("second"), moved)?.key == before.key
+    write(registration, "pub def registration() -> int:\n    return 2\n")?
+    assert reconcile(scratch.joinpath("first"), setup)?.key != before.key
+    return Ok(None)
+
+
+def verify_descriptor_selection(setup: Fixture) -> Result[None, str]:
+    """Equal invocation facts never let a descriptor for another source entry satisfy compilation."""
+    mut other = setup.unit
+    other.source = Path(other.source_root).joinpath("another.incn").0
+    write(Path(other.source), "def main() -> None:\n    println(\"another\")\n")?
+    first = unit_key(setup.unit, setup.toolchain)?
+    second = unit_key(other, setup.toolchain)?
+    assert description_digest(setup.unit)? == description_digest(other)?
+    assert first.descriptor != second.descriptor
+    assert linkage_key(first, true)?.descriptor == first.descriptor
+    one = write_unit(setup.unit, "app", None, described_by(first))?
+    two = write_unit(other, "app", None, described_by(second))?
+    assert one.0 != two.0
+    assert setup.unit.source in read(one)? and other.source in read(two)?
+    return Ok(None)
+
+
+def verify_invocation_identity(setup: Fixture) -> Result[None, str]:
+    """Changing one effective invocation fact changes identity, while changing only locations does not."""
+    first = description_digest(setup.unit)?
+    mut changed = setup.unit
+    changed.package = "another_crate"
+    assert description_digest(changed)? != first
+    changed = setup.unit
+    changed.active_features = ["extra"]
+    assert description_digest(changed)? != first
+    changed = setup.unit
+    changed.profile = "release"
+    assert description_digest(changed)? != first
+    changed = setup.unit
+    changed.kind = "test"
+    assert description_digest(changed)? != first
+    changed = setup.unit
+    changed.search = ["/another/target/directory"]
+    changed.search_index = Some("/another/home/search.json")
+    changed.source_root = "/another/checkout/src"
+    changed.project_root = "/another/checkout"
+    changed.source = "/another/checkout/src/main.incn"
+    assert description_digest(changed)? == first
+    return Ok(None)
+
+
+def verify_published_identity(scratch: Path) -> Result[None, str]:
+    """A payload keeps its producer identity across admission, independently of provenance and payload digest."""
+    source = scratch.joinpath("first/libunit.rlib")
+    moved = scratch.joinpath("elsewhere/libunit.rlib")
+    write(source, "compiled bytes")?
+    record_payload(source, "producer identity")?
+    assert published_identity(source)? == "producer identity"
+    write(moved, read(source)?)?
+    write(record_path(moved), read(record_path(source))?)?
+    admit_payload(moved)?
+    assert published_identity(moved)? == published_identity(source)?
+    write(moved, "compiled bytes")?
+    admit_payload(moved)?
+    assert published_identity(moved)? == "producer identity"
+    write(moved, "changed bytes")?
+    match admit_payload(moved):
+        Ok(_) =>
+            assert false, "changed payload cannot inherit its producer's identity"
+        Err(_) => pass
+    record_payload(moved, "another producer identity")?
+    assert published_identity(moved)? != published_identity(source)?
     return Ok(None)
 
 
@@ -174,10 +310,10 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     write(Path(setup.unit.source), "def main() -> None:\n    println(\"edited\")\n")?
     rewritten = reconcile(scratch.path(), setup)?
     assert rewritten.key == added.key
-    # Configuration is part of the key, and so are the siblings of an entry outside the source root (a test).
+    # Manifest publication metadata does not reach this already-described invocation.
     write(setup.root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.2.0\"\n")?
     manifest = reconcile(scratch.path(), setup)?
-    assert manifest.key != rewritten.key
+    assert manifest.key == rewritten.key
     mut test_unit = setup.unit
     test_unit.source = setup.root.joinpath("tests").joinpath("test_app.incn").0
     write(Path(test_unit.source), "def test_app() -> None:\n    assert true\n")?
@@ -215,8 +351,7 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     script += "printf '\\377out'; printf 'named refusal\\000tail' >&2\n"
     script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nesac\nexit 1\n"
     write(driver, script)?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     invocation = ["--unit", "unit.json", "app", "app.rlib", setup.toolchain.sysroot]
     options = ["--library"]
     # 1. Replay an unchanged refusal with exact binary streams.
@@ -292,8 +427,7 @@ def verify_check_replay(scratch: Path) -> Result[None, str]:
     script += "printf 'incan.compiler-check/1\\n' > \"$receipt\"\nprintf '\\377report'; printf 'warning\\000tail' >&2\n"
     script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nrefuse*) exit 1;;\nesac\nexit 0\n"
     write(driver, script)?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     text = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "text"]
     # 1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
     write(source, "pass")?
@@ -337,13 +471,17 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
     verify_closure_readings(scratch.path().joinpath("closure.json"))?
+    verify_toolchain_interface_admission(scratch.path(), setup.toolchain)?
     dependency = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
     write(dependency[0], "dependency rebuilt with different code")?
+    record_payload(dependency[0], fingerprint(["rebuilt dependency"])?)?
+    record_payload(dependency[1], fingerprint(["rebuilt dependency"])?)?
     rebuilt = reconcile(scratch.path(), setup)?
     assert rebuilt.key != first.key
     assert rebuilt.hashed == 0
     standard_artifacts = artifact_files(Path(setup.unit.loaves[1].dir), "std")?
     write(standard_artifacts[1], "{\"fixture\":\"standard package recompiled\"}")?
+    record_payload(standard_artifacts[1], fingerprint(["rebuilt standard"])?)?
     recompiled = reconcile(scratch.path(), setup)?
     assert recompiled.key != rebuilt.key
     # A manifest that declares a vocabulary worker adds it to the artifact set; rewritten without one, it does not.
@@ -359,8 +497,39 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
             assert false, "a malformed manifest cannot authorize an incomplete artifact set"
         Err(_) => pass
     verify_completed_library_abi(scratch.path().joinpath("publication"))?
+    verify_worker_publication(scratch.path().joinpath("workers"))?
     verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
     verify_requested_loaf_roots(scratch.path().joinpath("requested-roots"))?
+    return Ok(None)
+
+
+def verify_worker_publication(scratch: Path) -> Result[None, str]:
+    """Carried workers keep their baked identity; payload admission stays separate from library identity."""
+    setup = fixture(scratch)?
+    worker = scratch.joinpath("vocabulary/desugar")
+    write(worker, "one native worker")?
+    worker_id = fingerprint(["worker producer"])?
+    registration_id = fingerprint(["registration producer"])?
+    record_payload(worker, "sha256:" + worker_id)?
+    digest = file_digest(worker)?
+    metadata = scratch.joinpath("vocabulary/registration.json")
+    prepared = f"{{\"crate_path\":\"syntax.incn\",\"package_name\":\"app\",\"unit_identity\":\"{registration_id}\",\"metadata\":{{}},\"worker\":{{\"artifact_kind\":\"NativeWorker\",\"abi_version\":1,\"relative_path\":\"vocab-worker\",\"unit_identity\":\"{worker_id}\",\"sha256\":\"{digest}\"}}}}"
+    write(metadata, prepared)?
+    mut unit = setup.unit
+    unit.vocab = Some(metadata.0)
+    before = unit_key(unit, setup.toolchain)?
+    directory = scratch.joinpath("library")
+    stage_vocabulary(unit, directory)?
+    carried = directory.joinpath("vocab-worker")
+    record(directory.joinpath("library.inputs"), before, [carried], published_workers(unit, directory)?)?
+    assert published_identity(carried)? == "sha256:" + worker_id
+    write(metadata, prepared.replace(digest, fingerprint(["another payload"])?))?
+    assert unit_key(unit, setup.toolchain)?.digest == before.digest
+    match stage_vocabulary(unit, scratch.joinpath("refused")):
+        Ok(_) =>
+            assert false, "payload checksum changes require admission, never a fabricated unit identity"
+        Err(reason) =>
+            assert "payload changed" in reason
     return Ok(None)
 
 
@@ -422,8 +591,7 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     script += "printf published > \"$directory/$name\"\ndone\n"
     script += "printf '{}' > \"$directory/app.incnlib\"\n"
     write(driver, script)?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     # 2. The completed stamp must include the cache that publication added.
     mut library = setup.unit
     library.kind = "library"
@@ -449,6 +617,7 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     driver = compiler_fingerprint(setup.toolchain)?
     assert driver != first
     write(Path(setup.toolchain.externs[0].path), "runtime two, another interface")?
+    record_payload(Path(setup.toolchain.externs[0].path), fingerprint(["runtime two"])?)?
     runtime = compiler_fingerprint(setup.toolchain)?
     assert runtime != driver
     write(Path(setup.toolchain.rust_abi[0]), "abi two, other facts")?
@@ -459,11 +628,12 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     write(lock, "first producer closure")?
     recorded.registry_lock = lock.0
     selected = compiler_fingerprint(recorded)?
-    assert selected != abi
+    assert selected == abi
     write(lock, "other producer closure")?
-    assert compiler_fingerprint(recorded)? != selected
+    assert compiler_fingerprint(recorded)? == selected
     mut moved = setup.toolchain
     moved.sysroot = "/rust/1.98.0-x86_64-unknown-linux-gnu"
+    moved.target = "x86_64-unknown-linux-gnu"
     assert compiler_fingerprint(moved)? != abi
     # Rewriting the driver in place with the same length and putting its modification time back is still a change.
     rewrite_in_place(Path(setup.toolchain.driver), "driver 2.., a longer compiler")?
@@ -471,7 +641,14 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     # A unit that links the replaced native crate is keyed differently too.
     before = reconcile(scratch.path(), setup)?
     write(Path(setup.toolchain.externs[0].path), "runtime three, once more different")?
+    record_payload(Path(setup.toolchain.externs[0].path), fingerprint(["runtime three"])?)?
     assert reconcile(scratch.path(), setup)?.key != before.key
+    # Older installed producers can be used locally, but their bytes cannot invent an input identity.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    legacy = unit_key(setup.unit, setup.toolchain)?
+    assert legacy.digest == ""
+    assert "unit identity refused:" in legacy.refusal
+    assert "no recorded producer identity" in legacy.refusal
     return Ok(None)
 
 
@@ -552,6 +729,30 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
         setup.toolchain,
     )?
     assert changed_environment.digest != first.digest
+    # A compile-time path can change observable bytes; refusing portability must leave local execution available.
+    write(dependencies, f"library: {escaped}\n\n# env-dep:CARGO_MANIFEST_DIR=old\n")?
+    refused = library_key(
+        setup.root,
+        native,
+        dependencies,
+        arguments,
+        {"CARGO_MANIFEST_DIR": setup.root.0},
+        [],
+        setup.toolchain,
+    )?
+    assert refused.digest == "" and "CARGO_MANIFEST_DIR" in refused.refusal
+    assert linkage_key(refused, true)?.refusal == refused.refusal
+    assert staleness([], native.joinpath("absent-stamp"), refused)? == refused.refusal
+    refused_output = native.joinpath("refused.rlib")
+    write(refused_output, "locally compiled payload")?
+    record(native.joinpath("refused.oven-inputs"), refused, [refused_output])?
+    assert not native.joinpath("refused.oven-inputs").is_file()
+    match published_identity(refused_output):
+        Ok(_) =>
+            assert false, "a refused producer must never supply a fabricated dependency identity"
+        Err(reason) =>
+            assert "CARGO_MANIFEST_DIR" in reason
+    write(dependencies, f"library: {escaped}\n\n# env-dep:CARGO_PKG_NAME=old\n")?
     # A late source or native-artifact write invalidates publication even after a key was computed.
     stable = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
     _ = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
@@ -567,8 +768,8 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
 
 pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_it_links() -> Result[None, str]:
     """
-    A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
-    the libraries it links; unchanged, it is keyed from metadata alone.
+    A Rust unit is keyed by the sources it reads, effective invocation facts, compiler and linked producer identities.
+    Manifest publication metadata stays outside identity, and unchanged inputs require no content reads.
     """
     facet = LocalFacet(
         project="root",
@@ -589,8 +790,9 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     second = rust_pass(setup, "compiler", "std")?
     assert first.key == second.key
     assert second.hashed + second.listed == 0
-    # Each input of the key changes it: a source, a data file, a new module, the manifest, the cfg, the compiler and
-    # a linked library.
+    copied = rust_crate(scratch.path().joinpath("another-checkout"))?
+    assert rust_pass(copied, "compiler", "std")?.key == first.key
+    # Read sources, data files, selected features, compiler and linked identities each change the key.
     write(sources.joinpath("json.rs"), "pub fn parse() { let _ = 1; }\n")?
     edited = rust_pass(setup, "compiler", "std")?.key
     assert edited != first.key
@@ -602,12 +804,13 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     assert added != data
     write(setup.facet.joinpath("loaf.toml"), "[project]\nname = \"data\"\nversion = \"0.2.0\"\n")?
     manifest = rust_pass(setup, "compiler", "std")?.key
-    assert manifest != added
+    assert manifest == added
     features = rust_pass(setup, "compiler", "alloc")?.key
     assert features != manifest
     compiler = rust_pass(setup, "another compiler", "alloc")?.key
     assert compiler != features
     write(setup.dependency, "core two, rebuilt")?
+    record_payload(setup.dependency, fingerprint(["core two"])?)?
     linked = rust_pass(setup, "another compiler", "alloc")?.key
     assert linked != compiler
     verify_installed_rust_producer(scratch.path().joinpath("installed"))?
@@ -645,7 +848,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
         sysroot=false,
     )
     installed = scratch.joinpath("generation")
-    artifact = installed.joinpath(f"libdata-{identity(facet, "release")}.rlib")
+    artifact = installed.joinpath(f"libdata-{artifact_context(facet, declared, "release")?}.rlib")
     graph = installed.joinpath("data.incngraph")
     dependencies = installed.joinpath("library.d")
     included = scratch.joinpath("included value.txt")
@@ -706,6 +909,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     write(artifact, "one installed library")?
     record(stamp, key, [artifact, graph, dependencies])?
     write(setup.dependency, "rebuilt exact native dependency")?
+    record_payload(setup.dependency, fingerprint(["rebuilt exact native dependency"])?)?
     require_installed_refusal(facet, declared, output, request, built, "artifacts")?
     assert not output.is_dir()
     return Ok(None)
@@ -735,8 +939,7 @@ def verify_relocated_rust_producer(
     driver = Path(toolchain.driver)
     script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n"
     write(driver, script + "printf 'relocated checked graph' > \"$2\"\n")?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     _ = compile_rust_library(facet, declared, output, selected, built, [])?
     # 2. A fresh installation changes paths, inodes and status-change times, while preserving complete bytes.
     directory = artifact.parent().parent().joinpath("relocated")
@@ -745,6 +948,8 @@ def verify_relocated_rust_producer(
             write(directory.joinpath(source.name()), read(source)?)?
     dependency = directory.joinpath("libcore.rlib")
     write(dependency, read(Path(built["native-core@target"].artifact))?)?
+    write(record_path(dependency), read(record_path(Path(built["native-core@target"].artifact)))?)?
+    admit_payload(dependency)?
     mut relocated = built
     relocated["native-core@target"] = BuiltUnit(crate_name="core", artifact=dependency.0, directory=directory.0)
     moved = directory.joinpath(artifact.name())
@@ -754,7 +959,7 @@ def verify_relocated_rust_producer(
     proof = directory.joinpath("library.portable-inputs")
     saved = read(proof)?
     remove(proof)?
-    require_installed_refusal(facet, declared, output, moved_request, relocated, "command")?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
     write(proof, saved)?
     retained = compile_rust_library(facet, declared, output, moved_request, relocated, [])?
     assert retained.reused and retained.artifact == moved.0
@@ -801,8 +1006,7 @@ def verify_installed_graph_refresh(
     attempts = graph.parent().joinpath("graph-attempts")
     script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n" + f"printf x >> '{attempts.0}'\n" + "printf 'new checked graph' > \"$2\"\n"
     write(driver, script)?
-    mut chmod = Command.new("/bin/chmod")
-    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    make_executable(driver)?
     native_before = artifact_identity(artifact)?
     dependencies_before = artifact_identity(dependencies)?
     # 2. A new graph generation must retain both native outputs verbatim.
@@ -871,18 +1075,52 @@ def rust_crate(scratch: Path) -> Result[RustCrate, str]:
     write(sources.joinpath("table.json"), "{}")?
     dependency = scratch.joinpath("libcore.rlib")
     write(dependency, "core one")?
+    record_payload(dependency, fingerprint(["core one"])?)?
     return Ok(RustCrate(facet=facet, dependency=dependency, ledger=scratch.joinpath("ledger.json")))
 
 
 def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str]:
     """Key the crate as a new process would, built with `feature`: load the ledger, reconcile, save it."""
     described = ["crate data lib", "--cfg", f"feature=\"{feature}\""]
-    manifest = setup.facet.joinpath("loaf.toml")
     sources = setup.facet.joinpath("rust").joinpath("src")
     mut crates = load_ledger(setup.ledger, 0, "")
-    key = rust_key(compiler, described, manifest, sources, [setup.dependency.0], crates)?
+    paths = crates.sources(sources, true)?
+    key = reconciled_rust_key(setup.facet, setup.facet, paths, [], described, {}, [setup.dependency.0], compiler, crates)?
     crates.save()?
     return Ok(Pass(key=key.digest, hashed=crates.hashed, listed=crates.listed))
+
+
+def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
+    """A selected toolchain admits a transported native interface and refuses changed bytes on later selection."""
+    original = scratch.joinpath("producer/runtime.incnlib")
+    write(original, "runtime interface")?
+    record_payload(original, "runtime producer")?
+    directory = Path(toolchain.driver).parent()
+    copied = directory.joinpath("runtime.incnlib")
+    write(copied, read(original)?)?
+    write(record_path(copied), read(record_path(original))?)?
+    standard = directory.joinpath("loaves/standard/debug/libstandard.rlib")
+    write(standard, read(original)?)?
+    write(record_path(standard), read(record_path(original))?)?
+    document = JsonValue.object(
+        {"schema": JsonValue.string("incan.toolchain/1"), "driver": JsonValue.string(toolchain.driver), "sysroot": JsonValue.string(
+            toolchain.sysroot,
+        ), "rust_abi": JsonValue.array([JsonValue.string(path) for path in toolchain.rust_abi]), "externs": JsonValue.array(
+            [native.to_json() for native in toolchain.externs],
+        ), "search": JsonValue.array([]), "registry_units": JsonValue.string("")},
+    )
+    write(directory.joinpath("toolchain.json"), json_text(document)?)?
+    read_toolchain(directory)?
+    assert published_identity(copied)? == "runtime producer"
+    assert published_identity(standard)? == "runtime producer"
+    for payload in [copied, standard]:
+        write(payload, "changed payload")?
+        match read_toolchain(directory):
+            Ok(_) =>
+                assert false, "a changed payload cannot retain its transported producer identity"
+            Err(_) => pass
+        write(payload, read(original)?)?
+    return Ok(None)
 
 
 def verify_closure_readings(path: Path) -> Result[None, str]:

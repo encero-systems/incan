@@ -128,14 +128,18 @@ pub model Owner:
         return self.respond("done")
 
     def prepare(mut self, request: Request) -> Reply:
-        """Make the executable a run, build or test request needs, and say how that went."""
+        """Prepare an executable, falling back to a local request when producer evidence cannot support retained reuse."""
         clock = begin()
         reset_trace()
         trace_boundary("owner_received")
         mut reply = self.respond("refused")
         match self.try_prepare(request):
             Ok(found) => reply = found
-            Err(reason) => reply.reason = reason
+            Err(reason) =>
+                if "unit identity refused:" in reason:
+                    reply = self.respond("fallback", reason)
+                else:
+                    reply.reason = reason
         reply.trace = taken_trace()
         record("owner_request", f"{request.command}|{request.path}|{request.profile}", clock)
         return reply

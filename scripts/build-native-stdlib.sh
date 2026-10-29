@@ -25,8 +25,12 @@ for package in "$@"; do
     staged=$(mktemp -d "$output.XXXXXX")
     unit=$staged/$name.unit.json
     SELFBUILD_LIBRARY_OUTPUT=$staged "$builder" "$repo" "$package" "$profile" > "$unit"
+    "$builder" "$repo" identify "$unit"
+    native_flags=("${(@f)$(<"$unit.arguments")}")
     env -u RUSTC_BOOTSTRAP "$driver" --unit "$unit" "$name" "$staged/lib$name.rlib" "$sysroot" --library \
+        "${native_flags[@]}" \
         > "$staged/build.log" 2>&1 || { tail -20 "$staged/build.log" | cut -c1-600; exit 1; }
+    "$builder" "$repo" publish "$unit" "$staged"
     # Preserve the current package until its complete replacement is available to dependent source units.
     if [[ -e $output || -L $output ]]; then
         previous=$(mktemp -d "$output.previous.XXXXXX")
