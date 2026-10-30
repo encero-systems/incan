@@ -1,0 +1,287 @@
+"""Sealed sets preserve identities, share contents, refuse damage and admit without selecting a namespace."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest, sha256
+from scratch import scratch_directory
+from segment_store import EXPECT_ABSENT, Snapshot, begin, commit, get, payload_path, put, put_payload, snapshot
+from sealed_set import Profile, Record, SetSpec, admit, export_set, record_key, verify
+
+
+pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result[None, str]:
+    """
+    Sealed contents have one portable representation and one admission path for packages and bundles.
+
+    1. Equal snapshots with different histories export identical bytes.
+    2. Two owners share value and payload bytes while retaining separate record identities.
+    3. A repeat import leaves the entire store inventory unchanged and selects no namespace.
+    4. Damaged objects and identity conflicts refuse admission without publication.
+    """
+    scratch = scratch_directory()?
+    base = scratch.path()
+    profile = Profile(identity="test/1", schema="bytes/1", codec="raw/1")
+    source = base.joinpath("source")
+    other = base.joinpath("other")
+    payload_file = base.joinpath("native-file")
+    payload_file.write_bytes(b"shared native file").map_err((error) => error.message())?
+    payload = put_payload(source, payload_file).map_err((error) => error.message())?
+    assert put_payload(other, payload_file).map_err((error) => error.message())? == payload
+    first = write_value(source, "entry", b"shared value")?
+    write_value(other, "unrelated", b"history")?
+    second = write_value(other, "entry", b"shared value")?
+    spec = specification(profile, "package-one", [payload])
+    left = base.joinpath("left")
+    right = base.joinpath("right")
+
+    # 1. Local generations, unselected records and physical segment layouts never enter the exported identity.
+    root = export_set(first, spec, left).map_err((error) => error.message())?
+    assert export_set(second, spec, right).map_err((error) => error.message())? == root
+    assert inventory(left)? == inventory(right)?
+    verify(left, root, profile).map_err((error) => error.message())?
+
+    # 2. Ownership remains separate even when all the value bytes are shared.
+    home = base.joinpath("home")
+    admitted = admit(home, left, root, profile).map_err((error) => error.message())?
+    payloads_before = inventory(home.joinpath("payloads"))?
+    other_spec = specification(profile, "package-two", [payload])
+    other_set = base.joinpath("other-set")
+    other_root = export_set(second, other_spec, other_set).map_err((error) => error.message())?
+    both = admit(home, other_set, other_root, profile).map_err((error) => error.message())?
+    assert root != other_root
+    left_key = record_key(spec, spec.records[0]).map_err((error) => error.message())?
+    right_key = record_key(other_spec, other_spec.records[0]).map_err((error) => error.message())?
+    assert left_key != right_key
+    assert get(both, left_key).map_err((error) => error.message())? != None
+    assert get(both, right_key).map_err((error) => error.message())? != None
+    assert inventory(home.joinpath("payloads"))? == payloads_before
+    bundle_spec = specification(profile, "toolchain-bundle", [payload])
+    bundle = base.joinpath("bundle")
+    bundle_root = export_set(second, bundle_spec, bundle).map_err((error) => error.message())?
+    bundled = admit(home, bundle, bundle_root, profile).map_err((error) => error.message())?
+    assert bundled.generation > both.generation
+    assert inventory(home.joinpath("payloads"))? == payloads_before
+
+    # 3. The import receipt is available, but an existing plan selection stays untouched.
+    selected = commit(put(begin(bundled), "plan/selected", b"previous", EXPECT_ABSENT)).map_err(
+        (error) => error.message(),
+    )?
+    before = inventory(home)?
+    repeated = admit(home, left, root, profile).map_err((error) => error.message())?
+    assert repeated.generation == selected.generation
+    assert inventory(home)? == before
+    assert get(repeated, "plan/selected").map_err((error) => error.message())? == Some(b"previous")
+    assert get(admitted, "plan/selected").map_err((error) => error.message())? == None
+    prove_overlap(base, source, spec, left, root)?
+
+    # 4. Damage and invalid identities are errors before any publication.
+    prove_refusals(base, source, first, spec, left, home, root, payload)?
+    assert inventory(home)? == before
+    return Ok(None)
+
+
+def prove_refusals(
+    base: Path,
+    source: Path,
+    view: Snapshot,
+    spec: SetSpec,
+    left: Path,
+    home: Path,
+    root: str,
+    payload: str,
+) -> Result[None, str]:
+    """Refuse damaged metadata, content and indexes, incompatible codecs and immutable identity conflicts."""
+    before = inventory(home)?
+    profile = spec.profile
+    manifest = left.joinpath("manifest.json")
+    original = manifest.read_bytes().map_err((error) => error.message())?
+    manifest.write_bytes(b"damaged").map_err((error) => error.message())?
+    match admit(home, left, root, profile):
+        Ok(_) =>
+            assert false, "a damaged manifest was admitted"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    assert inventory(home)? == before
+    manifest.write_bytes(original).map_err((error) => error.message())?
+    payload_file = left.joinpath("payloads").joinpath(payload)
+    payload_bytes = payload_file.read_bytes().map_err((error) => error.message())?
+    payload_file.chmod(false).map_err((error) => error.message())?
+    payload_file.write_bytes(b"damaged payload").map_err((error) => error.message())?
+    match admit(home, left, root, profile):
+        Ok(_) =>
+            assert false, "a damaged payload was admitted"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    assert inventory(home)? == before
+    payload_file.write_bytes(payload_bytes).map_err((error) => error.message())?
+    prove_manifest_length(left, root, profile, payload, len(payload_bytes))?
+    payload_file.unlink().map_err((error) => error.message())?
+    payload_file.symlink_to(base.joinpath("native-file")).map_err((error) => error.message())?
+    match verify(left, root, profile):
+        Ok(_) =>
+            assert false, "a symlinked payload was accepted"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    payload_file.unlink().map_err((error) => error.message())?
+    payload_file.write_bytes(payload_bytes).map_err((error) => error.message())?
+    incompatible = Profile(identity=profile.identity, schema=profile.schema, codec="unsupported/2")
+    match verify(left, root, incompatible):
+        Ok(_) =>
+            assert false, "an unsupported required codec was accepted"
+        Err(error) =>
+            assert error.kind == "format", error.message()
+    changed = write_value(source, "entry", b"conflicting bytes")?
+    conflict = base.joinpath("conflict")
+    conflict_root = export_set(changed, spec, conflict).map_err((error) => error.message())?
+    match admit(home, conflict, conflict_root, profile):
+        Ok(_) =>
+            assert false, "one immutable revision accepted different values"
+        Err(error) =>
+            assert error.kind == "conflict", error.message()
+    assert inventory(home)? == before
+    prove_dependencies(base, view, spec, left, root)?
+    prove_invalid_selections(base, view, spec)?
+    installed = payload_path(home, payload)
+    saved = installed.read_bytes().map_err((error) => error.message())?
+    installed.chmod(false).map_err((error) => error.message())?
+    installed.write_bytes(b"damaged installed object").map_err((error) => error.message())?
+    damaged = inventory(home)?
+    match admit(home, left, root, profile):
+        Ok(_) =>
+            assert false, "a repeated import hid installed payload damage"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    assert inventory(home)? == damaged
+    installed.write_bytes(saved).map_err((error) => error.message())?
+    installed.chmod(true).map_err((error) => error.message())?
+    index = left.joinpath("index.seg")
+    index.write_bytes(b"damaged index").map_err((error) => error.message())?
+    match verify(left, root, profile):
+        Ok(_) =>
+            assert false, "a damaged index was accepted"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    return Ok(None)
+
+
+def prove_dependencies(base: Path, view: Snapshot, spec: SetSpec, original: Path, root: str) -> Result[None, str]:
+    """A dependency is an exact admitted set root, never an unresolved or recursively embedded closure."""
+    mut dependent = spec
+    dependent.origin = "consumer"
+    dependent.dependencies = [root]
+    directory = base.joinpath("dependent")
+    digest = export_set(view, dependent, directory).map_err((error) => error.message())?
+    empty = base.joinpath("missing-dependency")
+    match admit(empty, directory, digest, spec.profile):
+        Ok(_) =>
+            assert false, "a missing external set was accepted"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    assert not empty.exists()
+    home = base.joinpath("dependencies-home")
+    admit(home, original, root, spec.profile).map_err((error) => error.message())?
+    assert admit(home, directory, digest, spec.profile).map_err((error) => error.message())?.generation > 0
+    return Ok(None)
+
+
+def prove_overlap(base: Path, source: Path, spec: SetSpec, original: Path, root: str) -> Result[None, str]:
+    """A partially overlapping import writes only the missing envelope, its content and the new membership receipt."""
+    view = write_value(source, "extra", b"new contents")?
+    mut expanded = spec
+    expanded.records.append(Record(key="extra", revision="one", payloads=[], references=["entry"]))
+    directory = base.joinpath("expanded")
+    digest = export_set(view, expanded, directory).map_err((error) => error.message())?
+    mut reordered = expanded
+    reordered.records = [expanded.records[1], expanded.records[0]]
+    reordered_directory = base.joinpath("reordered")
+    assert export_set(view, reordered, reordered_directory).map_err((error) => error.message())? == digest
+    assert inventory(directory)? == inventory(reordered_directory)?
+    home = base.joinpath("overlap-home")
+    first = admit(home, original, root, spec.profile).map_err((error) => error.message())?
+    objects_before = len(inventory(home.joinpath("payloads"))?)
+    second = admit(home, directory, digest, spec.profile).map_err((error) => error.message())?
+    assert len(second.segments) == len(first.segments) + 1
+    assert second.segments[len(second.segments) - 1].count == 2
+    assert len(inventory(home.joinpath("payloads"))?) == objects_before + 1
+    before = inventory(home)?
+    repeated = admit(home, directory, digest, spec.profile).map_err((error) => error.message())?
+    assert repeated.generation == second.generation
+    assert inventory(home)? == before
+    return Ok(None)
+
+
+def prove_manifest_length(directory: Path, root: str, profile: Profile, payload: str, length: int) -> Result[None, str]:
+    """A correctly hashed manifest still refuses an inconsistent object length."""
+    path = directory.joinpath("manifest.json")
+    original = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    changed = original.replace(f"[\"{payload}\",{length}]", f"[\"{payload}\",{length + 1}]")
+    assert changed != original
+    path.write_bytes(changed.encode("utf-8")).map_err((error) => error.message())?
+    changed_root = hexlify(sha256.digest(changed.encode("utf-8")))
+    match verify(directory, changed_root, profile):
+        Ok(_) =>
+            assert false, "an inconsistent object length was accepted"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    path.write_bytes(original.encode("utf-8")).map_err((error) => error.message())?
+    verify(directory, root, profile).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def prove_invalid_selections(base: Path, view: Snapshot, spec: SetSpec) -> Result[None, str]:
+    """Duplicate identities, path-bearing payload names and missing record closure members cannot be exported."""
+    mut duplicate = spec
+    duplicate.records.append(spec.records[0])
+    match export_set(view, duplicate, base.joinpath("duplicate")):
+        Ok(_) =>
+            assert false, "a duplicate record key was exported"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    mut escaped = spec
+    escaped.records = [Record(key="entry", revision="one", payloads=["../outside"], references=[])]
+    match export_set(view, escaped, base.joinpath("escaped")):
+        Ok(_) =>
+            assert false, "a path-bearing payload name was exported"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    mut incomplete = spec
+    incomplete.records = [Record(key="entry", revision="one", payloads=[], references=["missing"])]
+    match export_set(view, incomplete, base.joinpath("incomplete")):
+        Ok(_) =>
+            assert false, "a missing record reference was exported"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    return Ok(None)
+
+
+def specification(profile: Profile, origin: str, payloads: list[str] = []) -> SetSpec:
+    """One selected revision, with its exact namespace root and immutable source receipt."""
+    return SetSpec(
+        profile=profile,
+        origin=origin,
+        producer="test-producer",
+        receipt="source-publication",
+        records=[Record(key="entry", revision="revision-one", payloads=payloads, references=[])],
+        namespaces=["entry"],
+        dependencies=[],
+    )
+
+
+def write_value(root: Path, key: str, value: bytes) -> Result[Snapshot, str]:
+    """Write one source record through the store's public transaction boundary."""
+    view = snapshot(root).map_err((error) => error.message())?
+    return commit(put(begin(view), key, value)).map_err((error) => error.message())
+
+
+def inventory(directory: Path, prefix: str = "") -> Result[list[str], str]:
+    """Sorted relative filenames and full digests, so a no-op cannot hide any new or changed file."""
+    if not directory.is_dir():
+        return Ok([])
+    mut entries: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        name = prefix + entry.name()
+        if entry.is_dir():
+            entries.extend(inventory(entry, name + "/")?)
+        else:
+            digest = hexlify(file_digest(entry, "sha256").map_err((error) => error.message())?)
+            entries.append(f"{name} {digest}")
+    return Ok(sorted(entries))
