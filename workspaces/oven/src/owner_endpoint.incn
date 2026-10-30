@@ -3,8 +3,9 @@ Finding a project's resident owner, starting one when there is none, and asking 
 
 An owner is identified by a generation: a digest of the protocol, this Oven executable's identity (so a rebuilt `incan`
 never talks to an older owner), the project, the home, the standard library and the toolchain description. Only
-semantic configuration is in it, so an incidental environment variable does not start another owner. Its socket,
-lock and readiness socket live in the private `owners` directory of the home.
+semantic configuration is in it, so an incidental environment variable does not start another owner. Its lock and
+mailbox live in the private `owners` directory of the home; its socket and readiness socket live in the user's private
+endpoint directory, named after a digest of that `owners` directory, so a deep home still has a short socket path.
 
 Starting is arbitrated: whoever finds no owner takes an exclusive lock, looks again, and only then starts one, so
 simultaneous commands start exactly one. A stale socket (nothing listens) is removed; a socket that something refuses
@@ -12,9 +13,9 @@ or an ordinary file in its place is left alone and the command prepares its exec
 """
 
 from rust::std::env import current_exe, vars_os
-from rust::std::fs import Permissions, metadata, set_permissions
+from rust::std::fs import Permissions, metadata, set_permissions, symlink_metadata
 from rust::std::io import ErrorKind
-from rust::std::os::unix::fs import FileTypeExt, PermissionsExt
+from rust::std::os::unix::fs import FileTypeExt, MetadataExt, PermissionsExt
 from rust::std::os::unix::net import UnixStream
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio
@@ -56,6 +57,10 @@ const PRIVATE_DIRECTORY: u32 = 448
 const LIFECYCLE_SECONDS: u64 = 5
 # The suffix of an owner's socket file name.
 const SOCKET_SUFFIX: str = ".sock"
+# Where the user's endpoint directory is made when the platform names no user runtime directory.
+const ENDPOINT_ROOT: str = "/tmp"
+# The digits of a directory's digest that name its sockets in the endpoint directory.
+const DIRECTORY_DIGITS: int = 12
 
 
 pub model Endpoint:
@@ -75,17 +80,80 @@ pub def endpoint_for(root: str) -> Result[Endpoint, str]:
     The endpoint of the owner of the project at `root` for this Oven, home and toolchain.
 
     1. The generation names the owner: a digest of what decides which owner may serve this project.
-    2. The owner's files live under that generation in the home's private `owners` directory.
-    3. A socket path longer than the system allows is refused.
+    2. Its lock and mailbox live in the home's private `owners` directory; its sockets in the user's endpoint directory.
+    3. A socket path the system could not bind is refused, naming it.
     """
     # 1. The generation names exactly the owner that may serve this project with this Oven, home and toolchain.
     generation = generation_of(root)?
-    # 2. Every file of the owner lives under its generation in the home's private `owners` directory.
-    endpoint = endpoint_at(owners_dir()?.0, generation)
-    # 3. A path the system could not bind is refused here, with the way to shorten it.
-    if len(endpoint.socket) > MAX_SOCKET_PATH:
-        return Err("the socket path would be too long for the system; set INCAN_HOME to a shorter directory")
+    # 2. The sockets' path does not grow with the home's depth.
+    directory = owners_dir()?.0
+    endpoint = endpoint_at(directory, socket_prefix(directory)?, generation)
+    # 3. Only an endpoint directory deeper than the system allows can still be refused here.
+    bindable(endpoint.socket)?
+    bindable(endpoint.ready)?
     return Ok(endpoint)
+
+
+pub def bindable(socket: str) -> Result[None, str]:
+    """Refuse a socket path longer than the system can bind, naming it."""
+    if len(socket) > MAX_SOCKET_PATH:
+        return Err(f"the socket path {socket} is longer than the system allows")
+    return Ok(None)
+
+
+pub def socket_prefix(directory: str) -> Result[str, str]:
+    """
+    The short, depth-independent path prefix of the sockets that belong to the private `directory`.
+
+    1. Make `directory` private; the user who owns it owns its sockets.
+    2. Make that user's private endpoint directory: `incan-<uid>` under the user runtime directory, or under `/tmp`.
+    3. Name the sockets by a digest of `directory`, so different homes never share one.
+    """
+    # 1. The directory the sockets belong to is private to its user before anything is named after it.
+    prepare_directory(directory)?
+    uid = owner_of(directory)?
+    # 2. The endpoint directory belongs to the same user and nobody else can enter it.
+    endpoints = f"{endpoint_root()}/incan-{uid}"
+    prepare_endpoints(endpoints, uid)?
+    # 3. A digest of the directory keeps the sockets of every home apart at a fixed length.
+    return Ok(f"{endpoints}/{fingerprint([directory])?[0:DIRECTORY_DIGITS]}-")
+
+
+def endpoint_root() -> str:
+    """The user runtime directory when the platform names one, else `/tmp`."""
+    runtime = get_or("XDG_RUNTIME_DIR", "")
+    if runtime != "" and runtime.startswith("/"):
+        return runtime
+    return ENDPOINT_ROOT
+
+
+def owner_of(directory: str) -> Result[u32, str]:
+    """The user who owns `directory`."""
+    match metadata(f"{directory}"):
+        Ok(found) => return Ok(found.uid())
+        Err(error) => return Err(f"{directory}: {error}")
+
+
+def prepare_endpoints(directory: str, uid: u32) -> Result[None, str]:
+    """
+    Make the user's endpoint directory and refuse one that is a link, belongs to another user, or is open to others.
+
+    1. A link in its place is never followed.
+    2. Make it private, as any owner directory.
+    3. It must belong to the user who owns the home.
+    """
+    # 1. A link could be swapped for another user's directory after the checks, so none is accepted.
+    match symlink_metadata(f"{directory}"):
+        Ok(found) =>
+            if found.file_type().is_symlink():
+                return Err(f"{directory} is a link")
+        Err(_) => pass
+    # 2. Creation, the mode and the refusal of a directory others can enter are those of every owner directory.
+    prepare_directory(directory)?
+    # 3. A directory made by another user is refused even when its mode is private.
+    if owner_of(directory)? != uid:
+        return Err(f"{directory} belongs to another user")
+    return Ok(None)
 
 
 def generation_of(root: str) -> Result[str, str]:
@@ -141,14 +209,14 @@ def inherited_setting(name: str) -> str:
         None => return "unset"
 
 
-def endpoint_at(directory: str, generation: str) -> Endpoint:
-    """The files of the owner of `generation`, named after it in `directory`."""
+def endpoint_at(directory: str, prefix: str, generation: str) -> Endpoint:
+    """The files of the owner of `generation`: its lock and mailbox in `directory`, its sockets after `prefix`."""
     return Endpoint(
         generation=generation,
         directory=directory,
-        socket=f"{directory}/{generation}{SOCKET_SUFFIX}",
+        socket=f"{prefix}{generation}{SOCKET_SUFFIX}",
         lock=f"{directory}/{generation}.lock",
-        ready=f"{directory}/{generation}.ready",
+        ready=f"{prefix}{generation}.ready",
         mailbox=f"{directory}/{generation}.trace",
     )
 
@@ -396,20 +464,25 @@ pub def ask(endpoint: Endpoint, request: Request, start: bool) -> Result[Option[
 
 
 pub def stop_owners() -> Result[int, str]:
-    """Stop every owner of this home. Returns how many answered."""
+    """Stop every owner and compiler worker of this home. Returns how many answered."""
     directory = owners_dir()?
     if not directory.is_dir():
         return Ok(0)
+    prefix = socket_prefix(directory.0)?
+    endpoints = Path(prefix).parent()
+    named = Path(prefix).name()
     mut stopped = 0
-    for entry in directory.iterdir().map_err((error) => error.message())?:
-        if entry.name().endswith(SOCKET_SUFFIX) and stop_owner(entry):
-            stopped += 1
+    for entry in endpoints.iterdir().map_err((error) => error.message())?:
+        name = entry.name()
+        if name.startswith(named) and name.endswith(SOCKET_SUFFIX):
+            generation = name[len(named):len(name) - len(SOCKET_SUFFIX)]
+            if stop_owner(entry, generation):
+                stopped += 1
     return Ok(stopped)
 
 
-def stop_owner(socket: Path) -> bool:
+def stop_owner(socket: Path, generation: str) -> bool:
     """Ask the owner listening at `socket` to stop. Whether one answered; a socket nobody listens at is removed."""
-    generation = socket.name()[0:len(socket.name()) - len(SOCKET_SUFFIX)]
     match dial(socket.0):
         Err(_) =>
             if stale_socket(socket.0):

@@ -31,8 +31,10 @@ fn run(arguments: &[String], codegen: bool) -> Result<(), Box<dyn std::error::Er
         records: Vec::new(),
         codegen,
     };
-    rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks))
-        .map_err(|_| "Rust analysis failed; no graph was published")?;
+    let capture = crate::native_timing::Capture::begin();
+    let analyzed = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
+    drop(capture);
+    analyzed.map_err(|_| "Rust analysis failed; no graph was published")?;
     if callbacks.records.is_empty() {
         return Err("Rust analysis produced no graph".into());
     }
