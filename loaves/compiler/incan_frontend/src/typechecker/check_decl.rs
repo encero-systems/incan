@@ -6561,7 +6561,7 @@ impl TypeChecker {
     }
 
     /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
-    fn check_function(&mut self, func: &FunctionDecl, decl_span: Span) {
+    pub(super) fn check_function_in_scope(&mut self, func: &FunctionDecl, decl_span: Span) {
         self.check_work.function_declarations += 1;
         self.symbols.enter_scope(ScopeKind::Function);
 
@@ -6663,7 +6663,7 @@ impl TypeChecker {
 
     /// Check one callable's statements inside its already bound declaration frame. Defaults and declaration validation
     /// remain with the caller and are not repeated here. Iterator and C-span flow state belongs to this body and is
-    /// restored before another body enters; checked output and deferred module decisions are still shared today.
+    /// restored before another body enters; checked output and pending decisions stay in the active body's writer.
     fn check_callable_body_in_frame(
         &mut self,
         body: &[Spanned<Statement>],
@@ -7073,7 +7073,7 @@ impl TypeChecker {
     /// resolved, so Body IR lowering (#1121) can retrieve the checked callable signature for this exact declaration
     /// instead of re-resolving raw AST annotations. Span is the only key that stays collision-safe across same-name
     /// methods on different owners and same-owner overloads, mirroring `function_bindings_by_span`.
-    fn check_method_with_self_ty(
+    pub(super) fn check_method_in_scope(
         &mut self,
         method: &MethodDecl,
         method_span: Span,

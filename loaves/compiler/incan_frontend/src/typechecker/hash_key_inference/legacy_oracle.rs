@@ -201,6 +201,7 @@ impl TypeChecker {
         &mut self,
         program: &crate::ast::Program,
     ) -> Result<(), Vec<crate::diagnostics::CompileError>> {
+        self.legacy_body_checking = true;
         let preserve_dependencies = std::mem::take(&mut self.dependency_semantics_pending);
         self.reset_program_check(program, preserve_dependencies);
         self.legacy_collect_program_declarations(program);

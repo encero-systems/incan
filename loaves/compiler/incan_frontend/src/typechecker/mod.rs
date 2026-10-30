@@ -42,6 +42,7 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
+mod body_check;
 mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
@@ -511,6 +512,12 @@ struct CheckingNominalScope {
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
+    /// Test-only cold oracle bypasses local table extraction while retaining the original semantic operations.
+    #[cfg(test)]
+    legacy_body_checking: bool,
+    /// Per-body complete compatibility snapshots for cold-oracle comparisons, absent from production.
+    #[cfg(test)]
+    body_local_observations: Vec<(Span, String)>,
     /// Actual stage entries for the current activation, reset before collecting one program.
     check_work: CheckWork,
     /// Symbol table populated during the first pass.
@@ -955,6 +962,10 @@ impl TypeChecker {
     /// Native queries, statement-block tracking and hash-key inference each initialize their own empty state.
     pub fn new() -> Self {
         Self {
+            #[cfg(test)]
+            legacy_body_checking: false,
+            #[cfg(test)]
+            body_local_observations: Vec::new(),
             check_work: CheckWork::default(),
             symbols: SymbolTable::new(),
             errors: Vec::new(),
@@ -7088,6 +7099,8 @@ impl TypeChecker {
     /// Clear per-program observations before collecting declarations. Dependency semantic inventories survive only
     /// for an explicitly prepared imported program; symbol registration and alias validation keep their prior order.
     fn reset_program_check(&mut self, program: &Program, preserve_dependency_semantics: bool) {
+        #[cfg(test)]
+        self.body_local_observations.clear();
         self.check_work = CheckWork::default();
         self.visibility_point = VisibilityPoint::Collecting;
         self.checking_nominal_scope.get_mut().take();
