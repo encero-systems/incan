@@ -12,13 +12,7 @@ from rust_activation import CfgSnapshot, TargetConfiguration
 
 pub def target_configuration(rustc: str) -> Result[TargetConfiguration, str]:
     """The host target and its complete `cfg`, as the pinned rustc prints them."""
-    host = compiler_version(rustc)?
-    mut triple = ""
-    for line in host.split("\n"):
-        if line.startswith("host: "):
-            triple = line[6:].strip()
-    if triple == "":
-        return Err(f"{rustc} -vV names no host")
+    triple = host_triple(rustc)?
     printed = probed(rustc, ["--print", "cfg", "--target", triple])?
     mut flags: list[str] = []
     mut values: Dict[str, list[str]] = {}
@@ -48,6 +42,14 @@ pub def compiler_version(rustc: str) -> Result[str, str]:
 pub def compiler_sysroot(rustc: str) -> Result[str, str]:
     """The sysroot the pinned rustc reports for itself."""
     return Ok(probed(rustc, ["--print", "sysroot"])?.strip())
+
+
+pub def host_triple(rustc: str) -> Result[str, str]:
+    """The pinned rustc's host target, as its `-vV` output names it."""
+    for line in compiler_version(rustc)?.split("\n"):
+        if line.startswith("host: "):
+            return Ok(line[6:].strip())
+    return Err(f"{rustc} -vV names no host")
 
 
 def probed(rustc: str, arguments: list[str], settings: list[tuple[str, str]] = []) -> Result[str, str]:
