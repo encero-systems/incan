@@ -17,7 +17,8 @@ from std.fs import Path
 from std.json import JsonValue
 from files import discard_file
 from observation import now_seconds, trace
-from owner_protocol import Connection, Reply, Request, dial, listen, reply_of, request_of
+from core_ipc import Connection, dial, listen
+from owner_protocol import Reply, Request, reply_of, request_of
 from owner_state import Owner
 
 
