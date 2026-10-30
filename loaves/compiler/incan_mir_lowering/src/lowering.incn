@@ -62,6 +62,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place, block as plan_block
 from bytes_plan import bytes_literal
+from types import static_method_result_type
 from native_callables import native_callable_storage
 from rust::incan_semantics_core::body_ir import NativeClosureStorage
 from newtype_constants import numeric_newtype_literal
@@ -4322,17 +4323,8 @@ def lower_static_sdk_method(
         returned,
         builder.intrinsics,
     )?
-    if not numeric_carrier(result):
-        match result:
-            (
-                PlanType.Bool
-                | PlanType.Unit
-                | PlanType.String
-                | PlanType.FunctionPointer(_)
-                | PlanType.List(_, _)
-                | PlanType.Model(_, _)
-            ) => pass
-            _ => return Err("the standard library static method result is borrowed or has no proven type")
+    if not static_method_result_type(result):
+        return Err("the standard library static method result is borrowed or has no proven type")
     mut path = ""
     match delegation.rust_path():
         Some(native_path) => path = str(native_path)
@@ -4488,18 +4480,8 @@ def lower_static_method_body(
         builder.intrinsics,
     )?
     result = return_representation(body, declared_result)?
-    if not numeric_carrier(result):
-        # Owned models and list snapshots move out of the call; neither borrows from the guarded storage.
-        match result:
-            (
-                PlanType.Bool
-                | PlanType.Unit
-                | PlanType.String
-                | PlanType.FunctionPointer(_)
-                | PlanType.Model(_, _)
-                | PlanType.List(_, _)
-            ) => pass
-            _ => return Err("unsupported Body IR global method borrowed or unproven result")
+    if not static_method_result_type(result):
+        return Err("unsupported Body IR global method borrowed or unproven result")
     operands = method_ordinary_operands(module, builder, target, arguments, body, span)?
     initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     mut symbol = source_method_symbol(module, builder, target, body, span)

@@ -1,8 +1,28 @@
-"""Native primitive representations shared by nominal and callable admission."""
+"""Native value representations shared by primitive lowering and guarded call admission."""
 
 from rust::incan_semantics_core import IncanPrimitiveType as Primitive
 from pub::incan_mir_plan import PlanType, ListLeaf
-from numerics import numeric_type
+from numerics import numeric_type, numeric_carrier
+
+
+pub def static_method_result_type(ty: PlanType) -> bool:
+    """
+    Admit values that leave a static guard by value, including retained Option, Result and source enum carriers.
+    Borrowed representations stay refused; the native adapter proves that retained payloads also outlive the guard.
+    """
+    if numeric_carrier(ty):
+        return true
+    match ty:
+        (
+            PlanType.Bool
+            | PlanType.Unit
+            | PlanType.String
+            | PlanType.FunctionPointer(_)
+            | PlanType.Model(_, _)
+            | PlanType.Enum(_, _)
+            | PlanType.List(_, _)
+        ) => return true
+        _ => return false
 
 
 pub def primitive_type(primitive: &Primitive) -> Result[PlanType, str]:

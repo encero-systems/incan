@@ -1,4 +1,4 @@
-# behavior: statics preserve writes and aliases; projected methods and field replacements use actual storage after argument effects
+# behavior: statics preserve writes and aliases; direct and projected methods return owned Result, Option and model snapshots after releasing storage (#2481)
 # expect-stdout:
 #   1
 #   2
@@ -29,6 +29,7 @@ pub tally = alias total
 
 enum Level(str):
     """Give a projected enum receiver an observable method."""
+
     INFO = "info"
 
     def rank(self) -> int:
@@ -38,6 +39,7 @@ enum Level(str):
 
 model Gauge:
     """Expose shared and exclusive projected method receivers."""
+
     value: int
 
     def bump(mut self, amount: int) -> int:
@@ -45,15 +47,83 @@ model Gauge:
         self.value += amount
         return self.value
 
+    def record(mut self, accepted: bool) -> Result[None, str]:
+        """Update retained storage on success and return an owned error on failure."""
+        if not accepted:
+            return Err("refused")
+        self.value += 1
+        return Ok(None)
+
+    def optional(self, present: bool) -> Option[Gauge]:
+        """Return an optional independent snapshot of the guarded value."""
+        if present:
+            return Some(Gauge(value=self.value))
+        return None
+
+    def snapshot(self) -> Gauge:
+        """Return an independent model rather than a loan into storage."""
+        return Gauge(value=self.value)
+
 
 model Config:
     """Keep model and enum fields under one persistent root."""
+
     gauge: Gauge
     level: Level
     label: str
 
 
 static config: Config = Config(gauge=Gauge(value=2), level=Level.INFO, label="initial")
+static gauge: Gauge = Gauge(value=10)
+
+
+def owned_results() -> None:
+    """Match both enum variants and preserve snapshots across later static mutations."""
+    match gauge.record(true):
+        Ok(_) => pass
+        Err(_) =>
+            assert false
+    error = gauge.record(false)
+    optional = gauge.optional(true)
+    snapshot = gauge.snapshot()
+    assert gauge.bump(2) == 13
+    match error:
+        Ok(_) =>
+            assert false
+        Err(message) =>
+            assert message == "refused"
+    match optional:
+        Some(value) =>
+            assert value.value == 11
+        None =>
+            assert false
+    match gauge.optional(false):
+        None => pass
+        Some(_) =>
+            assert false
+    assert snapshot.value == 11
+    match config.gauge.record(true):
+        Ok(_) => pass
+        Err(_) =>
+            assert false
+    projected = config.gauge.optional(true)
+    saved = config.gauge.snapshot()
+    assert config.gauge.bump(1) == 10
+    match projected:
+        Some(value) =>
+            assert value.value == 9
+        None =>
+            assert false
+    assert saved.value == 9
+    match config.gauge.optional(false):
+        None => pass
+        Some(_) =>
+            assert false
+    match config.gauge.record(false):
+        Ok(_) =>
+            assert false
+        Err(message) =>
+            assert message == "refused"
 
 
 def replacement() -> str:
@@ -79,3 +149,4 @@ def main() -> None:
     println(config.gauge.value)
     println(config.label)
     println(config.level.rank())
+    owned_results()
