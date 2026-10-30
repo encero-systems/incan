@@ -2267,6 +2267,7 @@ mod representation_facts;
 mod result_channels;
 mod static_aliases;
 mod union_layouts;
+pub use union_layouts::reaches_union;
 
 mod bodies;
 mod enum_types;

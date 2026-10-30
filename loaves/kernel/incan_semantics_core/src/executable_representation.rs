@@ -2208,13 +2208,15 @@ mod tests {
             ("First".into(), first.clone()),
             ("Second".into(), second.clone()),
             ("unused_private_secret".into(), identity("unused_private_secret", 3)),
-        ]);
+        ])
+        .into();
         let bytes = publish(&module(vec![exported]), &BTreeSet::from([identity("exported", 1)]))?;
         let reader = SurfaceReader::open(&bytes)?;
         let decoded = reader.declaration(&identity("exported", 1))?;
         assert_eq!(
             decoded.named_type_identities,
             std::collections::BTreeMap::from([("First".into(), first.clone()), ("Second".into(), second.clone())])
+                .into()
         );
         let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&identity("exported", 1))?
         else {
