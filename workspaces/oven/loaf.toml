@@ -8,3 +8,4 @@ main = "src/main.incn"
 [dependencies]
 toml = { loaf = "crates-io/toml", version = "0.9", default-features = true }
 incan_platform = { path = "../../loaves/platform" }
+incan_worker_host = { path = "../../loaves/compiler/incan_worker_host" }
