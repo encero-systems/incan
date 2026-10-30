@@ -8,6 +8,9 @@ from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from segment_store import (
     EXPECT_ABSENT,
+    EXPECT_REPAIR,
+    Lookup,
+    Transaction,
     Snapshot,
     StoreError,
     Write,
@@ -16,13 +19,16 @@ from segment_store import (
     encode_segment,
     get,
     lease,
+    lookup,
+    quarantine_record,
     payload_path,
     put,
     put_payload,
+    readmit_payload,
     snapshot,
 )
 
-const FORMAT: str = "incan.sealed-set/1"
+const FORMAT: str = "incan.sealed-set/2"
 const SET_PREFIX: str = "sealed/set/"
 
 
@@ -34,6 +40,15 @@ pub model Profile:
     pub codec: str
 
 
+pub model ExternalReference:
+    """One full immutable revision key and value supplied by a declared dependency set, never by global latest lookup."""
+
+    pub set_root: str
+    pub key: str
+    pub revision: str
+    pub value: str
+
+
 pub model Record:
     """One immutable revision; references name other keys in this set, and payloads name full SHA-256 digests."""
 
@@ -41,6 +56,7 @@ pub model Record:
     pub revision: str
     pub payloads: list[str]
     pub references: list[str]
+    pub external: list[ExternalReference] = []
 
 
 pub model SetSpec:
@@ -149,9 +165,16 @@ pub def admit(root: Path, directory: Path, set_root: str, supported: Profile) ->
     verified = verify_transport(directory, set_root, supported)?
     view = snapshot(root)?
     check_dependencies(view, verified.spec.dependencies)?
+    check_external(view, verified.spec.records)?
     receipt_key = SET_PREFIX + set_root
     already = get(view, receipt_key)? != None
     mut transaction = begin(view)
+    for dependency in verified.spec.dependencies:
+        key = SET_PREFIX + dependency
+        transaction = put(transaction, key, required_value(view, key)?, EXPECT_ABSENT)
+    for record in verified.spec.records:
+        for reference in record.external:
+            transaction = put(transaction, reference.key, required_value(view, reference.key)?, EXPECT_ABSENT)
     for entry in verified.entries:
         key = record_key(verified.spec, entry.record)?
         value = envelope_bytes(verified.spec, entry)?
@@ -218,6 +241,7 @@ def canonical_spec(spec: SetSpec) -> Result[SetSpec, StoreError]:
             revision=record.revision,
             payloads=unique_sorted(record.payloads)?,
             references=unique_sorted(record.references)?,
+            external=canonical_external(record.external)?,
         )
     return Ok(
         SetSpec(
@@ -260,6 +284,12 @@ def check_closure(verified: VerifiedSet) -> Result[None, StoreError]:
         for reference in entry.record.references:
             if reference not in records:
                 return Err(problem("integrity", reference, "reference is outside the declared record closure"))
+    for record in verified.spec.records:
+        for reference in record.external:
+            check_digest(reference.set_root)?
+            check_digest(reference.value)?
+            if reference.set_root not in verified.spec.dependencies or reference.key == "" or reference.revision == "":
+                return Err(problem("integrity", reference.key, "external reference lacks exact declared membership"))
     for namespace in verified.spec.namespaces:
         if namespace not in records:
             return Err(problem("integrity", namespace, "namespace root is not an exported record"))
@@ -350,7 +380,9 @@ def profile_fields(profile: Profile) -> list[str]:
 def envelope_bytes(spec: SetSpec, entry: Entry) -> Result[bytes, StoreError]:
     """One immutable record envelope, with ownership separate from shared content and admission provenance."""
     return json_bytes(
-        JsonValue.array([strings(profile_fields(spec.profile)), JsonValue.string(spec.origin), entry_json(entry)]),
+        JsonValue.array(
+            [strings(profile_fields(spec.profile)), JsonValue.string(spec.origin), entry_json(entry, false)?],
+        ),
     )
 
 
@@ -363,16 +395,19 @@ def index_bytes(spec: SetSpec, entries: list[Entry]) -> Result[bytes, StoreError
     return encode_segment(writes)
 
 
-def entry_json(entry: Entry) -> JsonValue:
+def entry_json(entry: Entry, membership: bool = true) -> Result[JsonValue, StoreError]:
     """A revision and its exact value, payload and intra-set record references."""
-    return JsonValue.array(
-        [
-            JsonValue.string(entry.record.key),
-            JsonValue.string(entry.record.revision),
-            JsonValue.string(entry.value),
-            strings(entry.record.payloads),
-            strings(entry.record.references),
-        ],
+    return Ok(
+        JsonValue.array(
+            [
+                JsonValue.string(entry.record.key),
+                JsonValue.string(entry.record.revision),
+                JsonValue.string(entry.value),
+                strings(entry.record.payloads),
+                strings(entry.record.references),
+                external_fields(entry.record.external, membership)?,
+            ],
+        ),
     )
 
 
@@ -386,7 +421,7 @@ def manifest_bytes(spec: SetSpec, entries: list[Entry], objects: list[Object], i
                 JsonValue.string(spec.origin),
                 JsonValue.string(spec.producer),
                 JsonValue.string(spec.receipt),
-                JsonValue.array([entry_json(entry) for entry in entries]),
+                JsonValue.array([entry_json(entry)? for entry in entries]),
                 strings(spec.namespaces),
                 strings(spec.dependencies),
                 JsonValue.array([object_json(object) for object in objects]),
@@ -413,7 +448,7 @@ def decode_manifest(document: bytes) -> Result[VerifiedSet, StoreError]:
         return Err(problem("format", "manifest", "profile requires identity, schema and codec"))
     mut entries: list[Entry] = []
     for value in array(fields[5])?:
-        item = array(value, 5)?
+        item = array(value, 6)?
         entries.append(
             Entry(
                 record=Record(
@@ -421,6 +456,7 @@ def decode_manifest(document: bytes) -> Result[VerifiedSet, StoreError]:
                     revision=string(item[1])?,
                     payloads=string_list(item[3])?,
                     references=string_list(item[4])?,
+                    external=decode_external(item[5])?,
                 ),
                 value=string(item[2])?,
             ),
@@ -542,3 +578,106 @@ def copy_file(source: Path, target: Path) -> Result[None, StoreError]:
 def problem(kind: str, object: str, detail: str) -> StoreError:
     """A named store-boundary failure, retaining the substrate's error categories."""
     return StoreError(kind=kind, object=object, detail=detail)
+
+
+def external_json(reference: ExternalReference) -> JsonValue:
+    """Canonical exact membership separate from the immutable target's ownership and shared value bytes."""
+    return strings([reference.set_root, reference.key, reference.revision, reference.value])
+
+
+def canonical_external(references: list[ExternalReference]) -> Result[list[ExternalReference], StoreError]:
+    """Sort exact references by unambiguous canonical fields, refusing duplicate membership claims."""
+    mut ordered: Dict[str, ExternalReference] = {}
+    for reference in references:
+        key = external_json(reference).to_json().map_err((error) => problem("format", reference.key, error.message()))?
+        if key in ordered:
+            return Err(problem("integrity", reference.key, "duplicate external reference"))
+        ordered[key] = reference
+    return Ok([ordered[key] for key in sorted([key for key in ordered.keys()])])
+
+
+def decode_external(value: JsonValue) -> Result[list[ExternalReference], StoreError]:
+    """Decode exact external references; canonical order and closure are checked before admission."""
+    mut references: list[ExternalReference] = []
+    for item in array(value)?:
+        fields = array(item, 4)?
+        references.append(
+            ExternalReference(
+                set_root=string(fields[0])?,
+                key=string(fields[1])?,
+                revision=string(fields[2])?,
+                value=string(fields[3])?,
+            ),
+        )
+    return Ok(references)
+
+
+def check_external(view: Snapshot, records: list[Record]) -> Result[None, StoreError]:
+    """Require each exact target to belong to the named admitted set, never merely exist in this home."""
+    for record in records:
+        for reference in record.external:
+            dependency = decode_manifest(required_value(view, SET_PREFIX + reference.set_root)?)?
+            mut supplied = false
+            for entry in dependency.entries:
+                if (
+                    record_key(dependency.spec, entry.record)? == reference.key
+                    and entry.record.revision == reference.revision
+                ):
+                    if entry.value != reference.value:
+                        return Err(problem("integrity", reference.key, "dependency supplies another value"))
+                    supplied = true
+            if not supplied:
+                return Err(problem("integrity", reference.key, "dependency does not supply the exact revision"))
+    return Ok(None)
+
+
+def external_fields(references: list[ExternalReference], membership: bool) -> Result[JsonValue, StoreError]:
+    """Transport pins supplying sets; immutable envelopes retain only exact logical targets and values."""
+    if membership:
+        return Ok(JsonValue.array([external_json(reference) for reference in references]))
+    mut targets: Dict[str, JsonValue] = {}
+    for reference in references:
+        value = strings([reference.key, reference.revision, reference.value])
+        encoded = value.to_json().map_err((error) => problem("format", reference.key, error.message()))?
+        targets[encoded] = value
+    return Ok(JsonValue.array([targets[key] for key in sorted([key for key in targets.keys()])]))
+
+
+pub def readmit(root: Path, directory: Path, set_root: str, supported: Profile) -> Result[Snapshot, StoreError]:
+    """
+    Explicitly re-admit frozen records and payloads from a completely verified, externally pinned set.
+
+    The supplying adapter owns the pinned root and trust decision. Intact unequal revisions are conflicts; damaged
+    frames are preserved as quarantine evidence and replaced by new transaction frames. Payload damage is moved out
+    of its canonical name before exact re-admission. Frozen bytes are never edited in place or recomputed here.
+    """
+    verified = verify_transport(directory, set_root, supported)?
+    view = snapshot(root)?
+    check_dependencies(view, verified.spec.dependencies)?
+    check_external(view, verified.spec.records)?
+    mut transaction = begin(view)
+    for entry in verified.entries:
+        key = record_key(verified.spec, entry.record)?
+        transaction = restored_frame(transaction, view, key, envelope_bytes(verified.spec, entry)?)?
+    transaction = restored_frame(transaction, view, SET_PREFIX + set_root, verified.document)?
+    for object in verified.objects:
+        readmit_payload(root, transport_file(directory, f"payloads/{object.digest}")?, object.digest)?
+    return commit(transaction)
+
+
+def restored_frame(transaction: Transaction, view: Snapshot, key: str, value: bytes) -> Result[Transaction, StoreError]:
+    """Guard equal frozen frames, quarantine physical damage, and refuse intact revision disagreement."""
+    match lookup(view, key):
+        Err(error) =>
+            if error.kind != "integrity":
+                return Err(error)
+            quarantine_record(view, key)?
+            return Ok(put(transaction, key, value, EXPECT_REPAIR))
+        Ok(found) =>
+            match found:
+                Lookup.Found(previous) =>
+                    if previous != value:
+                        return Err(problem("conflict", key, "intact frozen revision differs from verified transport"))
+                Lookup.Deleted => pass
+                Lookup.Absent => pass
+    return Ok(put(transaction, key, value, EXPECT_ABSENT))
