@@ -983,7 +983,8 @@ pub def library_compile_arguments(
     arguments = library_arguments(declared)
     mut metadata = "metadata=incan-unit"
     if iteration:
-        metadata = rust_metadata(request.profile, unit + "-" + declared.version)
+        context = fingerprint([unit, declared.package, declared.version])?
+        metadata = rust_metadata(request.profile, context)
     outputs = ["--out-dir", directory.0, "-C", metadata, "-C", f"extra-filename=-{unit}"]
     return Ok(
         arguments + outputs + ["--emit", f"link,dep-info={dependencies.0}"] + linking(facet, request, built, search)? + remap_arguments(
@@ -1443,9 +1444,9 @@ pub def binary_arguments(
         return Err(f"Rust test graph has no selected production library {library}")
     if library in built and (not testing or source != declared.library):
         selected = selected + ["--extern", f"{declared.crate_name}={built[library].artifact}"]
-    mut context = artifact_context(facet, declared, request.profile)? + "-" + declared.version + "-" + name
-    if testing:
-        context = context + "-test"
+    context = fingerprint(
+        [artifact_context(facet, declared, request.profile)?, declared.package, declared.version, name, str(testing)],
+    )?
     return Ok(
         selected + ["-C", rust_metadata(request.profile, context)] + linking(facet, request, built, search)? + remap_arguments(
             facet.project,
