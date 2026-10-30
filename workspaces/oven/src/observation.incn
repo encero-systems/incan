@@ -11,10 +11,13 @@ on.
 A write can leave a file's metadata exactly as it was recorded when it lands within the clock's granularity of the
 recording. An observation taken less than `settle` seconds after the file's last change is therefore stored unsettled,
 and the next reconciliation hashes it again.
+
+`FileMetadata` is the one status query every metadata-first check builds on: the ledgers here and request capture
+(`engine_capture`) alike.
 """
 
-from rust::std::fs import metadata
-from rust::std::io import Write, stderr
+from rust::std::fs import Metadata, metadata
+from rust::std::io import ErrorKind, Write, stderr
 from rust::std::os::unix::fs import MetadataExt
 from rust::std::string import String as RustString
 from rust::std::time import SystemTime, UNIX_EPOCH
@@ -30,6 +33,64 @@ from jec import begin, record
 # How old a file's last change must be before its metadata can vouch for its bytes.
 pub const SETTLE_SECONDS: int = 2
 const LEDGER_SCHEMA: str = "incan.oven.observations/1"
+const NANOSECONDS: int = 1000000000
+# The file type bits of a mode (`S_IFMT`), and the types of a regular file and a directory.
+const FILE_TYPE: int = 61440
+const REGULAR_FILE: int = 32768
+const DIRECTORY: int = 16384
+
+
+@derive(Eq)
+pub model FileMetadata:
+    """
+    What the filesystem reports about a file or directory, following symbolic links: a change detector, never content
+    identity. Replacing a file changes its inode; rewriting it in place changes its status change time even when the
+    modification time is put back.
+    """
+
+    pub device: int
+    pub inode: int
+    pub size: int
+    # The file type and permission bits.
+    pub mode: int
+    # The nanosecond times since the Unix epoch of its last modification and its last status change.
+    pub modified_ns: int
+    pub changed_ns: int
+
+    def stamp(self) -> str:
+        """The metadata as one comparable text, as ledgers and stamps record it."""
+        modified = f"{self.modified_ns // NANOSECONDS}.{self.modified_ns % NANOSECONDS}"
+        changed = f"{self.changed_ns // NANOSECONDS}.{self.changed_ns % NANOSECONDS}"
+        return f"{self.device}:{self.inode}:{self.size}:{self.mode}:{modified}:{changed}"
+
+    def newest_second(self) -> int:
+        """The whole second of its latest modification or status change."""
+        modified = self.modified_ns // NANOSECONDS
+        changed = self.changed_ns // NANOSECONDS
+        if changed > modified:
+            return changed
+        return modified
+
+    def settled(self, settle: int) -> bool:
+        """Whether its last change is at least `settle` seconds old, so these metadata can vouch for its bytes."""
+        return settled_since(self.newest_second(), settle)
+
+    def is_file(self) -> bool:
+        """Whether it describes a regular file."""
+        return (self.mode & FILE_TYPE) == REGULAR_FILE
+
+    def is_directory(self) -> bool:
+        """Whether it describes a directory."""
+        return (self.mode & FILE_TYPE) == DIRECTORY
+
+
+pub model Children:
+    """A directory's files of one kind and its subdirectories worth entering, by name and sorted."""
+
+    pub files: list[str]
+    pub directories: list[str]
+    # How many children had their type checked: each check is a status query.
+    pub checked: int = 0
 
 
 pub model Observation:
@@ -115,21 +176,9 @@ pub model Ledger:
         if directory.0 in self.directories and self.directories[directory.0].stamp == observed.stamp:
             return Ok(self.directories[directory.0])
         # 2. A changed directory yields the files this ledger keeps and the subdirectories worth entering.
-        mut files: list[str] = []
-        mut directories: list[str] = []
-        for child in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
-            name = child.name()
-            if child.is_dir():
-                if not skipped_directory(name):
-                    directories.append(name)
-            elif child.is_file() and name.endswith(self.extension):
-                files.append(name)
+        found = children(directory, self.extension)?
         # 3. The new listing is kept under the metadata it was taken at, and counts as work the pass could not avoid.
-        entry = DirectoryEntry(
-            stamp=retained(observed, self.settle),
-            files=sorted(files),
-            directories=sorted(directories),
-        )
+        entry = DirectoryEntry(stamp=retained(observed, self.settle), files=found.files, directories=found.directories)
         trace(f"listing {directory.0}")
         self.listed += 1
         self.changed = true
@@ -203,6 +252,27 @@ pub def skipped_directory(name: str) -> bool:
     return name.startswith(".") or name == "target" or name == "node_modules"
 
 
+pub def children(directory: Path, extension: str) -> Result[Children, str]:
+    """
+    List a directory once: the files whose names end with `extension` (every file when it is empty) and the
+    subdirectories worth entering (see `skipped_directory`).
+    """
+    mut files: list[str] = []
+    mut directories: list[str] = []
+    mut checked = 0
+    for child in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        name = child.name()
+        checked += 1
+        if child.is_dir():
+            if not skipped_directory(name):
+                directories.append(name)
+            continue
+        checked += 1
+        if child.is_file() and name.endswith(extension):
+            files.append(name)
+    return Ok(Children(files=sorted(files), directories=sorted(directories), checked=checked))
+
+
 def file_row(path: str, entry: FileEntry) -> JsonValue:
     """One file of the saved document."""
     return JsonValue.object(
@@ -236,25 +306,44 @@ pub def file_digest(path: Path) -> Result[str, str]:
 pub def observe(path: Path) -> Result[Observation, str]:
     """A file or directory's identity as the filesystem reports it, following symbolic links."""
     prefix = f"{path.0}: "
-    info = metadata(path.0).map_err((error) => f"{prefix}{error}")?
-    file = f"{info.dev()}:{info.ino()}:{info.size()}:{info.mode()}"
-    modified = f"{info.mtime()}.{info.mtime_nsec()}"
-    changed = f"{info.ctime()}.{info.ctime_nsec()}"
-    stamp = f"{file}:{modified}:{changed}"
-    mut newest = int(info.mtime())
-    if int(info.ctime()) > newest:
-        newest = int(info.ctime())
-    return Ok(Observation(stamp=stamp, newest=newest))
+    info = described(metadata(path.0).map_err((error) => f"{prefix}{error}")?)
+    return Ok(Observation(stamp=info.stamp(), newest=info.newest_second()))
+
+
+pub def file_metadata(path: Path) -> Result[Option[FileMetadata], str]:
+    """One status query of a file or directory, following symbolic links; `None` when nothing is there."""
+    match metadata(path.0):
+        Ok(info) => return Ok(Some(described(info)))
+        Err(error) =>
+            if error.kind() == ErrorKind.NotFound:
+                return Ok(None)
+            return Err(f"{path.0}: {error}")
+
+
+def described(info: Metadata) -> FileMetadata:
+    """The fields of the operating system's status record that detect a change."""
+    return FileMetadata(
+        device=int(info.dev()),
+        inode=int(info.ino()),
+        size=int(info.size()),
+        mode=int(info.mode()),
+        modified_ns=int(info.mtime()) * NANOSECONDS + int(info.mtime_nsec()),
+        changed_ns=int(info.ctime()) * NANOSECONDS + int(info.ctime_nsec()),
+    )
 
 
 def retained(observed: Observation, settle: int) -> str:
     """The stamp to retain: the observed one once it is old enough to trust, else an empty one that never matches."""
-    match SystemTime.now().duration_since(UNIX_EPOCH):
-        Ok(now) =>
-            if int(now.as_secs()) >= observed.newest + settle:
-                return observed.stamp
-        Err(_) => pass
+    if settled_since(observed.newest, settle):
+        return observed.stamp
     return ""
+
+
+pub def settled_since(newest: int, settle: int) -> bool:
+    """Whether a change in the whole second `newest` is at least `settle` seconds old; an unreadable clock says no."""
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => return int(now.as_secs()) >= newest + settle
+        Err(_) => return false
 
 
 pub def load_ledger(location: Path, settle: int, extension: str = ".incn") -> Ledger:
