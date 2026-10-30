@@ -1,5 +1,6 @@
 """Read the pinned Rust compiler's target facts and cache immutable installation probes."""
 
+from rust::std::env import vars_os
 from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.fs import Path
@@ -11,7 +12,7 @@ from rust_activation import CfgSnapshot, TargetConfiguration
 
 pub def target_configuration(rustc: str) -> Result[TargetConfiguration, str]:
     """The host target and its complete `cfg`, as the pinned rustc prints them."""
-    host = probed(rustc, ["-vV"])?
+    host = compiler_version(rustc)?
     mut triple = ""
     for line in host.split("\n"):
         if line.startswith("host: "):
@@ -39,27 +40,40 @@ pub def target_configuration(rustc: str) -> Result[TargetConfiguration, str]:
     return Ok(TargetConfiguration(triple=triple, cfg=Some(CfgSnapshot(flags=flags, values=values))))
 
 
-def probed(rustc: str, arguments: list[str]) -> Result[str, str]:
+pub def compiler_version(rustc: str) -> Result[str, str]:
+    """The pinned rustc's verbose version output, which names its release and host."""
+    return probed(rustc, ["-vV"])
+
+
+pub def compiler_sysroot(rustc: str) -> Result[str, str]:
+    """The sysroot the pinned rustc reports for itself."""
+    return Ok(probed(rustc, ["--print", "sysroot"])?.strip())
+
+
+def probed(rustc: str, arguments: list[str], settings: list[tuple[str, str]] = []) -> Result[str, str]:
     """
     What the pinned rustc prints for `arguments`, run once per rustc installation (see `retained_readings`): its
-    version and target configuration depend only on the installed compiler.
+    version and target configuration depend only on the installed compiler. A question that rustc also answers from
+    its environment names those `settings`; rustc runs with them, and they are part of the retained question.
     """
     program = Path(rustc)
     observed = observe(program)?
-    selection = " ".join(arguments)
+    selection = " ".join(arguments + deployment_configuration(settings))
     if let Some(value) = recall(program, selection, observed.stamp):
         if let Some(printed) = value.as_str():
             return Ok(printed)
-    printed = run_text(rustc, arguments)?
+    printed = run_text(rustc, arguments, settings)?
     retain(program, selection, observed, JsonValue.string(printed))
     return Ok(printed)
 
 
-pub def run_text(program: str, arguments: list[str]) -> Result[str, str]:
-    """Run a program to completion and return its stdout; a failure returns its stderr."""
+def run_text(program: str, arguments: list[str], settings: list[tuple[str, str]]) -> Result[str, str]:
+    """Run a program to completion with `settings` in its environment and return its stdout; a failure its stderr."""
     mut command = Command.new(program)
     for argument in arguments:
         command.arg(argument)
+    for name, value in settings:
+        command.env(name, value)
     match command.output():
         Err(error) => return Err(f"cannot run {program}: {error}")
         Ok(output) =>
@@ -67,6 +81,44 @@ pub def run_text(program: str, arguments: list[str]) -> Result[str, str]:
             if not output.status.success():
                 return Err(f"{program} {" ".join(arguments)} failed:\n{decoded(output.stderr)}")
             return Ok(stdout)
+
+
+pub def deployment_target(rustc: str, compiler: str, selection: list[tuple[str, str]]) -> Result[str, str]:
+    """
+    Read the effective Apple deployment target as a compiler fact, independently of the compiler's location.
+
+    rustc reads the deployment selection from its environment, so the `selection` it runs with is part of the question.
+    """
+    for line in compiler.split("\n"):
+        if line.startswith("host: ") and "-apple-" in line:
+            return probed(rustc, ["--print", "deployment-target"], selection)
+    return Ok("")
+
+
+pub def inherited_deployment_selection() -> Result[list[tuple[str, str]], str]:
+    """Every `*_DEPLOYMENT_TARGET` setting this process inherited, by name and exact value."""
+    mut entries: list[tuple[str, str]] = []
+    for key, value in vars_os():
+        name = key.into_string().map_err((_) => "an environment name is not Unicode")?
+        if name.ends_with("_DEPLOYMENT_TARGET"):
+            setting = value.into_string().map_err((_) => "a deployment setting is not Unicode")?
+            entries.append((str(name), str(setting)))
+    return Ok(entries)
+
+
+pub def inherited_deployment_configuration() -> Result[list[str], str]:
+    """The deployment selection this process inherited, as `deployment_configuration` normalizes it."""
+    return Ok(deployment_configuration(inherited_deployment_selection()?))
+
+
+pub def deployment_configuration(entries: list[tuple[str, str]]) -> list[str]:
+    """
+    Normalize deployment-selection inputs without duplicating rustc's platform/default policy.
+
+    Names and exact values distinguish absent, empty and explicit settings, so another selection is another question
+    to rustc and another resident owner.
+    """
+    return sorted([f"{name}={value}" for name, value in entries if name.endswith("_DEPLOYMENT_TARGET")])
 
 
 pub def decoded(bytes: bytes) -> str:

@@ -51,7 +51,7 @@ pub def compile_or_replay(
     3. Publish a certified refusal only if the complete input identity is still unchanged.
     """
     # 1. Replay a complete matching refusal unless a caller requested compiler side effects.
-    cacheable = ordinary_compilation() and complete_artifacts(unit)?
+    cacheable = key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
         if let Some(refusal) = load_outcome(path, key.digest):
             trace(f"unit {unit.package} {unit.kind}: replayed refusal")
@@ -87,7 +87,7 @@ pub def check_or_replay(
     label = f"unit {unit.package} check"
     identity = fingerprint([CHECK_DOMAIN, key.digest] + arguments)?
     # 1. A stored report of this identity is shown exactly as the compiler printed it.
-    cacheable = ordinary_compilation() and complete_artifacts(unit)?
+    cacheable = key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
         if let Some(report) = load_outcome(path, identity):
             trace(f"{label}: replayed")

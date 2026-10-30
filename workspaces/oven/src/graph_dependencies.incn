@@ -21,7 +21,7 @@ from rust_units import (
     build_dependencies,
     facet_bindings,
     compile_rust_library,
-    identity,
+    facet_slot,
     ordered,
     read_receipt,
     read_registry_units,
@@ -282,11 +282,11 @@ def recorded_native(name: str, previous: Dict[str, BuiltUnit], externs: list[Nat
 
 
 def current_library(facet: LocalFacet, name: str, previous: Dict[str, BuiltUnit], profile: str) -> Option[BuiltUnit]:
-    """The library recorded for a crate, when it was built for this very unit (its directory carries the identity)."""
+    """The library recorded in this project's selected target slot, independently of its portable unit identity."""
     if name not in previous:
         return None
     published = previous[name]
-    if Path(published.directory).name() == f"{name}-{identity(facet, profile)}":
+    if Path(published.directory).name() == f"{name}-{facet_slot(facet, profile)}":
         return Some(published)
     return None
 

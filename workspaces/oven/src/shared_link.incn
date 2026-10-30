@@ -7,7 +7,6 @@ from json_fields import required_items, required_text
 from unit import UnitDescription
 from unit_freshness import Key, artifact_identity, fingerprint
 
-
 const SCHEMA: str = "incan.native-shared/1"
 
 
@@ -18,9 +17,16 @@ pub def development_link(unit: UnitDescription, requested: bool) -> bool:
 
 pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
     """Keep source and artifact evidence while separating shared development outputs from ordinary build outputs."""
-    if not shared:
+    if not shared or key.refusal != "":
         return Ok(key)
-    return Ok(Key(digest=fingerprint([SCHEMA, key.digest])?, parts=key.parts + [f"linkage {SCHEMA}"]))
+    return Ok(
+        Key(
+            digest="sha256:" + fingerprint([SCHEMA, key.digest])?,
+            parts=key.parts + [f"linkage {SCHEMA}"],
+            provenance=key.provenance,
+            descriptor=key.descriptor,
+        ),
+    )
 
 
 pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[str], str]:

@@ -1,0 +1,86 @@
+"""Read Oven's own prepared unit descriptions at the native publication boundary."""
+
+from std.json import JsonValue
+from json_fields import required_items, required_text, strings
+from toolchain import NativeCrate
+from unit import UnitDescription, UnitLoaf, UNIT_DESCRIPTION_SCHEMA
+
+
+pub def read_unit(value: JsonValue) -> Result[UnitDescription, str]:
+    """Read the exact prepared compilation inputs, retaining paths as provenance for source observation."""
+    if required_text(value, "schema")? != UNIT_DESCRIPTION_SCHEMA:
+        return Err("unsupported prepared unit schema")
+    return Ok(
+        UnitDescription(
+            source=required_text(value, "source")?,
+            project_root=required_text(value, "project_root")?,
+            source_root=required_text(value, "source_root")?,
+            package=required_text(value, "package")?,
+            version=required_text(value, "version")?,
+            profile=required_text(value, "profile")?,
+            declared_features=texts(value, "declared_features")?,
+            active_features=texts(value, "active_features")?,
+            loaves=[read_loaf(item)? for item in required_items(value, "loaves")?],
+            rust_crates=texts(value, "rust_crates")?,
+            contract_models=texts(value, "contract_models")?,
+            c_headers=texts(value, "c_headers")?,
+            externs=[NativeCrate(name=required_text(item, "name")?, path=required_text(item, "path")?) for item in required_items(
+                value,
+                "externs",
+            )?],
+            search=texts(value, "search")?,
+            search_index=optional_text(value, "search_index")?,
+            rust_abi=texts(value, "rust_abi")?,
+            kind=required_text(value, "kind")?,
+            program_entries=texts(value, "program_entries")?,
+            vocab_entry=optional_text(value, "vocab_entry")?,
+            vocab=optional_text(value, "vocab")?,
+            vocabulary=flag(value, "vocabulary")?,
+            vocab_admissions=texts(value, "vocab_admissions")?,
+            vocab_policy=required_text(value, "vocab_policy")?,
+            vocab_desugarer=flag(value, "vocab_desugarer")?,
+        ),
+    )
+
+
+def read_loaf(value: JsonValue) -> Result[UnitLoaf, str]:
+    """Read a prepared provider binding without re-resolving its source or dependency graph."""
+    return Ok(
+        UnitLoaf(
+            key=required_text(value, "key")?,
+            name=required_text(value, "name")?,
+            dir=required_text(value, "dir")?,
+            standard=flag(value, "standard")?,
+            toolchain_provided=optional_flag(value, "toolchain_provided")?,
+            source_root=optional_text(value, "source_root")?,
+        ),
+    )
+
+
+def texts(value: JsonValue, name: str) -> Result[list[str], str]:
+    """Require a prepared string array, preserving malformed input as a publication refusal."""
+    item = value.require(name).map_err((error) => error.message())?
+    return strings(item, [name]).map_err((_) => f"prepared {name} must be a string array")
+
+
+def optional_text(value: JsonValue, name: str) -> Result[Option[str], str]:
+    """Read an absent or null optional path as absent, without repairing another JSON type."""
+    match value.get(name):
+        None => return Ok(None)
+        Some(item) =>
+            if item.is_null():
+                return Ok(None)
+            return Ok(Some(item.expect_str().map_err((error) => error.message())?))
+
+
+def flag(value: JsonValue, name: str) -> Result[bool, str]:
+    """Require one exact Boolean compilation fact."""
+    item = value.require(name).map_err((error) => error.message())?
+    return item.expect_bool().map_err((error) => error.message())
+
+
+def optional_flag(value: JsonValue, name: str) -> Result[bool, str]:
+    """Read the optional provider-facade marker, whose absent value is false in the unit schema."""
+    if value.get(name) == None:
+        return Ok(false)
+    return flag(value, name)

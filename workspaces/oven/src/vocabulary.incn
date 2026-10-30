@@ -5,7 +5,9 @@ from std.fs import Path
 from std.encoding.hex import hexlify
 from std.hash import sha256
 from std.json import JsonValue, parse
-from files import json_text, read, write
+from files import json_text, read, read_json, write
+from json_fields import required_text
+from observation import file_digest, observe
 from graph_queries import nested
 from publication import publish
 from rust_units import decoded
@@ -13,6 +15,7 @@ from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import compile_prepared_unit
 from unit_freshness import Key, record, reusable, unit_key
+from unit_publication import record_payload, record_verified_payload
 from vocabulary_policy import admit_vocabulary
 
 
@@ -54,6 +57,7 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
     code = compile_prepared_unit(registration, toolchain, output, Some(key))?
     if code != 0:
         return Err(f"vocabulary entry for {unit.package} was refused (exit {code})")
+    record_payload(output, key.digest, key.provenance, key.refusal)?
     # 3. Run only at the producer and carry the existing VocabMetadata payload into its library manifest.
     payload = run_registration(output)?
     mut worker = JsonValue.null()
@@ -69,10 +73,10 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
     prepared = JsonValue.object(
         {"crate_path": JsonValue.string(entry.replace(".", "/") + ".incn"), "package_name": JsonValue.string(
             unit.package,
-        ), "unit_identity": JsonValue.string(key.digest), "metadata": payload, "worker": worker},
+        ), "unit_identity": JsonValue.string(wire_digest(key)?), "metadata": payload, "worker": worker},
     )
     publish(metadata, json_text(prepared)?)?
-    record(stamp, key, registration_artifacts(metadata, directory))?
+    record(stamp, key, registration_artifacts(metadata, directory), [directory.joinpath("desugar")])?
     unit.vocab = Some(metadata.0)
     return Ok(unit)
 
@@ -85,8 +89,27 @@ pub def stage_vocabulary(unit: UnitDescription, directory: Path) -> Result[None,
             source = Path(metadata).parent().joinpath("desugar")
             if source.is_file():
                 directory.mkdir(true, true).map_err((error) => error.message())?
-                source.copy(directory.joinpath("vocab-worker"), true, true).map_err((error) => error.message())?
+                output = directory.joinpath("vocab-worker")
+                source.copy(output, true, true).map_err((error) => error.message())?
+                worker = read_json(Path(metadata))?.require("worker").map_err((error) => error.message())?
+                before = observe(output)?.stamp
+                payload = file_digest(output)?
+                expected = required_text(worker, "sha256")?
+                if payload != expected:
+                    return Err("native vocabulary worker payload changed during admission")
+                identity = "sha256:" + required_text(worker, "unit_identity")?
+                record_verified_payload(output, identity, payload, before, [unit.project_root])?
     return Ok(None)
+
+
+pub def published_workers(unit: UnitDescription, directory: Path) -> Result[list[Path], str]:
+    """Name the independently baked workers carried by a library, preserving their own producer identities."""
+    if let Some(path) = unit.vocab:
+        prepared = read_json(Path(path))?
+        worker = prepared.require("worker").map_err((error) => error.message())?
+        if not worker.is_null():
+            return Ok([directory.joinpath("vocab-worker")])
+    return Ok([])
 
 
 def registration_artifacts(metadata: Path, directory: Path) -> list[Path]:
@@ -109,14 +132,25 @@ def worker_description(registration: UnitDescription, entry: str, directory: Pat
 
 def worker_metadata(executable: Path, key: Key, schema_version: JsonValue) -> Result[JsonValue, str]:
     """Publish executable identity with the syntax schema declared by the producer's std.vocab."""
+    identity = wire_digest(key)?
+    before = observe(executable)?.stamp
     bytes = executable.read_bytes().map_err((error) => error.message())?
+    payload = hexlify(sha256.digest(bytes))
+    record_verified_payload(executable, key.digest, payload, before, key.provenance)?
     return Ok(
         JsonValue.object(
             {"artifact_kind": JsonValue.string("NativeWorker"), "abi_version": schema_version, "relative_path": JsonValue.string(
                 "vocab-worker",
-            ), "sha256": JsonValue.string(hexlify(sha256.digest(bytes))), "unit_identity": JsonValue.string(key.digest)},
+            ), "sha256": JsonValue.string(payload), "unit_identity": JsonValue.string(identity)},
         ),
     )
+
+
+def wire_digest(key: Key) -> Result[str, str]:
+    """Encode the canonical SHA-256 identity in the existing native-vocabulary wire format's bare digest field."""
+    if key.refusal != "":
+        return Err(key.refusal)
+    return Ok(key.digest.replace("sha256:", ""))
 
 
 def worker_main(entry: str) -> str:

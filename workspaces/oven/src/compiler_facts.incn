@@ -1,0 +1,58 @@
+"""Admit compiler and ABI-cache contents before unit identity lookup reads their recorded digests."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from files import json_text, read_json
+from home import home
+from json_fields import required_text
+from observation import file_digest, observe
+from publication import publish
+
+
+pub def admit_fact(path: Path) -> Result[None, str]:
+    """
+    Admit the current compiler fact at toolchain selection or dependency preparation.
+
+    1. Reuse an unchanged admitted generation without reading its payload.
+    2. Digest a new generation once, refusing concurrent writes.
+    3. Record provenance and observations separately from the content identity.
+    """
+    # 1. Physical aliases share admission evidence but never enter the recorded content digest.
+    location = fact_record(path)?
+    before = observe(path)?.stamp
+    if location.is_file():
+        document = read_json(location)?
+        if required_text(document, "observation")? == before:
+            return Ok(None)
+    # 2. Hashing belongs to admission, not to naming this fact in another unit's key.
+    digest = file_digest(path)?
+    if observe(path)?.stamp != before:
+        return Err(f"{path.0}: compiler fact changed during admission")
+    # 3. A replacement compiler or ABI cache is a new fact, identified by its content.
+    location.parent().mkdir(true, true).map_err((error) => error.message())?
+    record = JsonValue.object(
+        {"digest": JsonValue.string(digest), "observation": JsonValue.string(before), "provenance": JsonValue.string(
+            path.0,
+        )},
+    )
+    return publish(location, json_text(record)?)
+
+
+pub def fact_identity(path: Path) -> Result[str, str]:
+    """Read an already admitted compiler fact's content identity without reading or hashing its payload."""
+    location = fact_record(path)?
+    if not location.is_file():
+        return Err(f"{path.0}: compiler fact requires admission")
+    document = read_json(location)?
+    if required_text(document, "observation")? != observe(path)?.stamp:
+        return Err(f"{path.0}: compiler fact changed after admission")
+    return required_text(document, "digest")
+
+
+def fact_record(path: Path) -> Result[Path, str]:
+    """Locate admission evidence by physical provenance, outside the fact's content identity."""
+    physical = path.resolve().map_err((error) => error.message())?
+    address = hexlify(sha256.digest(physical.0.encode("utf-8")))
+    return Ok(home()?.joinpath("cache/compiler-facts").joinpath(f"{address}.json"))
