@@ -1,5 +1,5 @@
 """
-Bounded Unix transport shared by the owner, compiler worker and engine control protocols.
+Bounded IPC over Unix sockets: length-framed byte payloads, per-direction data credits and OS peer identity.
 
 It carries bytes and the OS identity of the peer, nothing else: what a payload encodes belongs to its protocol.
 """
