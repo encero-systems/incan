@@ -23,6 +23,7 @@ mod allocator {
     }
 
     unsafe extern "C" {
+        /// Write allocator totals for the selected zone, or every zone when `zone` is null.
         fn malloc_zone_statistics(zone: *mut std::ffi::c_void, statistics: *mut MallocStatistics);
     }
 
@@ -53,6 +54,7 @@ mod allocator {
     }
 
     unsafe extern "C" {
+        /// Read glibc allocator totals for the current process without transferring ownership.
         fn mallinfo2() -> MallocInfo;
     }
 
