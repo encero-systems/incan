@@ -1,7 +1,11 @@
-# behavior: two public functions sharing one name are distinct overloads selected by their parameter type
+# behavior: two public functions sharing one name are distinct overloads selected by their parameter type; overloads whose type parameter is bound to a type, builtin or model, are selected by the explicit type argument in either builtin spelling, directly and through an alias (#1033)
 # expect-stdout:
 #   2
 #   a!
+#   int q
+#   float p
+#   int r
+#   float column
 
 pub def convert(value: int) -> int:
     return value + 1
@@ -11,6 +15,41 @@ pub def convert(value: str) -> str:
     return value + "!"
 
 
+model Col:
+    name: str
+
+
+model IntCol:
+    src: str
+
+
+model FloatCol:
+    src: str
+
+
+def cast[T with Int](expr: Col) -> IntCol:
+    return IntCol(src="int " + expr.name)
+
+
+def cast[T with Float](expr: Col) -> FloatCol:
+    return FloatCol(src="float " + expr.name)
+
+
+safe_cast = alias cast
+
+
+def kind[T with IntCol]() -> str:
+    return "int column"
+
+
+def kind[T with FloatCol]() -> str:
+    return "float column"
+
+
 def main() -> None:
     println(convert(1))
     println(convert("a"))
+    println(cast[Int](Col(name="q")).src)
+    println(cast[Float](Col(name="p")).src)
+    println(safe_cast[int](Col(name="r")).src)
+    println(kind[FloatCol]())

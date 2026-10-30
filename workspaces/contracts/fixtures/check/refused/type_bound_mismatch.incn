@@ -1,0 +1,18 @@
+# behavior: a type argument that is not the type its bound names is refused (#1033)
+# expect-diagnostic: INCAN-T0001
+
+model Col:
+    name: str
+
+
+model IntCol:
+    src: str
+
+
+def cast[T with Int](expr: Col) -> IntCol:
+    return IntCol(src=expr.name)
+
+
+def main() -> None:
+    value = cast[str](Col(name="q"))
+    println(value.src)

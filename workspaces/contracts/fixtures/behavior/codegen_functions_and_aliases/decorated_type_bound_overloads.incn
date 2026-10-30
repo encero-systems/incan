@@ -1,0 +1,34 @@
+# behavior: decorated overloads whose type parameter is bound to a type keep their selection by the explicit type argument (#1033)
+# expect-stdout:
+#   int q
+#   float p
+
+model Col:
+    name: str
+
+
+model IntCol:
+    src: str
+
+
+model FloatCol:
+    src: str
+
+
+def registered[F](label: str) -> (F) -> F:
+    return (func) => func
+
+
+@registered("columns.cast")
+def cast[T with Int](expr: Col) -> IntCol:
+    return IntCol(src="int " + expr.name)
+
+
+@registered("columns.cast")
+def cast[T with Float](expr: Col) -> FloatCol:
+    return FloatCol(src="float " + expr.name)
+
+
+def main() -> None:
+    println(cast[Int](Col(name="q")).src)
+    println(cast[Float](Col(name="p")).src)
