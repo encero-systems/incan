@@ -6688,6 +6688,7 @@ impl TypeChecker {
 
     /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
     fn check_function(&mut self, func: &FunctionDecl, decl_span: Span) {
+        self.check_work.function_declarations += 1;
         self.symbols.enter_scope(ScopeKind::Function);
 
         self.validate_decorators_allowing_user_defined(&func.decorators);
@@ -6765,15 +6766,6 @@ impl TypeChecker {
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();
 
-        let prev_in_async_body = self.in_async_body;
-        let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
-        self.in_async_body = func.is_async();
-        let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
-        let previous_transferred_c_resource_bindings = std::mem::take(&mut self.transferred_c_resource_bindings);
-        let previous_for_item_taking = self.enter_for_item_taking_scope();
-        let previous_unbound_c_abi_span_constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
-        let previous_c_abi_span_bindings = std::mem::take(&mut self.c_abi_span_bindings);
-        let previous_consumed_c_abi_span_bindings = std::mem::take(&mut self.consumed_c_abi_span_bindings);
         let previous_c_abi_raw_call_owner =
             self.current_c_abi_raw_call_owner
                 .replace(crate::typechecker::CBindingRawCallOwner {
@@ -6781,22 +6773,11 @@ impl TypeChecker {
                     visibility: func.visibility,
                     declaration_span: decl_span,
                 });
-
-        // Check body
-        let previous_function = (self.receiver_plan_inputs.current_function).replace(decl_span);
-        self.check_statement_block(&func.body);
-        self.finalize_comprehension_collection_sources();
+        let previous_function = self.receiver_plan_inputs.current_function.replace(decl_span);
+        self.check_work.function_bodies += 1;
+        self.check_callable_body_in_frame(&func.body, func.is_async(), yield_context);
         self.receiver_plan_inputs.current_function = previous_function;
-
-        self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
-        self.transferred_c_resource_bindings = previous_transferred_c_resource_bindings;
-        self.exit_for_item_taking_scope(previous_for_item_taking);
-        self.unbound_c_abi_span_constructors = previous_unbound_c_abi_span_constructors;
-        self.c_abi_span_bindings = previous_c_abi_span_bindings;
-        self.consumed_c_abi_span_bindings = previous_consumed_c_abi_span_bindings;
         self.current_c_abi_raw_call_owner = previous_c_abi_raw_call_owner;
-        self.in_async_body = prev_in_async_body;
-        self.current_yield_context = prev_yield_context;
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.annotation_owner = previous_annotation_owner;
@@ -6804,6 +6785,37 @@ impl TypeChecker {
         self.mutable_bindings = previous_mutable_bindings;
         self.symbols.exit_scope();
         self.apply_user_defined_function_decorators(func, decl_span);
+    }
+
+    /// Check one callable's statements inside its already bound declaration frame. Defaults and declaration validation
+    /// remain with the caller and are not repeated here. Iterator and C-span flow state belongs to this body and is
+    /// restored before another body enters; checked output and deferred module decisions are still shared today.
+    fn check_callable_body_in_frame(
+        &mut self,
+        body: &[Spanned<Statement>],
+        is_async: bool,
+        yield_context: YieldContext,
+    ) {
+        let previous_async = std::mem::replace(&mut self.in_async_body, is_async);
+        let previous_yield = std::mem::replace(&mut self.current_yield_context, yield_context);
+        let previous_iterators = std::mem::take(&mut self.consumed_iterator_bindings);
+        let previous_resources = std::mem::take(&mut self.transferred_c_resource_bindings);
+        let previous_for_items = self.enter_for_item_taking_scope();
+        let previous_constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
+        let previous_spans = std::mem::take(&mut self.c_abi_span_bindings);
+        let previous_consumed_spans = std::mem::take(&mut self.consumed_c_abi_span_bindings);
+
+        self.check_statement_block(body);
+        self.finalize_comprehension_collection_sources();
+
+        self.consumed_iterator_bindings = previous_iterators;
+        self.transferred_c_resource_bindings = previous_resources;
+        self.exit_for_item_taking_scope(previous_for_items);
+        self.unbound_c_abi_span_constructors = previous_constructors;
+        self.c_abi_span_bindings = previous_spans;
+        self.consumed_c_abi_span_bindings = previous_consumed_spans;
+        self.in_async_body = previous_async;
+        self.current_yield_context = previous_yield;
     }
 
     /// Validate a function's fixture marker before checking its signature. Async fixture yield errors retain the
@@ -6894,6 +6906,7 @@ impl TypeChecker {
                 };
 
                 let previous_callable_default_context = std::mem::replace(&mut self.checking_callable_default, true);
+                self.check_work.callable_defaults += 1;
                 let default_ty = self.check_expr_with_expected(default, Some(&param_ty));
                 self.checking_callable_default = previous_callable_default_context;
                 if !self.types_compatible(&default_ty, &param_ty)
@@ -7193,6 +7206,7 @@ impl TypeChecker {
         self_ty: ResolvedType,
         owner_params: &[TypeParam],
     ) {
+        self.check_work.method_declarations += 1;
         self.validate_protected_type_param_bindings(&method.type_params, method_span);
         self.refuse_receiver_on_static_method(method, method_span);
         self.symbols.enter_scope(ScopeKind::Method {
@@ -7268,27 +7282,9 @@ impl TypeChecker {
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();
 
-        // Check body
         if let Some(body) = &method.body {
-            let prev_in_async_body = self.in_async_body;
-            let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
-            self.in_async_body = method.is_async();
-            let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
-            let previous_transferred_c_resource_bindings = std::mem::take(&mut self.transferred_c_resource_bindings);
-            let previous_for_item_taking = self.enter_for_item_taking_scope();
-            let previous_unbound_c_abi_span_constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
-            let previous_c_abi_span_bindings = std::mem::take(&mut self.c_abi_span_bindings);
-            let previous_consumed_c_abi_span_bindings = std::mem::take(&mut self.consumed_c_abi_span_bindings);
-            self.check_statement_block(body);
-            self.finalize_comprehension_collection_sources();
-            self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
-            self.transferred_c_resource_bindings = previous_transferred_c_resource_bindings;
-            self.exit_for_item_taking_scope(previous_for_item_taking);
-            self.unbound_c_abi_span_constructors = previous_unbound_c_abi_span_constructors;
-            self.c_abi_span_bindings = previous_c_abi_span_bindings;
-            self.consumed_c_abi_span_bindings = previous_consumed_c_abi_span_bindings;
-            self.in_async_body = prev_in_async_body;
-            self.current_yield_context = prev_yield_context;
+            self.check_work.method_bodies += 1;
+            self.check_callable_body_in_frame(body, method.is_async(), yield_context);
         }
 
         self.current_return_error_type = None;
