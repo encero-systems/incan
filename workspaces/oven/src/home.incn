@@ -28,15 +28,24 @@ pub model StandardPackage:
 
 
 pub def home() -> Result[Path, str]:
-    """Oven's home directory."""
+    """Oven's canonical absolute home, so every spelling uses the same local admission evidence."""
     configured = get_or("INCAN_HOME", "")
     if configured != "":
-        return Ok(Path(configured))
+        return resolved_home(Path(configured))
     for name in ["HOME", "USERPROFILE"]:
         user = get_or(name, "")
         if user != "":
-            return Ok(Path(user).joinpath(".incan"))
+            return resolved_home(Path(user).joinpath(".incan"))
     return Err("no home directory: set INCAN_HOME, or HOME")
+
+
+def resolved_home(path: Path) -> Result[Path, str]:
+    """Resolve existing ancestors without creating a home that a first installation has yet to populate."""
+    absolute = path.absolute().map_err((error) => error.message())?
+    if absolute.exists():
+        return absolute.resolve().map_err((error) => error.message())
+    parent = resolved_home(absolute.parent())?
+    return Ok(parent.joinpath(absolute.name()))
 
 
 pub def standard_artifact_dir(package: str, profile: str) -> Result[Path, str]:
