@@ -1800,6 +1800,22 @@ impl MutParamFacts {
 }
 
 impl MutBodyLocal {
+    /// Move the prepared callable frame into its statement writer without giving the declaration producer its
+    /// body effects. The frame returns when that writer closes; the known-body contribution stays with the body.
+    pub(super) fn enter_statement_frame(&mut self, writer: &mut MutParamFacts) {
+        writer.current = self.current.take();
+        if let Some(frame) = &writer.current
+            && self.bodies_checked.remove(&frame.identity)
+        {
+            writer.bodies_checked.insert(frame.identity.clone());
+        }
+    }
+
+    /// Return only the active frame to the declaration operation that will restore its enclosing callable.
+    pub(super) fn return_statement_frame(&mut self, enclosing: &mut Self) {
+        enclosing.current = self.current.take();
+    }
+
     /// Render this caller's pending argument decisions from final callee effects. No syntax or local inference is read.
     pub(super) fn finalize_arguments(
         &self,

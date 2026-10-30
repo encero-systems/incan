@@ -2412,17 +2412,25 @@ impl TypeChecker {
     pub fn check_declaration(&mut self, decl: &Spanned<Declaration>) {
         match &decl.node {
             Declaration::Import(_) => {} // Already handled
-            Declaration::Const(konst) => self.check_const(konst, decl.span),
-            Declaration::Static(static_decl) => self.check_static(static_decl, decl.span),
+            Declaration::Const(konst) => {
+                self.check_declaration_owner(decl.span, |checker| checker.check_const(konst, decl.span))
+            }
+            Declaration::Static(static_decl) => {
+                self.check_declaration_owner(decl.span, |checker| checker.check_static(static_decl, decl.span))
+            }
             Declaration::Model(model) => {
-                self.validate_protected_type_param_bindings(&model.type_params, decl.span);
-                self.check_model(model);
-                self.record_declared_display_route(&model.name, decl.span);
+                self.check_declaration_owner(decl.span, |checker| {
+                    checker.validate_protected_type_param_bindings(&model.type_params, decl.span);
+                    checker.check_model(model);
+                    checker.record_declared_display_route(&model.name, decl.span);
+                });
             }
             Declaration::Class(class) => {
-                self.validate_protected_type_param_bindings(&class.type_params, decl.span);
-                self.check_class(class);
-                self.record_declared_display_route(&class.name, decl.span);
+                self.check_declaration_owner(decl.span, |checker| {
+                    checker.validate_protected_type_param_bindings(&class.type_params, decl.span);
+                    checker.check_class(class);
+                    checker.record_declared_display_route(&class.name, decl.span);
+                });
             }
             Declaration::Trait(tr) => {
                 self.validate_protected_type_param_bindings(&tr.type_params, decl.span);
@@ -2446,7 +2454,7 @@ impl TypeChecker {
             }
             Declaration::Function(func) => {
                 self.validate_protected_type_param_bindings(&func.type_params, decl.span);
-                self.check_function(func, decl.span);
+                self.check_function_declaration(func, decl.span);
             }
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::VocabBlock(_) => self.errors.push(CompileError::syntax(
@@ -3931,6 +3939,7 @@ impl TypeChecker {
             });
             if let Some(default) = &field.node.default {
                 let field_ty = self.resolve_type_checked(&field.node.ty);
+                self.check_work.field_defaults += 1;
                 let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
                 if !self.types_compatible(&default_ty, &field_ty)
                     && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
@@ -4585,6 +4594,7 @@ impl TypeChecker {
             });
             if let Some(default) = &field.node.default {
                 let field_ty = self.resolve_type_checked(&field.node.ty);
+                self.check_work.field_defaults += 1;
                 let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
                 if !self.types_compatible(&default_ty, &field_ty)
                     && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
@@ -6686,8 +6696,8 @@ impl TypeChecker {
         }
     }
 
-    /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
-    pub(super) fn check_function_in_scope(&mut self, func: &FunctionDecl, decl_span: Span) {
+    /// Produce function declaration validation and default facts before checking its prepared statement frame.
+    pub(super) fn check_function_declaration_in_scope(&mut self, func: &FunctionDecl, decl_span: Span) {
         self.check_work.function_declarations += 1;
         self.symbols.enter_scope(ScopeKind::Function);
 
@@ -6775,7 +6785,7 @@ impl TypeChecker {
                 });
         let previous_function = self.receiver_plan_inputs.current_function.replace(decl_span);
         self.check_work.function_bodies += 1;
-        self.check_callable_body_in_frame(&func.body, func.is_async(), yield_context);
+        self.check_callable_body(&func.body, func.is_async(), decl_span, yield_context);
         self.receiver_plan_inputs.current_function = previous_function;
         self.current_c_abi_raw_call_owner = previous_c_abi_raw_call_owner;
         self.current_return_error_type = None;
@@ -6790,7 +6800,7 @@ impl TypeChecker {
     /// Check one callable's statements inside its already bound declaration frame. Defaults and declaration validation
     /// remain with the caller and are not repeated here. Iterator and C-span flow state belongs to this body and is
     /// restored before another body enters; checked output and pending decisions stay in the active body's writer.
-    fn check_callable_body_in_frame(
+    pub(super) fn check_callable_body_in_frame(
         &mut self,
         body: &[Spanned<Statement>],
         is_async: bool,
@@ -7284,7 +7294,7 @@ impl TypeChecker {
 
         if let Some(body) = &method.body {
             self.check_work.method_bodies += 1;
-            self.check_callable_body_in_frame(body, method.is_async(), yield_context);
+            self.check_callable_body(body, method.is_async(), method_span, yield_context);
         }
 
         self.current_return_error_type = None;

@@ -8,6 +8,12 @@
 pub struct CheckWork {
     /// Named concrete callable local checks, counted independently from deferred settlement.
     pub body_local_checks: usize,
+    /// Declaration/default/initializer producers entered separately from statement bodies.
+    pub declaration_local_checks: usize,
+    /// Declaration outputs finalized against their own pending decisions.
+    pub declaration_finalizations: usize,
+    /// Completed declaration/default results reused independently from their statement bodies.
+    pub declaration_view_reuses: usize,
     /// Top-level function declaration-validation entries, including functions with invalid or unreachable bodies.
     pub function_declarations: usize,
     /// Method declaration-validation entries, including abstract declarations without a body.
@@ -18,6 +24,8 @@ pub struct CheckWork {
     pub method_bodies: usize,
     /// Callable parameter default expressions passed to the existing expression checker. Field defaults are separate.
     pub callable_defaults: usize,
+    /// Model and class field defaults checked under their existing nominal declaration rules.
+    pub field_defaults: usize,
     /// Module mutation-argument settlement entries; this counts settlement, not local body checks.
     pub mutation_settlements: usize,
     /// Forwarding SCCs closed by the effect producer.

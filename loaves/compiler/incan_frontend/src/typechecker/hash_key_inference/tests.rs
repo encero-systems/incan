@@ -55,6 +55,7 @@ fn influence_facts_match_fresh_legacy_inference() -> Result<(), Box<dyn std::err
         "../../../../../../workspaces/contracts/fixtures/behavior/codegen_functions_and_aliases/decorated_generic_closed_signatures.incn"
     ))?;
     assert_body_local_matrix()?;
+    TypeChecker::assert_declaration_expression_owners()?;
     TypeChecker::assert_body_edit_reuse()?;
     assert_environment_matrix()?;
     assert_imported_influences()?;
@@ -111,6 +112,9 @@ fn assert_checkers(
         comparable_work.mutation_components, comparable_work.mutation_member_visits, comparable_work.body_local_checks
     );
     comparable_work.body_finalizations = 0;
+    comparable_work.declaration_local_checks = 0;
+    comparable_work.declaration_finalizations = 0;
+    comparable_work.declaration_view_reuses = 0;
     comparable_work.body_view_reuses = 0;
     comparable_work.mutation_components = 0;
     comparable_work.mutation_member_visits = 0;
@@ -605,8 +609,10 @@ fn assert_body_local_matrix() -> Result<(), Box<dyn std::error::Error>> {
         ),
         "def sum_items(values: list[int]) -> int:\n    return values.iter().sum()\n",
         "def numbers() -> Generator[int]:\n    yield 1\ndef probe(streams: dict[str, Generator[int]], key: str) -> bool:\n    match streams.get(key):\n        Some(value) => return true\n        None => return false\n",
+        "model Item:\n    value: int = 5\nclass Other:\n    value: int = 6\nconst seed: int = 3\nstatic total: int = 4\ndef defaults(value: int = seed + 1) -> int:\n    return value\n",
+        "const wrong: int = \"text\"\nstatic refused: int = \"text\"\ndef defaults(value: int = unknown()) -> int:\n    return value\n",
     ];
-    let read_only_index = variants.len() - 1;
+    let read_only_index = variants.len() - 3;
     for (index, source) in variants.into_iter().enumerate() {
         let accepted = assert_cold_check(source)?;
         if matches!(index, 1..=3) {

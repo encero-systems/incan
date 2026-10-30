@@ -519,6 +519,9 @@ pub struct TypeChecker {
     /// Per-body complete compatibility snapshots for cold-oracle comparisons, absent from production.
     #[cfg(test)]
     body_local_observations: Vec<(Span, String)>,
+    /// Verification-only enclosing writers needed to reconstruct complete snapshots inside nominal declarations.
+    #[cfg(test)]
+    body_enclosing_observations: Vec<body_check::BodyLocal>,
     /// Actual stage entries for the current activation, reset before collecting one program.
     check_work: CheckWork,
     /// Invocation-owned local outputs waiting for explicit finalization; never an engine cache.
@@ -527,6 +530,10 @@ pub struct TypeChecker {
     checked_bodies: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
     /// Locally settled open-value diagnostics rendered at the legacy final stage.
     body_open_diagnostics: Vec<CompileError>,
+    /// Completed declaration/default/initializer outputs, separate from callable statement outputs.
+    checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
+    diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
     /// Accumulated compile errors (non-fatal).
@@ -975,9 +982,13 @@ impl TypeChecker {
             legacy_body_checking: false,
             #[cfg(test)]
             body_local_observations: Vec::new(),
+            #[cfg(test)]
+            body_enclosing_observations: Vec::new(),
             check_work: CheckWork::default(),
             body_checks: Vec::new(),
             checked_bodies: Vec::new(),
+            checked_declarations: Vec::new(),
+            diagnostic_owner_ranges: Vec::new(),
             body_open_diagnostics: Vec::new(),
             symbols: SymbolTable::new(),
             errors: Vec::new(),
@@ -7114,9 +7125,13 @@ impl TypeChecker {
     fn reset_program_check(&mut self, program: &Program, preserve_dependency_semantics: bool) {
         #[cfg(test)]
         self.body_local_observations.clear();
+        #[cfg(test)]
+        self.body_enclosing_observations.clear();
         self.check_work = CheckWork::default();
         self.body_checks.clear();
         self.checked_bodies.clear();
+        self.checked_declarations.clear();
+        self.diagnostic_owner_ranges.clear();
         self.body_open_diagnostics.clear();
         self.visibility_point = VisibilityPoint::Collecting;
         self.checking_nominal_scope.get_mut().take();
