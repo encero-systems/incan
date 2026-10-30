@@ -1,4 +1,4 @@
-# behavior: a test maps a file read-only and reads bytes at an offset; reads outside the mapping are absent
+# behavior: a test maps a file read-only, reads and hashes bytes at an offset in place; reads outside it are absent
 # expect-stdout-contains:
 #   test_file_mapping.incn::test_mapped_file_reads_ranges PASSED
 #   test_file_mapping.incn::test_views_retain_their_mapping PASSED
@@ -7,17 +7,24 @@
 """A std.fs read-only mapping under `incan test`."""
 
 from std.fs import MappedView, Path
+from std.hash import sha256
 from std.testing import assert_true
 
 
 def test_mapped_file_reads_ranges() -> Result[None, str]:
-    """Map a written file, read a range inside it through a view, and see a range past its end come back absent."""
+    """
+    Map a written file, read and hash a range inside it through a view, and see a range past its end come back absent.
+    """
     path = Path("contracts-file-mapping")
     path.write_bytes(b"incan bakery").map_err((error) => error.message())?
     mapped = path.map_read().map_err((error) => error.message())?
     assert_true(mapped.len() == 12)
     match mapped.view(6, 6):
-        Some(found) => assert_true(found.to_bytes() == b"bakery")
+        Some(found) =>
+            assert_true(found.to_bytes() == b"bakery")
+            mut hasher = sha256.new()
+            hasher.update_view(found)
+            assert_true(hasher.finalize_bytes() == sha256.digest(b"bakery"))
         None => assert_true(false, "a range inside the mapping must be read")
     match mapped.view(10, 4):
         Some(_) => assert_true(false, "a range past the end must be absent")
