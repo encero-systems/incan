@@ -6,6 +6,8 @@
 /// second local check inside deferred settlement.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CheckWork {
+    /// Named concrete callable local checks, counted independently from deferred settlement.
+    pub body_local_checks: usize,
     /// Top-level function declaration-validation entries, including functions with invalid or unreachable bodies.
     pub function_declarations: usize,
     /// Method declaration-validation entries, including abstract declarations without a body.

@@ -54,6 +54,7 @@ fn influence_facts_match_fresh_legacy_inference() -> Result<(), Box<dyn std::err
     assert_cold_check(include_str!(
         "../../../../../../workspaces/contracts/fixtures/behavior/codegen_functions_and_aliases/decorated_generic_closed_signatures.incn"
     ))?;
+    assert_body_local_matrix()?;
     assert_environment_matrix()?;
     assert_imported_influences()?;
     assert_check_work_scope()?;
@@ -64,7 +65,7 @@ fn influence_facts_match_fresh_legacy_inference() -> Result<(), Box<dyn std::err
 
 /// Compare downstream checked facts and complete ordered diagnostics after independently checking the same source.
 /// Existing contract programs carry the language coverage; no expectation in those programs is changed.
-fn assert_cold_check(source: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn assert_cold_check(source: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut legacy = TypeChecker::new();
@@ -78,13 +79,17 @@ fn assert_checkers(
     program: &crate::ast::Program,
     candidate: &mut TypeChecker,
     legacy: &mut TypeChecker,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error>> {
     let source = "fresh legacy versus extracted influences";
-    assert_eq!(
-        candidate.check_program(program),
-        legacy.legacy_check_program(program),
-        "{source}"
-    );
+    let candidate_result = candidate.check_program(program);
+    let legacy_result = legacy.legacy_check_program(program);
+    assert_eq!(candidate_result, legacy_result, "{source}");
+    if program.declarations.iter().any(|declaration| {
+        matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == "sum_items")
+    }) {
+        assert!(candidate_result.is_ok());
+        assert_eq!(candidate.type_info.body_ir_iterator_sum_items.len(), 1);
+    }
     assert_eq!(candidate.warnings, legacy.warnings, "{source}");
     assert_eq!(
         candidate.type_info.declarations.declaration_identities,
@@ -139,8 +144,43 @@ fn assert_checkers(
         legacy.type_info.semantic_fact_store(&[]).render_snapshot(),
         "{source}"
     );
+    assert_eq!(
+        candidate.body_local_observations.len(),
+        candidate.check_work.body_local_checks
+    );
+    assert_eq!(
+        candidate
+            .body_local_observations
+            .iter()
+            .map(|(span, _)| span)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        candidate.check_work.body_local_checks,
+        "each concrete named body is checked once"
+    );
+    candidate.observe_body_local(crate::ast::Span::default());
+    legacy.observe_body_local(crate::ast::Span::default());
+    assert_eq!(
+        candidate.body_local_observations, legacy.body_local_observations,
+        "complete per-body facts, pending decisions and final settled facts"
+    );
+    assert_eq!(
+        candidate.check_work.body_local_checks,
+        candidate.check_work.function_bodies + candidate.check_work.method_bodies
+    );
+    eprintln!(
+        "body-local-oracle\tchecks={}\tobservations={}\terrors={}\twarnings={}\tdefaults={}\tmutation_settlements={}\tdictionary_settlements={}\topen_value_settlements={}\tdifferences=0",
+        candidate.check_work.body_local_checks,
+        candidate.body_local_observations.len(),
+        candidate_result.as_ref().err().map_or(0, Vec::len),
+        candidate.warnings.len(),
+        candidate.check_work.callable_defaults,
+        candidate.check_work.mutation_settlements,
+        candidate.check_work.dictionary_settlements,
+        candidate.check_work.open_value_settlements,
+    );
     compare_environment(candidate, legacy)?;
-    Ok(())
+    Ok(candidate_result.is_ok())
 }
 
 /// Measure source scanning separately from fact propagation on a reverse-ordered forwarding chain. These samples are
@@ -226,7 +266,7 @@ fn assert_check_work_scope() -> Result<(), Box<dyn std::error::Error>> {
 /// Source-imported aliases and hash requirements keep their accepted declaring identity. The imported body is only a
 /// signature influence input here; ordinary consumer checking must not call that body's local checker.
 fn assert_imported_influences() -> Result<(), Box<dyn std::error::Error>> {
-    let dependency = "pub model Item:\n    value: int\npub type Alias = Item\npub def target[T](value: T) -> None:\n    keys = {value}\n";
+    let dependency = "pub model Item:\n    value: int\npub type Alias = Item\npub def target[T](value: T) -> None:\n    keys = {value}\npub def touch(mut items: list[int]) -> None:\n    pass\n";
     let source =
         "from provider import Alias, target\ndef caller[T](item: Alias, value: T) -> None:\n    target(value)\n";
     let parse = |text: &str| -> Result<crate::ast::Program, Box<dyn std::error::Error>> {
@@ -242,6 +282,12 @@ fn assert_imported_influences() -> Result<(), Box<dyn std::error::Error>> {
     assert_checkers(&program, &mut candidate, &mut legacy)?;
     assert_eq!(candidate.check_work().function_bodies, 1);
     compare_environment(&candidate, &legacy)?;
+    let program = parse("from provider import touch\ndef caller() -> None:\n    items = [1]\n    touch(items)\n")?;
+    let mut legacy = TypeChecker::new();
+    let mut candidate = TypeChecker::new();
+    legacy.import_module(&dependency, "provider");
+    candidate.import_module(&dependency, "provider");
+    assert_checkers(&program, &mut candidate, &mut legacy)?;
     Ok(())
 }
 
@@ -513,6 +559,58 @@ fn compare_nominal_methods(
             compare_overloads(&actual.method_overloads, &expected.method_overloads)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Extend the cold oracle with the G2 effect, deferred-use, lexical inference and diagnostic matrix. Both routes
+/// check fresh source, including an unreachable refusal; the oracle never provides input to the local route.
+fn assert_body_local_matrix() -> Result<(), Box<dyn std::error::Error>> {
+    let variants = [
+        "def first(mut items: list[int]) -> None:\n    second(items)\ndef second(mut items: list[int]) -> None:\n    first(items)\n    items.append(1)\ndef caller() -> None:\n    items = [1]\n    first(items)\n",
+        "def touch(mut items: list[int]) -> None:\n    pass\ndef caller() -> None:\n    items = [1]\n    touch(items)\n",
+        "def touch(mut items: list[int]) -> None:\n    return None\ndef caller() -> None:\n    items = [1]\n    touch(items)\n",
+        "def touch(mut items: list[int]) -> None:\n    items.append(2)\ndef caller() -> None:\n    items = [1]\n    touch(items)\n",
+        "def touch(mut items: list[int]) -> None:\n    pass\ndef write(mut items: list[int]) -> None:\n    items.append(2)\ndef caller() -> None:\n    mut action = touch\n    action = write\n    items = [1]\n    action(items)\n",
+        "def factory[T]() -> list[T]:\n    return []\ndef use() -> list[int]:\n    values = factory()\n    values.append(1)\n    return values\ndef sibling() -> list[str]:\n    values = factory()\n    values.append(\"x\")\n    return values\n",
+        "def valid() -> int:\n    return 1\ndef unreachable() -> int:\n    return \"wrong\"\n",
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/cli_values_and_calls/mut_marked_callable_value_changes_the_argument.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/cli_refusals/refused_kept_dict_lookup_of_a_generator.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/ownership_parameters_and_receivers/dict_lookups_through_a_mutable_parameter.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/cli_values_and_calls/mut_parameter_changed_through_trait_dispatch_reaches_the_caller.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/cli_refusals_mutation/refused_immutable_argument_to_trait_dispatched_mut_parameter.incn"
+        ),
+        "def sum_items(values: list[int]) -> int:\n    return values.iter().sum()\n",
+        "def numbers() -> Generator[int]:\n    yield 1\ndef probe(streams: dict[str, Generator[int]], key: str) -> bool:\n    match streams.get(key):\n        Some(value) => return true\n        None => return false\n",
+    ];
+    let read_only_index = variants.len() - 1;
+    for (index, source) in variants.into_iter().enumerate() {
+        let accepted = assert_cold_check(source)?;
+        if matches!(index, 1..=3) {
+            assert_eq!(
+                accepted,
+                index != 3,
+                "the mutation edit changes only the caller's refusal"
+            );
+        }
+        if index == read_only_index {
+            assert!(
+                accepted,
+                "matching a generator lookup without keeping its payload is read-only"
+            );
+        }
     }
     Ok(())
 }
