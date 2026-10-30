@@ -1807,7 +1807,8 @@ impl TypeChecker {
 
     /// Validate a Rust method call, letting the type its result is expected to have bind method binders the
     /// arguments leave open (`parse::<F>()` reads `F` from `Result<i64, _>`). Literal aggregates are checked against
-    /// the specialized parameter before their concrete storage is retained for Body IR.
+    /// the specialized parameter before their concrete storage is retained for Body IR. Unsafe methods and associated
+    /// constructors receive the same RFC 005 refusal as free functions, before any executable identity is retained.
     pub(in crate::typechecker) fn validate_rust_method_call_with_expected(
         &mut self,
         callable_display: &str,
@@ -1818,6 +1819,11 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        if sig.is_unsafe {
+            let path = callable_display.strip_prefix("rust::").unwrap_or(callable_display);
+            self.errors.push(errors::rust_unsafe_call_not_supported(path, span));
+            return ResolvedType::Unknown;
+        }
         let owner_path = Self::rust_method_owner_path(callable_display);
         let contextual_types =
             self.contextualize_rust_bound_closures(sig, owner_path, args, arg_types, expected_return_ty);
