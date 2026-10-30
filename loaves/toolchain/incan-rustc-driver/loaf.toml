@@ -8,6 +8,7 @@ libc = { loaf = "crates-io/libc", version = "0.2" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }
+incan_worker_host = { loaf = "incan_worker_host", path = "../../compiler/incan_worker_host" }
 incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 
 incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver" }
