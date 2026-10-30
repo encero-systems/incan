@@ -1,0 +1,235 @@
+<svg viewBox="0 0 1280 940" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dd0013-graph-title dd0013-graph-desc">
+<title id="dd0013-graph-title">Ranked record graph: one sweep with early cutoff, across Incan and Rust</title>
+<desc id="dd0013-graph-desc">Record families are ranked by namespace in import order and then by phase: source revision, namespace and name slot, declaration source, signature, layout and default facets, checked body, Body IR, instance, plan function, codegen-unit membership and native unit. An edit to app.queue's source seeds its declaration, which recomputes the push_all signature to an equal value and stops there, so app.main's body, which reads only that signature, is not evaluated, and RFC 097's caller facet for push_all, read by the Rust unit native.ring, is reused. The push_all body and Body IR are recomputed once, and the Body IR's equal value stops propagation before plans, codegen units and native units. native.ring is Rust source in the same Loaf: its declaration and signature records, with the ownership facts duckborrowing needs, rank in the same graph as Incan's, and app.main's body reads the Ring.push signature directly; Rust bodies compile whole in rustc. Frozen std.collections facts are read but never recomputed. Beside each declaration sit its declaration text, doc record and position map, outside semantic identity. Evaluation, selection and observation records carry provenance, bindings and evidence beside the graph.</desc>
+<defs>
+<style>
+.dd13-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600}
+.dd13-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:9px}
+.dd13-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-tc{fill:#48f0ef;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
+.dd13-i{fill:#c1c8d0;font-family:Brawler,Georgia,serif;font-size:12px;font-style:italic}
+.dd13-c{text-anchor:middle}
+.dd13-m{fill:#030304}
+.dd13-box{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
+.dd13-store{fill:rgba(228,235,242,0.04);stroke:#98a2ad;stroke-width:1}
+.dd13-focal{fill:rgba(255,193,90,0.10);stroke:#ffc15a;stroke-width:1}
+.dd13-ext{fill:rgba(72,240,239,0.05);stroke:rgba(72,240,239,0.60);stroke-width:1}
+.dd13-dim{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
+.dd13-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
+.dd13-zonea{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1;stroke-dasharray:4 4}
+.dd13-zonec{fill:rgba(72,240,239,0.03);stroke:rgba(72,240,239,0.40);stroke-width:0.8}
+.dd13-w{fill:none;stroke:#c1c8d0;stroke-width:1.2}
+.dd13-wa{fill:none;stroke:#ffc15a;stroke-width:1.4}
+.dd13-wc{fill:none;stroke:#48f0ef;stroke-width:1.2}
+.dd13-d{stroke-dasharray:4 3}
+.dd13-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
+</style>
+<marker id="dd0013c-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+<marker id="dd0013c-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ffc15a"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#030304"/>
+<path d="M144,64 H1248" class="dd13-w" marker-end="url(#dd0013c-arrow)"/>
+<rect x="560" y="44" width="304" height="12" rx="2" class="dd13-m"/>
+<text x="712" y="53" class="dd13-l dd13-c">ONE SWEEP · NAMESPACES IN IMPORT ORDER, THEN PHASE</text>
+<rect x="136" y="120" width="1120" height="52" rx="6" class="dd13-zonec"/>
+
+<!-- row labels -->
+<text x="24" y="144" class="dd13-n">std.collections</text>
+<text x="24" y="160" class="dd13-tc">FROZEN LOAF FACTS</text>
+<text x="24" y="224" class="dd13-n">app.queue</text>
+<text x="24" y="240" class="dd13-t">EDITED NAMESPACE</text>
+<text x="24" y="304" class="dd13-n">native.ring</text>
+<text x="24" y="320" class="dd13-t">RUST SOURCE · SAME IR</text>
+<text x="24" y="384" class="dd13-n">app.main</text>
+<text x="24" y="400" class="dd13-t">IMPORTS QUEUE AND RING</text>
+
+<!-- column headers -->
+<text x="192" y="104" class="dd13-t dd13-c">SOURCE</text>
+<text x="304" y="104" class="dd13-t dd13-c">NAMES</text>
+<text x="416" y="104" class="dd13-t dd13-c">DECLARATIONS</text>
+<text x="528" y="104" class="dd13-t dd13-c">SIG·LAYOUT·DEFAULT</text>
+<text x="640" y="104" class="dd13-t dd13-c">CHECKED BODY</text>
+<text x="752" y="104" class="dd13-t dd13-c">BODY IR</text>
+<text x="864" y="104" class="dd13-t dd13-c">INSTANCE</text>
+<text x="976" y="104" class="dd13-t dd13-c">PLAN FUNCTION</text>
+<text x="1088" y="104" class="dd13-t dd13-c">CGU MEMBERSHIP</text>
+<text x="1200" y="104" class="dd13-t dd13-c">NATIVE UNIT</text>
+
+<!-- seed and dirty propagation in app.queue -->
+<path d="M192,244 V252 Q192,260 200,260 H408 Q416,260 416,252 V248" class="dd13-wa" marker-end="url(#dd0013c-arrow-accent)"/>
+<rect x="268" y="266" width="64" height="12" rx="2" class="dd13-m"/>
+<text x="300" y="275" class="dd13-l dd13-c" style="fill:#ffc15a">SEED</text>
+<path d="M464,226 H480" class="dd13-wa" marker-end="url(#dd0013c-arrow-accent)"/>
+<path d="M416,208 V200 Q416,192 424,192 H500 A8,8 0 0 1 516,192 H632 Q640,192 640,200 V208" class="dd13-wa" marker-end="url(#dd0013c-arrow-accent)"/>
+<path d="M688,226 H704" class="dd13-wa" marker-end="url(#dd0013c-arrow-accent)"/>
+<path d="M800,226 H812" class="dd13-wa"/>
+<line x1="812" y1="216" x2="812" y2="236" stroke="#ffc15a" stroke-width="2"/>
+<path d="M552,244 V256" class="dd13-wa"/>
+<line x1="542" y1="256" x2="562" y2="256" stroke="#ffc15a" stroke-width="2"/>
+
+<!-- read edges: reader to the record it read -->
+<path d="M508,208 V168" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+<path d="M864,208 V184 Q864,176 856,176 H672 Q664,176 664,168" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+<path d="M1040,226 H1028" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+<!-- caller facet (RFC 097) reads the push_all signature -->
+<path d="M600,288 V276 Q600,268 592,268 H524 Q516,268 516,260 V248" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+<!-- the Rust unit reads its caller facet -->
+<path d="M1200,324 V332 Q1200,340 1192,340 H648 Q640,340 640,332 V328" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+<!-- body main reads the push_all signature and the Rust Ring.push signature -->
+<path d="M592,396 H480 Q472,396 472,388 V246 Q472,238 478,238" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+<path d="M592,378 H536 Q528,378 528,370 V328" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+<!-- codegen-unit membership reads plans; the native unit reads its membership -->
+<path d="M1056,244 V332 A8,8 0 0 1 1056,348 V378 Q1056,386 1048,386 H1028" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+<path d="M1152,394 Q1144,394 1144,386 V348 A8,8 0 0 1 1144,332 V246 Q1144,238 1138,238" class="dd13-w dd13-d" marker-end="url(#dd0013c-arrow)"/>
+
+<!-- std.collections: frozen Loaf facts -->
+<rect x="256" y="128" width="96" height="36" rx="4" class="dd13-ext"/>
+<text x="304" y="143" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">ns collections</text>
+<text x="304" y="156" class="dd13-t dd13-c">MEMBERSHIP ROOT</text>
+<rect x="368" y="128" width="96" height="36" rx="4" class="dd13-ext"/>
+<text x="416" y="143" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">decl Deque</text>
+<rect x="480" y="128" width="96" height="36" rx="4" class="dd13-ext"/>
+<text x="528" y="143" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">sig Deque</text>
+<rect x="592" y="128" width="96" height="36" rx="4" class="dd13-ext"/>
+<text x="640" y="143" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">body extend</text>
+<text x="640" y="156" class="dd13-t dd13-c">GENERIC</text>
+<rect x="704" y="128" width="96" height="36" rx="4" class="dd13-ext"/>
+<text x="752" y="143" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">IR extend</text>
+<rect x="1152" y="128" width="96" height="36" rx="4" class="dd13-ext"/>
+<text x="1200" y="143" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">unit std</text>
+<text x="1200" y="156" class="dd13-t dd13-c">RFC 124 IDENTITY</text>
+
+<!-- app.queue: edited -->
+<rect x="144" y="208" width="96" height="36" rx="4" class="dd13-focal"/>
+<text x="192" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">queue.incn</text>
+<text x="192" y="236" class="dd13-t dd13-c">EDITED</text>
+<rect x="256" y="208" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="304" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">slot push_all</text>
+<text x="304" y="236" class="dd13-t dd13-c">PRESENT</text>
+<rect x="368" y="208" width="96" height="36" rx="4" class="dd13-box"/>
+<text x="416" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">decl push_all</text>
+<text x="416" y="236" class="dd13-t dd13-c">RECOMPUTED</text>
+<rect x="480" y="208" width="96" height="36" rx="4" class="dd13-box"/>
+<text x="528" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">sig push_all</text>
+<text x="528" y="236" class="dd13-t dd13-c">EQUAL · STOP</text>
+<rect x="592" y="208" width="96" height="36" rx="4" class="dd13-box"/>
+<text x="640" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">body push_all</text>
+<text x="640" y="236" class="dd13-t dd13-c">RECOMPUTED</text>
+<rect x="704" y="208" width="96" height="36" rx="4" class="dd13-box"/>
+<text x="752" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">IR push_all</text>
+<text x="752" y="236" class="dd13-t dd13-c">EQUAL · STOP</text>
+<rect x="816" y="208" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="864" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">extend[int]</text>
+<text x="864" y="236" class="dd13-t dd13-c">CONSUMER INSTANCE</text>
+<rect x="928" y="208" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="976" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">plan push_all</text>
+<text x="976" y="236" class="dd13-t dd13-c">NOT EVALUATED</text>
+<rect x="1040" y="208" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="1088" y="223" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">cgu app</text>
+<text x="1088" y="236" class="dd13-t dd13-c">FIXED PARTITION</text>
+
+<!-- native.ring: Rust source in the same Loaf -->
+<rect x="144" y="288" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="192" y="303" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">ring.rs</text>
+<text x="192" y="316" class="dd13-t dd13-c">UNCHANGED</text>
+<rect x="256" y="288" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="304" y="303" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">slot Ring</text>
+<rect x="368" y="288" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="416" y="303" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">decl Ring</text>
+<rect x="480" y="288" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="528" y="303" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">sig Ring.push</text>
+<text x="528" y="316" class="dd13-t dd13-c">OWNERSHIP FACTS</text>
+<rect x="592" y="288" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="640" y="303" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">caller facet</text>
+<text x="640" y="316" class="dd13-t dd13-c">RFC 097 · REUSED</text>
+<rect x="704" y="288" width="320" height="36" rx="4" class="dd13-dim"/>
+<text x="864" y="303" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">Rust bodies</text>
+<text x="864" y="316" class="dd13-t dd13-c">COMPILED WHOLE BY RUSTC</text>
+<rect x="1152" y="288" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="1200" y="303" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">unit native</text>
+<text x="1200" y="316" class="dd13-t dd13-c">NO REBAKE</text>
+
+<!-- app.main: not evaluated -->
+<rect x="144" y="368" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="192" y="383" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">main.incn</text>
+<rect x="256" y="368" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="304" y="383" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">slot main</text>
+<rect x="592" y="368" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="640" y="383" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">body main</text>
+<text x="640" y="396" class="dd13-t dd13-c">NOT EVALUATED</text>
+<rect x="704" y="368" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="752" y="383" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">IR main</text>
+<rect x="928" y="368" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="976" y="383" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">plan main</text>
+<rect x="1152" y="368" width="96" height="36" rx="4" class="dd13-dim"/>
+<text x="1200" y="383" class="dd13-s dd13-c" style="fill:#e4ebf2;font-size:9px">unit app</text>
+<text x="1200" y="396" class="dd13-t dd13-c">NO REBAKE</text>
+
+<text x="144" y="440" class="dd13-i">An unchanged build has no seed: it reuses the prior result binding and opens no graph page.</text>
+<text x="144" y="460" class="dd13-i">A changed read set with an equal value publishes new witnesses but dirties no consumer.</text>
+<text x="144" y="480" class="dd13-i">Rust records rank in the same graph: a Rust body edit that leaves Ring.push's ownership facts equal re-checks no Incan caller.</text>
+<text x="144" y="500" class="dd13-i">Rust calls push_all through its caller facet; the equal push_all signature leaves the facet and the Rust unit reused.</text>
+
+<!-- beside each declaration -->
+<rect x="24" y="524" width="1232" height="96" rx="8" class="dd13-zone"/>
+<rect x="36" y="528" width="284" height="12" rx="2" class="dd13-m"/>
+<text x="178" y="537" class="dd13-t dd13-c">BESIDE EACH DECLARATION · OUTSIDE SEMANTIC IDENTITY</text>
+<rect x="48" y="548" width="384" height="60" rx="6" class="dd13-store"/>
+<text x="240" y="570" class="dd13-n dd13-c">Declaration text</text>
+<text x="240" y="586" class="dd13-s dd13-c">exact source, comments included</text>
+<text x="240" y="598" class="dd13-s dd13-c">seeds the declaration; an equal semantic value stops there</text>
+<rect x="448" y="548" width="384" height="60" rx="6" class="dd13-store"/>
+<text x="640" y="570" class="dd13-n dd13-c">Doc record</text>
+<text x="640" y="586" class="dd13-s dd13-c">docstring and doc attributes · shipped in Loaves</text>
+<text x="640" y="598" class="dd13-s dd13-c">read by docs generation and hover; compiles nothing</text>
+<rect x="848" y="548" width="392" height="60" rx="6" class="dd13-store"/>
+<text x="1044" y="570" class="dd13-n dd13-c">Position map</text>
+<text x="1044" y="586" class="dd13-s dd13-c">node identity → file, line and column</text>
+<text x="1044" y="598" class="dd13-s dd13-c">diagnostics, native line tables; moved lines re-emit only their CGU</text>
+
+<!-- provenance, binding and evidence -->
+<rect x="24" y="644" width="1232" height="112" rx="8" class="dd13-zone"/>
+<rect x="36" y="648" width="276" height="12" rx="2" class="dd13-m"/>
+<text x="174" y="657" class="dd13-t dd13-c">PROVENANCE, BINDING AND EVIDENCE FAMILIES</text>
+<rect x="48" y="676" width="384" height="64" rx="6" class="dd13-store"/>
+<text x="240" y="698" class="dd13-n dd13-c">Evaluation</text>
+<text x="240" y="714" class="dd13-s dd13-c">producer profile + output key + completed input evidence</text>
+<text x="240" y="728" class="dd13-s dd13-c">revision · value digest · read witnesses · rank · status</text>
+<rect x="448" y="676" width="384" height="64" rx="6" class="dd13-store"/>
+<text x="640" y="698" class="dd13-n dd13-c">Selection / ResultBinding</text>
+<text x="640" y="714" class="dd13-s dd13-c">view-local command target and configuration</text>
+<text x="640" y="728" class="dd13-s dd13-c">exact source, package, record, native, diagnostic roots</text>
+<rect x="848" y="676" width="392" height="64" rx="6" class="dd13-store"/>
+<text x="1044" y="698" class="dd13-n dd13-c">RunObservation / TestEvidence</text>
+<text x="1044" y="714" class="dd13-s dd13-c">actual effects and replay eligibility</text>
+<text x="1044" y="728" class="dd13-s dd13-c">never semantic build authority</text>
+
+<!-- read outcomes -->
+<rect x="24" y="780" width="1232" height="88" rx="8" class="dd13-zone"/>
+<rect x="36" y="784" width="196" height="12" rx="2" class="dd13-m"/>
+<text x="134" y="793" class="dd13-t dd13-c">EVERY LOGICAL READ REPORTS ONE OF</text>
+<rect x="48" y="808" width="288" height="44" rx="6" class="dd13-box"/>
+<text x="192" y="826" class="dd13-n dd13-c">Found</text>
+<text x="192" y="842" class="dd13-s dd13-c">key · revision · digest · scope</text>
+<rect x="352" y="808" width="288" height="44" rx="6" class="dd13-box"/>
+<text x="496" y="826" class="dd13-n dd13-c">Absent</text>
+<text x="496" y="842" class="dd13-s dd13-c">name slot · selection · absence witness</text>
+<rect x="656" y="808" width="288" height="44" rx="6" class="dd13-box"/>
+<text x="800" y="826" class="dd13-n dd13-c">Members</text>
+<text x="800" y="842" class="dd13-s dd13-c">range or set · membership digest · bounds</text>
+<rect x="960" y="808" width="280" height="44" rx="6" class="dd13-box"/>
+<text x="1100" y="826" class="dd13-n dd13-c">StoreError</text>
+<text x="1100" y="842" class="dd13-s dd13-c">damage is never absence</text>
+
+<line x1="24" y1="892" x2="1256" y2="892" class="dd13-rule"/>
+<text x="24" y="916" class="dd13-t">LEGEND</text>
+<rect x="96" y="906" width="20" height="12" rx="2" class="dd13-focal"/><text x="124" y="916" class="dd13-l">edited input</text>
+<rect x="232" y="906" width="20" height="12" rx="2" class="dd13-box"/><text x="260" y="916" class="dd13-l">evaluated once</text>
+<rect x="376" y="906" width="20" height="12" rx="2" class="dd13-dim"/><text x="404" y="916" class="dd13-l">reused, not evaluated</text>
+<rect x="560" y="906" width="20" height="12" rx="2" class="dd13-ext"/><text x="588" y="916" class="dd13-l">frozen Loaf fact</text>
+<line x1="712" y1="912" x2="744" y2="912" class="dd13-wa"/><text x="752" y="916" class="dd13-l">dirty propagation</text>
+<line x1="888" y1="904" x2="888" y2="920" stroke="#ffc15a" stroke-width="2"/><text x="900" y="916" class="dd13-l">early cutoff</text>
+<line x1="1008" y1="912" x2="1040" y2="912" class="dd13-w dd13-d"/><text x="1048" y="916" class="dd13-l">recorded read</text>
+</svg>

@@ -1,0 +1,157 @@
+<svg viewBox="0 0 1280 1208" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dd0013-seq-title dd0013-seq-desc">
+<title id="dd0013-seq-title">Request lifecycle on incan.engine/1</title>
+<desc id="dd0013-seq-desc">A CLI negotiates a session, submits a request that is accepted and then captured into an immutable build epoch; a record worker prepares the stage by keyed reads; only for dirty or missing work the engine claims and rechecks, the worker evaluates or compiles natively and stages its result, and the engine publishes the shared result before selecting it for this caller; the CLI receives events and a complete reply with leased handles, pins the execution, launches the program and releases the pin; readers query bounded pages; cancel, resolve and drain or stop travel on the control lane at any time.</desc>
+<defs>
+<style>
+.dd13-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600}
+.dd13-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:9px}
+.dd13-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-tc{fill:#48f0ef;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
+.dd13-i{fill:#c1c8d0;font-family:Brawler,Georgia,serif;font-size:12px;font-style:italic}
+.dd13-c{text-anchor:middle}
+.dd13-m{fill:#030304}
+.dd13-box{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
+.dd13-store{fill:rgba(228,235,242,0.04);stroke:#98a2ad;stroke-width:1}
+.dd13-focal{fill:rgba(255,193,90,0.10);stroke:#ffc15a;stroke-width:1}
+.dd13-ext{fill:rgba(72,240,239,0.05);stroke:rgba(72,240,239,0.60);stroke-width:1}
+.dd13-dim{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
+.dd13-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
+.dd13-zonea{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1;stroke-dasharray:4 4}
+.dd13-zonec{fill:rgba(72,240,239,0.03);stroke:rgba(72,240,239,0.40);stroke-width:0.8}
+.dd13-w{fill:none;stroke:#c1c8d0;stroke-width:1.2}
+.dd13-wa{fill:none;stroke:#ffc15a;stroke-width:1.4}
+.dd13-wc{fill:none;stroke:#48f0ef;stroke-width:1.2}
+.dd13-d{stroke-dasharray:4 3}
+.dd13-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
+.dd13-life{stroke:rgba(228,235,242,0.25);stroke-width:1;stroke-dasharray:3 4}
+</style>
+<marker id="dd0013b-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+<marker id="dd0013b-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ffc15a"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#030304"/>
+<rect x="480" y="432" width="620" height="208" rx="6" class="dd13-zonea"/>
+<rect x="488" y="436" width="196" height="12" rx="2" class="dd13-m"/>
+<text x="492" y="445" class="dd13-ta">OPT · ONLY DIRTY OR MISSING WORK</text>
+<rect x="40" y="928" width="560" height="184" rx="6" class="dd13-zone"/>
+<rect x="48" y="932" width="236" height="12" rx="2" class="dd13-m"/>
+<text x="52" y="941" class="dd13-t">CONTROL LANE · SEPARATE CREDITS · ANY TIME</text>
+<line x1="112" y1="72" x2="112" y2="1136" class="dd13-life"/>
+<line x1="320" y1="72" x2="320" y2="1136" class="dd13-life"/>
+<line x1="560" y1="72" x2="560" y2="1136" class="dd13-life"/>
+<line x1="800" y1="72" x2="800" y2="1136" class="dd13-life"/>
+<line x1="1020" y1="72" x2="1020" y2="1136" class="dd13-life"/>
+<line x1="1196" y1="72" x2="1196" y2="1136" class="dd13-life"/>
+<path d="M112,120 H560" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="316" y="100" width="40" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="109" class="dd13-l dd13-c">Hello</text>
+<path d="M560,152 H112" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="310" y="132" width="52" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="141" class="dd13-l dd13-c">Welcome</text>
+<path d="M112,184 H560" class="dd13-wa" marker-end="url(#dd0013b-arrow-accent)"/>
+<rect x="312" y="164" width="48" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="173" class="dd13-l dd13-c">Submit</text>
+<path d="M560,216 H112" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="308" y="196" width="56" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="205" class="dd13-l dd13-c">Accepted</text>
+<path d="M560,248 H1020" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="700" y="228" width="180" height="12" rx="2" class="dd13-m"/>
+<text x="790" y="237" class="dd13-l dd13-c">capture inputs · pin snapshot</text>
+<path d="M1020,280 H560" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="706" y="260" width="168" height="12" rx="2" class="dd13-m"/>
+<text x="790" y="269" class="dd13-l dd13-c">BuildEpoch · SnapshotHandle</text>
+<path d="M560,312 H112" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="308" y="292" width="56" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="301" class="dd13-l dd13-c">Captured</text>
+<path d="M560,344 H800" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="634" y="324" width="92" height="12" rx="2" class="dd13-m"/>
+<text x="680" y="333" class="dd13-l dd13-c">Prepare(stage)</text>
+<path d="M800,376 H1020" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="842" y="356" width="136" height="12" rx="2" class="dd13-m"/>
+<text x="910" y="365" class="dd13-l dd13-c">read_many · witnesses</text>
+<path d="M800,408 H560" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="582" y="388" width="196" height="12" rx="2" class="dd13-m"/>
+<text x="680" y="397" class="dd13-l dd13-c">PreparedInputs | NeedPrerequisite</text>
+<path d="M560,472 H1020" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="738" y="452" width="104" height="12" rx="2" class="dd13-m"/>
+<text x="790" y="461" class="dd13-l dd13-c">claim · recheck</text>
+<path d="M560,504 H800" class="dd13-wa" marker-end="url(#dd0013b-arrow-accent)"/>
+<rect x="604" y="484" width="152" height="12" rx="2" class="dd13-m"/>
+<text x="680" y="493" class="dd13-l dd13-c">Evaluate | compile_native</text>
+<path d="M800,536 H1020" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="840" y="516" width="140" height="12" rx="2" class="dd13-m"/>
+<text x="910" y="525" class="dd13-l dd13-c">stage value + witnesses</text>
+<path d="M800,568 H560" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="652" y="548" width="56" height="12" rx="2" class="dd13-m"/>
+<text x="680" y="557" class="dd13-l dd13-c">Produced</text>
+<path d="M560,600 H1020" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="724" y="580" width="132" height="12" rx="2" class="dd13-m"/>
+<text x="790" y="589" class="dd13-l dd13-c">publish shared result</text>
+<path d="M560,628 H1020" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="722" y="608" width="136" height="12" rx="2" class="dd13-m"/>
+<text x="790" y="617" class="dd13-l dd13-c">select for this caller</text>
+<path d="M560,672 H112" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="270" y="652" width="132" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="661" class="dd13-l dd13-c">Event · trace handle</text>
+<path d="M560,704 H112" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="256" y="684" width="160" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="693" class="dd13-l dd13-c">Complete · leased handles</text>
+<path d="M112,736 H560" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="284" y="716" width="104" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="725" class="dd13-l dd13-c">Pin · execution</text>
+<path d="M112,768 H1196" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="592" y="748" width="124" height="12" rx="2" class="dd13-m"/>
+<text x="654" y="757" class="dd13-l dd13-c">launch exact payload</text>
+<path d="M1196,800 H112" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="616" y="780" width="76" height="12" rx="2" class="dd13-m"/>
+<text x="654" y="789" class="dd13-l dd13-c">exit status</text>
+<path d="M112,832 H560" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="310" y="812" width="52" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="821" class="dd13-l dd13-c">Release</text>
+<path d="M320,872 H560" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="420" y="852" width="40" height="12" rx="2" class="dd13-m"/>
+<text x="440" y="861" class="dd13-l dd13-c">Query</text>
+<path d="M560,904 H320" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="394" y="884" width="92" height="12" rx="2" class="dd13-m"/>
+<text x="440" y="893" class="dd13-l dd13-c">Page · cursor</text>
+<path d="M112,968 H560" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="312" y="948" width="48" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="957" class="dd13-l dd13-c">Cancel</text>
+<path d="M560,1000 H112" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="304" y="980" width="64" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="989" class="dd13-l dd13-c">Cancelled</text>
+<path d="M112,1032 H560" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="298" y="1012" width="76" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="1021" class="dd13-l dd13-c">Resolve(id)</text>
+<path d="M560,1064 H112" class="dd13-w dd13-d" marker-end="url(#dd0013b-arrow)"/>
+<rect x="234" y="1044" width="204" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="1053" class="dd13-l dd13-c">Committed | NotCommitted | Unknown</text>
+<path d="M112,1096 H560" class="dd13-w" marker-end="url(#dd0013b-arrow)"/>
+<rect x="296" y="1076" width="80" height="12" rx="2" class="dd13-m"/>
+<text x="336" y="1085" class="dd13-l dd13-c">Drain / Stop</text>
+<rect x="24" y="24" width="176" height="48" rx="6" class="dd13-box"/>
+<text x="112" y="44" class="dd13-n dd13-c">incan / oven CLI</text>
+<text x="112" y="60" class="dd13-s dd13-c">client</text>
+<rect x="232" y="24" width="176" height="48" rx="6" class="dd13-box"/>
+<text x="320" y="44" class="dd13-n dd13-c">LSP · MCP · graph</text>
+<text x="320" y="60" class="dd13-s dd13-c">reader</text>
+<rect x="472" y="24" width="176" height="48" rx="6" class="dd13-focal"/>
+<text x="560" y="44" class="dd13-n dd13-c">Engine service</text>
+<text x="560" y="60" class="dd13-s dd13-c">one per bakery</text>
+<rect x="712" y="24" width="176" height="48" rx="6" class="dd13-box"/>
+<text x="800" y="44" class="dd13-n dd13-c">Record worker</text>
+<text x="800" y="60" class="dd13-s dd13-c">or rustc worker</text>
+<rect x="936" y="24" width="168" height="48" rx="6" class="dd13-store"/>
+<text x="1020" y="44" class="dd13-n dd13-c">Bakery</text>
+<text x="1020" y="60" class="dd13-s dd13-c">IncQL-DB</text>
+<rect x="1128" y="24" width="136" height="48" rx="6" class="dd13-box"/>
+<text x="1196" y="44" class="dd13-n dd13-c">Program</text>
+<text x="1196" y="60" class="dd13-s dd13-c">process</text>
+<line x1="24" y1="1152" x2="1256" y2="1152" class="dd13-rule"/>
+<text x="24" y="1176" class="dd13-t">LEGEND</text>
+<line x1="96" y1="1172" x2="128" y2="1172" class="dd13-w"/><text x="136" y="1176" class="dd13-l">request</text>
+<line x1="216" y1="1172" x2="248" y2="1172" class="dd13-w dd13-d"/><text x="256" y="1176" class="dd13-l">reply or event</text>
+<line x1="376" y1="1172" x2="408" y2="1172" class="dd13-wa"/><text x="416" y="1176" class="dd13-l">submission and evaluation</text>
+<text x="640" y="1176" class="dd13-l">64-byte frames · 64 KiB bodies · 8 data credits per direction · record reads never cross this channel</text>
+</svg>

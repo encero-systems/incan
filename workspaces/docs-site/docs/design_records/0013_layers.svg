@@ -1,0 +1,92 @@
+<svg viewBox="0 0 1280 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dd0013-layers-title dd0013-layers-desc">
+<title id="dd0013-layers-title">Layers: OS facilities, the platform, std and the engine</title>
+<desc id="dd0013-layers-desc">At the bottom, OS and Rust facilities are reached through Incan interop; above them the platform provides the store substrate as an IncQL-DB profile, memory mapping with lifetime-safe views, durable I/O and publication ordering, IPC and peer identity, process control and groups, resource probes and tracing, each wrapping the facility below thinly; on top, std and the build engine are peers that both build on the platform, and std wraps the platform for users without reimplementing it.</desc>
+<defs>
+<style>
+.dd13-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600}
+.dd13-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:9px}
+.dd13-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-tc{fill:#48f0ef;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
+.dd13-i{fill:#c1c8d0;font-family:Brawler,Georgia,serif;font-size:12px;font-style:italic}
+.dd13-c{text-anchor:middle}
+.dd13-m{fill:#030304}
+.dd13-box{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
+.dd13-store{fill:rgba(228,235,242,0.04);stroke:#98a2ad;stroke-width:1}
+.dd13-focal{fill:rgba(255,193,90,0.10);stroke:#ffc15a;stroke-width:1}
+.dd13-ext{fill:rgba(72,240,239,0.05);stroke:rgba(72,240,239,0.60);stroke-width:1}
+.dd13-dim{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
+.dd13-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
+.dd13-zonea{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1;stroke-dasharray:4 4}
+.dd13-zonec{fill:rgba(72,240,239,0.03);stroke:rgba(72,240,239,0.40);stroke-width:0.8}
+.dd13-w{fill:none;stroke:#c1c8d0;stroke-width:1.2}
+.dd13-wa{fill:none;stroke:#ffc15a;stroke-width:1.4}
+.dd13-wc{fill:none;stroke:#48f0ef;stroke-width:1.2}
+.dd13-d{stroke-dasharray:4 3}
+.dd13-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
+</style>
+<marker id="dd0013e-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#030304"/>
+<rect x="24" y="24" width="1232" height="104" rx="8" class="dd13-zone"/>
+<rect x="36" y="28" width="196" height="12" rx="2" class="dd13-m"/>
+<text x="134" y="37" class="dd13-t dd13-c">3 · PEERS BUILT ON THE PLATFORM</text>
+<rect x="24" y="168" width="1232" height="168" rx="8" class="dd13-zonea"/>
+<rect x="36" y="172" width="236" height="12" rx="2" class="dd13-m"/>
+<text x="154" y="181" class="dd13-ta dd13-c">2 · PLATFORM · ONE HOME PER PRIMITIVE</text>
+<rect x="24" y="376" width="1232" height="104" rx="8" class="dd13-zonec"/>
+<rect x="36" y="380" width="260" height="12" rx="2" class="dd13-m"/>
+<text x="166" y="389" class="dd13-tc dd13-c">1 · OS AND RUST FACILITIES · VIA INCAN INTEROP</text>
+<path d="M336,112 V168" class="dd13-w" marker-end="url(#dd0013e-arrow)"/>
+<rect x="344" y="136" width="124" height="12" rx="2" class="dd13-m"/>
+<text x="348" y="145" class="dd13-l">WRAPS FOR USERS</text>
+<path d="M944,112 V168" class="dd13-w" marker-end="url(#dd0013e-arrow)"/>
+<rect x="952" y="136" width="60" height="12" rx="2" class="dd13-m"/>
+<text x="956" y="145" class="dd13-l">USES</text>
+<path d="M640,320 V376" class="dd13-w" marker-end="url(#dd0013e-arrow)"/>
+<rect x="648" y="344" width="148" height="12" rx="2" class="dd13-m"/>
+<text x="652" y="353" class="dd13-l">THIN INTEROP WRAPPERS</text>
+<rect x="48" y="56" width="576" height="56" rx="6" class="dd13-box"/>
+<text x="336" y="80" class="dd13-n dd13-c">std</text>
+<text x="336" y="98" class="dd13-s dd13-c">std.fs · std.process · std.net · std.time: user-facing wrappers over the platform</text>
+<rect x="656" y="56" width="584" height="56" rx="6" class="dd13-focal"/>
+<text x="948" y="80" class="dd13-n dd13-c">Build engine and compiler record service</text>
+<text x="948" y="98" class="dd13-s dd13-c">Oven engine, record workers, readers: policy over the platform</text>
+<rect x="48" y="200" width="280" height="56" rx="6" class="dd13-store"/>
+<text x="188" y="224" class="dd13-n dd13-c">Store substrate</text>
+<text x="188" y="242" class="dd13-s dd13-c">IncQL-DB profile: records, indexes</text>
+<rect x="344" y="200" width="280" height="56" rx="6" class="dd13-store"/>
+<text x="484" y="224" class="dd13-n dd13-c">Memory mapping</text>
+<text x="484" y="242" class="dd13-s dd13-c">lifetime-safe borrowed views</text>
+<rect x="640" y="200" width="296" height="56" rx="6" class="dd13-store"/>
+<text x="788" y="224" class="dd13-n dd13-c">Durable I/O and publication</text>
+<text x="788" y="242" class="dd13-s dd13-c">fsync order · atomic replace · locks</text>
+<rect x="952" y="200" width="288" height="56" rx="6" class="dd13-store"/>
+<text x="1096" y="224" class="dd13-n dd13-c">IPC and peer identity</text>
+<text x="1096" y="242" class="dd13-s dd13-c">framed transport · peer credentials</text>
+<rect x="48" y="264" width="392" height="56" rx="6" class="dd13-store"/>
+<text x="244" y="288" class="dd13-n dd13-c">Process control and groups</text>
+<text x="244" y="306" class="dd13-s dd13-c">spawn · process group · birth evidence · cancel</text>
+<rect x="456" y="264" width="384" height="56" rx="6" class="dd13-store"/>
+<text x="648" y="288" class="dd13-n dd13-c">Resource probes</text>
+<text x="648" y="306" class="dd13-s dd13-c">CPU limit · memory limit · footprint · observer</text>
+<rect x="856" y="264" width="384" height="56" rx="6" class="dd13-store"/>
+<text x="1048" y="288" class="dd13-n dd13-c">Tracing</text>
+<text x="1048" y="306" class="dd13-s dd13-c">monotonic clock · spans · out-of-band channel</text>
+<rect x="48" y="408" width="280" height="56" rx="6" class="dd13-ext"/>
+<text x="188" y="432" class="dd13-n dd13-c">mmap / munmap</text>
+<text x="188" y="450" class="dd13-s dd13-c">file mappings, clean shared pages</text>
+<rect x="344" y="408" width="280" height="56" rx="6" class="dd13-ext"/>
+<text x="484" y="432" class="dd13-n dd13-c">fsync · F_FULLFSYNC · rename</text>
+<text x="484" y="450" class="dd13-s dd13-c">flock · clonefile · FICLONE</text>
+<rect x="640" y="408" width="296" height="56" rx="6" class="dd13-ext"/>
+<text x="788" y="432" class="dd13-n dd13-c">Unix sockets · named pipes</text>
+<text x="788" y="450" class="dd13-s dd13-c">SO_PEERCRED · LOCAL_PEERCRED</text>
+<rect x="952" y="408" width="288" height="56" rx="6" class="dd13-ext"/>
+<text x="1096" y="432" class="dd13-n dd13-c">posix_spawn · setpgid · cgroups</text>
+<text x="1096" y="450" class="dd13-s dd13-c">Rust std and crates via rust::</text>
+<line x1="24" y1="504" x2="1256" y2="504" class="dd13-rule"/>
+<text x="24" y="528" class="dd13-i">Guardrail: the platform wraps OS and Rust facilities thinly, through interop, and never reimplements them. Low level means precise and minimal, not homegrown.</text>
+<text x="24" y="548" class="dd13-i">std wraps the platform for users and never carries a second implementation of a platform primitive.</text>
+</svg>
