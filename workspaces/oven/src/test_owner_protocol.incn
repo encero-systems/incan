@@ -149,6 +149,9 @@ def trace_contract(directory: str) -> Result[None, str]:
     assert trace_value(decoded, "records")?.expect_int().map_err((error) => error.message())? == 2
     assert trace_value(decoded, "calls")?.expect_int().map_err((error) => error.message())? == 3
     assert trace_value(decoded, "cpu_ns")?.is_null()
+    assert child.clock_id == parent.clock_id and child.clock_id != ""
+    for key in ["run", "request", "work", "producer", "operation", "snapshot", "thread", "outcome", "clock_id"]:
+        assert trace_value(decoded, key)?.expect_str().map_err((error) => error.message())? != ""
     assert child.start_ns >= parent.start_ns and child.end_ns <= parent.end_ns
     record(directory + "/spans.jsonl", child).map_err((_) => "trace output failed")?
     assert trace_refused(record("-", parent))
@@ -159,6 +162,25 @@ def trace_contract(directory: str) -> Result[None, str]:
     mut invalid = child
     invalid.end_ns = invalid.start_ns - 1
     assert trace_refused(encode(invalid))
+    record("", invalid).map_err((_) => "disabled output encoded an event")?
+    mut quoted = "\""
+    while len(quoted) < MAX_TEXT:
+        quoted = quoted + quoted
+    crowded = complete(
+        child_clock,
+        quoted,
+        quoted,
+        quoted,
+        run=quoted,
+        request=quoted,
+        work=quoted,
+        snapshot=quoted,
+        outcome=quoted,
+    )
+    match encode(crowded):
+        Err(TraceError.RecordBound) => pass
+        Err(_) => return Err("wrong refusal for an oversized encoded record")
+        Ok(_) => return Err("oversized encoded record was accepted")
     return Ok(None)
 
 

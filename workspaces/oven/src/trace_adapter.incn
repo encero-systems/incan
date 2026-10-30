@@ -1,0 +1,94 @@
+"""Adapt Oven's observation switches and compatibility formats to the platform's single span and channel home."""
+
+from rust::std::io import Write, stderr
+from rust::std::process import id
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from pub::incan_platform.trace import Clock, Counters, EngineSpan, append, begin, complete, enabled, record
+
+
+pub def work_clock() -> Option[Clock]:
+    """Start work only when its canonical channel or the existing JEC export is requested."""
+    return begin(enabled("INCAN_ENGINE_TRACE") or enabled("INCAN_JEC_TRACE"))
+
+
+pub def work(category: str, key: str, clock: Option[Clock], bytes: int) -> None:
+    """Publish one completed platform span, optionally exporting the legacy JEC representation of that span."""
+    match clock:
+        None => return
+        Some(started) =>
+            span = completed(started, category, key, Counters(bytes=bytes))
+            publish(span)
+            directory = get_or("INCAN_JEC_TRACE", "")
+            if directory != "":
+                compatibility_work(directory, span)
+
+
+pub def reason(message: str) -> None:
+    """Record a local reasoning event and export the requested legacy text representation."""
+    observing = enabled("INCAN_ENGINE_TRACE")
+    if not observing and not enabled("OVEN_TRACE"):
+        return
+    line = f"oven: {message}"
+    if observing:
+        match begin(true):
+            Some(clock) => publish(completed(clock, "reason", line, Counters()))
+            None => pass
+    relay([line])
+
+
+pub def relay(lines: list[str]) -> None:
+    """Export owner events already recorded at their producer, without creating duplicate canonical spans."""
+    destination = get_or("OVEN_TRACE", "")
+    if destination == "":
+        return
+    for line in lines:
+        compatibility_line(destination, line + "\n")
+
+
+def publish(span: EngineSpan) -> None:
+    """Send canonical observations to a separate per-process file; an unavailable observer cannot alter a build."""
+    directory = get_or("INCAN_ENGINE_TRACE", "")
+    if directory == "":
+        return
+    path = Path(directory).joinpath(f"engine-oven-{span.process}.jsonl").0
+    _ = record(path, span)
+
+
+def compatibility_work(directory: str, span: EngineSpan) -> None:
+    """Export the old JEC keys from the same completed span for existing measurement scripts."""
+    fields = JsonValue.object(
+        {"schema": JsonValue.string("incan.jec/1"), "process": JsonValue.int(span.process), "category": JsonValue.string(
+            span.operation,
+        ), "input": JsonValue.string(span.key), "nanoseconds": JsonValue.int(span.end_ns - span.start_ns), "bytes": JsonValue.int(
+            span.counters.bytes,
+        ), "allocations": JsonValue.null()},
+    )
+    match fields.to_json():
+        Err(_) => return
+        Ok(text) => _ = append(Path(directory).joinpath(f"oven-{span.process}.jsonl").0, text + "\n")
+
+
+def compatibility_line(destination: str, text: str) -> None:
+    """Export a legacy text line; only the explicit legacy `-` request selects stderr."""
+    if destination == "-":
+        mut output = stderr()
+        _ = output.write_all(RustString.from(text).into_bytes())
+        return
+    _ = append(destination, text)
+
+
+def completed(clock: Clock, operation: str, key: str, counters: Counters) -> EngineSpan:
+    """Keep caller-provided cross-process correlation separate from a process's monotonic clock identity."""
+    return complete(
+        clock,
+        "oven",
+        operation,
+        key,
+        counters,
+        run=get_or("INCAN_ENGINE_RUN", ""),
+        request=get_or("INCAN_ENGINE_REQUEST", f"oven-{id()}"),
+        work=f"{id()}:{clock.span}",
+    )

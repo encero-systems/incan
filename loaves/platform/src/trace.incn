@@ -5,7 +5,7 @@ from rust::std::fs import OpenOptions
 from rust::std::io import Write
 from rust::std::process import id
 from rust::std::thread import current
-from rust::std::time import Instant
+from rust::std::time import Instant, SystemTime, UNIX_EPOCH
 
 pub const SCHEMA: str = "incan.engine.trace/1"
 pub const MAX_TEXT: int = 4096
@@ -15,9 +15,13 @@ pub const MAX_RECORD: int = 65536
 pub enum TraceError:
     """A trace is incomplete when a field, record or output channel is refused."""
 
+    # A text field exceeds MAX_TEXT UTF-8 bytes.
     FieldBound
+    # The encoded observation exceeds MAX_RECORD UTF-8 bytes.
     RecordBound
+    # A duration, counter or string cannot represent a valid schema value.
     InvalidSpan
+    # The file destination is unavailable or selects a console stream.
     Channel
 
 
@@ -26,6 +30,7 @@ pub model Clock:
 
     pub span: int
     pub start_ns: int
+    pub origin: str
 
 
 model Origin:
@@ -33,11 +38,13 @@ model Origin:
 
     clock: Option[Instant] = None
     sequence: int = 0
+    identity: str = ""
 
     def begin(mut self) -> Clock:
         """Allocate a span identity only for an enabled observer."""
         self.sequence += 1
-        return Clock(span=self.sequence, start_ns=self.now())
+        started = self.now()
+        return Clock(span=self.sequence, start_ns=started, origin=self.identity)
 
     def now(mut self) -> int:
         """Nanoseconds since the first enabled observation; wall time never enters durations."""
@@ -45,6 +52,9 @@ model Origin:
             Some(origin) => return int(origin.elapsed().as_nanos())
             None =>
                 self.clock = Some(Instant.now())
+                match SystemTime.now().duration_since(UNIX_EPOCH):
+                    Ok(epoch) => self.identity = f"{id()}-{epoch.as_nanos()}"
+                    Err(_) => self.identity = f"{id()}-{self.clock:?}"
                 return 0
 
 
@@ -79,6 +89,8 @@ pub model EngineSpan:
     pub counters: Counters = Counters()
     # An unavailable CPU clock is null on the wire, never an invented zero.
     pub cpu_ns: Option[int] = None
+    # Distinguishes monotonic origins even when a process id is reused.
+    pub clock_id: str = ""
 
 
 pub def enabled(variable: str) -> bool:
@@ -109,8 +121,11 @@ pub def complete(
     outcome: str = "done",
 ) -> EngineSpan:
     """Complete a caller-correlated operation on the same monotonic origin as its start."""
+    mut run_id = run
+    if run_id == "":
+        run_id = clock.origin
     return EngineSpan(
-        run=run,
+        run=run_id,
         request=request,
         work=work,
         span=clock.span,
@@ -125,6 +140,7 @@ pub def complete(
         thread=f"{current().id():?}",
         outcome=outcome,
         counters=counters,
+        clock_id=clock.origin,
     )
 
 
@@ -155,6 +171,7 @@ pub def encode(span: EngineSpan) -> Result[str, TraceError]:
         field("thread", span.thread)?,
         field("outcome", span.outcome)?,
         field("clock", "process-monotonic")?,
+        field("clock_id", span.clock_id)?,
     ]
     fields.extend(
         [

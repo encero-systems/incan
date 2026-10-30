@@ -17,9 +17,8 @@ and the next reconciliation hashes it again.
 """
 
 from rust::std::fs import Metadata, metadata
-from rust::std::io import ErrorKind, Write, stderr
+from rust::std::io import ErrorKind
 from rust::std::os::unix::fs import MetadataExt
-from rust::std::string import String as RustString
 from rust::std::time import SystemTime, UNIX_EPOCH
 from std.encoding.hex import hexlify
 from std.environ import get_optional, get_or
@@ -29,6 +28,7 @@ from std.json import JsonValue, parse
 from json_fields import array, strings, text_field
 from publication import publish
 from jec import begin, record
+from trace_adapter import reason, relay as relay_observations
 
 # How old a file's last change must be before its metadata can vouch for its bytes.
 pub const SETTLE_SECONDS: int = 2
@@ -400,41 +400,13 @@ pub def trace_launch(program: str) -> None:
 
 
 pub def trace(message: str) -> None:
-    """
-    Record a line of the build's reasoning where `OVEN_TRACE` says: stderr for `-`, else the file it names.
-
-    A file is appended to, so a caller can read what one command did without touching the command's own output.
-    Silent when unset.
-    """
-    relay([f"oven: {message}"])
+    """Record build reasoning through platform observations and the requested compatibility export."""
+    reason(message)
 
 
 pub def relay(lines: list[str]) -> None:
-    """Record lines that are already traced, such as those a resident owner reports, where `OVEN_TRACE` says."""
-    destination = get_or("OVEN_TRACE", "")
-    if destination == "" or len(lines) == 0:
-        return
-    text = "\n".join(lines) + "\n"
-    if destination == "-":
-        write_to_stderr(text)
-        return
-    append_to(Path(destination), text)
-
-
-def write_to_stderr(text: str) -> None:
-    """Write text to the standard error stream."""
-    mut err = stderr()
-    # A closed standard error cannot be told about, so a failed write is ignored.
-    _ = err.write_all(RustString.from(text).into_bytes())
-
-
-def append_to(path: Path, text: str) -> None:
-    """Append text to a file; a trace that cannot be written is dropped, since it only explains."""
-    match path.open("a"):
-        Ok(file) =>
-            mut sink = file
-            _ = sink.write(text)
-        Err(_) => pass
+    """Relay owner reasoning through the same observation adapter as local events."""
+    relay_observations(lines)
 
 
 pub def now_seconds() -> int:
