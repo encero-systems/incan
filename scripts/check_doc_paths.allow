@@ -33,3 +33,14 @@ workspaces/docs-site/docs/_snippets/learning/development_toolchain.md	crates/inc
 workspaces/docs-site/docs/_snippets/learning/development_toolchain.md	crates	The v0.5.0 checkout the recipe pins keeps the support crates there
 workspaces/docs-site/docs/contributing/how-to/profile-native-compilation.md	src/main.incn	The reader's program entry in the project being profiled
 workspaces/docs-site/docs/contributing/how-to/profile-native-compilation.md	tests/test_value.incn	The reader's test entry in the project being profiled
+
+# The build engine's code map names reused code at the commits it cites, and the platform Loaf it is still to build.
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	workspaces/oven/src/segment_store.incn	Reused store at commit 65c314587
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	workspaces/oven/src/bakery.incn	Reused bakery families and claims at commit 65c314587
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	workspaces/oven/src/sealed_set.incn	Reused sealed record sets at commits f00035a66 and 0b1899ede
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/stdlib/system/src/fs/mapping.incn	Reused mapping primitive at commit 296b28e4b
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/stdlib/system/rust/src/mapping.rs	Reused mapping primitive at commit 296b28e4b
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	workspaces/oven/src/invocation_identity.incn	Reused unit identity at commit 18ce40d88
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/compiler/incan_mir_lowering/src/records.incn	Reused record read API at commit 411329faa
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/compiler/incan_frontend/src/record_read.rs	Reused record read adapter at commit 411329faa
+workspaces/docs-site/docs/contributing/explanation/build_engine_architecture.md	loaves/platform	The platform Loaf the architecture places below std, still to be built

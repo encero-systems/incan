@@ -4,7 +4,7 @@ title: Incremental compilation over a persistent semantic store
 status: Accepted
 type: design-decision
 date: 2026-10-29
-review_target: 0.6.0-dev.9
+review_target: v0.6
 sources:
   - Maintainer design review, 2026-10-29
   - https://github.com/encero-systems/incan/issues/1346
@@ -18,13 +18,13 @@ sources:
 
 ## Context
 
-On 0.6.0-dev.8, a one-body edit to the compiler's lowering library (37,000 Incan lines) redoes every phase over the whole library, about 211 s against 254 s cold. Reusing work one declaration category at a time did not converge.
+Before this decision the compiler kept no facts between invocations. A one-body edit to its lowering library (37,000 Incan lines) redid every phase over the whole library, about 211 s against 254 s cold, as measured in October 2026. Reusing work one declaration category at a time did not converge.
 
 #1346 names the same gap from the inspection side. Facts are discarded after every invocation, so the LSP, MCP and the code graph recompute what they need. Both problems come from one missing thing: a durable, identity-keyed record of what the compiler computed and what each result read.
 
 ## Decision
 
---8<-- "design_records/0012_semantic_store_architecture.svg"
+![Incremental compilation over a persistent semantic store](0012_semantic_store_architecture.svg)
 
 1. **One store per Incan home: the bakery.** It holds typed records keyed by canonical identity (RFC 120). The code-graph record kinds are its public model, and the JSONL export is a projection of it. The compiler's own results are records in the same store: signatures, layouts, default expressions, checked bodies, Body IR, generic instances, plan functions and codegen-unit membership. Compiled units live in it under RFC 124's unit identity. Oven only asks the bakery, and a missing fact is baked once and found by every later ask, so cold and warm builds take one path. Toolchain bundles and registry assets (RFC 125) arrive as inserts.
 2. **Records form a per-declaration graph of typed reads.** Each record is one facet of one declaration. Each read it makes is recorded, and its type is the type of record it reads: a signature, a body (a generic instance reads its body), a layout, or a name.
@@ -48,7 +48,7 @@ On 0.6.0-dev.8, a one-body edit to the compiler's lowering library (37,000 Incan
    - From the records a consumer actually read, Oven can derive the versions it is compatible with ("1.15–1.25 by evidence") and swap a version in without a full rebuild.
    - That evidence covers the interface the consumer used, not the behavior inside a dependency's ordinary function bodies.
 8. **Native code follows the same identities.** rustc incremental reuse is enabled only where a definition's fingerprint is a tracked input, and codegen units are keyed by identity so one change does not reshuffle the others.
-9. **Storage is our own format on the IncQL-DB substrate, written in Incan.**
+9. **Storage is our own format on the platform store substrate (RFC 165), written in Incan.** `std.db` is that substrate's public surface; the compiler reads its own facts through the substrate directly.
    - Immutable, memory-mapped segments: one canonical base plus small per-build deltas.
    - A manifest switched atomically, so readers take snapshots and never wait.
    - Edges stored in both directions, and fingerprints of 128 bits.
@@ -65,7 +65,7 @@ On 0.6.0-dev.8, a one-body edit to the compiler's lowering library (37,000 Incan
 
 ## Non-goals
 
-- Query languages, analytics, vector search or remote stores. These are IncQL-DB's, built on the same substrate.
+- Query languages, analytics, vector search or remote stores. These belong to query libraries reading the same records through optional adapters (RFC 165), never to the compiler's store.
 - Parallel scheduling. Records of equal rank allow it, but it is a later decision.
 - New user-facing syntax or semantics.
 

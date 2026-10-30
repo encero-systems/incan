@@ -1,0 +1,156 @@
+<svg viewBox="0 0 1280 728" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dd0013-stages-title dd0013-stages-desc">
+<title id="dd0013-stages-title">Build engine stages and their order</title>
+<desc id="dd0013-stages-desc">Compiler defect fixes come first, then the S1 durable record store, then the S2 subset of copy-on-write directory, scoped views and leases, mapped views, sealed-set admission and compaction with root collection; E1a proves the engine mechanics on hello with unit records and E1b moves hello to per-declaration records; a producer-map sub-design precedes E1b and E2, which also needs the S3 compiler record path; E3 adds Loaf admission and shared native units using S2 sealed sets, E4 the scheduler and memory discipline using S2 leases, E5 test, run and readers, E6 native incremental proof, and S4 distribution qualification joins E6 before E7 switches the default and removes the old engine.</desc>
+<defs>
+<style>
+.dd13-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600}
+.dd13-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:9px}
+.dd13-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-tc{fill:#48f0ef;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd13-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
+.dd13-i{fill:#c1c8d0;font-family:Brawler,Georgia,serif;font-size:12px;font-style:italic}
+.dd13-c{text-anchor:middle}
+.dd13-m{fill:#030304}
+.dd13-box{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
+.dd13-store{fill:rgba(228,235,242,0.04);stroke:#98a2ad;stroke-width:1}
+.dd13-focal{fill:rgba(255,193,90,0.10);stroke:#ffc15a;stroke-width:1}
+.dd13-ext{fill:rgba(72,240,239,0.05);stroke:rgba(72,240,239,0.60);stroke-width:1}
+.dd13-dim{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
+.dd13-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
+.dd13-zonea{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1;stroke-dasharray:4 4}
+.dd13-zonec{fill:rgba(72,240,239,0.03);stroke:rgba(72,240,239,0.40);stroke-width:0.8}
+.dd13-w{fill:none;stroke:#c1c8d0;stroke-width:1.2}
+.dd13-wa{fill:none;stroke:#ffc15a;stroke-width:1.4}
+.dd13-wc{fill:none;stroke:#48f0ef;stroke-width:1.2}
+.dd13-d{stroke-dasharray:4 3}
+.dd13-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
+</style>
+<marker id="dd0013d-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+<marker id="dd0013d-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ffc15a"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#030304"/>
+<text x="24" y="40" class="dd13-ta">PREREQUISITE PATH</text>
+<rect x="24" y="56" width="208" height="248" rx="8" class="dd13-zone"/>
+<rect x="36" y="60" width="132" height="12" rx="2" class="dd13-m"/>
+<text x="102" y="69" class="dd13-t dd13-c">DEFECTS BLOCKING E1</text>
+<rect x="536" y="56" width="208" height="248" rx="8" class="dd13-zone"/>
+<rect x="548" y="60" width="132" height="12" rx="2" class="dd13-m"/>
+<text x="614" y="69" class="dd13-t dd13-c">S2 SUBSET FOR E1</text>
+<text x="24" y="352" class="dd13-t">ENGINE STAGES</text>
+<!-- prerequisite chain -->
+<path d="M232,100 H280" class="dd13-wa" marker-end="url(#dd0013d-arrow-accent)"/>
+<path d="M488,100 H536" class="dd13-wa" marker-end="url(#dd0013d-arrow-accent)"/>
+<path d="M744,100 H792" class="dd13-wa" marker-end="url(#dd0013d-arrow-accent)"/>
+<path d="M1000,100 H1048" class="dd13-wa" marker-end="url(#dd0013d-arrow-accent)"/>
+<path d="M1152,144 V360" class="dd13-wa" marker-end="url(#dd0013d-arrow-accent)"/>
+<!-- engine chain right to left -->
+<path d="M1048,404 H1000" class="dd13-w" marker-end="url(#dd0013d-arrow)"/>
+<path d="M792,404 H744" class="dd13-w" marker-end="url(#dd0013d-arrow)"/>
+<path d="M536,404 H488" class="dd13-w" marker-end="url(#dd0013d-arrow)"/>
+<path d="M280,404 H232" class="dd13-w" marker-end="url(#dd0013d-arrow)"/>
+<path d="M128,448 V536" class="dd13-w" marker-end="url(#dd0013d-arrow)"/>
+<path d="M280,580 H232" class="dd13-w" marker-end="url(#dd0013d-arrow)"/>
+<path d="M1152,536 V448" class="dd13-w" marker-end="url(#dd0013d-arrow)"/>
+<path d="M384,448 V536" class="dd13-w dd13-d" marker-end="url(#dd0013d-arrow)"/>
+<!-- substrate capabilities used later -->
+<path d="M712,304 V320 Q712,328 720,328 H888 Q896,328 896,336 V360" class="dd13-w dd13-d" marker-end="url(#dd0013d-arrow)"/>
+<rect x="760" y="304" width="96" height="12" rx="2" class="dd13-m"/>
+<text x="808" y="313" class="dd13-l dd13-c">SEALED SETS</text>
+<path d="M640,304 V360" class="dd13-w dd13-d" marker-end="url(#dd0013d-arrow)"/>
+<rect x="560" y="324" width="72" height="12" rx="2" class="dd13-m"/>
+<text x="596" y="333" class="dd13-l dd13-c">LEASES · GC</text>
+<rect x="36" y="80" width="184" height="32" rx="4" class="dd13-box"/>
+<text x="128" y="94" class="dd13-s dd13-c" style="fill:#e4ebf2">Native constructors in lowering</text>
+<text x="128" y="106" class="dd13-t dd13-c">MMAP.MAP AS UNKNOWN VALUE</text>
+<rect x="36" y="124" width="184" height="32" rx="4" class="dd13-box"/>
+<text x="128" y="138" class="dd13-s dd13-c" style="fill:#e4ebf2">Byte constant to bytes param</text>
+<text x="128" y="150" class="dd13-t dd13-c">NON-LIST BORROW REFUSAL</text>
+<rect x="36" y="168" width="184" height="32" rx="4" class="dd13-box"/>
+<text x="128" y="182" class="dd13-s dd13-c" style="fill:#e4ebf2">Slicing a Deref to [u8]</text>
+<text x="128" y="194" class="dd13-t dd13-c">DOES NOT TYPE AS BYTES</text>
+<rect x="36" y="212" width="184" height="32" rx="4" class="dd13-dim"/>
+<text x="128" y="226" class="dd13-s dd13-c" style="fill:#e4ebf2">Reused: #2491 #2482 #2483</text>
+<text x="128" y="238" class="dd13-t dd13-c">LANDED OR IN REVIEW</text>
+<rect x="36" y="256" width="184" height="32" rx="4" class="dd13-dim"/>
+<text x="128" y="270" class="dd13-s dd13-c" style="fill:#e4ebf2">Reused: #2493 · keyed reads</text>
+<text x="128" y="282" class="dd13-t dd13-c">LANDED OR IN REVIEW</text>
+<rect x="280" y="56" width="208" height="88" rx="6" class="dd13-store"/>
+<text x="292" y="74" class="dd13-t">S1</text>
+<text x="384" y="96" class="dd13-n dd13-c">Durable record store</text>
+<text x="384" y="114" class="dd13-s dd13-c">typed outcomes · transactions</text>
+<text x="384" y="128" class="dd13-s dd13-c">synced publication · claims</text>
+<rect x="548" y="80" width="184" height="32" rx="4" class="dd13-store"/>
+<text x="640" y="94" class="dd13-s dd13-c" style="fill:#e4ebf2">COW B+tree directory</text>
+<text x="640" y="106" class="dd13-t dd13-c">INDEXED ACTIVATION</text>
+<rect x="548" y="124" width="184" height="32" rx="4" class="dd13-store"/>
+<text x="640" y="138" class="dd13-s dd13-c" style="fill:#e4ebf2">Scoped views and leases</text>
+<text x="640" y="150" class="dd13-t dd13-c">VIRTUAL STORES</text>
+<rect x="548" y="168" width="184" height="32" rx="4" class="dd13-store"/>
+<text x="640" y="182" class="dd13-s dd13-c" style="fill:#e4ebf2">Mapped views</text>
+<text x="640" y="194" class="dd13-t dd13-c">STD.FS ZERO-COPY</text>
+<rect x="548" y="212" width="184" height="32" rx="4" class="dd13-store"/>
+<text x="640" y="226" class="dd13-s dd13-c" style="fill:#e4ebf2">Sealed-set admission</text>
+<text x="640" y="238" class="dd13-t dd13-c">LOAF · BUNDLE · BAKE</text>
+<rect x="548" y="256" width="184" height="32" rx="4" class="dd13-store"/>
+<text x="640" y="270" class="dd13-s dd13-c" style="fill:#e4ebf2">Compaction + root GC</text>
+<text x="640" y="282" class="dd13-t dd13-c">DETERMINISTIC BASE</text>
+<rect x="792" y="56" width="208" height="88" rx="6" class="dd13-focal"/>
+<text x="804" y="74" class="dd13-ta">E1A · E1B</text>
+<text x="896" y="96" class="dd13-n dd13-c">Hello through the architecture</text>
+<text x="896" y="114" class="dd13-s dd13-c">E1a unit records · claim · pin</text>
+<text x="896" y="128" class="dd13-s dd13-c">E1b per-declaration records</text>
+<rect x="1048" y="56" width="208" height="88" rx="6" class="dd13-focal"/>
+<text x="1060" y="74" class="dd13-ta">E2 SUB-DESIGN</text>
+<text x="1152" y="96" class="dd13-n dd13-c">Producer map</text>
+<text x="1152" y="114" class="dd13-s dd13-c">every producer, key, rank</text>
+<text x="1152" y="128" class="dd13-s dd13-c">and read kind, named</text>
+<rect x="1048" y="360" width="208" height="88" rx="6" class="dd13-box"/>
+<text x="1060" y="378" class="dd13-t">E2</text>
+<text x="1152" y="400" class="dd13-n dd13-c">Ranked semantic graph</text>
+<text x="1152" y="418" class="dd13-s dd13-c">general compiler producers</text>
+<text x="1152" y="432" class="dd13-s dd13-c">cold-oracle edit matrix</text>
+<rect x="792" y="360" width="208" height="88" rx="6" class="dd13-box"/>
+<text x="804" y="378" class="dd13-t">E3</text>
+<text x="896" y="400" class="dd13-n dd13-c">Loaf admission</text>
+<text x="896" y="418" class="dd13-s dd13-c">shared native units</text>
+<text x="896" y="432" class="dd13-s dd13-c">RFC 124 payload variants</text>
+<rect x="536" y="360" width="208" height="88" rx="6" class="dd13-box"/>
+<text x="548" y="378" class="dd13-t">E4</text>
+<text x="640" y="400" class="dd13-n dd13-c">Scheduler and memory</text>
+<text x="640" y="418" class="dd13-s dd13-c">tokens · fairness · recycling</text>
+<text x="640" y="432" class="dd13-s dd13-c">crash matrices · COW forks</text>
+<rect x="280" y="360" width="208" height="88" rx="6" class="dd13-box"/>
+<text x="292" y="378" class="dd13-t">E5</text>
+<text x="384" y="400" class="dd13-n dd13-c">Test, run and readers</text>
+<text x="384" y="418" class="dd13-s dd13-c">fresh process per case</text>
+<text x="384" y="432" class="dd13-s dd13-c">LSP · MCP · contract runner</text>
+<rect x="24" y="360" width="208" height="88" rx="6" class="dd13-box"/>
+<text x="36" y="378" class="dd13-t">E6</text>
+<text x="128" y="400" class="dd13-n dd13-c">Native incremental proof</text>
+<text x="128" y="418" class="dd13-s dd13-c">tracked rustc inputs · CGUs</text>
+<text x="128" y="432" class="dd13-s dd13-c">head-to-head qualification</text>
+<rect x="1048" y="536" width="208" height="88" rx="6" class="dd13-store"/>
+<text x="1060" y="554" class="dd13-t">S3</text>
+<text x="1152" y="576" class="dd13-n dd13-c">Record-by-record reads</text>
+<text x="1152" y="594" class="dd13-s dd13-c">on S1 API + S2 indexes</text>
+<text x="1152" y="608" class="dd13-s dd13-c">bounded graph consumers</text>
+<rect x="280" y="536" width="208" height="88" rx="6" class="dd13-store"/>
+<text x="292" y="554" class="dd13-t">S4</text>
+<text x="384" y="576" class="dd13-n dd13-c">Distribution qualification</text>
+<text x="384" y="594" class="dd13-s dd13-c">bundle · Loaf · registry</text>
+<text x="384" y="608" class="dd13-s dd13-c">full B0-comparable runs</text>
+<rect x="24" y="536" width="208" height="88" rx="6" class="dd13-box"/>
+<text x="36" y="554" class="dd13-t">E7</text>
+<text x="128" y="576" class="dd13-n dd13-c">Default switch, removal</text>
+<text x="128" y="594" class="dd13-s dd13-c">full census, CI phases</text>
+<text x="128" y="608" class="dd13-s dd13-c">one engine, one authority</text>
+<line x1="24" y1="664" x2="1256" y2="664" class="dd13-rule"/>
+<text x="24" y="688" class="dd13-t">LEGEND</text>
+<rect x="96" y="678" width="20" height="12" rx="2" class="dd13-focal"/><text x="124" y="688" class="dd13-l">next stage and its required sub-design</text>
+<rect x="400" y="678" width="20" height="12" rx="2" class="dd13-store"/><text x="428" y="688" class="dd13-l">substrate stage (S)</text>
+<rect x="584" y="678" width="20" height="12" rx="2" class="dd13-box"/><text x="612" y="688" class="dd13-l">engine stage (E) or fix</text>
+<line x1="800" y1="684" x2="832" y2="684" class="dd13-wa"/><text x="840" y="688" class="dd13-l">prerequisite path</text>
+<line x1="992" y1="684" x2="1024" y2="684" class="dd13-w dd13-d"/><text x="1032" y="688" class="dd13-l">capability used</text>
+<text x="24" y="712" class="dd13-l">Each stage exits only on the measured proofs in its Proof by stage table.</text>
+</svg>

@@ -17,7 +17,7 @@ sources:
 
 Incan provisions its own Rust without reconfiguring the user's default toolchain. That ownership requires a deliberate version policy: a floating release or CI selector can otherwise change the compiler used for the same source tag.
 
-This decision predates dev.8's native route. “Generated projects” names the earlier Rust-emission producer; [DD-0004](0004_native_route_through_the_pinned_rustc.md) defines current native compilation. The implementation inventory, retired conformance fixtures and September 2026 measurements formerly recorded here remain historical evidence in this file's revision history and the linked issues, rather than current validation targets.
+This decision predates the direct native route of [DD-0004](0004_native_route_through_the_pinned_rustc.md). “Generated projects” names the earlier producer, which emitted Rust source and built it with Cargo; DD-0004 defines native compilation since then. The implementation inventory, retired conformance fixtures and September 2026 measurements formerly recorded here remain historical evidence in this file's revision history and the linked issues, not validation targets.
 
 ## Decision
 

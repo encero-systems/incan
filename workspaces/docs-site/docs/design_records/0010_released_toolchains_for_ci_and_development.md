@@ -1,12 +1,12 @@
 ---
 id: DD-0010
-title: The dev.8 release toolchain and CI
+title: Released toolchains for CI and development
 status: Accepted
 type: design-decision
 date: 2026-10-22
 review_target: v0.6
 sources:
-  - Maintainer decision, 2026-10-22 (dev.8 release)
+  - Maintainer decision, 2026-10-22
   - https://github.com/encero-systems/incan/issues/2256
   - DD-0002
   - DD-0004
@@ -15,15 +15,15 @@ sources:
 
 <!-- markdownlint-configure-file {"MD025": {"front_matter_title": ""}} -->
 
-# DD-0010: The dev.8 release toolchain and CI
+# DD-0010: Released toolchains for CI and development
 
 ## Context
 
-Development checkouts currently bootstrap the dev.8 compiler and Oven with the frozen dev.7 builder. Repeating that bootstrap in every checkout or CI job makes the builder's private environment a prerequisite for ordinary development. DD-0002 pins Rust, DD-0004 verifies the driver's compiler identity by content, and DD-0008 assigns toolchain installation and orchestration to Oven. A portable installed toolchain lets later work begin from a published compiler.
+Before this decision, every development checkout built the compiler and Oven with a frozen bootstrap builder: a compiler from before the direct native route, kept in its own private build environment. Repeating that bootstrap in every checkout or CI job made the builder's private environment a prerequisite for ordinary development. DD-0002 pins Rust, DD-0004 verifies the driver's compiler identity by content, and DD-0008 assigns toolchain installation and orchestration to Oven. A portable installed toolchain lets later work begin from a published compiler.
 
 ## Decision
 
-**When dev.8 is complete, it becomes a real release. Its packed toolchain is the release artifact of the `0.6.0-dev.8` tag. CI and every later development checkout install that artifact.** This is the distribution decision, not a claim that dev.8 is already complete or published.
+**A completed toolchain becomes a real release: its packed toolchain is the release artifact of its version tag. CI and every later development checkout install a released artifact.** This decides how toolchains are distributed; whether a given toolchain is complete and published is the maintainer's release decision.
 
 Oven's `incan toolchain pack OUT` produces the archive from an installed toolchain. It contains the named compiler driver, runtime dependencies, compiled standard Loaves, Rust standard-library ABI caches and prepared registry closure. Artifact paths are relative to their containing documents. The machine's Rust sysroot and local driver identity proof are not release contents.
 
@@ -33,9 +33,9 @@ Oven's `incan toolchain pack OUT` produces the archive from an installed toolcha
 
 ### CI and later development
 
-CI runners first install Rust 1.98.0 with `rustc-dev`, then install the dev.8 release artifact. Later development uses the same published artifact rather than reconstructing the private bootstrap environment. The artifact and Rust installation must match the runner's host platform.
+CI runners first install Rust 1.98.0 with `rustc-dev`, then install the released artifact the repository pins. Later development uses the same published artifact rather than reconstructing a private bootstrap environment. The artifact and Rust installation must match the runner's host platform.
 
-Release production must build the runtime, lowering, driver, ten standard packages, Oven, contract runner and LSP from source with an installed dev.8 release pack. The frozen dev.7 builder and generated Rust are retired production paths. Acceptance requires an audit of every build unit excluding the private bootstrap inputs, a case-for-case census match on the same source and keys, and a second generation with identical driver, runtime, lowering, standard core, Oven and runner bytes. Until that complete gate passes, a partial native build does not establish a bootstrap-free release producer.
+Release production must build the runtime, lowering, driver, ten standard packages, Oven, contract runner and LSP from source with an installed release pack, the seed. The frozen bootstrap builder and generated Rust are retired as production paths. Acceptance requires an audit of every build unit excluding the private bootstrap inputs, a case-for-case census match on the same source and keys, and a second generation with identical driver, runtime, lowering, standard core, Oven and runner bytes. Until that complete gate passes, a partial native build does not establish a bootstrap-free release producer.
 
 CI builds each PR's compiler with the installed toolchain and verifies the resulting compiler. Installing a release artifact is a prerequisite for that build, not evidence that the PR's compiler was tested.
 
