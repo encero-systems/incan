@@ -7,7 +7,10 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
-from files import json_text, make_directory, read, remove, write as write_file
+from files import json_text, make_directory, read, read_json, remove, write as write_file
+from json_fields import required_items, required_text
+from registry_metadata import completion_selection
+from retained_readings import recall, retain
 from segment_store import readmit_payload
 from bakery import fact_file, find, forget_verified, seal, staging
 from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
@@ -37,13 +40,14 @@ from rust_units import (
     linking,
     native_artifacts,
     package_environment,
+    read_registry_units,
     rust_library_producer_key,
     rust_library_graph_key,
 )
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
 from rust_target import compiler_version, deployment_target
-from toolchain import NativeCrate, Toolchain, admit_compiler_facts, read_toolchain
+from toolchain import NativeCrate, Toolchain, admit_compiler_facts, load_toolchain, read_toolchain, rust_compiler
 from compiler_facts import admit_fact
 from unit import UnitDescription, UnitLoaf
 from unit_rust import add_extern, compile_library_unit
@@ -696,7 +700,8 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
 pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     """
     Compiler, native, ABI, recorded producer selection, target and deployment changes each invalidate a unit's
-    generation, and an unchanged compiler is not asked for its target again.
+    generation, and an unchanged compiler is not asked for its target again. An unchanged installation's registry
+    closure is completed once per generation.
     """
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
@@ -737,6 +742,8 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     assert reconcile(scratch.path(), setup)?.key != before.key
     # The compiler's own answers are part of its identity, and an unchanged compiler is not asked them again.
     check_compiler_probes(scratch.path(), setup.toolchain)?
+    # What every project learns from the installation is learned once per home.
+    check_registry_completion(scratch.path())?
     # Older installed producers can be used locally, but their bytes cannot invent an input identity.
     remove(record_path(Path(setup.toolchain.externs[0].path)))?
     legacy = unit_key(setup.unit, setup.toolchain)?
@@ -777,6 +784,55 @@ def check_compiler_probes(scratch: Path, toolchain: Toolchain) -> Result[None, s
     assert compiler_fingerprint(probing)? != first
     assert read(probes)? == asked + "--print deployment-target\n" + asked
     return Ok(None)
+
+
+def check_registry_completion(scratch: Path) -> Result[None, str]:
+    """
+    A registry closure is completed from its producers' metadata once per closure generation and pinned compiler.
+
+    1. A settled closure of one installed producer entry is completed from that producer's metadata.
+    2. While the closure and its entry are unchanged, the retained completion answers.
+    3. A rewritten closure is completed again.
+    """
+    # 1. One installed producer entry, linked into a closure of its own.
+    toolchain = load_toolchain()?
+    installed = Path(toolchain.registry_units)
+    item = required_items(read_json(installed)?, "units")?[0]
+    entry = required_text(item, "entry")?.replace(":", "-")
+    source = installed.parent().joinpath("entries").joinpath(entry)
+    directory = scratch.joinpath("registry")
+    make_directory(directory.joinpath("entries"))?
+    linked = directory.joinpath("entries").joinpath(entry)
+    linked.symlink_to(source).map_err((error) => error.message())?
+    artifact = JsonValue.string(f"entries/{entry}/artifacts/{sole_artifact(source)?}")
+    externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": artifact})})
+    closure = directory.joinpath("closure.json")
+    document = {"schema": JsonValue.string("incan.oven.closure/1"), "externs": externs, "units": JsonValue.array([item])}
+    write(closure, json_text(JsonValue.object(document))?)?
+    settled(closure)?
+    first = read_registry_units(closure)?.units[0]
+    assert first.name != "" and first.crate_hash != ""
+    # 2. A retained completion that names the crate otherwise shows that no producer metadata was read again.
+    selection = completion_selection(rust_compiler(toolchain))?
+    observed = observe(closure)?
+    rows = recall(closure, selection, observed.stamp).unwrap_or(JsonValue.null()).as_array().unwrap_or([])
+    assert len(rows) == 1
+    mut row = rows[0].as_object().unwrap_or({})
+    row["name"] = JsonValue.string("retained")
+    retain(closure, selection, observed, JsonValue.array([JsonValue.object(row)]))
+    assert read_registry_units(closure)?.units[0].name == "retained"
+    # 3. Another closure generation is completed again from the producer's metadata.
+    rewrite_in_place(closure, read(closure)?)?
+    assert read_registry_units(closure)?.units[0].name == first.name
+    return Ok(None)
+
+
+def sole_artifact(entry: Path) -> Result[str, str]:
+    """The file name of the one library an installed producer entry holds."""
+    for candidate in entry.joinpath("artifacts").iterdir().map_err((error) => error.message())?:
+        if candidate.name().startswith("lib"):
+            return Ok(candidate.name())
+    return Err(f"{entry.0} holds no library")
 
 
 def probing_rustc(path: Path, probes: Path, release: str) -> Result[None, str]:
