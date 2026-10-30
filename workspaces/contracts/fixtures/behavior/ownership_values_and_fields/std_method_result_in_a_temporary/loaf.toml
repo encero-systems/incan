@@ -1,0 +1,9 @@
+[project]
+name = "std_method_result_in_a_temporary"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+drop_probe = { path = "rust/drop_probe" }
