@@ -26,6 +26,20 @@ step() {
     fail "$phase failed; see $out/$phase.log"
 }
 
+# Install the pinned Rust toolchain a second time, as a copy at another path with other file identities, the way a
+# user's machine holds it. A bundle whose installed producers name the builder's compiler fails against it.
+relocate_rust() {
+    local home=$1 sysroot
+    sysroot=$(rustup run 1.98.0 rustc --print sysroot)
+    mkdir -p "$home/toolchains"
+    if [[ $(uname -s) == Darwin ]]; then
+        cp -c -R "$sysroot" "$home/toolchains/$(basename "$sysroot")"
+    else
+        cp -R "$sysroot" "$home/toolchains/$(basename "$sysroot")"
+    fi
+    RUSTUP_HOME=$home rustup run 1.98.0 rustc -vV
+}
+
 # Capture partial evidence on failure too; absent counts and artifacts stay null.
 receipt() {
     local status=$? file
@@ -145,26 +159,35 @@ check_runtime_roots() {
         || fail 'native runtime closure has conflicting direct roots'
 }
 
-# Count a complete census and compare all case outcomes, beyond the committed PASS floor.
+# Retain every integration PASS and case key; the fresh installation must match the candidate exactly.
 compare_censuses() {
-    local installed_log=$1 log
-    [[ $(cat "$reference_log.source-sha") == "$sha" ]] || fail 'integration census names a different source SHA'
-    step integration-baseline "$source/scripts/check-dev8-baseline.sh" \
-        "$source/workspaces/contracts/dev8-pass-baseline.txt" "$reference_log"
+    local installed_log=$1 log reference_sha
+    reference_sha=$(cat "$reference_log.source-sha")
+    [[ $reference_sha =~ ^[a-f0-9]{40}$ ]] || fail 'integration census must name a full source SHA'
+    [[ $(git -C "$source" rev-parse "$reference_sha:workspaces/contracts") \
+        == $(git -C "$source" rev-parse "$sha:workspaces/contracts") ]] \
+        || fail 'integration census names different contract sources'
     cp "$reference_log" "$out/integration-contracts.log"
+    cp "$reference_log.source-sha" "$out/integration-contracts.log.source-sha"
     shasum -a 256 "$out/integration-contracts.log" > "$out/integration-contracts.sha256"
     for log in "$out/integration-contracts.log" "$out/baseline-contracts.log" "$installed_log"; do
         awk '/^(PASS|FAIL|PEND) / {print $2 "\t" $1}' "$log" | sort > "$log.keys"
     done
-    diff -u "$out/integration-contracts.log.keys" "$out/baseline-contracts.log.keys" \
-        > "$out/integration-parity.diff" || fail 'candidate differs from the integration census'
+    # A stage-2 compiler can repair failures in its seed, but cannot lose cases or any seed PASS.
+    cut -f1 "$out/integration-contracts.log.keys" > "$out/integration-case-keys.txt"
+    cut -f1 "$out/baseline-contracts.log.keys" > "$out/candidate-case-keys.txt"
+    diff -u "$out/integration-case-keys.txt" "$out/candidate-case-keys.txt" \
+        > "$out/integration-parity.diff" || fail 'candidate case keys differ from the integration census'
+    awk '$2 == "PASS" {print $1}' "$out/integration-contracts.log.keys" > "$out/integration-pass-keys.txt"
+    step integration-baseline "$source/scripts/check-dev8-baseline.sh" \
+        "$out/integration-pass-keys.txt" "$out/baseline-contracts.log"
     diff -u "$out/baseline-contracts.log.keys" "$installed_log.keys" > "$out/parity.diff" || fail 'baseline outcomes differ'
     parity=true
     awk '/^total:/ {printf "{\"pass\":%d,\"fail\":%d,\"pending\":%d}\n",$2,$4,$6}' \
         "$installed_log" > "$out/counts.json"
 }
 
-# With no supplied same-SHA census, measure the integration seed against the clean checkout's cases first.
+# With no supplied census of the same contract tree, measure the seed against the checkout's cases first.
 prepare_reference() {
     if [[ -n ${RELEASE_DEV8_BASELINE_LOG:-} ]]; then
         reference_log=$RELEASE_DEV8_BASELINE_LOG
@@ -219,6 +242,13 @@ rustup run 1.98.0 rustc -vV > "$out/rust.txt"
 export INCAN_HOME=$out/build-home
 toolchain=$INCAN_HOME/toolchains/0.6.0-dev.8
 prepare_build_home
+# A Linux toolchain carries its own pinned Clang for C ABI checks; macOS uses the machine's Xcode.
+if [[ $target == x86_64-unknown-linux-gnu ]]; then
+    step c-toolchain "$source/scripts/fetch-c-toolchain.sh" "$target" "$toolchain/c-toolchain"
+    jq --arg clang "$toolchain/c-toolchain/clang/bin/clang" '.c_compiler = $clang' "$toolchain/toolchain.json" \
+        > "$toolchain/toolchain.json.next"
+    mv "$toolchain/toolchain.json.next" "$toolchain/toolchain.json"
+fi
 export INCAN_STDLIB=$source/loaves/stdlib
 prepare_reference
 prepare_native_lane
@@ -253,10 +283,18 @@ status=0
 [[ $status -le 1 ]] || fail "baseline runner exited $status"
 step baseline "$source/scripts/check-dev8-baseline.sh" "$source/workspaces/contracts/dev8-pass-baseline.txt" \
     "$out/baseline-contracts.log"
+# Verify from a second checkout at another path, against a Rust installation at another path: nothing installed may
+# depend on where it was built or where the builder's compiler lives.
+verification=$out/verification-source
+step verification-clone git clone --shared --no-checkout "$ROOT" "$verification"
+step verification-checkout git -C "$verification" checkout --detach "$sha"
+step relocated-rust relocate_rust "$out/rustup"
 export CI_DEV8_OUT=$out/ci
-step installed-ci "$source/scripts/ci-dev8.sh" "$out/bundle/toolchain.tar.zst" "$oven" "$out/bundle/incan-lsp"
+step installed-ci env RUSTUP_HOME="$out/rustup" \
+    "$verification/scripts/ci-dev8.sh" "$out/bundle/toolchain.tar.zst" "$oven" "$out/bundle/incan-lsp"
 installed=($out/ci/run.*/contracts.log)
 [[ ${#installed[@]} == 1 && -f ${installed[0]} ]] || fail 'expected one installed census'
 compare_censuses "${installed[0]}"
 cp "$(dirname "${installed[0]}")/oven-tests.json" "$out/oven-tests.json"
+rm -rf -- "$out/rustup"
 phase=complete
