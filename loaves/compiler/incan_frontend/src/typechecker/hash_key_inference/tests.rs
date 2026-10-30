@@ -181,7 +181,9 @@ fn assert_checkers(
     );
     assert_eq!(
         candidate.check_work.body_local_checks,
-        candidate.check_work.function_bodies + candidate.check_work.method_bodies
+        candidate.check_work.function_bodies
+            + candidate.check_work.method_bodies
+            + candidate.check_work.property_bodies
     );
     eprintln!(
         "body-local-oracle\tchecks={}\tobservations={}\terrors={}\twarnings={}\tdefaults={}\tmutation_settlements={}\tdictionary_settlements={}\topen_value_settlements={}\tdifferences=0",
@@ -252,9 +254,9 @@ fn measure_influence_scan() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Unreachable invalid bodies still enter checking, while callable defaults are checked once in their declaring
-/// scope. This is a legacy-scope baseline; record-service edit reuse has not been implemented by this extraction.
+/// scope. Concrete and abstract methods and computed properties retain distinct declaration and body counts.
 fn assert_check_work_scope() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def first(value: int = 1) -> int:\n    return value\ndef unused(value: int = 2) -> int:\n    return \"wrong\"\n";
+    let source = "class Owner:\n    def member(self, value: int = 3) -> int:\n        return value\n    property current -> int:\n        return 1\ntrait Required:\n    def member(self, value: int = 4) -> int: ...\ndef first(value: int = 1) -> int:\n    return value\ndef unused(value: int = 2) -> int:\n    return \"wrong\"\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut checker = TypeChecker::new();
@@ -262,7 +264,13 @@ fn assert_check_work_scope() -> Result<(), Box<dyn std::error::Error>> {
     let work = checker.check_work();
     assert_eq!(work.function_declarations, 2);
     assert_eq!(work.function_bodies, 2);
-    assert_eq!(work.callable_defaults, 2);
+    assert_eq!(work.method_declarations, 2);
+    assert_eq!(work.method_bodies, 1);
+    assert_eq!(work.property_declarations, 1);
+    assert_eq!(work.property_bodies, 1);
+    assert_eq!(work.body_local_checks, 4);
+    assert_eq!(work.declaration_local_checks, 6);
+    assert_eq!(work.callable_defaults, 4);
     assert_eq!(work.mutation_settlements, 1);
     assert_eq!(work.dictionary_settlements, 1);
     assert_eq!(work.open_value_settlements, 1);
@@ -274,6 +282,18 @@ fn assert_check_work_scope() -> Result<(), Box<dyn std::error::Error>> {
         work.mutation_settlements,
         work.dictionary_settlements,
         work.open_value_settlements
+    );
+    eprintln!(
+        "declaration-producers\tfunction_declarations={}\tmethod_declarations={}\tfunction_bodies={}\tmethod_bodies={}\tproperty_declarations={}\tproperty_bodies={}\tdefault_checks={}\tdeclaration_checks={}\tbody_checks={}\tnested_body_checks=0",
+        work.function_declarations,
+        work.method_declarations,
+        work.function_bodies,
+        work.method_bodies,
+        work.property_declarations,
+        work.property_bodies,
+        work.callable_defaults,
+        work.declaration_local_checks,
+        work.body_local_checks,
     );
     Ok(())
 }
@@ -606,6 +626,9 @@ fn assert_body_local_matrix() -> Result<(), Box<dyn std::error::Error>> {
         ),
         include_str!(
             "../../../../../../workspaces/contracts/fixtures/behavior/cli_refusals_mutation/refused_immutable_argument_to_trait_dispatched_mut_parameter.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/snapshots_models_and_classes/computed_properties.incn"
         ),
         "def sum_items(values: list[int]) -> int:\n    return values.iter().sum()\n",
         "def numbers() -> Generator[int]:\n    yield 1\ndef probe(streams: dict[str, Generator[int]], key: str) -> bool:\n    match streams.get(key):\n        Some(value) => return true\n        None => return false\n",

@@ -350,6 +350,34 @@ impl TypeChecker {
         self.mut_params.current.as_ref().map(|body| &body.identity)
     }
 
+    /// Detach a validated declaration's mutation frame before its independent body producer is entered. Knowing a
+    /// concrete body exists belongs to its statement activation. Abstract methods retain the legacy known-callable
+    /// contribution with their declaration, without inventing a statement producer.
+    pub(in crate::typechecker) fn suspend_mut_param_body(
+        &mut self,
+        previous: MutParamBodyState,
+        has_statement_body: bool,
+    ) -> MutParamBodyState {
+        let prepared = MutParamBodyState(std::mem::replace(&mut self.mut_params.current, previous.0));
+        if has_statement_body && let Some(frame) = &prepared.0 {
+            self.mut_params.bodies_checked.remove(&frame.identity);
+        }
+        prepared
+    }
+
+    /// Consume a completed declaration's mutation inputs and mark this body known exactly once, without repeating
+    /// parameter classification or declaration validation.
+    pub(in crate::typechecker) fn resume_mut_param_body(
+        &mut self,
+        prepared: MutParamBodyState,
+        has_statement_body: bool,
+    ) -> MutParamBodyState {
+        if has_statement_body && let Some(frame) = &prepared.0 {
+            self.mut_params.bodies_checked.insert(frame.identity.clone());
+        }
+        MutParamBodyState(std::mem::replace(&mut self.mut_params.current, prepared.0))
+    }
+
     /// Leave a body entered with [`Self::enter_mut_param_body`].
     pub(in crate::typechecker) fn exit_mut_param_body(&mut self, previous: MutParamBodyState) {
         self.mut_params.current = previous.0;

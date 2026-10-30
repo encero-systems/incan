@@ -18,6 +18,10 @@ pub struct CheckWork {
     pub function_declarations: usize,
     /// Method declaration-validation entries, including abstract declarations without a body.
     pub method_declarations: usize,
+    /// Computed-property receiver and return validation entries, separate from statement checking.
+    pub property_declarations: usize,
+    /// Computed-property statement entries; abstract properties do not contribute.
+    pub property_bodies: usize,
     /// Top-level function body-check entries.
     pub function_bodies: usize,
     /// Method body-check entries; abstract declarations do not contribute.

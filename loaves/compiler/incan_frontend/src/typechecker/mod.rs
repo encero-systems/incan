@@ -517,6 +517,9 @@ pub struct TypeChecker {
     /// Test-only cold oracle bypasses local table extraction while retaining the original semantic operations.
     #[cfg(test)]
     legacy_body_checking: bool,
+    /// Verification-only declaration activations; a statement producer may not run inside any of them.
+    #[cfg(test)]
+    active_declaration_checks: Vec<Span>,
     /// Per-body complete compatibility snapshots for cold-oracle comparisons, absent from production.
     #[cfg(test)]
     body_local_observations: Vec<(Span, String)>,
@@ -981,6 +984,8 @@ impl TypeChecker {
         Self {
             #[cfg(test)]
             legacy_body_checking: false,
+            #[cfg(test)]
+            active_declaration_checks: Vec::new(),
             #[cfg(test)]
             body_local_observations: Vec::new(),
             #[cfg(test)]
