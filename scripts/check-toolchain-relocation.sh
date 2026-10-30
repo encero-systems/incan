@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Refuse builder paths and stale generations even when verification shares the builder's filesystem.
 set -euo pipefail
-[[ $# == 1 && -d $1 ]] || { echo 'usage: check-toolchain-relocation.sh INSTALLED_HOME' >&2; exit 2; }
+[[ $# -ge 1 && $# -le 3 && -d $1 ]] || { echo 'usage: check-toolchain-relocation.sh INSTALLED_HOME [BUILDER_HOME [BUILDER_SOURCE]]' >&2; exit 2; }
 installation=$(cd "$1" && pwd -P)
 toolchain=$installation/toolchains/0.6.0-dev.8
 [[ -d $toolchain ]] || { echo "missing installed toolchain: $toolchain" >&2; exit 1; }
@@ -18,4 +18,11 @@ while IFS= read -r -d '' document; do
     ' "$document")
     [[ -z $outside ]] || { echo "nonportable toolchain JSON $document: $outside" >&2; exit 1; }
 done < <(find "$toolchain" -type f -name '*.json' -print0)
+for builder in "${2:-}" "${3:-}"; do
+    [[ -n $builder ]] || continue
+    if grep -rIlF -e "$builder/" "$toolchain"; then
+        echo "installed records name the builder: $builder" >&2
+        exit 1
+    fi
+done
 echo 'toolchain relocation audit passed'

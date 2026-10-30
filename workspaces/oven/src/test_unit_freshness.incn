@@ -12,7 +12,7 @@ from observation import load_ledger
 from native_closure_input import NativeClosureInput, native_bindings
 from standalone_rust import published_bindings
 from scratch import scratch_directory
-from rust_freshness import compilation_observations, inputs_unchanged, library_key
+from rust_freshness import compilation_observations, inputs_unchanged, library_key, relocate_dependencies
 from rust_units import (
     BuiltUnit,
     RegistryUnits,
@@ -536,11 +536,11 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     retained = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
     assert retained.digest == first.digest
     observations = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
-    assert inputs_unchanged(dependencies, observations)?
+    assert inputs_unchanged(dependencies, observations, setup.root)?
     write(included, "changed included value")?
     changed = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
     assert changed.digest != first.digest
-    assert not inputs_unchanged(dependencies, observations)?
+    assert not inputs_unchanged(dependencies, observations, setup.root)?
     write(included, "first included value")?
     changed_environment = library_key(
         setup.root,
@@ -552,11 +552,25 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
         setup.toolchain,
     )?
     assert changed_environment.digest != first.digest
+    # Evidence names the project's files from the project, so a producer copied with an equal project elsewhere keeps
+    # its key and reads no file of the machine that built it.
+    source = setup.root.joinpath("src").joinpath("main.incn")
+    located = native.joinpath("located.d")
+    write(located, f"{located.0}: {source.0}\n\n{source.0}:\n")?
+    built = library_key(setup.root, native, located, arguments, environment, [], setup.toolchain)?
+    relocate_dependencies(located, setup.root)?
+    assert setup.root.0 not in read(located)?
+    assert native.0 not in read(located)?
+    assert library_key(setup.root, native, located, arguments, environment, [], setup.toolchain)?.digest == built.digest
+    moved = scratch.path().joinpath("moved")
+    write(moved.joinpath("loaf.toml"), read(setup.root.joinpath("loaf.toml"))?)?
+    write(moved.joinpath("src").joinpath("main.incn"), read(source)?)?
+    assert library_key(moved, native, located, arguments, environment, [], setup.toolchain)?.digest == built.digest
     # A late source or native-artifact write invalidates publication even after a key was computed.
     stable = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
     _ = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
     write(Path(setup.toolchain.externs[0].path), "changed while compiling")?
-    assert not inputs_unchanged(dependencies, stable)?
+    assert not inputs_unchanged(dependencies, stable, setup.root)?
     Path(setup.toolchain.externs[0].path).unlink().map_err((error) => error.message())?
     match compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain):
         Err(_) => pass
