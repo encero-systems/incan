@@ -91,10 +91,16 @@ impl SourceSignatureContext<'_> {
             .collect()
     }
 
+    /// Read a checked nominal's edit-stable identity. Body semantic projections use this same boundary for native
+    /// carrier keys; callers must supply checked bindings rather than infer authority from the key's bytes.
+    pub(crate) fn nominal_identity(&self, name: &str) -> Option<StableDeclarationId> {
+        StableDeclarationId::from_canonical(self.nominals.get(name)?, None, None)
+    }
+
     /// Resolve nominal references through checked identities; never infer one by parsing a carrier name.
     fn named(&self, name: &str) -> Option<SourceType> {
-        if let Some(identity) = self.nominals.get(name) {
-            return StableDeclarationId::from_canonical(identity, None, None).map(SourceType::Nominal);
+        if self.nominals.contains_key(name) {
+            return self.nominal_identity(name).map(SourceType::Nominal);
         }
         // Builtin structural constructors have no source declaration. Arbitrary unknown names fail closed.
         if incan_lang::lang::types::collections::from_str(name).is_some()
