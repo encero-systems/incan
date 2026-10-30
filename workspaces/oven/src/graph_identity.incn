@@ -16,9 +16,11 @@ pub def keyed(record: JsonValue, package: str) -> Result[JsonValue, str]:
     return Ok(JsonValue.object(fields))
 
 
-pub def link_keys(records: list[JsonValue]) -> Result[list[JsonValue], str]:
+pub def link_keys(records: list[JsonValue], providers: list[JsonValue] = []) -> Result[list[JsonValue], str]:
     """Join compiler-recorded targets to package-scoped keys; an ambiguous or absent identity never acquires a key."""
     mut index = KeyIndex()
+    for record in providers:
+        index.add(record)?
     for record in records:
         index.add(record)?
     mut result: list[JsonValue] = []
