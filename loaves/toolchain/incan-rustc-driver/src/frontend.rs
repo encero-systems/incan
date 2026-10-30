@@ -1001,6 +1001,8 @@ pub(crate) struct Dependencies {
     library: bool,
     /// Arguments Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
     rustc_args: Vec<String>,
+    /// Local experiment only: opt this invocation into pinned compiler-library linkage (CA-1).
+    compiler_internals: bool,
     /// A development executable may link exact native carriers from this immutable store.
     shared_native: Option<PathBuf>,
 }
@@ -1038,11 +1040,16 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         }
         externs.push((native.name.clone(), native.path.clone()));
     }
+    let mut compiler_internals = false;
     let mut library = false;
     let mut rustc_args = Vec::new();
     let mut shared_native = None;
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
+        if option == "--experimental-compiler-internals" {
+            compiler_internals = true;
+            continue;
+        }
         if option == "--library" {
             library = true;
             continue;
@@ -1063,6 +1070,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         rust_abi: unit.rust_abi.clone(),
         library,
         rustc_args,
+        compiler_internals,
         shared_native,
     })
 }
@@ -1193,6 +1201,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &native_externs,
         &dependencies.directories,
         &dependencies.rustc_args,
+        dependencies.compiler_internals,
         dependencies.shared_native.as_deref(),
         kind,
         overflow_checks,

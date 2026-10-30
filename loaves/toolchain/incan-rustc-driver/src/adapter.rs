@@ -270,6 +270,8 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
 
 /// Inject the prevalidated declarations after parsing an empty Incan crate root.
 struct Callbacks<'manifest> {
+    /// Explicit local experiment permission, scoped to this compilation session (CA-1).
+    compiler_internals: bool,
     plan: Arc<Plan>,
     manifest: Option<&'manifest incan_frontend::library_manifest::LibraryManifest>,
     search: Vec<rustc_session::search_paths::SearchPath>,
@@ -369,6 +371,9 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
     /// The source map owns one filename copied from the plan's shared file handle.
     fn config(&mut self, config: &mut interface::Config) {
         self.timing.mark("rustc_options");
+        if self.compiler_internals {
+            config.opts.unstable_features = rustc_feature::UnstableFeatures::Allow;
+        }
         let mut search = std::mem::take(&mut self.search);
         config
             .opts
@@ -396,6 +401,16 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
         krate: &mut ast::Crate,
     ) -> rustc_driver::Compilation {
         self.timing.mark("rustc_session");
+        if self.compiler_internals {
+            krate.attrs.push(ast::attr::mk_attr_nested_word(
+                &compiler.sess.psess.attr_id_generator,
+                ast::AttrStyle::Inner,
+                ast::Safety::Default,
+                rustc_span::sym::feature,
+                rustc_span::Symbol::intern("rustc_private"),
+                krate.spans.inner_span,
+            ));
+        }
         let sources = Sources::new(compiler.sess.source_map());
 
         // ---- Source-backed native declarations ----
@@ -822,6 +837,7 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 /// items. Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
 /// A development store derives shared carriers from those same native identities and records loader witnesses;
 /// ordinary builds and release compilation do not select that policy.
+/// `compiler_internals` is an explicit local-experiment opt-in (CA-1); it enables rustc_private only in this session.
 /// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
 /// rustc applies the same policy to the arithmetic it compiles from Rust crates, such as inlined standard library code.
 pub fn compile(
@@ -832,6 +848,7 @@ pub fn compile(
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
     rustc_args: &[String],
+    compiler_internals: bool,
     shared_store: Option<&Path>,
     kind: UnitKind,
     overflow_checks: bool,
@@ -896,6 +913,7 @@ pub fn compile(
     args.extend_from_slice(rustc_args);
     timing.mark("native_arguments");
     let mut callbacks = Callbacks {
+        compiler_internals,
         plan,
         manifest,
         search,
