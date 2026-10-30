@@ -198,8 +198,16 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
     if declaration_identities(original)? != declaration_identities(moved)?:
         failures.append("line movement changed a declaration identity")
     if "def read_item(item: Item) -> int:" in before:
+        if body_meanings(original) != body_meanings(moved):
+            failures.append("a position-only edit changed checked nominal body meaning")
+        write(source, before.replace("\n\nmodel Item:", "\n\n# nominal declaration moved\nmodel Item:"))?
+        shifted = document(incan, project, "jsonl")?
+        if body_meanings(original) != body_meanings(shifted):
+            failures.append("moving a nominal declaration changed checked body meaning")
         write(source, before.replace("def read_item(item: Item) -> int:", "def read_item(item: Other) -> int:"))?
         changed = document(incan, project, "jsonl")?
+        if body_meanings(original) == body_meanings(changed):
+            failures.append("a real nominal type edit kept every checked body digest")
         if declaration_identities(original)? == declaration_identities(changed)?:
             failures.append("a real source signature change retained every declaration identity")
     write(source, "this is invalid in both languages {")?
@@ -211,6 +219,16 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
     if "is unchecked" not in invalid.stderr or invalid.digest == original.digest:
         failures.append(f"broken source was not exported as an unchecked unit with a warning: {invalid.stderr}")
     return Ok(failures)
+
+
+def body_meanings(document: GraphDocument) -> Dict[str, str]:
+    """Index every exported checked body by its edit-stable source declaration key."""
+    mut meanings: Dict[str, str] = {}
+    for record in document.records:
+        digest = string_field(record, "semantic_digest")
+        if string_field(record, "record") == "declaration" and digest != "":
+            meanings[string_field(record, "stable_key")] = digest
+    return meanings
 
 
 def prefix_comment(source: Path) -> str:
