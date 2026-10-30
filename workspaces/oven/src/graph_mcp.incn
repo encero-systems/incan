@@ -134,10 +134,12 @@ model GraphServer:
             retained = self.memory.read(text(arguments, "task"), self.current_snapshot()?)
             return retained.to_json().map_err((error) => error.message())
         if name == "process_risk":
-            document = graph_response(command + ["--risk", "--format", "json"])?
-            records = parse_records(document)?
-            observations = JsonValue.array([record for record in records if text(record, "record") == "risk_signal"])
-            return observations.to_json().map_err((error) => error.message())
+            document = graph_response(command + ["--risk"])?
+            mut observations: list[str] = []
+            for line in record_lines(document):
+                if text(parse_record(line)?, "record") == "risk_signal":
+                    observations.append(line)
+            return Ok("[" + ",".join(observations) + "]")
         if name == "graph_query":
             kind = text(arguments, "kind")
             term = text(arguments, "term")
@@ -158,11 +160,11 @@ model GraphServer:
         snapshot = self.current_snapshot()?
         if text(arguments, "snapshot") != snapshot:
             return Err("feedback snapshot is stale; read the current graph summary")
-        document = graph_response(["codegraph", self.root, "--format", "json"])?
-        records = parse_records(document)?
+        document = graph_response(["codegraph", self.root])?
         mut keys: list[str] = []
         wanted = text(arguments, "declaration")
-        for record in records:
+        for line in record_lines(document):
+            record = parse_record(line)?
             selectors = [text(record, "id"), text(record, "stable_key"), display(record)]
             if text(record, "record") == "declaration" and wanted in selectors:
                 key = text(record, "stable_key")
@@ -176,21 +178,25 @@ model GraphServer:
 
     def summary(self) -> Result[str, str]:
         """Expose record counts, language/package context, degraded state and the current snapshot."""
-        document = graph_response(["codegraph", self.root, "--format", "json"])?
-        records = parse_records(document)?
-        mut counts: Dict[str, JsonValue] = {}
-        for record in records:
-            kind = text(record, "record")
+        document = graph_response(["codegraph", self.root])?
+        lines = record_lines(document)
+        if len(lines) == 0:
+            return Err("graph export has no header")
+        # The header leads the export; every later record contributes only its kind to the counts.
+        header = parse_record(lines[0])?
+        mut counts: Dict[str, int] = {}
+        for line in lines:
+            kind = text(parse_record(line)?, "record")
             mut count = 0
             if kind in counts:
-                count = counts[kind].expect_int().map_err((error) => error.message())?
-            counts[kind] = JsonValue.int(count + 1)
+                count = counts[kind]
+            counts[kind] = count + 1
         summary = JsonValue.object(
             {
-                "snapshot_id": nested(records[0], "snapshot_id"), "degraded": nested(records[0], "degraded"),
-                "languages": nested(records[0], "languages"),
-                "semantic_contexts": nested(records[0], "semantic_contexts"),
-                "counts": JsonValue.object(counts),
+                "snapshot_id": nested(header, "snapshot_id"), "degraded": nested(header, "degraded"),
+                "languages": nested(header, "languages"),
+                "semantic_contexts": nested(header, "semantic_contexts"),
+                "counts": JsonValue.object({kind: JsonValue.int(counts[kind]) for kind in counts.keys()}),
             },
         )
         return summary.to_json().map_err((error) => error.message())
@@ -286,9 +292,14 @@ def resources() -> JsonValue:
     )
 
 
-def parse_records(document: str) -> Result[list[JsonValue], str]:
-    """Decode the shared graph's JSON sequence once at the MCP presentation boundary."""
-    return parse(document).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())
+def record_lines(document: str) -> list[str]:
+    """The records of a graph export, one JSON document per line, still undecoded."""
+    return [line for line in document.split("\n") if line.strip() != ""]
+
+
+def parse_record(line: str) -> Result[JsonValue, str]:
+    """Decode one graph record; the caller keeps only the fields it selects, so no whole export becomes a tree."""
+    return parse(line).map_err((error) => error.message())
 
 
 def tool_names() -> list[str]:
