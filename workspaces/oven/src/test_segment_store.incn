@@ -21,6 +21,8 @@ from segment_store import (
     put,
     put_payload,
     snapshot,
+    fork,
+    read_counts,
 )
 
 
@@ -116,7 +118,7 @@ pub def test_damage_is_an_error_never_absence_or_an_older_value() -> Result[None
     root = scratch.path().joinpath("store")
     assert write_one(root, "a", "old").map_err((error) => error.message())?.generation > 0
     newer = write_one(root, "a", "newer").map_err((error) => error.message())?
-    damage_last_byte(root.joinpath("segments").joinpath(f"{newer.segments[1].name}.seg"))?
+    damage_last_byte(root.joinpath("segments").joinpath(f"{newer.segments[1]}.seg"))?
     damaged = snapshot(root).map_err((error) => error.message())?
     assert text(lookup(damaged, "a")) == "<integrity>"
     assert error_kind(write_one(root, "a", "plain")) == "integrity"
@@ -174,7 +176,7 @@ pub def test_compaction_preserves_contents_and_gives_a_byte_identical_base() -> 
     left = compact(one).map_err((error) => error.message())?
     right = compact(two).map_err((error) => error.message())?
     assert len(left.segments) == 1 and len(right.segments) == 1
-    assert left.segments[0].name == right.segments[0].name
+    assert left.segments[0] == right.segments[0] and left.index == right.index
     assert text(lookup(right, "b")) == "y"
     assert text(lookup(right, "c")) == "<deleted>"
     source = scratch.path().joinpath("artifact")
@@ -195,4 +197,57 @@ def damage_last_byte(path: Path) -> Result[None, str]:
     data = path.read_bytes().map_err((error) => error.message())?
     path.chmod(false).map_err((error) => error.message())?
     path.write_bytes(data[:len(data) - 1]).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys() -> Result[None, str]:
+    """
+    A key is found through its view's index: the pages read for one lookup do not grow with the number of segments or
+    with keys written elsewhere, and every key stays readable.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    for batch in range(40):
+        mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+        for item in range(25):
+            transaction = put(transaction, f"key-{batch}-{item}", f"value-{batch}-{item}".encode("utf-8"))
+        assert commit(transaction).map_err((error) => error.message())?.generation == batch + 1
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert len(latest.segments) == 40
+    before = read_counts()
+    assert text(lookup(latest, "key-17-3")) == "value-17-3"
+    after = read_counts()
+    assert after.pages - before.pages <= 3, f"{after.pages - before.pages} index pages for one lookup"
+    assert after.records - before.records == 1
+    assert text(lookup(latest, "key-0-0")) == "value-0-0"
+    assert text(lookup(latest, "key-39-24")) == "value-39-24"
+    assert text(lookup(latest, "missing")) == "<absent>"
+    assert len(keys(latest).map_err((error) => error.message())?) == 1000
+    return Ok(None)
+
+
+pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_writes() -> Result[None, str]:
+    """
+    A fork starts at its source's root; writes to either side stay on that side, an existing view name is refused, and
+    compaction keeps what each view holds.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    home = write_one(root, "shared", "base").map_err((error) => error.message())?
+    test_view = fork(home, "test").map_err((error) => error.message())?
+    assert test_view.index == home.index
+    assert text(lookup(test_view, "shared")) == "base"
+    in_test = commit(put(begin(test_view), "only-test", b"t")).map_err((error) => error.message())?
+    in_home = write_one(root, "only-home", "h").map_err((error) => error.message())?
+    assert text(lookup(in_test, "only-home")) == "<absent>"
+    assert text(lookup(in_home, "only-test")) == "<absent>"
+    assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-test")) == "t"
+    match fork(in_home, "test"):
+        Ok(_) => assert false, "an existing view was replaced"
+        Err(error) => assert error.kind == "conflict", error.message()
+    compacted = compact(root).map_err((error) => error.message())?
+    assert len(compacted.segments) == 1
+    assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-test")) == "t"
+    assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-home")) == "<absent>"
+    assert text(lookup(snapshot(root).map_err((error) => error.message())?, "only-home")) == "h"
     return Ok(None)
