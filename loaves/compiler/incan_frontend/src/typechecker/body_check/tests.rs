@@ -105,3 +105,144 @@ fn debug_container(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, close: 
     }
     parts.join(",")
 }
+
+impl TypeChecker {
+    /// Extend the existing cold oracle with edit reuse: applicability is proved from exact unchanged ASTs and G1
+    /// declaration projections at fixed coordinates. The harness calls the production local/finalization adapters;
+    /// it is not an incremental engine, a persistent cache, or proof of position remapping.
+    pub(in crate::typechecker) fn assert_body_edit_reuse() -> Result<(), Box<dyn std::error::Error>> {
+        let program_text = |body: &str| {
+            format!(
+                "def touch(mut items: list[int]) -> None:\n    {body:<24}\ndef first() -> None:\n    items = [1]\n    touch(items)\ndef second() -> None:\n    items = [2]\n    touch(items)\ndef sibling() -> int:\n    return 3\n"
+            )
+        };
+        let parse = |source: &str| -> Result<crate::ast::Program, Box<dyn std::error::Error>> {
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            Ok(crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?)
+        };
+        let original = parse(&program_text("println(1)"))?;
+        let mut envelope = TypeChecker::new();
+        envelope.prepare_body_edit_program(&original);
+        let environment = canonical_debug(&format!(
+            "{:?}",
+            (
+                &envelope.type_info.declarations,
+                envelope.symbols.all_symbols(),
+                &envelope.type_aliases
+            )
+        ));
+        let mut base = TypeChecker::new();
+        assert!(base.check_program(&original).is_ok());
+        assert_eq!(base.checked_bodies.len(), 4);
+        for (body, expected_finalizations, expected_reuses) in
+            [("println(2)", 1, 3), ("touch(items)", 1, 3), ("items.append(2)", 3, 1)]
+        {
+            let edited = parse(&program_text(body))?;
+            let mut candidate = TypeChecker::new();
+            candidate.prepare_body_edit_program(&edited);
+            // This fixture has no imports, decorators, defaults or signature influences. Its complete G1
+            // declaration projection must still be byte-equal before a sibling is admitted for reuse.
+            assert_eq!(
+                canonical_debug(&format!(
+                    "{:?}",
+                    (
+                        &candidate.type_info.declarations,
+                        candidate.symbols.all_symbols(),
+                        &candidate.type_aliases
+                    )
+                )),
+                environment
+            );
+            candidate.validate_source_type_names = true;
+            for (index, declaration) in edited.declarations.iter().enumerate() {
+                if index == 0 {
+                    candidate.check_environment_declaration(declaration);
+                } else {
+                    assert_eq!(
+                        declaration, &original.declarations[index],
+                        "exact local syntax/coordinate precondition"
+                    );
+                    let checked = base
+                        .checked_bodies
+                        .iter()
+                        .find(|checked| checked.local.owner == declaration.span)
+                        .ok_or("missing sibling value")?;
+                    candidate.reuse_checked_body(std::sync::Arc::clone(checked));
+                }
+            }
+            candidate.settle_body_checks();
+            candidate.record_program_lowering_facts(&edited);
+            let result = candidate.finish_program_check(&edited);
+            let mut legacy = TypeChecker::new();
+            let fresh = legacy.legacy_check_program(&edited);
+            assert_eq!(result, fresh, "complete ordered diagnostics after edit");
+            candidate.observe_body_local(Span::default());
+            legacy.observe_body_local(Span::default());
+            assert_eq!(
+                candidate.body_local_observations.last(),
+                legacy.body_local_observations.last(),
+                "all final fact families after edit"
+            );
+            assert_eq!(
+                candidate.type_info.semantic_fact_store(&[]).render_snapshot(),
+                legacy.type_info.semantic_fact_store(&[]).render_snapshot(),
+                "complete semantic facts after edit"
+            );
+            assert_eq!(
+                candidate.type_info.declarations.nested_declaration_identities,
+                legacy.type_info.declarations.nested_declaration_identities,
+                "unused lexical declarations survive reuse"
+            );
+            let work = candidate.check_work();
+
+            assert_eq!(work.body_local_checks, 1);
+            assert_eq!(work.body_finalizations, expected_finalizations);
+            assert_eq!(work.body_view_reuses, expected_reuses);
+            assert_eq!(work.callable_defaults, 0);
+            assert_eq!(
+                work.mutation_arguments,
+                legacy.check_work().mutation_arguments,
+                "cached obligations receive the current traversal binding"
+            );
+            for previous in base
+                .checked_bodies
+                .iter()
+                .filter(|checked| checked.local.owner != original.declarations[0].span)
+            {
+                let current = candidate
+                    .checked_bodies
+                    .iter()
+                    .find(|checked| checked.local.owner == previous.local.owner)
+                    .ok_or("missing final sibling")?;
+                let subscribed = !previous.effect_reads.is_empty();
+                assert_eq!(
+                    std::sync::Arc::ptr_eq(previous, current),
+                    expected_reuses == 3 || !subscribed
+                );
+                assert!(
+                    std::sync::Arc::ptr_eq(&previous.local, &current.local),
+                    "caller local facts are reused even when its effect decision changes"
+                );
+            }
+            eprintln!(
+                "body-edit\tbody={body}\tlocal_checks={}\tfinalizations={}\treused_views={}\tcomponents={}\tmembers={}\terrors={}\tdifferences=0",
+                work.body_local_checks,
+                work.body_finalizations,
+                work.body_view_reuses,
+                work.mutation_components,
+                work.mutation_member_visits,
+                result.as_ref().err().map_or(0, Vec::len)
+            );
+        }
+        Ok(())
+    }
+    /// Prepare exactly the production G1 envelope before a test driver admits any reused body.
+    fn prepare_body_edit_program(&mut self, program: &crate::ast::Program) {
+        self.reset_program_check(program, false);
+        self.collect_program_check_declarations(program);
+        self.record_program_header_facts();
+        self.record_source_declaration_identities(program);
+        self.visibility_point = super::super::VisibilityPoint::Collected;
+        self.prepare_program_body_facts();
+    }
+}
