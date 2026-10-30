@@ -233,10 +233,13 @@ from frozen_equality import compare_frozen, borrow_frozen_argument, frozen_refer
 from decorator_caches import (
     DecoratorFrame,
     frame_name,
-    validate_text_binding,
+    validate_instance_binding,
     validate_binding_policy,
     callable_name_profile,
-    reified_pointer,
+    frame_signature,
+    builder_signature,
+    cached_binding_frames,
+    binding_accessor_name,
 )
 from traits import (
     close_trait_dispatch_arguments,
@@ -532,14 +535,15 @@ def validate_declarations_and_bodies(module: &BodyIrModule, modules: &list[BodyI
     """
     Validate a module's retained declarations and bodies; trait implementations are validated by the caller.
 
-    A generic decorator initializer is admitted only for its validated text-callable cache profile. It never enters
-    ordinary module-static initialization or falls through to the undecorated original.
+    A generic decorator initializer is admitted only for a synchronous per-instantiation binding. Its closed instances
+    publish their own storage cells; they never enter ordinary module-static initialization or fall through to the
+    undecorated original.
     """
     for binding in module.decorated_bindings:
         if not module.is_well_formed_decorated_binding_in_project(binding, modules):
             return Err("invalid Body IR decorated binding identity")
         match binding.initializer:
-            Some(_initializer) => _ = validate_text_binding(binding)?
+            Some(_initializer) => _ = validate_instance_binding(binding)?
             None => pass
     for declaration in module.static_declarations:
         if not module.is_well_formed_static_declaration_in_project(declaration, modules):
@@ -8165,6 +8169,7 @@ def lower_requested_frames(
         instances,
     )?
     trace_lowering(trace, "generic instances")
+    mut instance_cells: list[StaticCell] = []
     lower_instances(
         template_constructors,
         context,
@@ -8179,8 +8184,12 @@ def lower_requested_frames(
         externals,
         intrinsics,
         retained_nominals,
+        instance_cells,
     )?
-    return Ok(statics)
+    mut cells = statics
+    for cell in instance_cells:
+        cells.append(cell)
+    return Ok(cells)
 
 
 def finalize_plan_layouts(
@@ -8998,6 +9007,7 @@ def append_context_refusals(
         Ok(_cells) => pass
         Err(error) => refusals.append(f"computed static: {error}")
     mut retained_nominals = nominal_instances
+    mut instance_cells: list[StaticCell] = []
     match lower_instances(
         template_constructors,
         context,
@@ -9012,6 +9022,7 @@ def append_context_refusals(
         externals,
         intrinsics,
         retained_nominals,
+        instance_cells,
     ):
         Ok(_lowered) => pass
         Err(error) => refusals.append(f"type-parameter instance: {error}")
@@ -9065,8 +9076,13 @@ def retain_generic_decorator_frames(
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut instances: list[Instance],
+    mut cells: list[StaticCell],
 ) -> Result[None, str]:
-    """Close a retained original and its sole initializer with the wrapper's authenticated ordered arguments."""
+    """
+    Close a retained original and its sole initializer with the wrapper's authenticated ordered arguments.
+
+    The closed instance's storage cell takes the next slot after the unit's source statics and earlier instance cells.
+    """
     for binding_position in range(len(module.decorated_bindings)):
         binding = borrowed_at(module.decorated_bindings, binding_position)
         if binding.original_body.canonical != body.canonical:
@@ -9077,7 +9093,6 @@ def retain_generic_decorator_frames(
         match binding.initializer:
             None => pass
             Some(template) =>
-                validate_text_binding(binding)?
                 if len(owned_callable_slots) != 0:
                     return Err("unsupported Body IR generic decorated wrapper with owned closure parameters")
                 original = instantiate(binding.original_body, arguments, [])?
@@ -9092,6 +9107,8 @@ def retain_generic_decorator_frames(
                     arguments,
                     DecoratorFrame.Original,
                 )?
+                signature = frame_signature(function)
+                original_name = function.name
                 retain_instance(functions, function)?
                 append_synthesized(functions, synthesized)?
                 merge_externals(externals, runtime)?
@@ -9108,10 +9125,30 @@ def retain_generic_decorator_frames(
                     arguments,
                     DecoratorFrame.Initializer,
                 )?
+                # Decorators generic over the whole callable return the original's exact closed signature.
+                if init_function.return_type != PlanType.FunctionPointer(signature):
+                    return Err("unsupported Body IR generic decorator initializer outside its original's signature")
+                initializer_name = init_function.name
                 retain_instance(functions, init_function)?
                 append_synthesized(functions, init_synthesized)?
                 merge_externals(externals, init_runtime)?
                 merge_instance_requests(instances, init_pending)
+                cell, frames, cache_runtime = cached_binding_frames(
+                    program,
+                    binding,
+                    evaluator_name(module, body),
+                    original_name,
+                    initializer_name,
+                    signature,
+                    len(program.statics.as_ref()) + len(cells),
+                    unions,
+                    intrinsics,
+                    location(body.span, source, file),
+                )?
+                cells.append(cell)
+                for frame in frames:
+                    retain_instance(functions, frame)?
+                merge_externals(externals, cache_runtime)?
     return Ok(None)
 
 
@@ -9129,11 +9166,13 @@ def lower_instances(
     mut externals: list[ExternalFunction],
     mut intrinsics: list[EnumDeclaration],
     mut nominal_instances: list[NominalInstance],
+    mut cells: list[StaticCell],
 ) -> Result[None, str]:
     """
     Drain checked instances through an explicit foreign mutable loan and append native layouts in place.
 
     All producers merge requests through request_instance, preserving the first equivalent checked frame.
+    Each closed instance of a generic decorated function appends its storage cell to `cells`.
     Imported Rust values written as `mut T` are owned parameters, so only `&mut T` preserves this module's storage.
     Callers that publish source declarations restore their original nominal-table length after retaining the layouts.
     Final runtime call selections are applied once after the queue closes.
@@ -9187,6 +9226,7 @@ def lower_instances(
             functions,
             externals,
             instances,
+            cells,
         )?
         enqueue_instances(queue, instances)
         diagnostic_context = f"{body.name} at {files[source_index]}"
@@ -9499,7 +9539,6 @@ def frame_decorator_role(
         validate_binding_policy(binding)?
         match binding.initializer:
             Some(_initializer) =>
-                validate_text_binding(binding)?
                 if role == DecoratorFrame.Normal:
                     cached_decorator = slot
                 elif role == DecoratorFrame.Initializer:
@@ -13246,7 +13285,7 @@ def read_generic_decorator(
     global: &RustGlobalPlace,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Read only a validated wrapper's own closed binding through its declaration-specific initializer guard."""
+    """Read only a validated wrapper's own closed binding through its instance's publishing accessor."""
     slot = builder.cached_decorator
     if slot < 0:
         return Ok(None)
@@ -13257,42 +13296,10 @@ def read_generic_decorator(
         return Ok(None)
     if builder.body_identity != binding.original_body.canonical or len(value.projection) != 0:
         return Err("unsupported Body IR generic decorator read outside its whole checked wrapper binding")
-    validate_text_binding(binding)?
-    pointer = PlanType.FunctionPointer([PlanType.String])
-    initializer = reified_pointer(builder, frame_name(builder.name, DecoratorFrame.Initializer), [pointer], span)
-    original = reified_pointer(builder, frame_name(builder.name, DecoratorFrame.Original), [PlanType.String], span)
-    original_address = callable_address(builder, original, span)?
-    module = owned_literal(builder, builder.module_identity, span)
-    declaration = owned_literal(builder, str(binding.original_body.direct_call_id), span)
-    instance = owned_literal(builder, builder.name, span)
-    name = owned_literal(builder, str(global.identity.declaration_name), span)
-    operands = [
-        read_place(module, true, span),
-        read_place(declaration, true, span),
-        read_place(instance, true, span),
-        initializer,
-        original_address,
-        read_place(name, true, span),
-    ]
-    for owner in [module, declaration, instance, name]:
-        forget_owned(builder, owner.local)
-    output = temporary(builder, pointer, span)
-    external_call(
-        builder,
-        "incan_native_runtime::cached_text_binding",
-        [
-            PlanType.String,
-            PlanType.String,
-            PlanType.String,
-            PlanType.FunctionPointer([pointer]),
-            PlanType.USize,
-            PlanType.String,
-        ],
-        pointer,
-        operands,
-        output,
-        span,
-    )
+    validate_instance_binding(binding)?
+    # The wrapper shares the original's closed signature, which the accessor returns as a reified pointer.
+    output = temporary(builder, PlanType.FunctionPointer(builder_signature(builder)), span)
+    terminate_call(builder, CalleeKind.Planned(binding_accessor_name(builder.name)), [], output, span)
     return Ok(Some(read_place(output, false, span)))
 
 
