@@ -78,13 +78,13 @@ def test_view_bounds_and_scalars() -> Result[None, str]:
     path.write_bytes(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\xff").map_err((error) => error.message())?
     mapped = path.map_read().map_err((error) => error.message())?
     view = required_view(mapped.view(1, 8))?
-    assert_true(view.read_u8(0) == Some(1))
-    assert_true(view.read_u16_le(0) == Some(513))
-    assert_true(view.read_u32_le(0) == Some(67305985))
-    assert_true(view.read_u64_le(0) == Some(578437695752307201))
-    assert_true(view.read_i16_le(0) == Some(513))
-    assert_true(view.read_i32_le(0) == Some(67305985))
-    assert_true(view.read_i64_le(0) == Some(578437695752307201))
+    assert_true(view.read_u8(0) == Some(1u8))
+    assert_true(view.read_u16_le(0) == Some(513u16))
+    assert_true(view.read_u32_le(0) == Some(67305985u32))
+    assert_true(view.read_u64_le(0) == Some(578437695752307201u64))
+    assert_true(view.read_i16_le(0) == Some(513i16))
+    assert_true(view.read_i32_le(0) == Some(67305985i32))
+    assert_true(view.read_i64_le(0) == Some(578437695752307201i64))
     assert_true(absent(view.read_u64_le(1)))
     assert_true(absent(view.read_u8(8)))
     assert_true(absent(view.read_u8(-1)))
@@ -97,11 +97,12 @@ def test_view_bounds_and_scalars() -> Result[None, str]:
     assert_true(absent(mapped.view(9223372036854775807, 1)))
     assert_true(absent(mapped.view(1, 9223372036854775807)))
     signed = required_view(mapped.view(9, 1))?
-    assert_true(signed.read_i8(0) == Some(-1))
+    assert_true(signed.read_i8(0) == Some(-1i8))
     floats = Path("contracts-mapped-view-floats")
     floats.write_bytes(b"\x00\x00\xc0?\x00\x00\x00\x00\x00\x00\xf8?").map_err((error) => error.message())?
     float_mapping = floats.map_read().map_err((error) => error.message())?
     float_view = required_view(float_mapping.view(0, 12))?
-    assert_true(float_view.read_f32_le(0) == Some(1.5))
+    one_and_a_half: f32 = 1.5
+    assert_true(float_view.read_f32_le(0) == Some(one_and_a_half))
     assert_true(float_view.read_f64_le(4) == Some(1.5))
     return Ok(None)
