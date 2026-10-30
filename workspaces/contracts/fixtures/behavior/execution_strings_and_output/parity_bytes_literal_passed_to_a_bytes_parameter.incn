@@ -1,4 +1,4 @@
-# behavior: bytes parameters, fields and frozen values support signed indexing with u8 elements, including typed list comprehensions and read-only frozen-constant arguments (#2256; parity corpus case 15)
+# behavior: bytes parameters, fields and frozen values support signed indexing with u8 elements, including typed list comprehensions and read-only frozen-constant arguments (#2497; #2256; parity corpus case 15)
 # expect-stdout:
 #   1
 #   105
@@ -10,6 +10,9 @@
 #   255
 #   2
 #   0
+#   255 0 0
+#   0
+#   2
 
 """A bytes literal is passed to a bytes parameter (parity corpus case 15)."""
 
@@ -17,6 +20,7 @@ from std.io import BytesIO
 
 const RAW: FrozenBytes = b"\x00\xff"
 const EMPTY: bytes = b""
+const ID: bytes = b"id"
 
 
 model Packet:
@@ -57,3 +61,9 @@ def main() -> None:
     stream = BytesIO(RAW)
     println(len(stream.getvalue()))
     println(len(ordinal_key_bytes(EMPTY)))
+    mut copied = Packet(data=RAW)
+    other = Packet(data=RAW)
+    copied.data = EMPTY
+    println(f"{other.data[-1]} {len(copied.data)} {RAW[0]}")
+    println(len(Packet(data=EMPTY).data))
+    println(len(Packet(data=ID).data))

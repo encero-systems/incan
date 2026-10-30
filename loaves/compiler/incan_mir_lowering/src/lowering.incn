@@ -10470,7 +10470,7 @@ def list_assignment(
                         append_list_value(builder, output, argument, leaf, depth, span)?
                     None => splice_list_spread(builder, output, item, leaf, depth, span)?
         RustRvalue.Use(value) =>
-            argument = value_operand(builder, value, span)?
+            argument = boundary_operand(builder, value, ty, span)?
             # The checker types a builtin range call as a list, but its value is a lazy range only iteration consumes.
             if operand_type(builder, argument)? != ty:
                 return Err("unsupported Body IR list assignment from a non-list value")
@@ -13962,6 +13962,11 @@ pub def boundary_plan_operand(
 ) -> Result[Operand, str]:
     """Convert an evaluated value to its checked boundary carrier, retaining exact native aliases, tuple layouts and ownership without repeating source effects."""
     source = operand_type(builder, value)?
+    if source == PlanType.FrozenBytes and target == PlanType.List(ListLeaf.U8, 1):
+        frozen = temporary(builder, source, span)
+        builder.emit(plan_assign(frozen, RvalueKind.Use(value), span))
+        storage = sequence_read_storage(builder, frozen, span)?
+        return Ok(read_place(storage, true, span))
     if source == PlanType.StrRef and target == PlanType.String:
         owned = owned_slice_text(builder, value, span)
         return Ok(read_place(owned, true, span))
