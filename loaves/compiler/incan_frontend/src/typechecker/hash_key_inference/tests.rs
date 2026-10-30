@@ -54,6 +54,7 @@ fn influence_facts_match_fresh_legacy_inference() -> Result<(), Box<dyn std::err
     assert_cold_check(include_str!(
         "../../../../../../workspaces/contracts/fixtures/behavior/codegen_functions_and_aliases/decorated_generic_closed_signatures.incn"
     ))?;
+    assert_environment_matrix()?;
     assert_imported_influences()?;
     assert_check_work_scope()?;
     measure_influence_scan()?;
@@ -138,6 +139,7 @@ fn assert_checkers(
         legacy.type_info.semantic_fact_store(&[]).render_snapshot(),
         "{source}"
     );
+    compare_environment(candidate, legacy)?;
     Ok(())
 }
 
@@ -239,5 +241,278 @@ fn assert_imported_influences() -> Result<(), Box<dyn std::error::Error>> {
     candidate.import_module(&dependency, "provider");
     assert_checkers(&program, &mut candidate, &mut legacy)?;
     assert_eq!(candidate.check_work().function_bodies, 1);
+    compare_environment(&candidate, &legacy)?;
+    Ok(())
+}
+
+/// Compare scoped declaration readers with a separately collected legacy checker at each binding transition.
+fn assert_environment_matrix() -> Result<(), Box<dyn std::error::Error>> {
+    let sources = [
+        "def read(value: Alias) -> int:\n    return value.value\ntype Alias = Item\nmodel Item:\n    value: int\n",
+        "model Item:\n    value: int\ntype Alias = Item\ndef read(value: Alias) -> int:\n    return value.value\n",
+        "def choose(value: int) -> int:\n    return value\ndef choose(value: str) -> str:\n    return value\ndef caller() -> int:\n    return choose(1)\n",
+        "def invalid_default(value: int = value) -> int:\n    return value\n",
+        "def defaults(value: int = outer) -> int:\n    return value\nconst outer: int = 3\n",
+        "def direct[T](key: T) -> None:\n    keys = {key}\ndef forward[U](key: U) -> None:\n    direct(key)\n",
+    ];
+    for source in sources {
+        assert_environment_source(source)?;
+        assert_cold_check(source)?;
+    }
+    for source in [
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/snapshots_traits_and_generics/trait_supertraits.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/snapshots_functions_and_projections/user_defined_decorators.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/codegen_functions_and_aliases/decorated_type_bound_overloads.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
+        ),
+        include_str!(
+            "../../../../../../workspaces/contracts/fixtures/behavior/codegen_functions_and_aliases/decorated_generic_closed_signatures.incn"
+        ),
+    ] {
+        assert_environment_source(source)?;
+        assert_cold_check(source)?;
+    }
+    Ok(())
+}
+
+/// Advance independent collectors in source order; defaults and decorators keep their existing checking boundary.
+fn assert_environment_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut candidate = TypeChecker::new();
+    let mut legacy = TypeChecker::new();
+    candidate.reset_program_check(&program, false);
+    legacy.reset_program_check(&program, false);
+    candidate.collect_program_check_declarations(&program);
+    legacy.legacy_collect_program_declarations(&program);
+    candidate.record_program_header_facts();
+    candidate.record_source_declaration_identities(&program);
+    candidate.visibility_point = super::super::VisibilityPoint::Collected;
+    candidate.prepare_program_body_facts();
+    legacy.prepare_program_body_facts();
+    let source_identities = candidate.type_info.declarations.source_identities.clone();
+    compare_environment(&candidate, &legacy)?;
+    candidate.validate_source_type_names = true;
+    legacy.validate_source_type_names = true;
+    for constants in [true, false] {
+        for declaration in &program.declarations {
+            if matches!(declaration.node, crate::ast::Declaration::Const(_)) != constants {
+                continue;
+            }
+            candidate.visibility_point = super::super::VisibilityPoint::BeforeDeclaration(declaration.span);
+            compare_environment(&candidate, &legacy)?;
+            candidate.check_environment_declaration(declaration);
+            assert_eq!(candidate.type_info.declarations.source_identities, source_identities);
+            legacy.check_declaration(declaration);
+            assert_eq!(
+                candidate.check_environment().visibility_point(),
+                super::super::VisibilityPoint::AfterDeclaration(declaration.span)
+            );
+            compare_environment(&candidate, &legacy)?;
+        }
+    }
+    eprintln!(
+        "environment-oracle\t{}\t{}",
+        program.declarations.len(),
+        candidate.check_work().function_bodies
+    );
+    Ok(())
+}
+
+/// Compare every active spelling, canonical target, alias, source signature, generic bound and closure selection.
+fn compare_environment(candidate: &TypeChecker, legacy: &TypeChecker) -> Result<(), Box<dyn std::error::Error>> {
+    let environment = candidate.check_environment();
+    let declarations = candidate.declaration_view();
+    let names = |checker: &TypeChecker| {
+        checker
+            .symbols
+            .active_module_symbols()
+            .map(|(_, symbol)| symbol.name.clone())
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(names(candidate), names(legacy));
+    for symbol in legacy.symbols.all_symbols() {
+        let expected = legacy
+            .symbols
+            .lookup(&symbol.name)
+            .and_then(|id| legacy.symbols.get(id));
+        let actual = environment.lookup(&symbol.name);
+        assert_eq!(
+            actual.map(|value| (&value.symbol.name, value.symbol.span)),
+            expected.map(|value| (&value.name, value.span))
+        );
+        let Some(actual) = actual else { continue };
+        let expected_id = legacy.symbols.lookup(&symbol.name).ok_or("missing legacy binding")?;
+        assert_eq!(actual.canonical, legacy.symbols.identity_of(expected_id));
+        assert_eq!(
+            environment.import_path(&symbol.name),
+            legacy.symbols.import_binding_path(&symbol.name)
+        );
+        let Some(expected) = expected else { continue };
+        compare_binding_kinds(&actual.symbol.kind, &expected.kind)?;
+    }
+    assert!(environment.lookup("__absent_environment_binding__").is_none());
+    for (name, expected) in legacy.type_aliases.iter() {
+        let actual = declarations.alias(name).ok_or("missing alias")?;
+        assert_eq!(actual.type_params, expected.type_params);
+        assert_eq!(actual.target, expected.target);
+        assert_eq!(actual.nominal_identities, expected.nominal_identities);
+    }
+    for (canonical, expected) in &legacy.hash_key_inference.type_params {
+        assert_eq!(declarations.hash_parameters(canonical), Some(expected));
+    }
+    for (span, expected) in &legacy.type_info.declarations.function_bindings_by_span {
+        assert_eq!(declarations.function(*span), Some(expected));
+    }
+    for (span, expected) in &legacy.type_info.declarations.method_bindings_by_span {
+        assert_eq!(declarations.method(*span), Some(expected));
+    }
+    assert_eq!(
+        candidate.hash_key_inference.type_params,
+        legacy.hash_key_inference.type_params
+    );
+    assert_eq!(
+        candidate.type_info.calls.closure_holding_params,
+        legacy.type_info.calls.closure_holding_params
+    );
+    assert_eq!(
+        candidate.type_info.calls.closure_returning_callables,
+        legacy.type_info.calls.closure_returning_callables
+    );
+    assert_eq!(candidate.errors, legacy.errors);
+    assert_eq!(candidate.warnings, legacy.warnings);
+    Ok(())
+}
+
+/// Compare callable fields without ordering HashMaps or substituting display strings for checked types.
+fn compare_function(actual: &crate::symbols::FunctionInfo, expected: &crate::symbols::FunctionInfo) {
+    assert_eq!(actual.params, expected.params);
+    assert_eq!(actual.return_type, expected.return_type);
+    assert_eq!(actual.is_async, expected.is_async);
+    assert_eq!(actual.type_params, expected.type_params);
+    assert_eq!(actual.type_param_bounds, expected.type_param_bounds);
+    assert_eq!(actual.type_param_bound_details, expected.type_param_bound_details);
+    assert_eq!(actual.emitted_name, expected.emitted_name);
+}
+
+/// Decorator transitions may replace a function with a callable value; overload candidates keep all checked fields.
+fn compare_binding_kinds(
+    actual: &crate::symbols::SymbolKind,
+    expected: &crate::symbols::SymbolKind,
+) -> Result<(), String> {
+    use crate::symbols::SymbolKind;
+    assert_eq!(std::mem::discriminant(actual), std::mem::discriminant(expected));
+    match (actual, expected) {
+        (SymbolKind::Function(actual), SymbolKind::Function(expected)) => compare_function(actual, expected),
+        (SymbolKind::FunctionOverloads(actual), SymbolKind::FunctionOverloads(expected)) => {
+            assert_eq!(actual.len(), expected.len());
+            for (actual, expected) in actual.iter().zip(expected) {
+                compare_function(&actual.info, &expected.info);
+                assert_eq!(actual.identity, expected.identity);
+                assert_eq!(actual.span, expected.span);
+            }
+        }
+        (SymbolKind::Variable(actual), SymbolKind::Variable(expected)) => {
+            assert_eq!(actual.ty, expected.ty);
+            assert_eq!(actual.is_mutable, expected.is_mutable);
+        }
+        (SymbolKind::Trait(actual), SymbolKind::Trait(expected)) => {
+            assert_eq!(actual.type_params, expected.type_params);
+            assert_eq!(actual.supertraits, expected.supertraits);
+            assert_eq!(actual.requires, expected.requires);
+            assert_eq!(actual.method_aliases, expected.method_aliases);
+            compare_methods(&actual.methods, &expected.methods)?;
+        }
+        (SymbolKind::Type(actual), SymbolKind::Type(expected)) => compare_nominal_methods(actual, expected)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Preserve every checked method signature field, including generic constraints and inherited aliases.
+fn compare_methods(
+    actual: &HashMap<String, crate::symbols::MethodInfo>,
+    expected: &HashMap<String, crate::symbols::MethodInfo>,
+) -> Result<(), String> {
+    assert_eq!(actual.len(), expected.len());
+    for (name, expected) in expected {
+        let actual = actual
+            .get(name)
+            .ok_or_else(|| format!("missing checked method {name}"))?;
+        compare_method(actual, expected);
+    }
+    Ok(())
+}
+
+/// Compare a method candidate independently of its name slot, including receiver, constraints and alias target.
+fn compare_method(actual: &crate::symbols::MethodInfo, expected: &crate::symbols::MethodInfo) {
+    assert_eq!(actual.identity, expected.identity);
+    assert_eq!(actual.type_params, expected.type_params);
+    assert_eq!(actual.type_param_bounds, expected.type_param_bounds);
+    assert_eq!(actual.type_param_bound_details, expected.type_param_bound_details);
+    assert_eq!(actual.trait_target, expected.trait_target);
+    assert_eq!(actual.receiver, expected.receiver);
+    assert_eq!(actual.params, expected.params);
+    assert_eq!(actual.return_type, expected.return_type);
+    assert_eq!(actual.is_async, expected.is_async);
+    assert_eq!(actual.has_body, expected.has_body);
+    assert_eq!(actual.alias_of, expected.alias_of);
+}
+
+/// Same-name methods retain every checked overload, rather than comparing only the primary candidate.
+fn compare_overloads(
+    actual: &HashMap<String, Vec<crate::symbols::MethodInfo>>,
+    expected: &HashMap<String, Vec<crate::symbols::MethodInfo>>,
+) -> Result<(), String> {
+    assert_eq!(actual.len(), expected.len());
+    for (name, expected) in expected {
+        let actual = actual
+            .get(name)
+            .ok_or_else(|| format!("missing method overload set {name}"))?;
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            compare_method(actual, expected);
+        }
+    }
+    Ok(())
+}
+
+/// Compare nominal method tables through their checked declarations, with no source-text re-resolution.
+fn compare_nominal_methods(
+    actual: &crate::symbols::TypeInfo,
+    expected: &crate::symbols::TypeInfo,
+) -> Result<(), String> {
+    use crate::symbols::TypeInfo;
+    assert_eq!(std::mem::discriminant(actual), std::mem::discriminant(expected));
+    match (actual, expected) {
+        (TypeInfo::Model(actual), TypeInfo::Model(expected)) => {
+            assert_eq!(actual.type_params, expected.type_params);
+            compare_methods(&actual.methods, &expected.methods)?;
+            compare_overloads(&actual.method_overloads, &expected.method_overloads)?;
+        }
+        (TypeInfo::Class(actual), TypeInfo::Class(expected)) => {
+            assert_eq!(actual.type_params, expected.type_params);
+            compare_methods(&actual.methods, &expected.methods)?;
+            compare_overloads(&actual.method_overloads, &expected.method_overloads)?;
+        }
+        (TypeInfo::Enum(actual), TypeInfo::Enum(expected)) => {
+            assert_eq!(actual.type_params, expected.type_params);
+            compare_methods(&actual.methods, &expected.methods)?;
+            compare_overloads(&actual.method_overloads, &expected.method_overloads)?;
+        }
+        (TypeInfo::Newtype(actual), TypeInfo::Newtype(expected)) => {
+            assert_eq!(actual.type_params, expected.type_params);
+            compare_methods(&actual.methods, &expected.methods)?;
+            compare_overloads(&actual.method_overloads, &expected.method_overloads)?;
+        }
+        _ => {}
+    }
     Ok(())
 }
