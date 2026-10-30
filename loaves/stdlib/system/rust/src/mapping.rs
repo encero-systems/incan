@@ -3,7 +3,8 @@
 //! The owner anchor is explicit: dropping a mapping handle cannot unmap bytes still held by a view. This is not a
 //! lexical borrow, and a caller retaining a view also retains the whole virtual mapping. The backing file must remain
 //! immutable until the last handle or view is dropped; neither a read-only descriptor nor this anchor prevents an
-//! unrelated process from truncating or modifying the inode.
+//! unrelated process from truncating or modifying the inode. A view lends its bytes to native readers through
+//! `AsRef<[u8]>`, so hashing or comparing mapped bytes needs no copy.
 
 use std::fs::File;
 use std::ops::Range;
@@ -114,6 +115,13 @@ impl MappedView {
     }
 }
 
+/// A view lends its bytes, in place, to native APIs that read `AsRef<[u8]>`.
+impl AsRef<[u8]> for MappedView {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
 /// Generate endian-specific scalar readers without unsafe native-structure casts.
 macro_rules! little_endian {
     ($($method:ident: $scalar:ty),+ $(,)?) => {
@@ -172,6 +180,8 @@ mod tests {
         let child = parent.slice(1, 3).ok_or("missing child")?;
         assert!(Arc::ptr_eq(&mapping.mapping, &child.mapping));
         assert_eq!(child.as_bytes().as_ptr(), mapping.mapping[3..].as_ptr());
+        let lent: &[u8] = child.as_ref();
+        assert_eq!(lent.as_ptr(), mapping.mapping[3..].as_ptr());
         drop(mapping);
         drop(parent);
         assert_eq!(child.as_bytes(), b"345");
