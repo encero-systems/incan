@@ -119,8 +119,7 @@ pub def validate_binding_policy(binding: &DecoratedBinding) -> Result[None, str]
     match binding.initialization:
         DecoratedInitialization.PerInstantiation => return validate_instance_binding(binding)
         DecoratedInitialization.PerInvocation =>
-            if len(binding.original_body.type_parameters) == 0 or binding.initializer != None:
-                return Err("unsupported Body IR per-invocation decorator lifetime")
+            return Err("unsupported Body IR retired per-invocation decorator lifetime")
         DecoratedInitialization.ModuleStorage =>
             if len(binding.original_body.type_parameters) != 0 or binding.initializer != None:
                 return Err("unsupported Body IR module decorator lifetime")

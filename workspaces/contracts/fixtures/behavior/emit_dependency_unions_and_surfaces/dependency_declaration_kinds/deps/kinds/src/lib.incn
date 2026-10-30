@@ -28,10 +28,10 @@ pub model Badge with Named:
         return f"badge {self.text}"
 
 
-pub type Answer = int | str
+pub type Answer = Union[int, str]
+
 
 pub const ZERO: int = 0
-
 pub static count: int = 10
 
 
@@ -44,11 +44,10 @@ pub def first(value: int) -> int:
 
 
 pub fixed = partial first(value=1)
-
 pub second = alias first
 
 
-def preserve[F]() -> ((F) -> F):
+def preserve[F]() -> (F) -> F:
     return (func) => func
 
 
@@ -57,8 +56,15 @@ pub def decorated() -> int:
     return 1
 
 
-@preserve()
+def observed[F]() -> (F) -> F:
+    """Make initialization of each imported generic instance visible to its consumer."""
+    println("decorating generic")
+    return (func) => func
+
+
+@observed()
 pub def generic[T](value: T) -> T:
+    """Preserve its closed type through the published decorator binding."""
     return value
 
 
