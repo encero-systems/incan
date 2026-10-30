@@ -1,36 +1,28 @@
-"""
-Keys for compiled units, and the stamps that let outputs be reused while their key is unchanged.
-
-A unit's key covers everything its compilation reads: the compiler and its native closure, the unit's description
-(profile, features, kind and every directory and crate it names), its manifest and lock, every Incan source it can
-reach, the artifacts of every Loaf it links, and the native crates beyond the toolchain's own. The target is the
-toolchain's, which its sysroot names. Path dependencies enter through their artifacts: a dependency is prepared, and
-so keyed on its own sources, before its consumer is.
-
-Authored files are keyed by content, reconciled against retained observations (see `observation`), so an unchanged unit
-is keyed without reading a source or listing a directory. Installed and built artifacts (the driver, native crates,
-Rust ABI caches and every Loaf's artifacts) are large, so they are keyed by their filesystem identity (inode, size,
-nanosecond times of modification and status change) and never by their bytes, which cost seconds per command. A stamp
-binds a key to the identity of the outputs built for it, including a Loaf's published native ABI cache.
-"""
+"""Identify units by compiled sources, effective invocation facts and recorded linked identities; guard reuse locally."""
 
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
-from codegen import native_arguments
-from files import json_text
+from codegen import native_arguments, SOURCE_PREFIX
+from files import json_text, read_json
+from json_fields import required_text
 from home import unit_ledger
 from loaf_local_graph import unique
 from manifest_vocabulary import manifest_vocabulary
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
 from jec import begin, record as record_work
 from publication import place, publish
-from toolchain import NativeCrate, Toolchain
+from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitDescription
-from apple_sdk import sdk_identity
+from unit_publication import published_identity, record_payload
+from source_identity import entry_scope, source_inputs
+from compiler_facts import fact_identity
+from rust_target import compiler_version, deployment_target, inherited_deployment_selection
+from apple_sdk import selected_sdk
+from std.environ import get_or
 
-const UNIT_DOMAIN: str = "incan.oven.unit/1"
+const UNIT_DOMAIN: str = "incan.oven.unit/2"
 
 
 pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]:
@@ -65,15 +57,39 @@ pub def artifact_identity(path: Path) -> Result[str, str]:
 
 
 pub model Key:
-    """What a unit's outputs are valid for: one digest, and the digest of each kind of input beside it."""
+    """A portable identity and its input dimensions, publication provenance, or a named refusal of portability."""
 
     pub digest: str
     # One `kind digest` line per kind of input, in a fixed order, so that a changed key can name what changed.
     pub parts: list[str]
+    # Source origins travel with publication but never enter the identity or its changed-input dimensions.
+    pub provenance: list[str] = []
+    # A refused portable identity permits a local bake, never reusable publication under a fabricated key.
+    pub refusal: str = ""
+    # Exact descriptor publication is a provenance guard, separate from portable invocation identity.
+    pub descriptor: str = ""
 
 
 pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
     """Reconcile every input of `unit` against the retained observations; the key its outputs are valid for."""
+    match identified_unit(unit, toolchain, compiler):
+        Ok(key) => return Ok(key)
+        Err(reason) =>
+            if "unit identity refused:" in reason:
+                return Ok(
+                    Key(
+                        digest="",
+                        parts=[],
+                        provenance=[unit.project_root, unit.source],
+                        refusal=reason,
+                        descriptor=fingerprint([json_text(unit.to_json())?])?,
+                    ),
+                )
+            return Err(reason)
+
+
+def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[Key, str]:
+    """Finish identity only when the compiler and every linked unit have admitted identities."""
     mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
     mut selected_compiler = compiler
     if selected_compiler == "":
@@ -106,155 +122,180 @@ pub def ledger_name(unit: UnitDescription) -> str:
 
 pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     """
-    Bind reuse to the driver and its installed native closure and Rust facts.
+    Identify the selected compiler by content and its target, independently of its installation location.
 
-    The installed driver is named by its content digest, and its path is part of the fingerprint.
-
-    1. The driver, its sysroot and the driver's identity.
-    2. The native crates every unit links, its recorded registry selection and the Rust ABI caches checking reads.
-    3. The directories the dependencies of those crates live in.
+    1. Read admitted compiler and Rust fact-cache digests.
+    2. Read the identities the linked native units were produced under.
+    3. Bind the target and selected SDK settings without including their installation paths.
     """
-    # 1. A different driver, at another path or rebuilt in place, is a different compiler.
-    driver = [toolchain.driver, toolchain.sysroot, artifact_identity(Path(toolchain.driver))?]
-    # 2. So is a changed runtime or support crate, or a changed Rust fact cache.
+    # 1. Metadata avoids reading unchanged compiler facts but never enters the compiler identity.
+    mut facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
+    # 2. Native dependencies carry identities recorded by their producers, never inferred from payloads.
     natives = native_identities(toolchain.externs)?
-    mut caches = cache_identities(toolchain.rust_abi)?
-    if toolchain.registry_lock != "":
-        caches.append(artifact_identity(Path(toolchain.registry_lock))?)
-    # 3. The directories the crates' own dependencies live in are part of the compiler's reach.
-    return fingerprint(driver + natives + caches + toolchain.search + [sdk_identity(toolchain.sysroot)?])
+    # 3. Registry selection and search directories locate providers; the exact linked identities select them.
+    #    The compiler's own answers are probed once per rustc installation and deployment selection.
+    target = compiler_target(toolchain)?
+    facts.extend([target, deployment_target(rust_compiler(toolchain), target, inherited_deployment_selection()?)?])
+    return fingerprint(facts + natives + [sdk_content_identity(toolchain.sysroot)?])
+
+
+pub def sdk_content_identity(sysroot: str) -> Result[str, str]:
+    """Identify the selected SDK's declared contents without its installation location or selection observations."""
+    mut sdk = selected_sdk(sysroot)?
+    if sdk == "":
+        sdk = get_or("SDKROOT", "")
+    if sdk == "":
+        return Ok("")
+    return fingerprint(cache_identities([Path(sdk).joinpath("SDKSettings.json").0])?)
+
+
+def compiler_target(toolchain: Toolchain) -> Result[str, str]:
+    """Read the installed compiler's version and host without retaining its physical sysroot location."""
+    if toolchain.target != "":
+        return Ok(toolchain.target)
+    return compiler_version(rust_compiler(toolchain))
 
 
 pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
-    """The name, path and identity of each native crate, in order."""
+    """Canonical native aliases and the identities their producers recorded, without reading artifact bytes."""
     mut inputs: list[str] = []
     for native in externs:
-        inputs.append(native.name)
-        inputs.append(native.path)
-        inputs.append(artifact_identity(Path(native.path))?)
-    return Ok(inputs)
+        inputs.append(f"{native.name} {published_identity(Path(native.path))?}")
+    return Ok(sorted(inputs))
 
 
 pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
-    """The path and identity of each Rust ABI cache, in order."""
+    """Read admitted Rust-fact digests in canonical order, independently of their installation paths."""
     mut inputs: list[str] = []
-    for cache in caches:
-        inputs.append(cache)
-        inputs.append(artifact_identity(Path(cache))?)
-    return Ok(inputs)
+    for path in caches:
+        inputs.append(fact_identity(Path(path))?)
+    return Ok(sorted(inputs))
 
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
-    """The unit description and its effective native flags: changing a profile's code generation invalidates reuse."""
-    return fingerprint([json_text(unit.to_json())?] + native_arguments(unit.profile))
+    """Only facts the compiler observes, excluding source, target and provider locations retained as provenance."""
+    facts = JsonValue.object(
+        {"crate": JsonValue.string(unit.package), "version": JsonValue.string(unit.version), "edition": JsonValue.string(
+            "2024",
+        ), "domain": JsonValue.string("target"), "kind": JsonValue.string(unit.kind), "source_mapping": JsonValue.string(
+            SOURCE_PREFIX,
+        ), "overflow_checks": JsonValue.bool(unit.profile != "release"), "vocabulary": JsonValue.bool(unit.vocabulary), "vocab_policy": JsonValue.string(
+            unit.vocab_policy,
+        ), "vocab_desugarer": JsonValue.bool(unit.vocab_desugarer)},
+    )
+    bindings = [f"{loaf.key}={loaf.name}:{loaf.standard}:{loaf.toolchain_provided}" for loaf in unit.loaves]
+    flags = native_arguments(unit.profile)
+    selected = [f"feature={feature}" for feature in sorted(unit.active_features)]
+    declared = [f"declared-feature={feature}" for feature in sorted(unit.declared_features)]
+    return fingerprint(
+        [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
+            unit.vocab_admissions,
+        ),
+    )
 
 
 pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
     """
-    Hash everything authored that the compilation reads, and identify every artifact it links.
+    Digest compiled source contents and fold the recorded identities of the units it links.
 
     A caller that keeps the unit's description digest (it only changes with the description) passes it in. Sorted
-    paths make added, removed and renamed modules observable. Dependency artifacts bind consumers to rebuilt
-    providers, including transitive ones.
+    logical source bindings make added, removed and renamed modules observable. Dependency identities bind consumers
+    to rebuilt providers, including transitive ones.
 
     1. Pair every authored file the compilation reads with its digest.
     2. Pair every linked artifact with its identity.
     3. Combine them with the compiler and the description into the key.
     """
     # 1. An edit to any authored file the compilation reads changes the key; an untouched file costs no read.
-    files = unit_files(unit, project)?
-    sources = digested(files, project)?
+    sources = source_contents(unit, project)?
     # 2. A rebuilt library, native crate or ABI cache the unit links changes the key of the unit linking it.
     artifacts = loaf_identities(unit)? + native_identities(unit.externs)? + cache_identities(unit.rust_abi)?
     # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
-    return assembled(compiler, described, sources, artifacts)
+    key = assembled(compiler, described, sources, artifacts)?
+    return Ok(
+        Key(
+            digest=key.digest,
+            parts=key.parts,
+            provenance=[unit.project_root, unit.source],
+            descriptor=fingerprint([json_text(unit.to_json())?])?,
+        ),
+    )
 
 
-def digested(paths: list[str], mut ledger: Ledger) -> Result[list[str], str]:
-    """Each path followed by the digest of its bytes, reconciled through the ledger."""
-    mut inputs: list[str] = []
-    for path in paths:
-        inputs.append(path)
-        inputs.append(ledger.digest(Path(path))?)
-    return Ok(inputs)
+def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
+    """Resolve declared entries from their project and identify their roles without physical source locations."""
+    root = Path(unit.source_root)
+    declared = Path(unit.project_root)
+    mut contents = ["entry", entry_scope(Path(unit.source), root), project.digest(Path(unit.source))?]
+    modules = [path for path in unit_files(unit, project)? if path != unit.source]
+    contents.extend(source_inputs(modules, root, project)?)
+    for entry in unit.program_entries:
+        contents.extend(["program-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
+    if let Some(entry) = unit.vocab_entry:
+        contents.extend(["vocabulary-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
+    for schema in unit.contract_models:
+        contents.extend(["contract-model", project.digest(Path(unit.project_root).joinpath(schema))?])
+    for header in unit.c_headers:
+        contents.extend(["c-header", project.digest(Path(unit.project_root).joinpath(header))?])
+    if let Some(vocab) = unit.vocab:
+        contents.extend(["vocabulary", vocabulary_facts(Path(vocab))?])
+    return Ok(contents)
+
+
+def vocabulary_facts(path: Path) -> Result[str, str]:
+    """Identify prepared vocabulary semantics and producer identities, excluding worker payload checksums and locations."""
+    prepared = read_json(path)?
+    worker = prepared.require("worker").map_err((error) => error.message())?
+    mut provider = JsonValue.null()
+    if not worker.is_null():
+        provider = JsonValue.object(
+            {"kind": JsonValue.string(required_text(worker, "artifact_kind")?), "unit": JsonValue.string(
+                required_text(worker, "unit_identity")?,
+            ), "abi": worker.require("abi_version").map_err((error) => error.message())?},
+        )
+    facts = JsonValue.object(
+        {"module": JsonValue.string(required_text(prepared, "crate_path")?), "package": JsonValue.string(
+            required_text(prepared, "package_name")?,
+        ), "registration": JsonValue.string(required_text(prepared, "unit_identity")?), "metadata": prepared
+            .require("metadata")
+            .map_err((error) => error.message())?, "worker": provider},
+    )
+    return fingerprint([json_text(facts)?])
 
 
 def loaf_identities(unit: UnitDescription) -> Result[list[str], str]:
-    """The path and identity of every artifact of every Loaf the unit links; a missing artifact is `absent`."""
+    """Canonical Loaf bindings and their published producer identities; absent producer evidence refuses."""
     mut inputs: list[str] = []
     for loaf in unit.loaves:
-        for path in artifact_files(Path(loaf.dir), loaf.name)?:
-            inputs.append(path.0)
-            if path.is_file():
-                inputs.append(artifact_identity(path)?)
-            else:
-                inputs.append("absent")
-    return Ok(inputs)
+        path = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
+        inputs.append(f"{loaf.key}={loaf.name} {published_identity(path)?}")
+    return Ok(sorted(inputs))
 
 
 def assembled(compiler: str, described: str, sources: list[str], artifacts: list[str]) -> Result[Key, str]:
     """A key from the digests of its four kinds of input."""
     authored = fingerprint(sources)?
     linked = fingerprint(artifacts)?
-    digest = fingerprint([UNIT_DOMAIN, compiler, described, authored, linked])?
+    digest = "sha256:" + fingerprint([UNIT_DOMAIN, compiler, described, authored, linked])?
     parts = [f"compiler {compiler}", f"description {described}", f"sources {authored}", f"artifacts {linked}"]
     return Ok(Key(digest=digest, parts=parts))
 
 
-pub def rust_key(
-    compiler: str,
-    described: list[str],
-    manifest: Path,
-    crate_sources: Path,
-    externs: list[str],
-    mut crates: Ledger,
-) -> Result[Key, str]:
-    """
-    The key of a Rust unit.
-
-    The same kinds of input as an Incan unit's key, so the same stamp, lock and atomic install keep its outputs. The
-    ledger must keep every file (`load_ledger(.., "")`).
-
-    1. How it is compiled (`described`: its crate, features, profile and every argument), digested.
-    2. Its manifest and every file of its crate, each with its digest.
-    3. The identity of each library it links.
-    4. Combine them with the compiler into the key.
-    """
-    # 1. Another crate name, feature, profile or argument is another unit.
-    description = fingerprint(described)?
-    # 2. An edit to the manifest or to any file of the crate, data files included, changes the key.
-    manifest_inputs = digested([manifest.0], crates)?
-    listed = crates.sources(crate_sources, true)?
-    sources = manifest_inputs + digested(listed, crates)?
-    # 3. A rebuilt library the crate links changes its key.
-    mut artifacts: list[str] = []
-    for extern in externs:
-        artifacts.append(extern)
-        artifacts.append(artifact_identity(Path(extern))?)
-    # 4. The compiler joins the crate's inputs in the same key an Incan unit has.
-    return assembled(compiler, description, sources, artifacts)
-
-
 def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
     """
-    The files a unit's compilation reads from its project: manifest, lock, entry, sources and metadata inputs.
+    The source files and metadata inputs a unit's compilation reads; manifest facts already reach its invocation.
 
     Modules resolve from the source root and from the entry's own directory, so an entry outside the source root (a
     test beside `src`) brings its directory with it; an entry in the project root brings only its own siblings.
     """
     root = Path(unit.project_root)
     mut paths = [unit.source]
-    for name in ["loaf.toml", "oven.lock"]:
-        if root.joinpath(name).is_file():
-            paths.append(root.joinpath(name).0)
     paths = paths + project.sources(Path(unit.source_root), true)?
     entry_directory = Path(unit.source).parent()
     if not unit.source.startswith(unit.source_root + "/"):
         paths = paths + project.sources(entry_directory, entry_directory.0 != unit.project_root)?
     for extra in unit.contract_models + unit.c_headers:
         paths.append(root.joinpath(extra).0)
-    if let Some(vocab) = unit.vocab:
-        paths.append(vocab)
     return Ok(unique(paths))
 
 
@@ -279,6 +320,8 @@ pub def staleness(outputs: list[Path], stamp: Path, key: Key) -> Result[str, str
     4. Every output is still the one the stamp recorded.
     """
     # 1. An output without a stamp was never vouched for.
+    if key.refusal != "":
+        return Ok(key.refusal)
     if not stamp.is_file():
         return Ok("no stored build")
     recorded = stamp.read_text("utf-8", "strict").map_err((error) => f"{stamp.0}: {error.message()}")?.split("\n")
@@ -314,11 +357,21 @@ def changed_kinds(recorded: list[str], parts: list[str]) -> str:
     return ", ".join(kinds)
 
 
-pub def record(stamp: Path, key: Key, outputs: list[Path]) -> Result[None, str]:
-    """Publish a completed build's stamp: its key, the digest of each kind of input, then each output's identity."""
+pub def record(stamp: Path, key: Key, outputs: list[Path], borrowed: list[Path] = []) -> Result[None, str]:
+    """Stamp every output's generation, publishing owned payloads while preserving borrowed units' producer identities."""
+    borrowed_paths = [artifact.0 for artifact in borrowed]
+    if key.refusal != "":
+        if stamp.is_file():
+            stamp.unlink().map_err((error) => error.message())?
+        for output in outputs:
+            if output.0 not in borrowed_paths:
+                record_payload(output, "", key.provenance, key.refusal)?
+        return Ok(None)
     mut lines = [key.digest] + key.parts
     for output in outputs:
         lines.append(observe(output)?.stamp)
+        if output.0 not in borrowed_paths:
+            record_payload(output, key.digest, key.provenance)?
     return publish(stamp, "\n".join(lines))
 
 

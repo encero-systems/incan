@@ -2,11 +2,13 @@
 
 from std.fs import Path
 from std.json import JsonValue
-from files import make_directory, parse_json, write
+from files import json_text, make_directory, parse_json, read_json, write
 from driver_command import driver_command
 from home import standard_packages
-from json_fields import array, field, required_text, strings
+from json_fields import array, field, required_items, required_text, strings
 from loaf_local_graph import unique
+from observation import trace
+from publication import publish
 from rust_units import RegistrySelection, decoded, read_registry_units
 from registry_units import RegistryDemand, RegistryUnits
 from registry_metadata import bound_entries
@@ -14,7 +16,10 @@ from native_closure_input import native_bindings
 from toml_fields import optional_string, optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain, located
 from unit import UnitDescription
+from unit_freshness import fingerprint, unit_key
 from jec import begin, record
+
+const IMPORTS_SCHEMA: str = "incan.oven.rust-imports/1"
 
 
 pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> Result[list[NativeCrate], str]:
@@ -96,8 +101,26 @@ pub def published_bindings(
 
 
 def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[JsonValue], str]:
-    """Read parser-owned import records without checking items that still need their dependency artifacts."""
+    """
+    Read parser-owned import records without checking items that still need their dependency artifacts.
+
+    The records depend only on the compiler, the unit's exact description and the sources and Loaves it reads, which
+    the unit's key and descriptor identify. They are retained under that identity, so an unchanged unit starts no
+    compiler, and any change to those inputs asks it again.
+
+    1. Answer from the records retained for this identity.
+    2. Otherwise ask the compiler for the records of the description it reads.
+    3. Retain them only while the unit's inputs are still those the compiler read.
+    """
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    retained = directory.joinpath(f"{unit.package}.imports.json")
+    # 1. A unit whose identity is refused is never answered from a record.
+    identity = imports_identity(unit, toolchain)?
+    if identity != "":
+        if let Some(records) = retained_imports(retained, identity):
+            trace(f"unit {unit.package} imports: reused")
+            return Ok(records)
+    # 2. The compiler parses the source graph the description names.
     make_directory(directory)?
     path = directory.joinpath(f"{unit.package}.imports.unit.json")
     write(path, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
@@ -109,7 +132,46 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     record("driver_spawn", f"--rust-imports {path.0}", clock)
     if not output.status.success():
         return Err(decoded(output.stderr))
-    return array(parse_json(decoded(output.stdout))?, []).map_err((_) => "invalid Rust import records")
+    records = array(parse_json(decoded(output.stdout))?, []).map_err((_) => "invalid Rust import records")?
+    # 3. An edit made while the compiler read the sources is read again next time. A record that cannot be written
+    #    only costs the next command the same parse.
+    if identity != "" and imports_identity(unit, toolchain)? == identity:
+        _ = retain_imports(retained, identity, records)
+    return Ok(records)
+
+
+def imports_identity(unit: UnitDescription, toolchain: Toolchain) -> Result[str, str]:
+    """The identity of a unit's import records: its key and exact description; empty when its key is refused."""
+    key = unit_key(unit, toolchain)?
+    if key.refusal != "":
+        return Ok("")
+    return fingerprint([IMPORTS_SCHEMA, key.digest, key.descriptor])
+
+
+def retained_imports(path: Path, identity: str) -> Option[list[JsonValue]]:
+    """The records retained for exactly `identity`; a missing, other or malformed record is a miss."""
+    if not path.is_file():
+        return None
+    match retained_records(path, identity):
+        Ok(found) => return found
+        Err(_) => return None
+
+
+def retained_records(path: Path, identity: str) -> Result[Option[list[JsonValue]], str]:
+    """Read a record and admit it only for the same schema and identity."""
+    document = read_json(path)?
+    if required_text(document, "schema")? != IMPORTS_SCHEMA or required_text(document, "identity")? != identity:
+        return Ok(None)
+    return Ok(Some(required_items(document, "records")?))
+
+
+def retain_imports(path: Path, identity: str, records: list[JsonValue]) -> Result[None, str]:
+    """Publish one complete record atomically; a racing command publishes the same records of the same identity."""
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(IMPORTS_SCHEMA)
+    fields["identity"] = JsonValue.string(identity)
+    fields["records"] = JsonValue.array(records)
+    return publish(path, json_text(JsonValue.object(fields))?)
 
 
 def merged_requests(requests: list[JsonValue]) -> Result[dict[str, RegistrySelection], str]:

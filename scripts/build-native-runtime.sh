@@ -42,8 +42,10 @@ jq --slurpfile interfaces "${SELFBUILD_SOURCE_INTERFACES:-/dev/null}" '
         | .search = ([.externs[].path | sub("/[^/]+$"; "")] | unique)
       else . end
     | .loaves += ($interfaces[0] // [])' "$unit.prepared" > "$unit"
+"$builder" "$repo" identify "$unit"
+native_flags=("${(@f)$(<"$unit.arguments")}")
 env -u RUSTC_BOOTSTRAP "$driver" --unit "$unit" incan_native_runtime \
-    "$output/libincan_native_runtime.rlib" "$sysroot" --library > "$output/build.log" 2>&1 \
+    "$output/libincan_native_runtime.rlib" "$sysroot" --library "${native_flags[@]}" > "$output/build.log" 2>&1 \
     || { tail -30 "$output/build.log"; exit 1; }
 
 if ! jq -e 'all(.externs[]; .[0] != "incan_native_runtime"
@@ -53,6 +55,7 @@ if ! jq -e 'all(.externs[]; .[0] != "incan_native_runtime"
     exit 1
 fi
 if [[ ${INCAN_RUNTIME_INSTALL:-1} == 0 ]]; then
+    "$builder" "$repo" publish "$unit" "$output"
     shasum -a 256 "$output/libincan_native_runtime.rlib"
     exit 0
 fi
@@ -73,6 +76,7 @@ jq --arg directory "$output" '
     | .macro_externs |= map(.[1] |= absolute)
     | .search |= map(absolute)' "$output/incan_native_runtime.native.json" \
     > "$staged/incan_native_runtime.native.json"
+"$builder" "$repo" publish "$unit" "$staged"
 # Names and bytes both contribute; unchanged machine code cannot hide changed governed bodies or native facts.
 (cd "$staged" && shasum -a 256 libincan_native_runtime.rlib incan_native_runtime.incnlib \
     incan_native_runtime.incnbody incan_native_runtime.native.json incan_native_runtime.rustabi \
@@ -85,6 +89,7 @@ if [[ -e $installed ]]; then
         cmp "$staged/$artifact" "$installed/$artifact" \
             || { print -u2 "runtime generation $digest has conflicting $artifact bytes"; exit 1; }
     done
+    "$builder" "$repo" publish "$unit" "$installed"
 else
     mv "$staged" "$installed"
     staged=
