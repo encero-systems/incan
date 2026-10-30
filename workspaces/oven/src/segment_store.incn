@@ -936,19 +936,21 @@ pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
     return snapshot(root, committed.view)
 
 
-pub def quarantine_record(view: Snapshot, key: str) -> Result[None, StoreError]:
+pub def quarantine_record(view: Snapshot, key: str, codec_damage: bool = false) -> Result[None, StoreError]:
     """
     Preserve a damaged frame's segment as evidence before an owner recomputes the derived record.
 
     The shared segment remains in place for other keys and older snapshots; repair publishes a new frame through
     an explicit transaction. Index damage cannot be repaired one record at a time and is returned to the owner.
 
-    1. Require selected frame damage and resolve its physical object.
+    1. Require selected frame damage, or an explicit diagnosis by the owning codec, and resolve its object.
     2. Preserve and synchronize evidence without removing shared contents.
     """
-    # 1. A healthy record or an unreadable index does not authorize frame replacement.
+    # 1. An intact frame needs its owning codec to diagnose semantic damage explicitly.
     match lookup(view, key):
-        Ok(_) => return Err(failure("conflict", key, "only damaged records can be quarantined"))
+        Ok(_) =>
+            if not codec_damage:
+                return Err(failure("conflict", key, "only diagnosed damage can be quarantined"))
         Err(error) =>
             if error.kind != "integrity":
                 return Err(error)
