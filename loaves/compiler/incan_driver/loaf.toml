@@ -1,7 +1,7 @@
 [dependencies]
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
-incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
+incan_frontend = { loaf = "incan_frontend", path = "../incan_frontend" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.6.0-dev.8" }
@@ -25,34 +25,14 @@ name = "incan_driver"
 private = true
 version = "0.6.0-dev.8"
 
-[project.features]
-default = [
-    "std_testing",
-    "std_async",
-    "std_decorators",
-]
-std_async = [
-    "incan_frontend/std_async",
-]
-std_decorators = [
-    "incan_frontend/std_decorators",
-]
-std_testing = [
-    "incan_frontend/std_testing",
-]
-test_support = [
-    "incan_frontend/test_support",
-]
-
 [rust]
 edition = "2024"
 name = "incan_driver"
 type = "lib"
 
-# Test-only dependencies and helper features; production defaults are unchanged.
+# Additional dependencies of the driver's own test harness.
 [envs.test.dependencies]
 byteorder = { loaf = "crates-io/byteorder", version = "1" }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8" }
 incan_derive = { loaf = "incan_derive", path = "../../stdlib/derive/incan_derive" }
 incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
-incan_frontend = { features = ["test_support"] }
