@@ -17,7 +17,7 @@ from graph_cache import (
     unchecked_warning,
 )
 from graph_dependencies import GraphDependencies, prepare_graph, unit_natives, unit_loaves
-from observation import trace
+from observation import file_digest, trace
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from graph_queries import matches, query, query_group, text
@@ -48,7 +48,7 @@ pub const VALUE_OPTIONS: FrozenList[str] = [
     "--budget",
 ]
 # The version of the key an answer is cached under; changing it discards every cached answer.
-const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/16"
+const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/18"
 
 
 pub model GraphOptions:
@@ -372,15 +372,92 @@ def render(
             definition = Some(selected.term)
         records = read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot, definition)?
         trace(f"graph query records: {started.elapsed().as_millis()} ms")
+        if selected.format == "json" and selected.query == "defs":
+            return definition_response(records, selected.term, selected.limit)
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
         mut lines = hits[:selected.limit]
         if len(hits) > selected.limit:
             lines.append(f"… {len(hits) - selected.limit} more")
         return Ok("\n".join(lines))
-    records = read_records(paths, root, toolchain, "", selected.strict, degraded, snapshot)? + process
+    records = export_records(paths, root, selected, toolchain, degraded, snapshot)? + process
     if selected.format == "json":
         return json_text(JsonValue.array(records))
     return Ok("\n".join([json_text(record)? for record in records]))
+
+
+def definition_response(records: list[JsonValue], term: str, limit: int) -> Result[str, str]:
+    """Bound structured definition records and their digest metadata to the same exact selection."""
+    declarations = [record for record in records[1:] if definition_candidate(record, term) and matches(record, term)]
+    selected = declarations[:limit]
+    mut header = records[0].expect_object().map_err((error) => error.message())?
+    header["declaration_digests"] = declaration_digests(selected)?
+    header["remaining_hits"] = JsonValue.int(len(declarations) - len(selected))
+    return json_text(JsonValue.array([JsonValue.object(header)] + selected))
+
+
+def export_records(
+    paths: list[GraphUnit],
+    root: str,
+    selected: GraphOptions,
+    toolchain: Toolchain,
+    degraded: bool,
+    snapshot: str,
+) -> Result[list[JsonValue], str]:
+    """
+    Export the requested unit's facts, retaining immutable dependency graphs by identity and location.
+
+    1. Separate the requested project's units from its dependency providers.
+    2. Read provider declaration keys for joins, without copying their records into the answer.
+    3. Export local facts and references to each provider's original graph.
+    """
+    # 1. An explicit additional source is also a separate unit, rather than an owner of this project's records.
+    mut owner = Path(root)
+    if owner.is_file():
+        owner = project_root_of(owner).unwrap_or(owner.parent())
+    local = [unit for unit in paths if unit.root.0 == owner.0]
+    dependencies = [unit for unit in paths if unit.root.0 != owner.0]
+    # 2. Foreign keys remain available to local references through the exact published declaration identities.
+    providers = provider_keys(dependencies, toolchain)?
+    # 3. Every dependency keeps one graph; the answer carries only its address and content identity.
+    records = read_records(local, root, toolchain, "", selected.strict, degraded, snapshot, None, providers)?
+    mut header = records[0].expect_object().map_err((error) => error.message())?
+    mut references: list[JsonValue] = []
+    for unit in dependencies:
+        if not unit.path.is_file():
+            continue
+        references.append(dependency_reference(unit)?)
+    header["dependencies"] = JsonValue.array(references)
+    return Ok([JsonValue.object(header)] + records[1:])
+
+
+def dependency_reference(unit: GraphUnit) -> Result[JsonValue, str]:
+    """Address original immutable graph bytes by digest, retaining their package and source-anchor provenance."""
+    mut fields: Dict[str, JsonValue] = {}
+    fields["id"] = JsonValue.string(f"graph:sha256:{file_digest(unit.path)?}")
+    fields["graph"] = JsonValue.string(unit.path.0)
+    fields["root_path"] = JsonValue.string(unit.root.0)
+    fields["package"] = JsonValue.string(unit.package)
+    fields["version"] = JsonValue.string(unit.version)
+    return Ok(JsonValue.object(fields))
+
+
+def provider_keys(paths: list[GraphUnit], toolchain: Toolchain) -> Result[list[JsonValue], str]:
+    """Read only identity columns from published declarations; dependency payloads never enter an export."""
+    columns = [JsonValue.string(field) for field in ["record", "id", "stable_identity"]]
+    fields = json_text(JsonValue.object({"declaration": JsonValue.array(columns)}))?
+    mut records: list[JsonValue] = []
+    for unit in paths:
+        mut package = unit.package
+        for line in read_graph(unit, toolchain, "declaration", fields)?.split("\n"):
+            if line == "":
+                continue
+            record = parse(line).map_err((error) => error.message())?
+            if text(record, "record") == "header":
+                check_identity(unit, record)?
+                package = text(record.get("package").unwrap_or(JsonValue.null()), "name")
+            else:
+                records.append(keyed(record, package)?)
+    return Ok(records)
 
 
 def context_index(
@@ -484,6 +561,7 @@ def read_records(
     degraded: bool,
     snapshot: str,
     definition: Option[str] = None,
+    providers: list[JsonValue] = [],
 ) -> Result[list[JsonValue], str]:
     """
     Merge unit documents deterministically, retaining one header and one instance of each identified fact.
@@ -535,6 +613,8 @@ def read_records(
             records.append(record)
         trace(f"graph records {unit.package}: {started.elapsed().as_millis()} ms")
     # 4. The header tells the reader the mode, whether any unit was unchecked, and every language and context involved.
+    # An unchecked unit may have only its refusal note; the request still has a presentation header.
+    header["record"] = JsonValue.string("header")
     header["root_path"] = JsonValue.string(root)
     header["mode"] = JsonValue.string("allow_errors")
     if strict:
@@ -543,7 +623,7 @@ def read_records(
     header["languages"] = JsonValue.array([JsonValue.string(name) for name in sorted(languages)])
     header["semantic_contexts"] = JsonValue.array(contexts)
     header["identity_schema"] = JsonValue.string("incan.graph.identity/1")
-    records = link_keys(records)?
+    records = link_keys(records, providers)?
     header["declaration_digests"] = declaration_digests(records)?
     header["snapshot_id"] = JsonValue.string(snapshot)
     return Ok([JsonValue.object(header)] + records)

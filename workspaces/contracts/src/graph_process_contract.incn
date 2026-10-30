@@ -6,9 +6,9 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue, parse
+from graph_document import GraphDocument, document
 from files import optional_text as text
 from protocol_peer import Peer, decode, start
-from run import invoke
 
 
 pub def check_process(incan: str, project: Path) -> Result[None, str]:
@@ -20,12 +20,12 @@ pub def check_process(incan: str, project: Path) -> Result[None, str]:
     absent = graph(incan, project, true)?
     if project.joinpath(".git-contract-history").is_dir():
         rename(project.joinpath(".git-contract-history").0, project.joinpath(".git").0).map_err((error) => str(error))?
-    if len(risks(absent)) != 0:
+    if len(risks(absent.records)) != 0:
         return Err("unavailable git history invented process observations")
     # 2. Observe deterministic, opt-in fixture history.
     git(project, ["init"])?
     mut paths: list[str] = []
-    for record in absent:
+    for record in absent.records:
         path = text(record, "path")
         if local_source(record, project):
             paths.append(path)
@@ -36,17 +36,17 @@ pub def check_process(incan: str, project: Path) -> Result[None, str]:
     git(project, ["commit", "--allow-empty", "--no-gpg-sign", "-m", "graph process observation fixture"])?
     observed = graph(incan, project, true)?
     repeated = graph(incan, project, true)?
-    if serialized(observed)? != serialized(repeated)?:
+    if observed.digest != repeated.digest:
         return Err("process observations are not deterministic for unchanged inputs")
-    if len(risks(observed)) == 0:
+    if len(risks(observed.records)) == 0:
         return Err("available git history produced no process observations")
-    for record in risks(observed):
+    for record in risks(observed.records):
         if not git_provenance(record):
             return Err("a process observation lacks git provenance")
         present = [populated(record, key) for key in ["evidence", "ownership", "co_changes"]]
         if false in present:
             return Err("a process observation omitted raw churn, ownership or co-change evidence")
-    if len(risks(graph(incan, project, false)?)) != 0:
+    if len(risks(graph(incan, project, false)?.records)) != 0:
         return Err("process observations escaped the explicit opt-in")
     # 3. Verify key separation and session-only feedback expiry.
     check_package_keys(incan, project)?
@@ -61,22 +61,27 @@ def check_package_keys(incan: str, project: Path) -> Result[None, str]:
     mut lines = before.split("\n")
     for index in range(len(lines)):
         if lines[index].startswith("name = "):
-            lines[index] = 'name = "graph_identity_scope_probe"'
+            lines[index] = "name = \"graph_identity_scope_probe\""
             break
     manifest.write_text("\n".join(lines), "utf-8", "strict", None).map_err((error) => error.message())?
     renamed = graph(incan, project, false)
     manifest.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
     after = renamed?
-    left = sorted([text(record, "stable_key") for record in original if text(record, "record") == "declaration"])
-    right = sorted([text(record, "stable_key") for record in after if text(record, "record") == "declaration"])
+    left = declaration_keys(original.records)
+    right = declaration_keys(after.records)
     if left == right:
         return Err("distinct package identities share the same declaration key set")
     return Ok(None)
 
 
+def declaration_keys(records: list[JsonValue]) -> list[str]:
+    """Compare each package's proved keys independently of response representation and source coordinates."""
+    return sorted([text(record, "stable_key") for record in records if text(record, "record") == "declaration"])
+
+
 def check_memory(incan: str, project: Path) -> Result[None, str]:
     """Feedback stays in MCP, affects ranking, and expires on a changed snapshot or elapsed TTL."""
-    records = graph(incan, project, false)?
+    records = graph(incan, project, false)?.records
     mut key = ""
     for record in records:
         if text(record, "record") == "declaration" and text(record, "name") == "helper":
@@ -85,12 +90,11 @@ def check_memory(incan: str, project: Path) -> Result[None, str]:
         return Err("feedback fixture has no proved helper identity")
     snapshot = text(records[0], "snapshot_id")
     mut peer = start(incan, project, ["mcp", "."], "jsonl")?
-    peer.request(1, "initialize", JsonValue.object({
-        "protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object({}),
-        "clientInfo": JsonValue.object({
-            "name": JsonValue.string("graph-memory-contract"), "version": JsonValue.string("1")
-        })
-    }))?
+    client = JsonValue.object({"name": JsonValue.string("graph-memory-contract"), "version": JsonValue.string("1")})
+    initialization = JsonValue.object(
+        {"protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object({}), "clientInfo": client},
+    )
+    peer.request(1, "initialize", initialization)?
     peer.notify("notifications/initialized", JsonValue.object({}))?
     feedback = observation(key, snapshot, 3600)
     tool(peer, 2, "record_feedback", feedback)?
@@ -121,7 +125,7 @@ def check_memory(incan: str, project: Path) -> Result[None, str]:
         return Err("feedback outlived its TTL")
     tool(peer, 8, "process_risk", JsonValue.object({}))?
     peer.finish()?
-    for record in graph(incan, project, false)?:
+    for record in graph(incan, project, false)?.records:
         if text(record, "provenance") == "session_feedback":
             return Err("session feedback escaped into compiler graph records")
     return Ok(None)
@@ -133,22 +137,16 @@ def tool(mut peer: Peer, identifier: int, name: str, arguments: JsonValue) -> Re
     result = peer.request(identifier, "tools/call", request)?
     error = result.require("isError").map_err((error) => error.message())?
     if error.expect_bool().map_err((error) => error.message())?:
-        return Err(f"MCP tool {name} refused: {result.to_json().unwrap_or('')}")
+        return Err(f"MCP tool {name} refused: {result.to_json().unwrap_or("")}")
     blocks = result.require("content").map_err((error) => error.message())?
     content = blocks.expect_array().map_err((error) => error.message())?
     document = content[0].require("text").map_err((error) => error.message())?
     return document.expect_str().map_err((error) => error.message())
 
 
-def graph(incan: str, project: Path, risk: bool) -> Result[list[JsonValue], str]:
+def graph(incan: str, project: Path, risk: bool) -> Result[GraphDocument, str]:
     """Read the public graph format with optional observations, never a test-private extractor."""
-    mut arguments = ["inspect", "codegraph", ".", "--format", "json"]
-    if risk:
-        arguments.append("--risk")
-    output = invoke(incan, arguments, project)?
-    if output.code != Some(0):
-        return Err(f"graph export failed: {output.stderr}")
-    return parse(output.stdout).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())
+    return document(incan, project, "jsonl", risk)
 
 
 def risks(records: list[JsonValue]) -> list[JsonValue]:
@@ -160,8 +158,14 @@ def git(project: Path, arguments: list[str]) -> Result[None, str]:
     """Write only synthetic fixture history, with a local identity and external hooks disabled for the invocation."""
     mut command = Command.new("git")
     configuration = [
-        "-c", "core.hooksPath=/dev/null", "-c", "user.name=Graph Fixture",
-        "-c", "user.email=graph-fixture@example.invalid", "-c", "commit.gpgSign=false"
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "user.name=Graph Fixture",
+        "-c",
+        "user.email=graph-fixture@example.invalid",
+        "-c",
+        "commit.gpgSign=false",
     ]
     for argument in configuration + arguments:
         command.arg(argument)
@@ -195,17 +199,13 @@ def populated(record: JsonValue, key: str) -> bool:
             return len(value.expect_object().unwrap_or({})) > 0
 
 
-def serialized(records: list[JsonValue]) -> Result[str, str]:
-    """Compare deterministic whole documents, including their provenance and snapshot identity."""
-    return JsonValue.array(records).to_json().map_err((error) => error.message())
-
-
 def observation(declaration: str, snapshot: str, ttl: int) -> JsonValue:
     """Build an explicit usefulness observation against this exact task and snapshot."""
-    return JsonValue.object({
-        "task": JsonValue.string("helper"), "declaration": JsonValue.string(declaration),
-        "snapshot": JsonValue.string(snapshot), "ttl_seconds": JsonValue.int(ttl)
-    })
+    return JsonValue.object(
+        {"task": JsonValue.string("helper"), "declaration": JsonValue.string(declaration), "snapshot": JsonValue.string(
+            snapshot,
+        ), "ttl_seconds": JsonValue.int(ttl)},
+    )
 
 
 def memory(mut peer: Peer, identifier: int) -> Result[list[JsonValue], str]:

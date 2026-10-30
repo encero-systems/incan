@@ -94,6 +94,8 @@ incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtu
 
 A selector is `<family>`, `<family>/<area>` or `<family>/<area>/<name>`. The runner prints `PASS`, `FAIL` with each broken expectation, or `PEND` with its reason for every case, a summary per area and a total, and exits 1 when a case fails or a family cannot be read.
 
+Graph exports are captured to scratch files and decoded one record at a time. The runner retains the declaration identities, generated helper sites, Rust call links, files and optional process observations that its assertions use. A streaming canonical digest covers every record, including discarded payloads, so JSON/JSONL parity and source-edit checks still compare complete exports. The graph cases also reject copied dependency records and exercise chunk boundaries, split UTF-8, escaped delimiters and malformed framing.
+
 For the installed dev.8 workflow, pinned release bundles, and the committed PASS-key regression gate, see [Verify an installed dev.8 toolchain](dev8-ci.md).
 
 Set `CONTRACT_TIMINGS=1` to print elapsed milliseconds for each child invocation, each case comparison and each family. Family timings include discovery, execution and comparison, with the units Oven reported compiling or reusing. A batched case's comparison excludes its earlier execution; invocation timings name the case project or shared compilation project. These observations leave commands, expectations and verdicts unchanged.

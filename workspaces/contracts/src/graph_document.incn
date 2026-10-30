@@ -1,0 +1,278 @@
+"""Select graph assertions one record at a time from file-backed JSON and JSONL responses."""
+
+from rust::std::string import String as RustString
+from rust::std::mem import take
+from std.fs import Path
+from std.hash import Sha256Hasher, sha256
+from std.json import JsonValue
+from files import items, json_text, make_directory, optional_text, parse_json, required, required_text, remove, write
+from run import invoke_to_file
+
+static sequence: int = 0
+
+
+pub model GraphDocument:
+    """Only the records the case asserts on, plus a streaming digest of every canonical record."""
+
+    pub records: list[JsonValue]
+    pub digest: bytes
+    pub stderr: str = ""
+
+
+pub def document(incan: str, project: Path, format: str, risk: bool = false) -> Result[GraphDocument, str]:
+    """
+    Read an export without capturing its text or building a JSON tree for the whole answer.
+
+    1. Capture stdout to an owned scratch file through the normal invocation pool.
+    2. Decode independent records, retaining only assertion inputs and a digest for complete format parity.
+    3. Remove the capture file after decoding, including on a malformed response.
+    """
+    # 1. The pool still owns the command's deadline, process group and stderr.
+    directory = project.joinpath("target").joinpath("graph-contract")
+    make_directory(directory)?
+    sequence += 1
+    path = directory.joinpath(f"{sequence}.{format}")
+    mut arguments = ["inspect", "codegraph", ".", "--format", format]
+    if risk:
+        arguments.append("--risk")
+    outcome = invoke_to_file(incan, arguments, project, path)?
+    if outcome.code != Some(0):
+        remove(path)?
+        return Err(f"{format} export failed: {outcome.stderr}")
+    # 2. A buffer holds at most one record and one fixed-size input chunk.
+    result = read_document(path, format)
+    # 3. No successful or malformed capture remains after its assertions have been selected.
+    remove(path)?
+    mut selected = result?
+    selected.stderr = outcome.stderr
+    return Ok(selected)
+
+
+pub def check_reader(project: Path) -> Result[None, str]:
+    """
+    Exercise chunked public graph framing within the existing graph cases.
+
+    1. Cross a chunk boundary inside UTF-8 and retain escaped quotes and brackets inside a discarded record.
+    2. Compare complete JSON and JSONL meanings without retaining the unrelated payload.
+    3. Refuse missing separators, trailing commas, truncated responses and copied provider records.
+    """
+    # 1. The first byte of the Unicode scalar lies at the end of the first input chunk.
+    header = json_text(JsonValue.object({"record": JsonValue.string("header"), "dependencies": JsonValue.array([])}))?
+    prefix = header + "\n{\"record\":\"registry\",\"value\":\""
+    padding = padding_text(65535 - len(prefix.encode("utf-8")))
+    ignored = json_text(
+        JsonValue.object(
+            {"record": JsonValue.string("registry"), "value": JsonValue.string(
+                padding + "€\\\"}]" + padding_text(65536),
+            )},
+        ),
+    )?
+    path = project.joinpath("target").joinpath("graph-reader-contract")
+    write(path, header + "\n" + ignored + "\n")?
+    lines = read_document(path, "jsonl")?
+    # 2. Only the header survives selection, but the entire ignored record contributes to parity.
+    write(path, "[" + header + "," + ignored + "]")?
+    array = read_document(path, "json")?
+    if len(lines.records) != 1 or lines.digest != array.digest:
+        return Err("streaming graph selection lost UTF-8, escaping or complete format parity")
+    # 3. Invalid framing never becomes a partial successful document.
+    identity = "graph:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    anchor = JsonValue.string("@std/probe")
+    dependency = JsonValue.object(
+        {"id": JsonValue.string(identity), "graph": JsonValue.string(path.0), "root_path": anchor},
+    )
+    copied = json_text(
+        JsonValue.object({"record": JsonValue.string("header"), "dependencies": JsonValue.array([dependency])}),
+    )? + "\n" + json_text(
+        JsonValue.object(
+            {"record": JsonValue.string("registry"), "span": JsonValue.object(
+                {"file": JsonValue.string("@std/probe/lib.incn")},
+            )},
+        ),
+    )?
+    controls = [("json", "[" + header + ",]"), ("json", "[" + header), ("jsonl", copied)]
+    for format, content in controls + [("jsonl", header + "\n{"), ("jsonl", header + "{}")]:
+        write(path, content)?
+        match read_document(path, format):
+            Err(_) => pass
+            Ok(_) => return Err("streaming graph selection accepted malformed framing")
+    remove(path)?
+    return Ok(None)
+
+
+def read_document(path: Path, format: str) -> Result[GraphDocument, str]:
+    """Feed bounded byte chunks so a UTF-8 scalar split across reads is decoded only with its complete record."""
+    file = path.open("rb").map_err((error) => error.message())?
+    mut reader = GraphReader(array=format == "json")
+    reader.begin()
+    while true:
+        chunk = file.read_bytes(65536).map_err((error) => error.message())?
+        if len(chunk) == 0:
+            return reader.finish()
+        reader.feed(chunk)?
+
+
+def padding_text(size: int) -> str:
+    """Produce deterministic payload bytes using the protocol consumer's established doubling pattern."""
+    mut text = "x"
+    while len(text) < size:
+        text += text
+    return text[:size]
+
+
+class GraphReader:
+    """Frame JSON objects across chunks; JSON parsing and canonical hashing apply to one record at a time."""
+
+    array: bool
+    phase: str = "record"
+    allow_end: bool = true
+    depth: int = 0
+    quoted: bool = false
+    escaped: bool = false
+    pending: list[u8] = []
+    count: int = 0
+    records: list[JsonValue] = []
+    roots: list[str] = []
+    hasher: Sha256Hasher = sha256.new()
+
+    def begin(mut self) -> None:
+        """Initialize framing and canonical array hashing without exposing mutable reader state."""
+        if self.array:
+            self.phase = "array"
+        self.hasher.update(b"[")
+
+    def feed(mut self, chunk: bytes) -> Result[None, str]:
+        """Retain only the current object's bytes, including objects crossing a chunk boundary."""
+        for index in range(len(chunk)):
+            byte = int(chunk[index])
+            if self.depth > 0:
+                self.pending.append(chunk[index])
+                self.token(byte)
+                if self.depth == 0:
+                    data = take(self.pending)
+                    self.record(data)?
+                    self.phase = "line_end"
+                    if self.array:
+                        self.phase = "separator"
+                continue
+            if self.outside(byte)?:
+                self.pending.append(chunk[index])
+        return Ok(None)
+
+    def token(mut self, byte: int) -> None:
+        """Count nesting only outside strings, retaining escape state across chunk boundaries."""
+        if self.quoted:
+            if self.escaped:
+                self.escaped = false
+            elif byte == 92:
+                self.escaped = true
+            elif byte == 34:
+                self.quoted = false
+            return
+        if byte == 34:
+            self.quoted = true
+        elif byte in [123, 91]:
+            self.depth += 1
+        elif byte in [125, 93]:
+            self.depth -= 1
+
+    def outside(mut self, byte: int) -> Result[bool, str]:
+        """Validate array separators or JSONL line endings before beginning the next object."""
+        if self.phase == "line_end":
+            if byte == 10:
+                self.phase = "record"
+            elif byte not in [9, 13, 32]:
+                return Err("a JSONL record was not followed by a line ending")
+            return Ok(false)
+        if byte in [9, 10, 13, 32]:
+            return Ok(false)
+        if self.phase == "array":
+            if byte != 91:
+                return Err("a JSON graph export is not an array")
+            self.phase = "record"
+            return Ok(false)
+        if self.phase == "done":
+            return Err("a JSON graph export has trailing data")
+        if self.phase == "separator":
+            if byte == 93:
+                self.phase = "done"
+            elif byte == 44:
+                self.phase = "record"
+                self.allow_end = false
+            else:
+                return Err("a JSON graph record has no array separator")
+            return Ok(false)
+        if self.array and byte == 93 and self.allow_end:
+            self.phase = "done"
+            return Ok(false)
+        if byte != 123:
+            return Err("a graph record is not a JSON object")
+        self.depth = 1
+        self.allow_end = true
+        return Ok(true)
+
+    def record(mut self, data: bytes) -> Result[None, str]:
+        """Validate every record, hash its canonical form and retain exactly the facts used by graph assertions."""
+        mut text = ""
+        match RustString.from_utf8(data):
+            Ok(value) => text = str(value)
+            Err(_) => return Err("a graph record is not UTF-8")
+        record = parse_json(text)?
+        kind = required_text(record, "record")?
+        if optional_text(record, "provenance") == "session_feedback":
+            return Err("session feedback escaped into compiler graph records")
+        if self.count == 0:
+            if kind != "header":
+                return Err("a graph export has no initial header")
+            self.dependencies(record)?
+        elif kind == "header":
+            return Err("a graph export repeated its header")
+        self.check_owner(record)?
+        if self.count > 0:
+            self.hasher.update(b",")
+        self.hasher.update(json_text(record)?.encode("utf-8"))
+        self.count += 1
+        if asserted(record):
+            self.records.append(record)
+        return Ok(None)
+
+    def dependencies(mut self, header: JsonValue) -> Result[None, str]:
+        """Require content-addressed original graph artifacts before admitting any dependency source anchors."""
+        for dependency in items(required(header, "dependencies")?)?:
+            if not required_text(dependency, "id")?.startswith("graph:sha256:"):
+                return Err("a dependency graph has no content identity")
+            if not Path(required_text(dependency, "graph")?).is_file():
+                return Err("a dependency graph reference names no published graph")
+            self.roots.append(required_text(dependency, "root_path")? + "/")
+        return Ok(None)
+
+    def check_owner(self, record: JsonValue) -> Result[None, str]:
+        """Reject copied provider records even when no other assertion retains their record kind."""
+        span = record.get("span").unwrap_or(JsonValue.null())
+        mut path = optional_text(span, "file")
+        if optional_text(record, "record") == "file":
+            path = optional_text(record, "path")
+        for root in self.roots:
+            if path.startswith(root):
+                return Err(f"an export copied a dependency-owned record: {path}")
+        return Ok(None)
+
+    def finish(mut self) -> Result[GraphDocument, str]:
+        """Reject truncated objects or arrays before returning selected facts and the complete stream's digest."""
+        if self.depth != 0 or self.count == 0:
+            return Err("a graph export is empty or truncated")
+        if self.array and self.phase != "done":
+            return Err("a JSON graph export has no closing array")
+        self.hasher.update(b"]")
+        return Ok(GraphDocument(records=self.records, digest=self.hasher.finalize_bytes()))
+
+
+def asserted(record: JsonValue) -> bool:
+    """Keep identities, Rust call links and generated helper sites; other records contribute only to parity."""
+    kind = optional_text(record, "record")
+    if kind in ["header", "declaration", "file", "risk_signal"]:
+        return true
+    if kind == "call" and optional_text(record, "language") == "rust":
+        return true
+    identity = record.get("canonical_identity").unwrap_or(JsonValue.null())
+    return kind in ["call", "reference"] and optional_text(identity, "declaration_name") == "helper"

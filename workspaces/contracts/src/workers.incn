@@ -26,6 +26,8 @@ pub model Invocation:
     pub duration_hint: int = 0
     # `NAME=value` settings a project case's `environment:` block adds to this command's inherited environment.
     pub environment: list[str] = []
+    # Large protocol responses stay in an owned file and are selected by their consumer after reaping.
+    pub stdout_file: Option[Path] = None
 
 
 model Started:
@@ -37,6 +39,7 @@ model Started:
     clock: Instant
     deadline_seconds: int
     measure: bool
+    stdout_file: Option[Path]
 
 
 # The runner enters one pool at a time; active records own child handles and their request metadata together.
@@ -73,7 +76,14 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
             index = pool_ready[next]
             request = requests[index]
             clock = Instant.now()
-            match launch(request.program, request.arguments, request.project, request.selector, request.environment):
+            match launch(
+                request.program,
+                request.arguments,
+                request.project,
+                request.selector,
+                request.environment,
+                request.stdout_file,
+            ):
                 Err(error) => record_failure(index, error)
                 Ok(child) =>
                     handle = Rc.new(RefCell.new(child))
@@ -85,6 +95,7 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
                             clock=clock,
                             deadline_seconds=request.deadline_seconds,
                             measure=measured_command(request),
+                            stdout_file=request.stdout_file,
                         ),
                     )
             next += 1
@@ -196,7 +207,7 @@ def settle(info: Started, status: ExitStatus, timed_out: bool) -> None:
         None => pass
     if info.measure:
         record_elapsed(info.project, info.clock)
-    record_outcome(info.index, finish(info.project, code, timed_out, info.deadline_seconds))
+    record_outcome(info.index, finish(info.project, code, timed_out, info.deadline_seconds, info.stdout_file))
     report_time(f"invocation {info.project.0}", info.clock)
 
 

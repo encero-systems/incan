@@ -9,3 +9,9 @@ pub def invoke(incan: str, arguments: list[str], project: Path, environment: lis
     """Run one command through the pool's capture, deadline and reaping contract, with any declared settings."""
     request = Invocation(program=incan, arguments=arguments, project=project, selector=None, environment=environment)
     return invoke_many([request], 1)[0]
+
+
+pub def invoke_to_file(incan: str, arguments: list[str], project: Path, output: Path) -> Result[Outcome, str]:
+    """Capture a protocol response on disk through the same pool, deadlines and process-group reaping as other runs."""
+    request = Invocation(program=incan, arguments=arguments, project=project, selector=None, stdout_file=Some(output))
+    return invoke_many([request], 1)[0]
