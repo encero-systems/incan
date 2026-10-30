@@ -900,7 +900,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
         installed=native_artifacts(toolchain.externs),
     )
     built = {"native-core@target": BuiltUnit(crate_name="core", artifact=setup.dependency.0, directory=scratch.0)}
-    arguments = library_compile_arguments(facet, declared, installed, request, built, [])?
+    arguments = library_compile_arguments(facet, declared, installed, request, built, [], false)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     key = rust_library_producer_key(facet, installed, arguments, environment, request, toolchain)?
     stamp = installed.joinpath("library.oven-inputs")
