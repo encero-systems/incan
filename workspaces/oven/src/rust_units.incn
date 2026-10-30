@@ -1367,7 +1367,7 @@ pub def compile_binary(
     1. Name the binary and the crate it compiles from.
     2. Link the root's own library, then everything the facet links.
     3. A binary that links the toolchain's own libraries carries the runpaths to find them.
-    4. Reuse an unchanged binary, or compile and atomically publish it.
+    4. Reuse an unchanged binary, or compile and publish it with checkout-independent dependency evidence.
     """
     # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
     directory = output.joinpath("bin")
@@ -1421,6 +1421,7 @@ pub def compile_binary(
         place(staged_dependencies, dependencies)?
         println(f"compiled {name}")
         return Ok(binary.0)
+    relocate_dependencies(staged_dependencies, Path(facet.project))?
     fact = seal(store, current.digest, staged, "rust binary", rust_unit_name("binary", output_name, ""), [], "rust binary")?
     register_root(store, facet.project, current.digest)?
     view(store, fact, output_name, binary)?
@@ -1430,13 +1431,12 @@ pub def compile_binary(
 
 
 def view_baked_binary(store: Path, identity: str, output_name: str, directory: Path, project: str) -> Result[bool, str]:
-    """View a baked binary and its dependency evidence into `directory`; false when it is not baked."""
+    """View a baked binary, retaining the dependency evidence already validated for this checkout; false on a miss."""
     match find(store, identity)?:
         None => return Ok(false)
         Some(fact) =>
             register_root(store, project, identity)?
             view(store, fact, output_name, directory.joinpath(output_name))?
-            view(store, fact, f"{output_name}.d", directory.joinpath(f"{output_name}.d"))?
             return Ok(true)
 
 
@@ -1499,9 +1499,11 @@ def binary_key(
     arguments: list[str],
     environment: Dict[str, str],
 ) -> Result[Key, str]:
-    """Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths."""
+    """Key a binary from usable dependency evidence, refreshing an unavailable witness before trusting reuse."""
+    mut discovered = false
     if not dependencies.is_file():
         invoke_rustc(request.rustc, dependency_arguments(arguments, dependencies), environment, declared.unstable, name)?
+        discovered = true
     for argument in arguments:
         if argument.startswith("link-arg=-Wl,-rpath,/"):
             return Ok(
@@ -1512,13 +1514,33 @@ def binary_key(
                     refusal="unit identity refused: absolute runtime search path",
                 ),
             )
-    compiler = native_compiler_fingerprint(request.rustc, request.project)?
     facts = arguments + [f"domain={facet.domain.value()}", f"unstable={declared.unstable}"]
+    if not discovered:
+        match binary_evidence_key(directory, dependencies, facet, request, facts, environment):
+            Ok(key) =>
+                if key.refusal == "":
+                    return Ok(key)
+            Err(_) => pass
+        # An older view may hold another checkout's absolute paths without their source provenance.
+        invoke_rustc(request.rustc, dependency_arguments(arguments, dependencies), environment, declared.unstable, name)?
+    return binary_evidence_key(directory, dependencies, facet, request, facts, environment)
+
+
+def binary_evidence_key(
+    directory: Path,
+    dependencies: Path,
+    facet: LocalFacet,
+    request: RustBuild,
+    arguments: list[str],
+    environment: Dict[str, str],
+) -> Result[Key, str]:
+    """Reconcile the selected binary's compiler, domain, invocation and observed source/environment inputs."""
+    compiler = native_compiler_fingerprint(request.rustc, request.project)?
     return library_key(
         Path(facet.project),
         directory,
         dependencies,
-        facts,
+        arguments,
         environment,
         [],
         selected_toolchain(request)?,

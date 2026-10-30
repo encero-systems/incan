@@ -13,6 +13,15 @@ from toolchain import load_toolchain, rust_compiler
 
 
 pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]:
+    """Run the facet contract in two checkouts sharing one bakery, including reused binary dependency evidence."""
+    temporary = scratch_directory()?
+    root = temporary.path()
+    verify_rust_facet(root.joinpath("first"))?
+    verify_rust_facet(root.joinpath("second"))?
+    return Ok(None)
+
+
+def verify_rust_facet(root: Path) -> Result[None, str]:
     """
     Exercise the real Rust test producer and reporter, including a test-only local dependency.
 
@@ -21,8 +30,6 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     3. Repair the failing assertion and require the same harness path to rebuild and pass.
     4. Compile procedural macro unit and integration harnesses in their producer's host domain.
     """
-    temporary = scratch_directory()?
-    root = temporary.path()
     project = root.joinpath("project")
     helper = root.joinpath("helper")
     make_directory(project.joinpath("src"))?
@@ -60,6 +67,9 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     assert run_rust_harness(Path(programs[0]), project)? == 1
     for program in programs[1:]:
         assert run_rust_harness(Path(program), project)? == 0
+    # An older target view's unlocatable dependency witness is rediscovered, never mistaken for current inputs.
+    write(Path(programs[0] + ".d"), "old: /unavailable/checkout/src/lib.rs\n")?
+    assert build_rust_tests(request)? == programs
     # 3. Source edits invalidate the ordinary executable proof.
     write(source, rust_tests(7))?
     rebuilt = build_rust_tests(request)?
