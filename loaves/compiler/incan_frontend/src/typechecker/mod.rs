@@ -520,6 +520,12 @@ pub struct TypeChecker {
     body_local_observations: Vec<(Span, String)>,
     /// Actual stage entries for the current activation, reset before collecting one program.
     check_work: CheckWork,
+    /// Invocation-owned local outputs waiting for explicit finalization; never an engine cache.
+    body_checks: Vec<body_check::BodyCheckInput>,
+    /// Completed invocation-owned body values exposed to the record adapter.
+    checked_bodies: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Locally settled open-value diagnostics rendered at the legacy final stage.
+    body_open_diagnostics: Vec<CompileError>,
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
     /// Accumulated compile errors (non-fatal).
@@ -542,7 +548,7 @@ pub struct TypeChecker {
     pub consumed_iterator_bindings: HashMap<String, Span>,
     /// `dict.get(key)` calls whose value type cannot be copied, with that type's name; refused at the end of checking
     /// unless the lookup turned out to be only read (see `check_expr/dict_lookups.rs`).
-    pending_uncopyable_dict_lookups: Vec<(Span, String)>,
+    pending_uncopyable_dict_lookups: Vec<(usize, Span, String)>,
     /// Locals bound directly to a module static (`live = counts`), which read the static's storage like the static
     /// itself does, with the name of the static each one aliases.
     static_alias_bindings: HashMap<SymbolId, String>,
@@ -967,6 +973,9 @@ impl TypeChecker {
             #[cfg(test)]
             body_local_observations: Vec::new(),
             check_work: CheckWork::default(),
+            body_checks: Vec::new(),
+            checked_bodies: Vec::new(),
+            body_open_diagnostics: Vec::new(),
             symbols: SymbolTable::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -7102,6 +7111,9 @@ impl TypeChecker {
         #[cfg(test)]
         self.body_local_observations.clear();
         self.check_work = CheckWork::default();
+        self.body_checks.clear();
+        self.checked_bodies.clear();
+        self.body_open_diagnostics.clear();
         self.visibility_point = VisibilityPoint::Collecting;
         self.checking_nominal_scope.get_mut().take();
         self.validate_source_type_names = false;
@@ -7239,8 +7251,15 @@ impl TypeChecker {
                 self.check_environment_declaration(decl);
             }
         }
-        self.resolve_mut_arguments();
-        self.refuse_copying_dict_lookups_of_uncopyable_values();
+        #[cfg(test)]
+        if self.legacy_body_checking {
+            self.legacy_resolve_mut_arguments();
+            self.refuse_copying_dict_lookups_of_uncopyable_values();
+        } else {
+            self.settle_body_checks();
+        }
+        #[cfg(not(test))]
+        self.settle_body_checks();
     }
 
     /// Retain layout and trait facts after body checking without publishing a nominal snapshot yet. Native module
@@ -7288,6 +7307,7 @@ impl TypeChecker {
             }
         }
         self.settle_open_value_destinations();
+        self.errors.append(&mut self.body_open_diagnostics);
         if let Err(error) = self.loaves.validate_demands() {
             self.errors
                 .push(CompileError::type_error(error.to_string(), Span::default()));

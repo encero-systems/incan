@@ -844,6 +844,8 @@ pub(crate) struct BodyIrOpenCall {
     pub parameters: Vec<String>,
     pub result: ResolvedType,
     pub bindings: HashMap<String, ResolvedType>,
+    /// This complete lexical group has passed explicit destination settlement.
+    pub settled: bool,
     pub invalidated: bool,
 }
 

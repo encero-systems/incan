@@ -104,7 +104,17 @@ fn assert_checkers(
         legacy.type_info.declarations.type_alias_targets
     );
     assert_eq!(candidate.type_info.import_bindings, legacy.type_info.import_bindings);
-    assert_eq!(candidate.check_work(), legacy.check_work(), "{source}");
+    let mut comparable_work = candidate.check_work();
+    eprintln!(
+        "mutation-producer\tcomponents={}\tmembers={}\tchecks={}",
+        comparable_work.mutation_components, comparable_work.mutation_member_visits, comparable_work.body_local_checks
+    );
+    comparable_work.body_finalizations = 0;
+    comparable_work.body_view_reuses = 0;
+    comparable_work.mutation_components = 0;
+    comparable_work.mutation_member_visits = 0;
+    assert_eq!(comparable_work, legacy.check_work(), "{source}");
+
     assert_eq!(
         candidate.type_info.calls.closure_holding_params, legacy.type_info.calls.closure_holding_params,
         "{source}"

@@ -20,6 +20,18 @@ pub struct CheckWork {
     pub callable_defaults: usize,
     /// Module mutation-argument settlement entries; this counts settlement, not local body checks.
     pub mutation_settlements: usize,
+    /// Forwarding SCCs closed by the effect producer.
+    pub mutation_components: usize,
+    /// Parameter members visited while closing effect SCCs.
+    pub mutation_member_visits: usize,
+    /// Local outputs finalized against immutable callee effects.
+    pub body_finalizations: usize,
+    /// Completed sibling values reused without local checking or finalization.
+    pub body_view_reuses: usize,
+    /// Recorded mutation arguments, also defining their legacy traversal order.
+    pub mutation_arguments: usize,
+    /// Recorded dictionary lookups, also defining their legacy traversal order.
+    pub dictionary_lookups: usize,
     /// Deferred dictionary refusal passes.
     pub dictionary_settlements: usize,
     /// Deferred lexical open-value destination passes.
