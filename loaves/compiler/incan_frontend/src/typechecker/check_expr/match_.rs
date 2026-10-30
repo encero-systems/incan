@@ -660,8 +660,7 @@ impl TypeChecker {
                         self.type_info.record_resolved_identity(field_name.span, identity);
                     }
                     if self.private_field_is_inaccessible(type_name, info) {
-                        self.errors
-                            .push(errors::private_field(type_name, &field_name.node, field_name.span));
+                        self.errors.push(Self::private_field_error(type_name, info, &field_name.node, field_name.span));
                         continue;
                     }
                     if !provided.insert(canonical_name.clone()) {
