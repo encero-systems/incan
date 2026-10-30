@@ -167,6 +167,7 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
     An uninitialized store is empty. A missing committed `CURRENT`, an unreadable or malformed pointer, or an
     unknown format is refused; none of them is read as an empty store. A view the generation does not name is empty.
     """
+    check_view_key(view)?
     check_format(root)?
     pointer = root.joinpath("CURRENT")
     if not pointer.exists() and not pointer.is_symlink():
@@ -208,6 +209,16 @@ def check_format(root: Path) -> Result[None, StoreError]:
     return Ok(None)
 
 
+def check_view_key(name: str) -> Result[None, StoreError]:
+    """Validate a nonempty view token before it can enter or select a line-oriented manifest."""
+    if name == "" or name.strip() != name:
+        return Err(failure("format", name, "view key is empty or has surrounding whitespace"))
+    for character in name:
+        if character <= " " or character == "\\x7f":
+            return Err(failure("format", name, "view key contains a manifest delimiter or control character"))
+    return Ok(None)
+
+
 def manifest_path(root: Path, generation: int, digest: str) -> Path:
     """Where the manifest of one generation lives."""
     return root.joinpath("snapshots").joinpath(f"{generation}.{digest[:16]}.manifest")
@@ -233,10 +244,12 @@ def read_manifest(root: Path, generation: int, digest: str, view: str) -> Result
                 if len(fields) == 2 and fields[0] == "segment":
                     segments.append(fields[1])
                 elif len(fields) == 3 and fields[0] == "view":
+                    check_view_key(fields[1])?
                     views.append(ViewRoot(view=fields[1], root=fields[2]))
                     if fields[1] == view:
                         index = fields[2]
                 elif len(fields) == 2 and fields[0] == "view":
+                    check_view_key(fields[1])?
                     views.append(ViewRoot(view=fields[1], root=""))
                 else:
                     return Err(failure("integrity", path.0, f"malformed manifest line {line}"))
@@ -459,8 +472,10 @@ pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
     Create view `name` at `view`'s current root and return it.
 
     The new view shares every index page with its source; the source's later writes never reach it. A view that
-    already exists is refused rather than replaced.
+    already exists is refused rather than replaced. Names must be nonempty, contain no ASCII whitespace or control
+    characters, and have no surrounding Unicode whitespace; invalid names are refused before publication.
     """
+    check_view_key(name)?
     mut transaction = begin(view)
     transaction.fork = name
     published = commit(transaction)?
@@ -511,6 +526,7 @@ pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
 
 def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged: Path) -> Result[Snapshot, StoreError]:
     """Name a new view at the source view's root; the caller holds the publication lock."""
+    check_view_key(transaction.fork)?
     for existing in latest.views:
         if existing.view == transaction.fork:
             remove_tree(staged)
