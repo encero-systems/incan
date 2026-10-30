@@ -6824,15 +6824,17 @@ impl TypeChecker {
     /// Validate bound names and type arguments for declarations whose collected signatures otherwise have no semantic
     /// body pass.
     ///
-    /// A bound name resolves as a builtin trait (`Eq`, `Ord`, `Awaitable`, ...) or a builtin derive bound (`Copy`
-    /// included, which names no builtin trait of its own; see [`Self::builtin_derive_bound`]), neither of which appears
-    /// in the symbol table since no import declares it, or as a user-defined trait the program declares or imports.
+    /// A bound name resolves as a builtin trait (`Eq`, `Ord`, `Awaitable`, ...), a builtin derive bound (`Copy`
+    /// included, which names no builtin trait of its own; see [`Self::builtin_derive_bound`]) or a builtin type in
+    /// either spelling (`int` or `Int`, #1033), none of which appears in the symbol table under every spelling, or as
+    /// a trait or type the program declares or imports.
     fn validate_type_param_bound_type_names(&mut self, type_params: &[TypeParam]) {
         for type_param in type_params {
             for bound in &type_param.bounds {
                 let resolved_name = self.resolve_trait_bound_name(&bound.name, type_param.span);
                 let is_builtin = builtin_traits::from_str(&resolved_name).is_some()
-                    || self.builtin_derive_bound(&resolved_name).is_some();
+                    || self.builtin_derive_bound(&resolved_name).is_some()
+                    || ResolvedType::builtin_simple(&resolved_name).is_some();
                 if !is_builtin && self.lookup_symbol(&resolved_name).is_none() {
                     self.errors.push(errors::unknown_symbol(&bound.name, type_param.span));
                 }

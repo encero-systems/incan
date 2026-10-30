@@ -1,0 +1,34 @@
+# behavior: a decorated function whose type parameter is absent from its signature, with parameters and a non-text result, is decorated once per closed instance on its first call
+# expect-stdout:
+#   decorating columns
+#   2
+#   Row0
+#   decorating columns
+#   Point:0
+
+
+def traced[F](label: str) -> (F) -> F:
+    println(f"decorating {label}")
+    return (func) => func
+
+
+model Row:
+    name: str
+
+
+model Point:
+    x: int
+
+
+@traced("columns")
+def columns[T](separator: str, width: int) -> list[str]:
+    mut names: list[str] = []
+    for index in range(width):
+        names.append(f"{T.__class_name__()}{separator}{index}")
+    return names
+
+
+def main() -> None:
+    println(len(columns[Row]("", 2)))
+    println(columns[Row]("", 1)[0])
+    println(columns[Point](":", 1)[0])

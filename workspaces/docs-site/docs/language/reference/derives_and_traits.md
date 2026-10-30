@@ -245,6 +245,36 @@ def main() -> None:
     e = len[int]([1])             # refused: brackets on a builtin call (INCAN-T0001)
 ```
 
+### Bounds that name a type
+
+- A `with` bound may name a type instead of a trait: a builtin type in either spelling (`int` or `Int`), or a model, class, enum, newtype or type alias, declared or imported. Only that type satisfies the bound; an alias of a type satisfies a bound on its target. Any other type argument is refused (`INCAN-T0001`).
+- Overloads that differ only in such a bound are selected by the explicit type argument, directly or through an alias of the function.
+- A name that is a trait keeps its trait meaning, so a type never stands in for a trait of the same name.
+
+```incan
+model Col:
+    name: str
+
+model IntCol:
+    src: str
+
+model FloatCol:
+    src: str
+
+def cast[T with Int](expr: Col) -> IntCol:
+    return IntCol(src=expr.name)
+
+def cast[T with Float](expr: Col) -> FloatCol:
+    return FloatCol(src=expr.name)
+
+safe_cast = alias cast
+
+def main() -> None:
+    a = cast[Int](Col(name="a"))          # accepted: a is IntCol
+    b = safe_cast[float](Col(name="b"))   # accepted: b is FloatCol
+    c = cast[str](Col(name="c"))          # refused: no overload is bound to str (INCAN-T0001)
+```
+
 ## Traits (authoring)
 
 - A trait declares methods. A required method is a signature with no body (`def render(self) -> str`, or with `: ...`); a default method has a body.
