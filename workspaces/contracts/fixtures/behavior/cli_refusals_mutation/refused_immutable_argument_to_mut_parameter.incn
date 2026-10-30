@@ -1,5 +1,8 @@
-# behavior: an immutable binding or a list element passed to a mut list parameter that a trait default method or a function changes is refused at check time
+# behavior: an immutable binding, a list element or a frozen byte constant passed to a mut parameter that a trait default method or a function changes is refused at check time (#2256)
 # expect-diagnostic: INCAN-T0117
+
+const RAW: bytes = b"abc"
+
 
 trait Replacer:
     def replace(self, mut items: list[int]) -> int:
@@ -15,9 +18,15 @@ def extend(mut items: list[int]) -> None:
     items.append(7)
 
 
+def replace(mut data: bytes) -> None:
+    """Require caller-visible mutable byte storage, which a frozen constant cannot supply."""
+    data[0] = 0u8
+
+
 def main() -> None:
     items: list[int] = [1, 2]
     println(Widget(id=1).replace(items))
     println(len(items))
     mut rows: list[list[int]] = [[1]]
     extend(rows[0])
+    replace(RAW)
