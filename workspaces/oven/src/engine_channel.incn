@@ -1,6 +1,6 @@
 """Bounded engine frames, correlated sessions and data-credit back-pressure over the core Unix transport."""
 
-from core_ipc import Connection
+from core_ipc import Connection, Credits
 from engine_codec import decode, encode
 from engine_messages import Ack, Message
 from engine_wire import CONTROL, DATA_CREDITS, HEADER_SIZE, MAX_PAYLOAD, Header, Refusal, RefusalKind
@@ -28,8 +28,10 @@ pub class Channel:
     pub session: bytes = zero_id()
     pub sent: u64 = 0
     pub received: u64 = 0
-    pub pending: list[str] = []
-    pub incoming: list[str] = []
+    # Credits this end spent on data frames the peer has not acknowledged yet.
+    pub pending: Credits = Credits(limit=DATA_CREDITS)
+    # Credits the peer spent on data frames this end has not consumed yet.
+    pub incoming: Credits = Credits(limit=DATA_CREDITS)
     pub retired: bool = false
 
     def send(mut self, request: bytes, message: Message) -> Result[SendOutcome, Refusal]:
@@ -37,7 +39,7 @@ pub class Channel:
         if self.retired:
             return Err(Refusal(kind=RefusalKind.Transport, detail="engine connection is retired"))
         control = is_control(message)
-        if not control and len(self.pending) == DATA_CREDITS:
+        if not control and self.pending.exhausted():
             return Ok(SendOutcome.Blocked)
         tag, raw = encode(message)?
         mut flags = 0
@@ -50,7 +52,7 @@ pub class Channel:
         sequence = self.sent
         self.sent += 1
         if not control:
-            self.pending.append(str(sequence))
+            self.pending.spend(sequence).map_err(credit_refusal)?
         return Ok(SendOutcome.Sent(sequence))
 
     def receive(mut self) -> Result[Envelope, Refusal]:
@@ -85,28 +87,26 @@ pub class Channel:
             Message.Ack(ack) => self.credit(ack.sequence)?
             _ =>
                 if header.flags == 0:
-                    if len(self.incoming) == DATA_CREDITS:
+                    if self.incoming.exhausted():
                         return Err(Refusal(kind=RefusalKind.Credit, detail="peer exceeded data credits"))
-                    self.incoming.append(str(header.sequence))
+                    self.incoming.spend(header.sequence).map_err(credit_refusal)?
         return Ok(Envelope(header=header, message=message))
 
     def credit(mut self, sequence: u64) -> Result[None, Refusal]:
         """Return one exact outstanding credit; forged or repeated acknowledgments retire the connection."""
-        if str(sequence) not in self.pending:
-            return Err(Refusal(kind=RefusalKind.Credit, detail="acknowledgment names no outstanding frame"))
-        self.pending = [item for item in self.pending if item != str(sequence)]
-        return Ok(None)
+        return self.pending.regain(sequence).map_err(
+            (_) => Refusal(kind=RefusalKind.Credit, detail="acknowledgment names no outstanding frame"),
+        )
 
     def acknowledge(mut self, frame: Envelope) -> Result[None, Refusal]:
         """Return credit only after the caller consumes one data frame; control needs no acknowledgment."""
         if frame.header.flags == CONTROL:
             return Ok(None)
         sequence = frame.header.sequence
-        if str(sequence) not in self.incoming:
+        if not self.incoming.holds(sequence):
             return Err(Refusal(kind=RefusalKind.Credit, detail="frame was already acknowledged"))
         _ = self.send(frame.header.request, Message.Ack(Ack(sequence=sequence)))?
-        self.incoming = [item for item in self.incoming if item != str(sequence)]
-        return Ok(None)
+        return self.incoming.regain(sequence).map_err(credit_refusal)
 
 
 pub def is_control(message: Message) -> bool:
@@ -129,3 +129,8 @@ pub def transport_refusal(detail: str) -> Refusal:
 pub def short_read(detail: str) -> Refusal:
     """A timed-out or truncated frame is never a valid shorter payload."""
     return Refusal(kind=RefusalKind.ShortRead, detail=detail)
+
+
+pub def credit_refusal(detail: str) -> Refusal:
+    """A data frame the credit window refuses."""
+    return Refusal(kind=RefusalKind.Credit, detail=detail)

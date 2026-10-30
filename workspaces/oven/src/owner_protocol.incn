@@ -7,7 +7,9 @@ completed executable's path travel in the reply's own fields, never mixed into o
 resolved (command, entry, profile, features), never a unit description.
 """
 
-from std.json import JsonValue
+from rust::std::string import String as RustString
+from std.json import JsonValue, parse
+from core_ipc import Connection
 from json_fields import boolean, field, strings, text_field
 
 
@@ -82,6 +84,30 @@ pub model Reply:
 pub def prepares_executable(command: str) -> bool:
     """Whether a command asks the owner for an executable, rather than for something about the owner itself."""
     return command in ["run", "build", "test"]
+
+
+pub def send_document(mut connected: Connection, document: JsonValue) -> Result[None, str]:
+    """Send one document as one frame, its payload the document's JSON text in UTF-8."""
+    payload = document.to_json().map_err((error) => error.message())?.encode("utf-8")
+    return connected.send(payload)
+
+
+pub def receive_document(mut connected: Connection) -> Result[JsonValue, str]:
+    """Read one frame and its document; a payload that is not UTF-8 JSON refuses it."""
+    payload = connected.receive()?
+    match RustString.from_utf8(payload):
+        Ok(text) => return parse(str(text)).map_err((error) => error.message())
+        Err(_) => return Err("the frame is not UTF-8")
+
+
+pub def send_quietly(mut connected: Connection, document: JsonValue) -> None:
+    """Send a document whose delivery nobody checks: a peer that has gone away needs no answer."""
+    _ = send_document(connected, document)
+
+
+pub def discard_reply(mut connected: Connection) -> None:
+    """Read and drop the peer's answer to a message for which only the peer's presence mattered."""
+    _ = connected.receive()
 
 
 pub def request_of(document: JsonValue) -> Result[Request, str]:

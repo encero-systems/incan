@@ -1,4 +1,8 @@
-"""Bounded Unix transport shared by the owner, compiler worker and engine control protocols."""
+"""
+Bounded Unix transport shared by the owner, compiler worker and engine control protocols.
+
+It carries bytes and the OS identity of the peer, nothing else: what a payload encodes belongs to its protocol.
+"""
 
 from rust::std::fs import File, Permissions, set_permissions
 from rust::std::io import ErrorKind, Read, Write
@@ -7,21 +11,13 @@ from rust::std::os::unix::fs import PermissionsExt
 from rust::std::os::unix::net import UnixListener, UnixStream
 from rust::std::cell import RefCell
 from rust::std::rc import Rc
-from rust::std::string import String as RustString
 from rust::std::time import Duration
-from std.json import JsonValue, parse
 
 pub const MAX_FRAME: int = 16777216
 const HEADER_DIGITS: int = 8
 const OWNER_ONLY: u32 = 384
-
-
-pub def digits_only(text: str) -> bool:
-    """Whether every character of `text` is an ASCII decimal digit."""
-    for index in range(len(text)):
-        if text[index] not in "0123456789":
-            return false
-    return true
+# The byte of the ASCII digit zero.
+const DIGIT_ZERO: int = 48
 
 
 pub model PeerIdentity:
@@ -33,7 +29,7 @@ pub model PeerIdentity:
 
 
 pub class Connection:
-    """One end of an owner socket, speaking frames."""
+    """One end of a Unix socket, speaking length-framed byte payloads."""
 
     # Shared and interior-mutable, because a foreign socket can be neither cloned nor copied.
     pub stream: Rc[RefCell[UnixStream]]
@@ -56,16 +52,15 @@ pub class Connection:
         self.stream.borrow_mut().read_exact(payload).map_err((error) => f"cannot read frame: {error}")?
         return Ok(payload)
 
-    def send(mut self, document: JsonValue) -> Result[None, str]:
+    def send(mut self, payload: bytes) -> Result[None, str]:
         """
         Write one frame.
 
-        1. Encode the document, refusing one over the bound.
+        1. Refuse a payload over the bound.
         2. Write the eight-digit length header.
         3. Write the payload.
         """
         # 1. The bound is checked before anything is written.
-        payload = document.to_json().map_err((error) => error.message())?.encode("utf-8")
         if len(payload) > MAX_FRAME:
             return Err(f"a frame of {len(payload)} bytes exceeds the {MAX_FRAME} allowed")
         # 2. The header states the payload's length.
@@ -79,31 +74,19 @@ pub class Connection:
             Ok(_) => return Ok(None)
             Err(error) => return Err(f"cannot write {what}: {error}")
 
-    def receive(mut self) -> Result[JsonValue, str]:
+    def receive(mut self) -> Result[bytes, str]:
         """
-        Read one frame. A header that is not a length, a length over the bound or a payload cut short refuses it.
+        Read one frame's payload. A header that is not a length, a length over the bound or a payload cut short
+        refuses it.
 
         1. Read the eight-digit header and take the length it states.
         2. Read exactly that many payload bytes.
-        3. Decode them as UTF-8 JSON.
         """
         # 1. The length is validated before any buffer of that size exists.
         header = self.read_part(HEADER_DIGITS, HEADER_DIGITS)?
         size = length_of(header)?
         # 2. A payload cut short is an error, not a shorter frame.
-        payload = self.read_part(size, MAX_FRAME)?
-        # 3. The payload is a JSON document in UTF-8.
-        match RustString.from_utf8(payload):
-            Ok(text) => return parse(str(text)).map_err((error) => error.message())
-            Err(_) => return Err("the frame is not UTF-8")
-
-    def send_quietly(mut self, document: JsonValue) -> None:
-        """Send a frame whose delivery nobody checks: a peer that has gone away needs no answer."""
-        _ = self.send(document)
-
-    def discard_reply(mut self) -> None:
-        """Read and drop the peer's answer to a message for which only the peer's presence mattered."""
-        _ = self.receive()
+        return self.read_part(size, MAX_FRAME)
 
     def wait_at_most(mut self, seconds: u64) -> None:
         """Bound each read by `seconds`; 0 removes the bound, which a long build needs."""
@@ -123,29 +106,24 @@ pub def length_of(header: bytes) -> Result[int, str]:
     """
     The payload length a frame header states, within the bound.
 
-    1. The header is text.
-    2. It is exactly eight decimal digits.
+    1. The header is exactly eight bytes.
+    2. Each is an ASCII decimal digit, so nothing is signed.
     3. The length they spell does not exceed `MAX_FRAME`.
     """
-    # 1. A header is text; bytes that are not UTF-8 are no length.
-    text = header_text(header)?
-    # 2. A length is exactly eight decimal digits, nothing shorter and nothing signed.
-    if len(text) != HEADER_DIGITS:
+    # 1. A length is exactly eight digits, nothing shorter.
+    if len(header) != HEADER_DIGITS:
         return Err("the frame header is not eight digits")
-    if not digits_only(text):
-        return Err("the frame header is not a length")
+    mut size = 0
+    for index in range(HEADER_DIGITS):
+        # 2. A byte that is not a decimal digit makes the header no length.
+        digit = int(header[index]) - DIGIT_ZERO
+        if digit < 0 or digit > 9:
+            return Err("the frame header is not a length")
+        size = size * 10 + digit
     # 3. The length they spell is within the bound, so no buffer of unbounded size is ever allocated.
-    size = int(text)
     if size > MAX_FRAME:
         return Err(f"a frame of {size} bytes exceeds the {MAX_FRAME} allowed")
     return Ok(size)
-
-
-def header_text(header: bytes) -> Result[str, str]:
-    """A frame header as text."""
-    match RustString.from_utf8(header):
-        Ok(found) => return Ok(str(found))
-        Err(_) => return Err("the frame header is not text")
 
 
 pub def padded(size: int) -> str:
@@ -166,13 +144,13 @@ def zeros(count: int) -> bytes:
     return text[0:count].encode("utf-8")
 
 
-pub def connection(stream: UnixStream) -> Connection:
+def connection(stream: UnixStream) -> Connection:
     """Speak frames over `stream`."""
     return Connection(stream=Rc.new(RefCell.new(stream)))
 
 
 pub class Listener:
-    """A listening owner socket."""
+    """A listening Unix socket."""
 
     pub socket: Rc[RefCell[UnixListener]]
 
@@ -213,7 +191,7 @@ pub def listen(path: str, blocking: bool) -> Result[Listener, str]:
     # 1. A socket listens at `path`, or the error says why it cannot.
     socket = bind(path)?
     mut listener = Listener(socket=Rc.new(RefCell.new(socket)))
-    # 2. No other user can connect to the owner or read what it is sent.
+    # 2. No other user can connect to the listener or read what it is sent.
     match set_permissions(path, Permissions.from_mode(OWNER_ONLY)):
         Ok(_) => pass
         Err(error) => return Err(f"cannot restrict {path}: {error}")
@@ -231,17 +209,30 @@ def bind(path: str) -> Result[UnixListener, str]:
 
 
 pub def dial(path: str) -> Result[Connection, str]:
-    """Connect to a socket path; the error says why, so a caller can tell a stale socket from a refused one."""
+    """Connect to a socket path; the error says why the connection failed."""
     match UnixStream.connect(path):
         Ok(stream) => return Ok(connection(stream))
         Err(error) => return Err(f"cannot connect to {path}: {error}")
 
 
+pub def dial_live(path: str) -> Result[Option[Connection], str]:
+    """
+    Connect to a socket path. `None` when nothing is alive there, with no listener or no socket any more; any other
+    failure, such as a listener that refuses this user, is an error.
+    """
+    match UnixStream.connect(path):
+        Ok(stream) => return Ok(Some(connection(stream)))
+        Err(error) =>
+            if error.kind() == ErrorKind.ConnectionRefused or error.kind() == ErrorKind.NotFound:
+                return Ok(None)
+            return Err(f"cannot connect to {path}: {error}")
+
+
 pub def stale(path: str) -> bool:
     """Whether connecting to `path` found nothing alive there: no listener, or no socket any more."""
-    match UnixStream.connect(path):
-        Ok(_) => return false
-        Err(error) => return error.kind() == ErrorKind.ConnectionRefused or error.kind() == ErrorKind.NotFound
+    match dial_live(path):
+        Ok(found) => return found is None
+        Err(_) => return false
 
 
 pub def readable(connected: Connection) -> Result[bool, str]:
@@ -265,3 +256,45 @@ pub def session_id() -> Result[bytes, str]:
     mut result: bytes = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
     source.read_exact(result).map_err((error) => f"cannot read OS entropy: {error}")?
     return Ok(result)
+
+
+pub class Credits:
+    """
+    The data frames one direction of a connection may have outstanding, each named by its sequence.
+
+    A sender spends a credit on each data frame and regains it only when the peer acknowledges that exact frame; a
+    receiver spends one on each data frame it admits and returns it once the frame is consumed. A frame that holds no
+    credit returns none, so a forged or repeated acknowledgment never adds one.
+    """
+
+    pub limit: int
+    # The outstanding sequences, as decimal text.
+    outstanding: list[str] = []
+
+    def held(self) -> int:
+        """How many credits are spent."""
+        return len(self.outstanding)
+
+    def exhausted(self) -> bool:
+        """Whether every credit is spent, so the next data frame must wait."""
+        return len(self.outstanding) >= self.limit
+
+    def holds(self, sequence: u64) -> bool:
+        """Whether the frame `sequence` holds a credit."""
+        return str(sequence) in self.outstanding
+
+    def spend(mut self, sequence: u64) -> Result[None, str]:
+        """Spend a credit on the frame `sequence`; with none left, or one already spent on it, it is refused."""
+        if self.exhausted():
+            return Err("no data credit is left")
+        if self.holds(sequence):
+            return Err("the frame already holds a credit")
+        self.outstanding.append(str(sequence))
+        return Ok(None)
+
+    def regain(mut self, sequence: u64) -> Result[None, str]:
+        """Return the credit the frame `sequence` holds; a frame that holds none is refused."""
+        if not self.holds(sequence):
+            return Err("no outstanding frame has that sequence")
+        self.outstanding = [item for item in self.outstanding if item != str(sequence)]
+        return Ok(None)

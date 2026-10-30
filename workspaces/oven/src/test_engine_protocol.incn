@@ -90,7 +90,7 @@ pub def test_credit_back_pressure_and_control_lane() -> Result[None, str]:
         SendOutcome.Sent(_) =>
             assert false, "ninth frame was sent without credit"
     assert client.sent == 8
-    assert len(client.pending) == 8
+    assert client.pending.held() == 8
     _ = client.send(zero_id(), Message.Cancel(Cancel(interest_token="interest"))).map_err(detail)?
     first = server.receive().map_err(detail)?
     server.acknowledge(first).map_err(detail)?
@@ -108,6 +108,16 @@ pub def test_credit_back_pressure_and_control_lane() -> Result[None, str]:
             assert value.interest_token == "interest"
         _ =>
             assert false, "control frame was lost behind exhausted data credits"
+    # An acknowledgment that names no outstanding frame returns no credit and retires the connection.
+    forged = server.send(zero_id(), Message.Ack(Ack(sequence=99u64))).map_err(detail)?
+    for _index in range(7):
+        returned = client.receive().map_err(detail)?
+    match client.receive():
+        Ok(_) =>
+            assert false, "a forged acknowledgment returned a credit"
+        Err(reason) =>
+            assert reason.kind == RefusalKind.Credit
+    assert client.retired
     return Ok(None)
 
 
