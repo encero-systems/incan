@@ -75,6 +75,13 @@ def digest_of(epoch: BuildEpoch, path: Path) -> str:
         None => return ""
 
 
+def refused(result: Result[CaptureResult, str]) -> bool:
+    """Whether a capture was refused."""
+    match result:
+        Ok(_) => return false
+        Err(_) => return true
+
+
 def touched(epoch: BuildEpoch, path: Path) -> bool:
     """Whether a capture recorded anything at `path`, found or absent."""
     return epoch.input(path.0) is not None or path.0 in [item.path for item in epoch.absent]
@@ -280,6 +287,8 @@ pub def test_build_captures_the_package_membership_without_its_fixtures() -> Res
     third = capture(request, Some(epoch), admitted, 0)?
     assert third.outcome == CaptureOutcome.Changed
     assert third.counters.in_reach.listings == 1 and third.counters.in_reach.reads == 1
+    # A command whose roots capture does not know is refused, not guessed at.
+    assert refused(capture(CaptureRequest(roots=[app.0], selection=InputSelection(command="check")), None, admitted, 0))
     return Ok(None)
 
 
