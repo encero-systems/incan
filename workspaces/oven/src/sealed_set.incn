@@ -650,16 +650,23 @@ pub def readmit(root: Path, directory: Path, set_root: str, supported: Profile) 
     The supplying adapter owns the pinned root and trust decision. Intact unequal revisions are conflicts; damaged
     frames are preserved as quarantine evidence and replaced by new transaction frames. Payload damage is moved out
     of its canonical name before exact re-admission. Frozen bytes are never edited in place or recomputed here.
+
+    1. Verify the transport and its exact admitted dependency closure.
+    2. Stage frozen envelopes and the receipt, refusing intact disagreement.
+    3. Re-admit exact payload bytes and commit the replacement frames together.
     """
+    # 1. Repair receives the same complete integrity and profile checks as ordinary admission.
     verified = verify_transport(directory, set_root, supported)?
     view = snapshot(root)?
     check_dependencies(view, verified.spec.dependencies)?
     check_external(view, verified.spec.records)?
+    # 2. Quarantine preserves damage; only a new transaction can change selected frames.
     mut transaction = begin(view)
     for entry in verified.entries:
         key = record_key(verified.spec, entry.record)?
         transaction = restored_frame(transaction, view, key, envelope_bytes(verified.spec, entry)?)?
     transaction = restored_frame(transaction, view, SET_PREFIX + set_root, verified.document)?
+    # 3. Payload identities remain pinned while replacement frames become visible atomically.
     for object in verified.objects:
         readmit_payload(root, transport_file(directory, f"payloads/{object.digest}")?, object.digest)?
     return commit(transaction)

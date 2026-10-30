@@ -733,9 +733,13 @@ pub def repair_derived(
     Publish an explicitly recomputed derived unit after preserving damage as quarantine evidence.
 
     The owner must supply a complete bake from verified inputs under this exact identity, not frozen imported facts.
-    This operation claims the identity, preserves a damaged selected frame, quarantines damaged matching payloads,
-    and publishes a new record transaction. Ordinary reads and verification never invoke it.
+    Ordinary reads and verification never invoke this operation.
+
+    1. Claim the exact identity and preserve any selected damage.
+    2. Clear damaged canonical names needed by the verified replacement.
+    3. Publish the recomputed unit in a new record transaction.
     """
+    # 1. The claim excludes a competing producer while the old damage is preserved.
     held = claim(store, identity)?
     view = snapshot(store).map_err(store_failure)?
     match store_lookup(view, record_key(identity)):
@@ -752,10 +756,12 @@ pub def repair_derived(
                                 quarantine_payload(store, file.digest).map_err(store_failure)?
                 Lookup.Deleted => pass
                 Lookup.Absent => pass
+    # 2. The owner supplied complete replacement bytes, independently of damaged storage.
     for relative in staged_files(staged, "")?:
         source = staged.joinpath(relative)
         digest = hexlify(file_digest(source, "sha256").map_err((error) => error.message())?)
         quarantine_payload(store, digest).map_err(store_failure)?
+    # 3. Record publication uses the same transaction path as an ordinary bake.
     forget_verified()
     return seal(store, identity, staged, kind, name, reaches, provenance)
 
