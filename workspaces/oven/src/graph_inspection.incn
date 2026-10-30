@@ -531,8 +531,9 @@ def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, st
             if source.name() != "lib.incn":
                 paths.append(own_unit_graph(source, root, prepared, toolchain)?)
             # 4. The standard Loaves the units reach join, except the one the project itself is.
-            package = rust_facet(root.0, false)?.package
-            standard = standard_graphs(root, "debug", toolchain, paths, prepared.registry, package)?
+            package = rust_facet(root.0, false, prepared.request.manifests)?.package
+            standard = standard_graphs(root, "debug", toolchain, paths, prepared.registry, package,
+                                       prepared.request.manifests)?
             return Ok(paths + standard)
 
 
@@ -545,10 +546,11 @@ def own_unit_graph(
     """The graph of a source of the project's own target unit, checked against the interfaces of its dependencies."""
     for facet in prepared.facets:
         if facet.project == root.0 and facet.domain.value() == "target":
-            natives = unit_natives(facet, prepared.built, prepared.request, unit_loaves(facet, prepared.interfaces)?)?
-            loaves = unit_loaves(facet, prepared.interfaces)?
+            loaves = unit_loaves(facet, prepared.interfaces, prepared.request.manifests)?
+            natives = unit_natives(facet, prepared.built, prepared.request, loaves)?
             graph = inspect_incan(source, toolchain, natives, prepared.interfaces, facet.features, false, loaves,
-                                  registry=Some(prepared.registry))?
+                                  registry=Some(prepared.registry), reader=prepared.request.manifests,
+                                  facets=prepared.facets)?
             return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
     return Err("inspection selected no source unit")
 

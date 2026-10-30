@@ -12,6 +12,8 @@ from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import prepare_linked
 from registry_units import RegistryUnits
+from intake import ManifestReader
+from loaf_local_graph import LocalFacet
 
 # The version of the key an export is cached under; changing it discards every cached export.
 const EXPORT_DOMAIN: str = "incan.codegraph.incan/4"
@@ -27,6 +29,8 @@ pub def inspect_incan(
     source_loaves: list[UnitLoaf] = [],
     owner: Option[Path] = None,
     registry: Option[RegistryUnits] = None,
+    reader: ManifestReader = ManifestReader(),
+    facets: list[LocalFacet] = [],
 ) -> Result[Path, str]:
     """
     Export one unit, checked or not, once per digest; dependency interfaces stay in the inspection cache and never
@@ -43,7 +47,8 @@ pub def inspect_incan(
     """
     # 1. The unit is described against the toolchain, and links the interfaces its dependencies were checked into.
     entry_source = source.resolve().map_err((error) => error.message())?
-    mut unit = describe(entry_source, "debug", FeatureRequest(features=features, default_features=defaults))?
+    mut unit = describe(entry_source, "debug", FeatureRequest(features=features, default_features=defaults),
+                        reader, Some(toolchain), facets)?
     if source.name() == "lib.incn":
         unit.kind = "library"
     ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves, registry)?

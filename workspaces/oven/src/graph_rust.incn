@@ -57,7 +57,8 @@ pub def inspect_rust(
     prepared = prepare_graph(root, profile, features, substitutes, toolchain, [], published_only)?
     mut paths = prepared.paths
     if len(paths) > 0:
-        paths = paths + standard_graphs(root, profile, toolchain, paths, prepared.registry)?
+        paths = paths + standard_graphs(root, profile, toolchain, paths, prepared.registry,
+                                       reader=prepared.request.manifests)?
     # 2. Every Rust export is keyed by the compiler, the libraries built and the registry artifacts it links against.
     context = native_context(prepared, toolchain)?
     registry = registry_artifacts(prepared.facets, prepared.request)?
@@ -102,7 +103,7 @@ def facet_graphs(
     toolchain: Toolchain,
 ) -> Result[list[GraphUnit], str]:
     """The graphs of one facet: its library, when it has one, and, for the project's own facet, its binaries."""
-    declared = rust_facet(facet.project, false)?
+    declared = rust_facet(facet.project, false, prepared.request.manifests)?
     own = facet.project == root.0 and facet.domain == DependencyDomain.Target
     mut graphs: list[GraphUnit] = []
     if declared.kind != "":
