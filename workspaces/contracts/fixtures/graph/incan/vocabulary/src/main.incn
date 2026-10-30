@@ -1,4 +1,4 @@
-# behavior: graph inspection checks a consumer of an always-on vocabulary through its prepared registration
+# behavior: graph inspection checks a vocabulary consumer and keeps dependency records in their published graphs (#2484)
 # graph-commands:
 #   src/main.incn --query defs main
 # expect-stdout-contains:

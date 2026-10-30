@@ -64,12 +64,13 @@ pub def launch(
     project: Path,
     selector: Option[str],
     environment: list[str],
+    stdout_file: Option[Path] = None,
 ) -> Result[Child, str]:
     """
     Start one child with separate captured streams; the caller owns waiting and collection.
 
     `environment` holds `NAME=value` settings added to the inherited environment, as a case's `environment:` block
-    declares them.
+    declares them. When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
     """
     mut command = Command.new(incan)
     trace = trace_file(project)
@@ -79,7 +80,7 @@ pub def launch(
         command.env(name, value)
     command.process_group(0)
     command.stdin(Stdio.null())
-    command.stdout(File.create(stream_path(project, "stdout").0).map_err((error) => str(error))?)
+    command.stdout(File.create(stdout_file.unwrap_or(stream_path(project, "stdout")).0).map_err((error) => str(error))?)
     command.stderr(File.create(stream_path(project, "stderr").0).map_err((error) => str(error))?)
     match selector:
         Some(value) =>
@@ -135,16 +136,24 @@ pub def terminate_group(pid: int) -> Result[None, str]:
     return Ok(None)
 
 
-pub def finish(project: Path, code: Option[int], timed_out: bool, deadline_seconds: int = 0) -> Result[Outcome, str]:
+pub def finish(
+    project: Path,
+    code: Option[int],
+    timed_out: bool,
+    deadline_seconds: int = 0,
+    stdout_file: Option[Path] = None,
+) -> Result[Outcome, str]:
     """
     Collect strict UTF-8 streams after reaping, preserving signals and a deadline's partial output.
 
-    1. Read and remove this invocation's captured streams.
+    1. Read and remove captured streams, leaving caller-owned stdout on disk and its Outcome text empty.
     2. Include the effective deadline when it expired.
     3. Retain the original exit-code or signal outcome.
     """
-    # 1. Read and remove this invocation's captured streams.
-    stdout_result = read_stream(project, "stdout")
+    # 1. Collect ordinary captures; a file-backed response remains available to its streaming consumer.
+    mut stdout_result: Result[str, str] = Ok("")
+    if stdout_file is None:
+        stdout_result = read_stream(project, "stdout")
     stderr_result = read_stream(project, "stderr")
     stdout = stdout_result?
     mut stderr = stderr_result?
