@@ -1117,6 +1117,9 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         RvalueKind::PointerAddress(pointer) => pointer_address_result(plan, function, pointer),
         RvalueKind::MutBorrow(value) => borrow_result(plan, function, value, true),
         RvalueKind::Borrow(value) => borrow_result(plan, function, value, false),
+        RvalueKind::UnsizeTraitObject(value, source, target) => {
+            trait_object_result(plan, function, value, source, target)
+        }
         RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
             Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
             Scalar::StrArrayRef(_) => Ok(Scalar::StrSlice),
@@ -1395,6 +1398,38 @@ fn pointer_cast_result(
         return Err(invalid(function, "pointer cast requires a compatible raw pointer"));
     }
     Ok(scalar(target))
+}
+
+/// Admit a trait-object conversion only from the operand's own reference type to an object reference of the same
+/// mutability. Whether the referent implements the object is rustc's to prove when it builds the conversion.
+fn trait_object_result(
+    plan: &Plan,
+    function: &Function,
+    value: &Operand,
+    source: &PlanType,
+    target: &PlanType,
+) -> Result<Scalar, PlanError> {
+    require(
+        function,
+        operand(plan, function, value)?,
+        scalar(source),
+        "trait object conversion source",
+    )?;
+    let target = scalar(target);
+    let preserved = match (&target, scalar(source)) {
+        (Scalar::ScalarRef(inner), Scalar::ModelRef(_) | Scalar::ScalarRef(_))
+        | (Scalar::ScalarMutRef(inner), Scalar::ModelMutRef(_) | Scalar::ScalarMutRef(_)) => {
+            matches!(inner.as_slice(), [Scalar::NativeTraitObject(..)])
+        }
+        _ => false,
+    };
+    if !preserved {
+        return Err(invalid(
+            function,
+            "a trait object conversion keeps its reference's mutability",
+        ));
+    }
+    Ok(target)
 }
 
 /// Admit address observation only for a thin raw pointer, retaining the existing refusal for unsized pointees.
@@ -1714,11 +1749,11 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier borrows primitive storage, a checked tuple, a function pointer, or a sized shared
-/// reference. Borrowing a reference preserves its referent and does not make that referent writable; exclusive
-/// reference values do not acquire copying authority.
+/// The scalar reference carrier borrows primitive storage, a checked tuple, a function pointer, a Rust trait object or
+/// a sized shared reference. Borrowing a reference preserves its referent and does not make that referent writable;
+/// exclusive reference values do not acquire copying authority.
 fn scalar_referent(ty: &Scalar) -> bool {
-    if shared_reference(ty) {
+    if shared_reference(ty) || matches!(ty, Scalar::NativeTraitObject(..)) {
         return true;
     }
     if matches!(ty, Scalar::FunctionPointer(_) | Scalar::Tuple(_)) {
@@ -2677,7 +2712,8 @@ fn validate_nested_carrier_components(plan: &Plan, ty: &PlanType) -> Result<(), 
             if !matches!(elements.as_slice(), [inner] if scalar_referent(&scalar(inner))) {
                 return Err(PlanError::Unsupported {
                     function: "scalar reference".into(),
-                    reason: "scalar reference requires one admitted sized scalar or shared-reference referent".into(),
+                    reason: "scalar reference requires one admitted scalar, Rust trait object or reference referent"
+                        .into(),
                 });
             }
             for element in elements {

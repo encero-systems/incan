@@ -1,0 +1,9 @@
+[project]
+name = "native_trait_callbacks"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+tiny_driver = { path = "rust/tiny_driver" }

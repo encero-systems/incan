@@ -182,6 +182,8 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
             return RvalueKind.PointerOffset(swap_operand(pointer, handle), swap_operand(offset, handle))
         RvalueKind.PointerAddress(pointer) => return RvalueKind.PointerAddress(swap_operand(pointer, handle))
         RvalueKind.UnsizeSlice(value) => return RvalueKind.UnsizeSlice(swap_operand(value, handle))
+        RvalueKind.UnsizeTraitObject(value, source, target) =>
+            return RvalueKind.UnsizeTraitObject(swap_operand(value, handle), source, target)
         RvalueKind.UnitFunction(name) => return RvalueKind.UnitFunction(name)
         RvalueKind.FrozenText(value) => return RvalueKind.FrozenText(swap_operand(value, handle))
         RvalueKind.FrozenBytes(values) => return RvalueKind.FrozenBytes(values)

@@ -441,6 +441,9 @@ pub fn rvalue<'tcx>(
         RvalueKind::Borrow(value) => {
             mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?)
         }
+        RvalueKind::UnsizeTraitObject(value, source, target) => {
+            trait_object_rvalue(tcx, sources, value, source, target, destination_type)?
+        }
         RvalueKind::UnsizeSlice(value) => mir::Rvalue::Cast(
             mir::CastKind::PointerCoercion(
                 rustc_middle::ty::adjustment::PointerCoercion::Unsize,
@@ -450,6 +453,33 @@ pub fn rvalue<'tcx>(
             native_type(tcx, destination_type)?,
         ),
     })
+}
+
+/// Convert a reference to a concrete value into a reference to the Rust trait object its destination holds.
+fn trait_object_rvalue<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    value: &Operand,
+    source: &PlanType,
+    target: &PlanType,
+    destination: &PlanType,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    let source = native_type(tcx, source)?;
+    let target = native_type(tcx, target)?;
+    if target != native_type(tcx, destination)? {
+        return Err(PlanError::Invalid {
+            function: "trait object conversion".into(),
+            reason: format!("`{source}` does not convert to `{target}`"),
+        });
+    }
+    Ok(mir::Rvalue::Cast(
+        mir::CastKind::PointerCoercion(
+            rustc_middle::ty::adjustment::PointerCoercion::Unsize,
+            mir::CoercionSource::Implicit,
+        ),
+        operand(tcx, sources, value)?,
+        target,
+    ))
 }
 
 /// Resolve a retained executor callback before reifying its safe no-argument, unit-returning function pointer.
