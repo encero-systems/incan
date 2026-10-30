@@ -9,12 +9,6 @@ name = "incan_semantics_stdlib"
 private = true
 version = "0.6.0-dev.8"
 
-[project.features]
-default = []
-std_async = []
-std_decorators = []
-std_testing = []
-
 [rust]
 edition = "2024"
 name = "incan_semantics_stdlib"
