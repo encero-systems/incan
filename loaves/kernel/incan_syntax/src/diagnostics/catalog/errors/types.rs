@@ -2360,6 +2360,15 @@ pub fn missing_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Type '{}' has no field '{}'", type_name, field), span)
 }
 
+/// Report a class field that holds its own class by value, which leaves the class without a finite layout.
+pub fn direct_recursive_class_field(class_name: &str, field: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Class '{class_name}' holds itself through field '{field}' with no Option or collection in between"),
+        span,
+    )
+    .with_hint("Store the field as `Option[...]` or in a collection such as `list[...]`")
+}
+
 /// Report access to a class field that is not visible from the current member-access context.
 pub fn private_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Field '{field}' on '{type_name}' is private"), span)

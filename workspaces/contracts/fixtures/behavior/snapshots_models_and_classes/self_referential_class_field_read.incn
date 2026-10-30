@@ -1,0 +1,23 @@
+# behavior: a self-referential class reads a scalar through its Option link and copies the linked node out by value (#2475)
+# expect-stdout:
+#   2
+#   2
+
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+
+def second(node: Node) -> int:
+    match node.next:
+        Some(n) => return n.value
+        None => return 0
+
+
+def main() -> None:
+    head = Node(value=1, next=Some(Node(value=2, next=None)))
+    println(second(head))
+    link = head.next
+    match link:
+        Some(n) => println(n.value)
+        None => println("none")

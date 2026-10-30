@@ -8,7 +8,7 @@ materializes a copy, and code that only needs its type must compute it here inst
 from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
 from pub::incan_mir_plan import PlanType, ListLeaf
 from frame import Builder
-from models import field_projection
+from models import field_step_type
 from lists import list_shape, list_element, is_list
 from collections import is_collection, collection_arguments
 from model_lists import structural_prefix
@@ -106,16 +106,14 @@ def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -
                 Some((leaf, depth)) => return Ok(PlanType.List(leaf, depth))
                 None => return Err("unsupported Body IR slicing non-list")
         _ => pass
-    return Ok(
-        field_projection(
-            builder.constructors,
-            builder.nominals,
-            ty,
-            projection,
-            builder.enums,
-            builder.unions,
-            builder.intrinsics,
-        )?.ty,
+    return field_step_type(
+        builder.constructors,
+        builder.nominals,
+        ty,
+        projection,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
     )
 
 

@@ -252,6 +252,9 @@ pub enum PlanType:
     CChar
     # A compiler-managed raw pointer with exactly one pointee carrier; source arithmetic never creates one.
     RawPointer(bool, list[PlanType])
+    # A class field that reaches its own class by value is stored on the heap: exactly one owned referent. Reads
+    # dereference it and construction boxes the checked value, so the source value keeps its referent type.
+    Boxed(list[PlanType])
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:

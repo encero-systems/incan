@@ -1,0 +1,12 @@
+# behavior: a class whose field holds its own type with no Option or collection between them is refused at check time, naming the class and the field (#2475)
+# expect-stderr-contains:
+#   Class 'Node' holds itself through field 'child'
+# expect-exit: 1
+
+class Node:
+    pub value: int
+    pub child: Node
+
+
+def main() -> None:
+    println("unreachable")
