@@ -361,7 +361,7 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     helper = reconcile(scratch.path(), testing)?
     assert helper.key != before.key
     verify_refusal_replay(scratch.path().joinpath("refusals"))?
-    verify_relocated_refusal(scratch.path().joinpath("relocated-refusals"))?
+    verify_relocated_outcomes(scratch.path().joinpath("relocated"))?
     verify_check_replay(scratch.path().joinpath("checks"))?
     verify_import_records(scratch.path().joinpath("imports"))?
     return Ok(None)
@@ -500,53 +500,66 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def verify_relocated_refusal(scratch: Path) -> Result[None, str]:
+def verify_relocated_outcomes(scratch: Path) -> Result[None, str]:
     """
-    A refusal retained in one project replays in a copy at another path in the copy's own locations, byte for byte
-    what a fresh compilation of the copy prints. The counted compiler names the description and an entry beside it.
+    A refusal and a check report retained in one project replay in a copy at another path in the copy's own locations,
+    byte for byte what a fresh compiler run for the copy prints. The counted compiler names the description and an
+    entry beside it.
+
+    1. Key the same project at two paths: the keys agree, because only content enters them.
+    2. Produce each outcome in the first project, replay it in the second, and produce it fresh there with its own store.
     """
     first = fixture(scratch.joinpath("first"))?
     second = fixture(scratch.joinpath("second"))?
     attempts = scratch.joinpath("attempts")
     driver = Path(first.toolchain.driver)
     mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
-    script += f"printf x >> '{attempts.0}'\nprintf 'incan.compiler-refusal/1\\n' > \"$7\"\n"
+    script += f"printf x >> '{attempts.0}'\nprevious=''\n"
+    script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\nprevious=$argument\ndone\n"
+    script += "certified=check\n[ \"$1\" = --unit ] && certified=refusal\n"
+    script += "printf 'incan.compiler-%s/1\\n' \"$certified\" > \"$receipt\"\n"
     script += "printf 'refused: %s\\n' \"$2\"; printf '%s/src/main.incn:1:1: refused\\n' \"${2%/target/*}\" >&2\nexit 1\n"
     write(driver, script)?
     make_executable(driver)?
-    mut producer = first.toolchain
-    producer.console = scratch.joinpath("produced").0
+    # 1. Key the same project at two paths: the keys agree, because only content enters them.
     mut consumer = second.toolchain
     consumer.driver = driver.0
-    consumer.console = scratch.joinpath("replayed").0
-    produced = unit_key(first.unit, producer)?
+    produced = unit_key(first.unit, first.toolchain)?
     relocated = unit_key(second.unit, consumer)?
     assert produced.digest == relocated.digest, "the same project at another path has another key"
-    cache = scratch.joinpath("bakery")
-    options = ["--library"]
-    assert compile_or_replay(first.unit, producer, located(first), options, cache, produced, "test")? == 1
-    assert compile_or_replay(second.unit, consumer, located(second), options, cache, relocated, "test")? == 1
-    assert read(attempts)? == "x"
-    mut fresh = consumer
-    fresh.console = scratch.joinpath("fresh").0
-    alone = scratch.joinpath("fresh-bakery")
-    assert compile_or_replay(second.unit, fresh, located(second), options, alone, relocated, "test")? == 1
-    assert read(attempts)? == "xx"
-    replayed = console_streams(consumer)?
-    assert replayed == console_streams(fresh)?
-    assert second.root.0 in replayed and first.root.0 not in replayed, replayed
+    # 2. Only the first project's run and the fresh run start the compiler; the replay reads the record.
+    store = scratch.joinpath("bakery")
+    mut expected = ""
+    for kind in ["refusal", "check"]:
+        original = outcome_streams(kind, first, first.toolchain, store, produced, scratch.joinpath(f"{kind}-produced"))?
+        replayed = outcome_streams(kind, second, consumer, store, relocated, scratch.joinpath(f"{kind}-replayed"))?
+        alone = scratch.joinpath(f"{kind}-alone")
+        fresh = outcome_streams(kind, second, consumer, alone, relocated, scratch.joinpath(f"{kind}-fresh"))?
+        expected += "xx"
+        assert read(attempts)? == expected, f"the {kind} at another path was not replayed"
+        assert replayed == fresh, replayed
+        assert second.root.0 in replayed and first.root.0 not in replayed and replayed != original, replayed
     return Ok(None)
 
 
-def located(setup: Fixture) -> list[str]:
-    """A compilation request whose description lives in the project's own target, as Oven writes it."""
+def outcome_streams(
+    kind: str,
+    setup: Fixture,
+    toolchain: Toolchain,
+    store: Path,
+    key: Key,
+    console: Path,
+) -> Result[str, str]:
+    """Compile or check `setup` with a request-local console; what that console received, as one text."""
+    mut selected = toolchain
+    selected.console = console.0
     description = setup.root.joinpath("target").joinpath("incan").joinpath("units").joinpath("app.json")
-    return ["--unit", description.0, "app", "app.rlib", setup.toolchain.sysroot]
-
-
-def console_streams(toolchain: Toolchain) -> Result[str, str]:
-    """The stdout and stderr a request-local console received, as one text."""
-    return Ok(read(Path(f"{toolchain.console}.out"))? + "\n--\n" + read(Path(f"{toolchain.console}.err"))?)
+    if kind == "check":
+        assert check_or_replay(setup.unit, selected, description, "text", store, key)? == 1
+    else:
+        invocation = ["--unit", description.0, "app", "app.rlib", setup.toolchain.sysroot]
+        assert compile_or_replay(setup.unit, selected, invocation, ["--library"], store, key, "test")? == 1
+    return Ok(read(Path(f"{console.0}.out"))? + "\n--\n" + read(Path(f"{console.0}.err"))?)
 
 
 def verify_check_replay(scratch: Path) -> Result[None, str]:
@@ -571,38 +584,37 @@ def verify_check_replay(scratch: Path) -> Result[None, str]:
     script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nrefuse*) exit 1;;\nesac\nexit 0\n"
     write(driver, script)?
     make_executable(driver)?
-    text = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "text"]
+    description = Path("unit.json")
     # 1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
     write(source, "pass")?
     passing = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, passing)? == 0
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, passing)? == 0
     write(source, "refuse")?
     refused = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, refused)? == 1
     mut expected = "xx"
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
     mut capturing = setup.toolchain
     capturing.console = scratch.joinpath("console").0
-    assert check_or_replay(setup.unit, capturing, text, record, refused)? == 1
+    assert check_or_replay(setup.unit, capturing, description, "text", record, refused)? == 1
     assert Path(f"{capturing.console}.out").read_bytes().map_err((error) => error.message())? == b"\xffreport"
     assert Path(f"{capturing.console}.err").read_bytes().map_err((error) => error.message())? == b"warning\x00tail"
     # 2. Check again for another report format and after an edit.
-    json = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "json"]
-    assert check_or_replay(setup.unit, setup.toolchain, json, record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "json", record, refused)? == 1
     write(source, "refuse edited")?
     edited = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, edited)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, edited)? == 1
     expected += "xx"
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
     # 3. Check again after crashes, signals, uncertified failures and statuses no report has.
     for mode in ["crash", "signal", "io", "status"]:
         write(source, mode)?
         changed = unit_key(setup.unit, setup.toolchain)?
-        first_status = check_or_replay(setup.unit, setup.toolchain, text, record, changed)?
-        assert check_or_replay(setup.unit, setup.toolchain, text, record, changed)? == first_status
+        first_status = check_or_replay(setup.unit, setup.toolchain, description, "text", record, changed)?
+        assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, changed)? == first_status
         expected += "xx"
         assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected, mode
     return Ok(None)
