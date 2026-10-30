@@ -127,14 +127,13 @@ target.parent().sync_directory()?
 
 Use `path.lock_shared()` or `path.lock_exclusive()` to acquire a blocking advisory `FileLock`; `try_lock_shared()` and `try_lock_exclusive()` return `Ok(None)` when a conflicting lock is held. Locks apply to a stable sibling lock entry and are released when their guard leaves scope. They coordinate cooperative processes only, so they are not an authorization or mandatory-locking mechanism. Do not hold a blocking file lock across unrelated work or asynchronous suspension.
 
-`path.map_read()` maps a whole file read-only and returns `Result[MappedFile, IoError]`. Opening or mapping failure is an `IoError`. A mapping touches pages on demand; processes mapping the same immutable inode can share clean file-backed pages. This is not a promise about resident memory or page-cache sharing across different cloned inodes.
+`path.map_read()` maps a whole file read-only and returns `Result[MappedFile, IoError]`. Opening or mapping failure is an `IoError`. A mapping touches pages on demand; processes mapping the same immutable inode can share clean file-backed pages. This is not a promise about resident memory or page-cache sharing across different cloned inodes. Mapped bytes are read only through views; `MappedView.to_bytes()` is the only operation that copies them.
 
 The backing inode must not be modified or truncated until the mapping **and every derived view** are released. Read-only file permissions are not sufficient to establish immutability. Replacing a pathname by rename preserves the old mapped inode. Map only files whose publication protocol provides this guarantee, never a file an unrelated writer may edit in place.
 
 | Method | Result | Contract |
 | --- | --- | --- |
 | `MappedFile.len()` | `int` | Number of mapped bytes |
-| `MappedFile.read(offset: int, length: int)` | `Option[bytes]` | Explicit copy of the selected range |
 | `MappedFile.view(offset: int, length: int)` | `Option[MappedView]` | Zero-copy view retaining the mapping |
 | `MappedView.len()` | `int` | Number of bytes in this view |
 | `MappedView.slice(offset: int, length: int)` | `Option[MappedView]` | Zero-copy subview, bounded by its parent view |

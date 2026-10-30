@@ -20,13 +20,14 @@ pub struct MappedFile {
 impl MappedFile {
     /// Map an immutable file without reading its contents into an owned byte buffer.
     ///
-    /// # Safety
-    ///
-    /// The caller must ensure that the backing inode is not modified or truncated until this mapping and all views
-    /// derived from it have been dropped. Replacing the path with another inode does not change this mapping.
-    pub unsafe fn open(path: &str) -> Result<Self, String> {
+    /// The backing inode must not be modified or truncated until this mapping and every view derived from it have been
+    /// dropped; `std.fs` states this as the contract of `map_read`. Replacing the path with another inode does not
+    /// change this mapping.
+    pub fn open(path: &str) -> Result<Self, String> {
         let file = File::open(path).map_err(|error| error.to_string())?;
-        // SAFETY: the caller supplies the immutable-inode guarantee for the mapping's complete shared lifetime.
+        // SAFETY: the inode is not modified or truncated while any handle or view of this mapping lives. That is the
+        // documented contract of every caller; the bakery store meets it because its objects are content-named and
+        // never rewritten in place.
         let mapping = unsafe { Mmap::map(&file) }.map_err(|error| error.to_string())?;
         if mapping.len() > i64::MAX as usize {
             return Err("mapping length exceeds the supported signed offset range".into());
@@ -53,12 +54,6 @@ impl MappedFile {
             mapping: Arc::clone(&self.mapping),
             range,
         })
-    }
-
-    /// Copy a bounded range into owned bytes, preserving `MappedFile.read`'s existing contract.
-    pub fn read(&self, offset: i64, length: i64) -> Option<Vec<u8>> {
-        let range = checked_range(self.mapping.len(), offset, length)?;
-        Some(self.mapping[range].to_vec())
     }
 }
 
@@ -163,8 +158,8 @@ mod tests {
         file.write_all(bytes)?;
         file.flush()?;
         let path = file.path().to_str().ok_or("test path is not UTF-8")?;
-        // SAFETY: tests retain the file and never write or truncate its inode after this call.
-        let mapping = unsafe { MappedFile::open(path) }?;
+        // The test retains the file and never writes or truncates its inode after this call.
+        let mapping = MappedFile::open(path)?;
         Ok((file, mapping))
     }
 
@@ -195,8 +190,8 @@ mod tests {
         for (offset, length) in [(-1, 0), (0, -1), (5, 0), (3, 2), (i64::MAX, 1), (1, i64::MAX)] {
             assert!(view.slice(offset, length).is_none());
         }
-        assert!(mapping.read(i64::MAX, i64::MAX).is_none());
-        assert_eq!(mapping.read(2, 4), Some(b"2345".to_vec()));
+        assert!(mapping.view(i64::MAX, i64::MAX).is_none());
+        assert_eq!(mapping.view(2, 4).map(|copied| copied.to_bytes()), Some(b"2345".to_vec()));
         Ok(())
     }
 

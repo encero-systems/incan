@@ -7,18 +7,15 @@ pub type MappedFile = newtype NativeMapping:
     """
     A read-only memory mapping of one whole file.
 
-    Reads touch the pages they need. Processes mapping the same immutable inode can share its clean file-backed pages.
-    The inode must not be modified or truncated until this handle and all its views are gone. Replacing its pathname
-    does not change the mapped inode. Read-only permissions alone do not establish this guarantee.
+    Reads go through views and touch the pages they need. Processes mapping the same immutable inode can share its
+    clean file-backed pages. The inode must not be modified or truncated until this handle and all its views are gone.
+    Replacing its pathname does not change the mapped inode. Read-only permissions alone do not establish this
+    guarantee.
     """
 
     def len(self) -> int:
         """The number of mapped bytes."""
         return self.0.len()
-
-    def read(self, offset: int, length: int) -> Option[bytes]:
-        """A copy of the `length` bytes at `offset`, or `None` when they do not all lie inside the mapping."""
-        return self.0.read(offset, length)
 
     def view(self, offset: int, length: int) -> Option[MappedView]:
         """
@@ -94,6 +91,5 @@ pub type MappedView = newtype NativeView:
 
 
 pub def map_read(path: str) -> Result[MappedFile, str]:
-    """Map the file at `path` read-only."""
-    unsafe:
-        return NativeMapping.open(path).map((mapped) => MappedFile(mapped))
+    """Map the file at `path` read-only; its inode must stay unmodified while the mapping or any view lives."""
+    return NativeMapping.open(path).map((mapped) => MappedFile(mapped))
