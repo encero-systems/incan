@@ -1,0 +1,37 @@
+"""Preparation work bounds carried by the existing graph cases."""
+
+from std.fs import Path
+from files import make_directory, parse_json, read, required_text, remove
+from run import invoke
+
+
+pub def check_registry_preparation(incan: str, project: Path) -> Result[None, str]:
+    """
+    A warm inspection reads the installed registry closure and its completion once for all source projects.
+
+    1. Trace a fresh inspection after the case's ordinary commands have prepared its graphs.
+    2. Count registry decodes across the command, including explicit codegraph sources.
+    3. Remove the observations after checking the bound.
+    """
+    # 1. Only this command writes into its observation directory.
+    directory = project.joinpath(".preparation-work")
+    make_directory(directory)?
+    outcome = invoke(incan, ["inspect", "codegraph", ".", "--query", "refs", "helper"], project,
+                     [f"INCAN_JEC_TRACE={directory.0}"])?
+    if outcome.code != Some(0):
+        return Err(f"preparation inspection failed: {outcome.stderr}")
+    # 2. Registry completion is part of the same reading, rather than a second source project's reading.
+    mut readings = 0
+    for path in directory.iterdir().map_err((error) => error.message())?:
+        for line in read(path)?.split("\n"):
+            if line == "":
+                continue
+            record = parse_json(line)?
+            if required_text(record, "category")? == "registry_index":
+                readings += 1
+        remove(path)?
+    # 3. Observation files never become fixture inputs for a later command.
+    directory.rmdir().map_err((error) => error.message())?
+    if readings != 1:
+        return Err(f"one inspection read the registry closure {readings} times; expected once")
+    return Ok(None)

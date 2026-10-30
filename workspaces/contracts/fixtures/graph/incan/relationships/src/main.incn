@@ -1,4 +1,4 @@
-# behavior: graph CLI, MCP and LSP agree on identities, bounded context, freshness, git evidence and expiring feedback
+# behavior: graph CLI, MCP and LSP agree on identities, bounded context, freshness, git evidence and expiring feedback; inspections share one registry reading
 # graph-commands:
 #   src/main.incn --query defs helper
 #   src/main.incn --query callers helper

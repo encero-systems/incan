@@ -11,6 +11,7 @@ from unit_compiler import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import prepare_linked
+from registry_units import RegistryUnits
 
 # The version of the key an export is cached under; changing it discards every cached export.
 const EXPORT_DOMAIN: str = "incan.codegraph.incan/4"
@@ -25,6 +26,7 @@ pub def inspect_incan(
     defaults: bool = true,
     source_loaves: list[UnitLoaf] = [],
     owner: Option[Path] = None,
+    registry: Option[RegistryUnits] = None,
 ) -> Result[Path, str]:
     """
     Export one unit, checked or not, once per digest; dependency interfaces stay in the inspection cache and never
@@ -44,7 +46,7 @@ pub def inspect_incan(
     mut unit = describe(entry_source, "debug", FeatureRequest(features=features, default_features=defaults))?
     if source.name() == "lib.incn":
         unit.kind = "library"
-    ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves)?
+    ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves, registry)?
     # 2. An export is made once per digest of everything it reads; a cached one, checked or not, is returned as it is.
     project = Path(unit.project_root)
     mut cache_root = project
@@ -76,6 +78,7 @@ def prepared_unit(
     built: Dict[str, NativeCrate],
     interfaces: Dict[str, Path],
     source_loaves: list[UnitLoaf],
+    registry: Option[RegistryUnits],
 ) -> Result[UnitDescription, str]:
     """
     The unit as the exporting compiler is told about it.
@@ -89,7 +92,7 @@ def prepared_unit(
         [loaf for loaf in unit.loaves if not loaf.is_dependency()] + source_loaves,
         interfaces,
     )?
-    mut ready = prepare_linked(selected, toolchain, [loaf.name for loaf in source_loaves])?
+    mut ready = prepare_linked(selected, toolchain, [loaf.name for loaf in source_loaves], registry)?
     for name in sorted([key for key in built.keys()]):
         native = built[name]
         ready.externs = [item for item in ready.externs if item.name != name] + [native]
