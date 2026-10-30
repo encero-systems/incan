@@ -8,7 +8,7 @@ from rust::std::process import Command, Stdio
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
-from core_ipc import dial
+from pub::incan_platform.ipc import dial
 from core_process import executable as current_executable, spawn_detached, running, terminate
 from engine_channel import Channel, SendOutcome
 from engine_messages import Message

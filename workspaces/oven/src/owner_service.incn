@@ -15,9 +15,9 @@ from rust::std::thread import sleep, spawn
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, dial, listen
 from files import discard_file
 from observation import now_seconds, trace
-from core_ipc import Connection, dial, listen
 from owner_protocol import Reply, Request, discard_reply, receive_document, reply_of, request_of
 from owner_protocol import send_document, send_quietly
 from owner_state import Owner

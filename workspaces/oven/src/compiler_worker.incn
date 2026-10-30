@@ -15,13 +15,13 @@ from rust::std::time import Duration
 from std.fs import Path
 from std.fs.locking import FileLock
 from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file
 from home import owners_dir
 from json_fields import required_text
 from observation import trace, trace_boundary
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
-from core_ipc import Connection, Listener, listen
 from decimal_text import digits_only
 from owner_protocol import receive_document, send_document
 from toolchain import Toolchain

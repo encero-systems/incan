@@ -5,8 +5,8 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.environ import get_or
 from std.fs import Path
+from pub::incan_platform.ipc import dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid
-from core_ipc import dial, listen
 from engine_channel import Channel, SendOutcome
 from engine_codec import decode, encode
 from engine_messages import (

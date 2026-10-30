@@ -33,6 +33,7 @@ The checker and Body IR own semantic facts. Lowering consumes those facts; it do
 | Rust compiler adapter and metadata extraction | `loaves/toolchain/incan-rustc-driver/src/` |
 | Native runtime authored in Incan | `loaves/compiler/incan_native_runtime/src/` |
 | Standard packages | `loaves/stdlib/` |
+| OS primitives below the standard packages: IPC and peer identity | `loaves/platform/src/` |
 | Contract runner and fixtures | `workspaces/contracts/` |
 
 ## Libraries and Rust facts
