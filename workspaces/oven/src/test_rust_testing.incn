@@ -23,6 +23,7 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     3. Repair the failing assertion and require the same harness path to rebuild and pass.
     4. Compile procedural macro unit and integration harnesses in their producer's host domain.
     5. Require optimized qualification and iteration to preserve the same edit/revert behavior.
+    6. Reuse and execute the test harnesses repeatedly from another checkout.
     """
     temporary = scratch_directory()?
     root = temporary.path()
@@ -106,6 +107,27 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     for program in build_rust_tests(optimized)?:
         assert run_rust_harness(Path(program), project)? == 0
     verify_incremental_revert(optimized, helper, helper_source, project)?
+    # 6. The bakery's dependency evidence remains valid in a second checkout.
+    verify_relocated_harnesses(optimized, project, root.joinpath("relocated"))?
+    return Ok(None)
+
+
+def verify_relocated_harnesses(request: RustBuild, project: Path, relocated: Path) -> Result[None, str]:
+    """Baked test harnesses run repeatedly from another checkout with its own source and dependency evidence."""
+    make_directory(relocated)?
+    write(relocated.joinpath("loaf.toml"), read(project.joinpath("loaf.toml"))?)?
+    for directory in ["src", "tests"]:
+        make_directory(relocated.joinpath(directory))?
+        for source in project.joinpath(directory).iterdir().map_err((error) => error.message())?:
+            destination = relocated.joinpath(directory).joinpath(source.name())
+            write(destination, read(source)?)?
+    mut selected = request
+    selected.project = relocated.0
+    first = build_rust_tests(selected)?
+    second = build_rust_tests(selected)?
+    assert first == second
+    for program in second:
+        assert run_rust_harness(Path(program), relocated)? == 0
     return Ok(None)
 
 
@@ -138,9 +160,8 @@ def verify_incremental_revert(request: RustBuild, helper: Path, original: str, p
         slot = facet_slot(facet, request.profile)
         output = rust_output(project, request.profile)
         directory = output.joinpath(f"helper-{slot}")
-        scratch = output.joinpath("incremental").joinpath(f"{slot}-library")
-        assert scratch.is_dir(), f"missing Rust scratch in {scratch.0}"
-        assert "incremental=" not in read(directory.joinpath("library.oven-inputs"))?
+        # A bakery hit needs no local rustc scratch; its retained producer proof still excludes scratch flags.
+        assert "incremental=" not in read(directory.joinpath("library.portable-inputs"))?
     source = helper.joinpath("src/lib.rs")
     write(source, original.replace("{ 7 }", "{ 9 }"))?
     changed = build_rust_tests(request)?

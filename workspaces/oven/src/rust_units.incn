@@ -1383,6 +1383,9 @@ pub def compile_binary(
     2. Link the root's own library, then everything the facet links.
     3. A binary that links the toolchain's own libraries carries the runpaths to find them.
     4. Reuse an unchanged binary, or compile and atomically publish it.
+
+    Prior dependency evidence that cannot identify the selected checkout is rediscovered before compilation.
+    Published dep-info names project sources relatively, so a later checkout can validate the same unit.
     """
     # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
     directory = output.joinpath("bin")
@@ -1403,7 +1406,12 @@ pub def compile_binary(
         arguments = arguments + runpath_arguments(selected)
     # 4. A baked binary of the identity is viewed; otherwise it is compiled and baked.
     dependencies = directory.joinpath(f"{output_name}.d")
-    inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
+    mut inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
+    if inputs.refusal != "":
+        # A prior view may carry evidence without a portable source mapping; observe this checkout before compiling.
+        discovered = dependency_arguments(arguments, dependencies)
+        invoke_rustc(request.rustc, discovered, environment, declared.unstable, name)?
+        inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
     label = f"unit {name} rust binary"
     store = rust_store()?
     held = claim_rust(store, f"binary {inputs.digest}")?
@@ -1443,6 +1451,8 @@ pub def compile_binary(
         place(staged_dependencies, dependencies)?
         println(f"compiled {name}")
         return Ok(binary.0)
+    # Baked evidence is interpreted in each consumer's checkout, just as a library's dependency evidence is.
+    relocate_dependencies(staged_dependencies, Path(facet.project))?
     fact = seal(store, current.digest, staged, "rust binary", rust_unit_name("binary", output_name, ""), [], "rust binary")?
     register_root(store, facet.project, current.digest)?
     view(store, fact, output_name, binary)?
