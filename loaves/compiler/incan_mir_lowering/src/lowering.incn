@@ -4680,19 +4680,9 @@ def lower_library_method(
                     callee = CalleeKind.FutureMethod(path, type_arguments)
                     return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
                 _ => pass
-            if len(type_arguments) != 0:
-                return instantiated_external_call(
-                    builder,
-                    path,
-                    type_arguments,
-                    parameters,
-                    result,
-                    operands,
-                    output,
-                    span,
-                )
-            external_call(builder, path, parameters, result, operands, output, span)
-            return Ok(None)
+            # Like a source method's, an owned result (text, an enum, a model, a collection) gets an owner in the
+            # caller, so a discarded or matched result is dropped as well.
+            return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
 
 
 def library_method_arguments(
