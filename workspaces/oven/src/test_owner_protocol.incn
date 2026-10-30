@@ -3,6 +3,7 @@
 from rust::std::io import Write
 from rust::std::os::unix::net import UnixStream
 from std.json import JsonValue, parse
+from std.fs import Path
 from pub::incan_platform.trace import (
     SCHEMA,
     MAX_TEXT,
@@ -12,6 +13,9 @@ from pub::incan_platform.trace import (
     complete,
     encode,
     record,
+    append as trace_append,
+    flush as flush_trace,
+    MAX_RECORD,
 )
 from pub::incan_platform.ipc import MAX_FRAME, dial, length_of, listen, padded
 from owner_protocol import Reply, Request, receive_document, reply_of, request_of, send_document
@@ -154,6 +158,18 @@ def trace_contract(directory: str) -> Result[None, str]:
         assert trace_value(decoded, key)?.expect_str().map_err((error) => error.message())? != ""
     assert child.start_ns >= parent.start_ns and child.end_ns <= parent.end_ns
     record(directory + "/spans.jsonl", child).map_err((_) => "trace output failed")?
+    flush_trace().map_err((_) => "trace flush failed")?
+    mut saved = Path(directory + "/spans.jsonl").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert saved == child_text
+    # More than one buffer is drained without losing, reordering or splitting encoded records.
+    mut expected = child_text
+    while len(expected) < MAX_RECORD * 2:
+        trace_append(directory + "/spans.jsonl", child_text).map_err((_) => "batched append failed")?
+        expected += child_text
+    flush_trace().map_err((_) => "batch flush failed")?
+    saved = Path(directory + "/spans.jsonl").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert saved == expected
+    assert trace_refused(trace_append(directory + "/missing/spans.jsonl", child_text))
     assert trace_refused(record("-", parent))
     mut oversized = "x"
     while len(oversized) <= MAX_TEXT:

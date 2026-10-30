@@ -13,6 +13,7 @@ retryable.
 """
 
 from rust::std::os::unix::process import CommandExt
+from pub::incan_platform.trace import flush as flush_trace
 from rust::std::process import Command
 from std.fs import Path
 from bakery import (
@@ -284,6 +285,7 @@ pub def run_program(binary: Path, arguments: list[str], argv0: Option[str] = Non
     for argument in arguments:
         command.arg(argument)
     trace_launch(program)
+    _ = flush_trace()
     failure = command.exec()
     return Err(f"cannot run {program}: {failure}")
 
