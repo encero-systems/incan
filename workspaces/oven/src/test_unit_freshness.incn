@@ -196,11 +196,29 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     # RFC 124: checkout, target and installed-home locations are publication provenance.
     relocated = fixture(scratch.path().joinpath("another-checkout"))?
     assert reconcile(scratch.path().joinpath("another-checkout"), relocated)?.key == first.key
+    verify_be34_position_changes(scratch.path().joinpath("positions"))?
     verify_source_move(scratch.path().joinpath("moved-entry"))?
     verify_project_entries(scratch.path().joinpath("project-entries"))?
     verify_invocation_identity(setup)?
     verify_descriptor_selection(setup)?
     verify_published_identity(scratch.path().joinpath("publication"))?
+    return Ok(None)
+
+
+def verify_be34_position_changes(scratch: Path) -> Result[None, str]:
+    """BE-34: comments and moved declarations may rekey native units because native debug tables read positions."""
+    setup = fixture(scratch)?
+    source = Path(setup.unit.source)
+    helper = "def helper() -> int:\n    return 1\n\n"
+    main = "def main() -> None:\n    println(helper())\n"
+    write(source, helper + main)?
+    original = reconcile(scratch, setup)?
+    write(source, "# position-only edit\n" + helper + main)?
+    commented = reconcile(scratch, setup)?
+    assert commented.key != original.key, "BE-34: the native unit reads changed positions"
+    write(source, main + "\n" + helper)?
+    moved = reconcile(scratch, setup)?
+    assert moved.key != original.key, "BE-34: moving declarations updates native position inputs"
     return Ok(None)
 
 
