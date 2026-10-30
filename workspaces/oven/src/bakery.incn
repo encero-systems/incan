@@ -36,6 +36,7 @@ from segment_store import (
     EXPECT_REPAIR,
     Lookup,
     StoreError,
+    Snapshot,
     begin,
     claim as claim_key,
     commit,
@@ -742,20 +743,14 @@ pub def repair_derived(
     # 1. The claim excludes a competing producer while the old damage is preserved.
     held = claim(store, identity)?
     view = snapshot(store).map_err(store_failure)?
-    match store_lookup(view, record_key(identity)):
-        Err(error) =>
-            if error.kind != "integrity":
-                return Err(error.message())
-            quarantine_record(view, record_key(identity)).map_err(store_failure)?
-        Ok(found) =>
-            match found:
-                Lookup.Found(value) =>
-                    if let Some(fact) = decode_fact(value):
-                        for file in fact.files:
-                            if not payload_current(store, file):
-                                quarantine_payload(store, file.digest).map_err(store_failure)?
-                Lookup.Deleted => pass
-                Lookup.Absent => pass
+    if not preserve_unit_damage(store, identity, view)?:
+        return Err(
+            StoreError(
+                kind="conflict",
+                object=record_key(identity),
+                detail="unit is intact or absent; repair is not applicable",
+            ).message(),
+        )
     # 2. The owner supplied complete replacement bytes, independently of damaged storage.
     for relative in staged_files(staged, "")?:
         source = staged.joinpath(relative)
@@ -774,3 +769,33 @@ pub def repair_payload_command(arguments: list[str]) -> Result[i32, str]:
     forget_verified()
     println(f"re-admitted payload {arguments[1]}")
     return Ok(0)
+
+
+def preserve_unit_damage(store: Path, identity: str, view: Snapshot) -> Result[bool, str]:
+    """Preserve diagnosed physical or unit-codec damage; healthy or absent units cannot authorize repair."""
+    key = record_key(identity)
+    match store_lookup(view, key):
+        Err(error) =>
+            if error.kind != "integrity":
+                return Err(error.message())
+            quarantine_record(view, key).map_err(store_failure)?
+            return Ok(true)
+        Ok(found) =>
+            match found:
+                Lookup.Found(value) =>
+                    match decode_fact(value):
+                        None =>
+                            quarantine_record(view, key, true).map_err(store_failure)?
+                            return Ok(true)
+                        Some(fact) =>
+                            if fact.identity != identity:
+                                quarantine_record(view, key, true).map_err(store_failure)?
+                                return Ok(true)
+                            mut damaged = false
+                            for file in fact.files:
+                                if not payload_current(store, file):
+                                    quarantine_payload(store, file.digest).map_err(store_failure)?
+                                    damaged = true
+                            return Ok(damaged)
+                Lookup.Deleted => return Ok(false)
+                Lookup.Absent => return Ok(false)
