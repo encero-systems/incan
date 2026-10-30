@@ -24,9 +24,9 @@ index pages on one root-to-leaf path and the one frame it finds, checks the page
 key, and answers `Found`, `Deleted` or `Absent`. Damage is a `StoreError`, never absence, and a read never falls
 through a damaged entry to an older value.
 
-Writing: a transaction begun on one view collects writes with their preconditions and commits by staging its delta
-segment and index pages outside any lock, then, under the publication lock only, validating every precondition
-against the latest generation and installing segment, pages, manifest and `CURRENT`, each synced with its directory,
+Writing: a transaction begun on one view collects writes with their preconditions. Under the publication lock it
+validates every precondition against the latest generation, stages only changed records, then installs the segment,
+pages, manifest and `CURRENT`, each synced with its directory,
 in that order. A transaction whose writes are all already present commits nothing and adds no bytes.
 """
 
@@ -911,18 +911,25 @@ pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
     The caller supplies a snapshot retained from a successful commit or open, never a discovered staging manifest.
     This maintenance operation does not infer a root from generation order and never recomputes frozen records.
     A damaged candidate refuses repair. Existing payload admission remains the owning adapter's responsibility.
+
+    1. Lock publication and validate the supplied committed manifest.
+    2. Verify every selected view's index and frame contents.
+    3. Durably select that exact root and reopen it.
     """
+    # 1. The caller's retained root is authority; generation order never chooses a candidate.
     root = committed.root
     if committed.generation == 0 or committed.digest == "":
         return Err(failure("conflict", root.0, "repair requires a previously committed root"))
     held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
     check_format(root)?
     candidate = read_manifest(root, committed.generation, committed.digest, committed.view)?
+    # 2. No selected view may hide a damaged index path or frame.
     for selected in candidate.views:
         for entry in index_entries(root, selected.root).map_err(index_failure)?:
             match entry.location:
                 None => return Err(failure("integrity", entry.key, "leaf has no frame location"))
                 Some(location) => read_frame(root, entry.key, location)?
+    # 3. Publish only after the candidate is complete and verified.
     pointer = root.joinpath("CURRENT")
     place_synced(pointer, f"{candidate.generation} {candidate.digest}\n".encode("utf-8"))?
     root.sync_directory().map_err((error) => io_failure(root, error))?
@@ -935,7 +942,11 @@ pub def quarantine_record(view: Snapshot, key: str) -> Result[None, StoreError]:
 
     The shared segment remains in place for other keys and older snapshots; repair publishes a new frame through
     an explicit transaction. Index damage cannot be repaired one record at a time and is returned to the owner.
+
+    1. Require selected frame damage and resolve its physical object.
+    2. Preserve and synchronize evidence without removing shared contents.
     """
+    # 1. A healthy record or an unreadable index does not authorize frame replacement.
     match lookup(view, key):
         Ok(_) => return Err(failure("conflict", key, "only damaged records can be quarantined"))
         Err(error) =>
@@ -944,6 +955,7 @@ pub def quarantine_record(view: Snapshot, key: str) -> Result[None, StoreError]:
     match index_find(view.root, view.index, key).map_err(index_failure)?:
         None => return Err(failure("conflict", key, "no selected frame to quarantine"))
         Some(location) =>
+            # 2. Keep the source segment available to every other key and retained snapshot.
             source = view.root.joinpath("segments").joinpath(f"{location.segment}.seg")
             target = quarantine_path(view.root, location.segment)?
             if source.is_file():
@@ -963,13 +975,18 @@ pub def quarantine_payload(root: Path, digest: str) -> Result[None, StoreError]:
 
     This never edits frozen bytes in place. The caller must have already verified complete authoritative replacement
     inputs; normal lookup and verification never call it. Intact content remains untouched.
+
+    1. Lock publication and keep intact or already absent content unchanged.
+    2. Move damaged content into quarantine and synchronize both directories.
     """
+    # 1. Recheck under publication so an intact canonical object is never displaced.
     held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
     source = payload_path(root, digest)
     if not source.exists() and not source.is_symlink():
         return Ok(None)
     if not source.is_symlink() and payload_intact(root, digest):
         return Ok(None)
+    # 2. Preserve the damaged inode instead of editing or deleting its bytes.
     target = quarantine_path(root, digest)?
     source.replace(target).map_err((error) => io_failure(source, error))?
     source.parent().sync_directory().map_err((error) => io_failure(source.parent(), error))?
@@ -992,10 +1009,15 @@ pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[None,
 
     The committed reference already pins the complete digest. Verify the replacement before quarantining anything;
     an invalid replacement leaves every retained object unchanged. Admission cannot change a namespace or revision.
+
+    1. Verify replacement bytes against the exact committed identity.
+    2. Quarantine damage, then admit through the ordinary payload installer.
     """
+    # 1. A proposed replacement cannot authorize its own new identity.
     actual = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
     if actual != expected:
         return Err(failure("integrity", source.0, "replacement differs from the committed payload digest"))
+    # 2. The ordinary installer retains the same canonical identity without an in-place edit.
     quarantine_payload(root, expected)?
     if put_payload(root, source)? != expected:
         return Err(failure("integrity", source.0, "replacement changed during re-admission"))
