@@ -121,7 +121,7 @@ fn retain_native_type_identities(modules: &mut [BodyIrModule], native: &[BodyIrM
     for module in modules {
         for body in &mut module.bodies {
             for (name, identity) in &identities {
-                body.named_type_identities
+                std::sync::Arc::make_mut(&mut body.named_type_identities)
                     .entry(name.clone())
                     .or_insert_with(|| identity.clone());
             }
