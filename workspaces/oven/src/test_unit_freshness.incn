@@ -13,7 +13,7 @@ from intake import ManifestReader
 from observation import SETTLE_SECONDS, file_digest, load_ledger, now_seconds, observe
 from vocabulary import published_workers, stage_vocabulary
 from native_closure_input import NativeClosureInput, native_bindings
-from standalone_rust import published_bindings
+from standalone_rust import published_bindings, standalone_crates
 from scratch import scratch_directory
 from shared_link import linkage_key
 from rust_freshness import (
@@ -302,7 +302,10 @@ def verify_published_identity(scratch: Path) -> Result[None, str]:
 
 
 pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, str]:
-    """An edited source changes the key and costs one hash; a new module also relists its directory."""
+    """
+    An edited source changes the key and costs one hash; a new module also relists its directory. What is retained
+    under the key, a refusal, a check report or import records, is asked of the compiler again after an edit.
+    """
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
@@ -334,6 +337,43 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     assert helper.key != before.key
     verify_refusal_replay(scratch.path().joinpath("refusals"))?
     verify_check_replay(scratch.path().joinpath("checks"))?
+    verify_import_records(scratch.path().joinpath("imports"))?
+    return Ok(None)
+
+
+def verify_import_records(scratch: Path) -> Result[None, str]:
+    """
+    Ask a counted compiler for a standalone unit's Rust import requests once per unit identity.
+
+    1. An unchanged unit reuses the records the compiler gave for it.
+    2. An edited source asks again, and so does another description.
+    3. A unit whose identity is refused is asked every time.
+    """
+    setup = fixture(scratch)?
+    driver = Path(setup.toolchain.driver)
+    attempts = scratch.joinpath("attempts")
+    mut script = "#!/bin/sh\n[ \"$1\" = --rust-imports ] || exit 2\n" + f"printf x >> '{attempts.0}'\n"
+    script += "printf '[{\"crate\":\"std\",\"version\":null,\"features\":[],\"source\":\"main.incn\"}]'\n"
+    write(driver, script)?
+    make_executable(driver)?
+    # 1. An unchanged unit reuses the records the compiler gave for it.
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert read(attempts)? == "x"
+    # 2. An edited source asks again, and so does another description.
+    write(Path(setup.unit.source), "def main() -> None:\n    println(\"imports\")\n")?
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert read(attempts)? == "xx"
+    mut featured = setup.unit
+    featured.active_features = ["extra"]
+    assert len(standalone_crates(featured, setup.toolchain)?) == 0
+    assert read(attempts)? == "xxx"
+    # 3. A unit whose identity is refused is asked every time.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert len(standalone_crates(setup.unit, setup.toolchain)?) == 0
+    assert read(attempts)? == "xxxxx"
     return Ok(None)
 
 
