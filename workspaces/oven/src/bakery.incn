@@ -27,6 +27,7 @@ from std.fs.locking import FileLock
 from std.json import JsonValue
 from files import json_text, make_directory, read_json
 from home import home
+from jec import begin as begin_work, record as record_work
 from json_fields import required_items, required_text, string_value
 from observation import observe, trace
 from publication import publish
@@ -128,6 +129,14 @@ def store_failure(error: StoreError) -> str:
 
 
 pub def find(store: Path, identity: str) -> Result[Option[Fact], str]:
+    """The baked unit of `identity`, or nothing; see `find_unit`."""
+    clock = begin_work()
+    found = find_unit(store, identity)
+    record_work("bakery_find", identity, clock)
+    return found
+
+
+def find_unit(store: Path, identity: str) -> Result[Option[Fact], str]:
     """
     The baked unit of `identity`, or nothing.
 
@@ -184,6 +193,14 @@ def payload_current(store: Path, file: FactFile) -> bool:
 
 
 pub def claim(store: Path, identity: str) -> Result[FileLock, str]:
+    """Claim `identity` for baking; see `claim_unit`."""
+    clock = begin_work()
+    held = claim_unit(store, identity)
+    record_work("bakery_claim", identity, clock)
+    return held
+
+
+def claim_unit(store: Path, identity: str) -> Result[FileLock, str]:
     """
     Claim `identity` for baking; waits while another baker holds it. The claim lasts as long as the lock.
 
@@ -218,6 +235,7 @@ pub def seal(
     2. Publish the unit record and the record of its name in one delta.
     3. Remove the staging directory.
     """
+    clock = begin_work()
     # 1. Payload files are stored before any record names them.
     mut files: list[FactFile] = []
     for relative in staged_files(staged, "")?:
@@ -235,6 +253,7 @@ pub def seal(
     # 3. Staging belongs to this bake only.
     _ = staged.remove_tree()
     trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
+    record_work("bakery_seal", identity, clock)
     return Ok(fact)
 
 
@@ -374,6 +393,14 @@ pub def lookup(store: Path, name: str) -> Result[Option[str], str]:
 
 
 pub def view(store: Path, fact: Fact, relative: str, destination: Path) -> Result[None, str]:
+    """Make `destination` a view of one file of `fact`; see `view_unit_file`."""
+    clock = begin_work()
+    viewed = view_unit_file(store, fact, relative, destination)
+    record_work("bakery_view", destination.0, clock)
+    return viewed
+
+
+def view_unit_file(store: Path, fact: Fact, relative: str, destination: Path) -> Result[None, str]:
     """
     Make `destination` a view of one payload file of `fact` that its user may run, edit or strip.
 
@@ -422,6 +449,14 @@ def clone(source: Path, destination: Path, program: bool) -> Result[None, str]:
 
 
 pub def view_directory(store: Path, fact: Fact, destination: Path, prefix: str = "") -> Result[None, str]:
+    """Make `destination` a view of a whole unit, or of its files below `prefix`; see `view_unit_directory`."""
+    clock = begin_work()
+    viewed = view_unit_directory(store, fact, destination, prefix)
+    record_work("bakery_view", destination.0, clock)
+    return viewed
+
+
+def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str = "") -> Result[None, str]:
     """
     Make the directory `destination` a view of a whole unit, or of its files below `prefix`.
 
