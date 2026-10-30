@@ -69,6 +69,14 @@ pub def run_text(program: str, arguments: list[str]) -> Result[str, str]:
             return Ok(stdout)
 
 
+pub def deployment_target(rustc: str, compiler: str) -> Result[str, str]:
+    """Read the effective Apple deployment target as a compiler fact, independently of the compiler's location."""
+    for line in compiler.split("\n"):
+        if line.startswith("host: ") and "-apple-" in line:
+            return run_text(rustc, ["--print", "deployment-target"])
+    return Ok("")
+
+
 pub def decoded(bytes: bytes) -> str:
     """Process output as text; output that is not UTF-8 is named, not repaired."""
     match RustString.from_utf8(bytes):
