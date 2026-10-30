@@ -1,12 +1,36 @@
-"""Validated frame roles, cache signatures and callable-name admission for closed generic decorators."""
+"""
+Frame roles, per-instance storage and callable-name admission for closed generic decorators.
 
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType
-from rust::incan_semantics_core::body_ir import BodyIrModule, Body, DecoratedBinding, DecoratedInitialization
-from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Callee, CalleeKind, RvalueKind
-from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place
+A generic decorated function evaluates its decorators once for each closed instance. Each instance gets a typed storage
+cell, seeded with its original callable and published with the decorated callable. The runtime's claim protocol runs
+the publication once, waits for a competing publisher, refuses same-thread recursion and permits a retry after a
+failure.
+"""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import BodyIrModule, DecoratedBinding, DecoratedInitialization
+# Keep inferred empty Builder field element types in scope until #2010 is resolved.
+from pub::incan_mir_plan import (
+    BasicBlock,
+    Callee,
+    CalleeKind,
+    Constant,
+    EnumDeclaration,
+    ExternalFunction,
+    Function,
+    Local,
+    Operand,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    StaticCell,
+    TerminatorKind,
+)
+from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from frame import Builder, temporary, read_place, terminate_call, external_call, literal
+from text_plan import owned_literal
 from classes import body_module_identity
-from closures import callable_component
+from program_context import ProgramContext
 
 
 pub enum DecoratorFrame:
@@ -25,26 +49,49 @@ pub def frame_name(base: str, role: DecoratorFrame) -> str:
         DecoratorFrame.Initializer => return f"{base}__incan_initializer"
 
 
-pub def validate_text_binding(binding: &DecoratedBinding) -> Result[None, str]:
-    """Admit only the measured synchronous zero-argument string-returning original and matching initializer."""
+pub def binding_accessor_name(base: str) -> str:
+    """Name the frame that publishes a closed instance once and returns its decorated callable."""
+    return f"{base}__incan_binding"
+
+
+def binding_seed_name(base: str) -> str:
+    """Name the storage cell's initializer, which holds the original until publication replaces it."""
+    return f"{base}__incan_binding_seed"
+
+
+def binding_publish_name(base: str) -> str:
+    """Name the frame that runs the instance's decorators and stores their result in its cell."""
+    return f"{base}__incan_binding_publish"
+
+
+pub def validate_instance_binding(binding: &DecoratedBinding) -> Result[None, str]:
+    """Admit a synchronous per-instantiation binding with its initializer; its frames check the closed signature."""
     if binding.initialization != DecoratedInitialization.PerInstantiation:
         return Err("unsupported Body IR cached decorator outside per-instantiation policy")
     body = binding.original_body
-    if body.is_async or body.is_generator() or len(body.params) != 0 or not string_type(body.return_type):
-        return Err("unsupported Body IR generic decorator outside a zero-argument string callable")
-    match binding.initializer:
-        Some(initializer) =>
-            if callable_component(initializer.return_type)? == PlanType.FunctionPointer([PlanType.String]):
-                return Ok(None)
-        None => pass
-    return Err("unsupported Body IR generic decorator initializer outside a text function pointer")
+    if body.is_async or body.is_generator():
+        return Err("unsupported Body IR generic decorator on an async or generator callable")
+    if binding.initializer == None:
+        return Err("unsupported Body IR generic decorator without a per-instantiation initializer")
+    return Ok(None)
 
 
-pub def string_type(ty: &RustType) -> bool:
-    """Require the checked owned string type without promoting a named or sized carrier."""
-    match ty:
-        RustType.Primitive(IncanPrimitiveType.Str) => return true
-        _ => return false
+pub def frame_signature(function: &Function) -> list[PlanType]:
+    """The reified pointer signature of a planned frame: its parameter types, then its result."""
+    mut signature: list[PlanType] = []
+    for parameter in function.parameters:
+        signature.append(parameter.ty.clone())
+    signature.append(function.return_type.clone())
+    return signature
+
+
+pub def builder_signature(builder: &Builder) -> list[PlanType]:
+    """The pointer signature of the frame being built, read from its parameter slots and then its return slot."""
+    mut signature: list[PlanType] = []
+    for index in range(1, builder.parameter_count + 1):
+        signature.append(builder.locals[index].ty.clone())
+    signature.append(builder.locals[0].ty.clone())
+    return signature
 
 
 pub def callable_name_profile(module: &BodyIrModule, owner: str) -> Result[bool, str]:
@@ -70,7 +117,7 @@ pub def reified_pointer(mut builder: Builder, name: str, signature: list[PlanTyp
 pub def validate_binding_policy(binding: &DecoratedBinding) -> Result[None, str]:
     """Honor the kernel-validated lifetime and complete initializer field without inferring a replacement from storage."""
     match binding.initialization:
-        DecoratedInitialization.PerInstantiation => return validate_text_binding(binding)
+        DecoratedInitialization.PerInstantiation => return validate_instance_binding(binding)
         DecoratedInitialization.PerInvocation =>
             if len(binding.original_body.type_parameters) == 0 or binding.initializer != None:
                 return Err("unsupported Body IR per-invocation decorator lifetime")
@@ -78,3 +125,162 @@ pub def validate_binding_policy(binding: &DecoratedBinding) -> Result[None, str]
             if len(binding.original_body.type_parameters) != 0 or binding.initializer != None:
                 return Err("unsupported Body IR module decorator lifetime")
     return Ok(None)
+
+
+pub def cached_binding_frames(
+    program: ProgramContext,
+    binding: &DecoratedBinding,
+    base: str,
+    original: str,
+    initializer: str,
+    signature: list[PlanType],
+    slot: int,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+    span: SourceSpan,
+) -> Result[tuple[StaticCell, list[Function], list[ExternalFunction]], str]:
+    """
+    Plan a closed instance's storage cell and the frames that seed, publish and read it.
+
+    1. Seed the cell with the original, so reaching the storage never runs user code.
+    2. Publish by running the initializer frame and storing the decorated callable it returns.
+    3. Read through the runtime claim, which publishes once per instance, then load the cell.
+    """
+    module_identity = body_module_identity(binding.original_body)?
+    mut declaration = ""
+    match binding.original_body.canonical:
+        Some(identity) => declaration = str(identity.declaration_name)
+        None => return Err("unsupported Body IR generic decorator without a declaration identity")
+    pointer = PlanType.FunctionPointer(signature)
+    # 1. The seed is never observed: every read waits for publication first.
+    mut seed = cache_frame(program, binding_seed_name(base), pointer, module_identity, unions, intrinsics, span)
+    seeded = reified_pointer(seed, original, signature, span)
+    seed.emit(plan_assign(plan_place(0, span), RvalueKind.Use(seeded), span))
+    seed.finish(TerminatorKind.Return, span)
+    # 2. Publication replaces the seed only after every decorator has returned.
+    mut publish = cache_frame(
+        program,
+        binding_publish_name(base),
+        PlanType.Unit,
+        module_identity,
+        unions,
+        intrinsics,
+        span,
+    )
+    decorated = temporary(publish, pointer, span)
+    terminate_call(publish, CalleeKind.Planned(initializer), [], decorated, span)
+    stored = temporary(publish, PlanType.Unit, span)
+    terminate_call(publish, CalleeKind.StaticStore(slot), [read_place(decorated, false, span)], stored, span)
+    publish.emit(plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span))
+    publish.finish(TerminatorKind.Return, span)
+    # 3. The publisher's address identifies this unit's cell to the runtime claim.
+    mut access = cache_frame(program, binding_accessor_name(base), pointer, module_identity, unions, intrinsics, span)
+    module_text = owned_literal(access, module_identity, span)
+    instance_text = owned_literal(access, base, span)
+    name_text = owned_literal(access, declaration, span)
+    publisher = reified_pointer(access, binding_publish_name(base), [PlanType.Unit], span)
+    publisher_address = function_address(access, publisher, span)
+    original_address = function_address(access, reified_pointer(access, original, signature, span), span)
+    claimed = temporary(access, PlanType.Unit, span)
+    external_call(
+        access,
+        "incan_native_runtime::initialize_binding",
+        [
+            PlanType.String,
+            PlanType.String,
+            PlanType.FunctionPointer([PlanType.Unit]),
+            PlanType.USize,
+            PlanType.USize,
+            PlanType.String,
+        ],
+        PlanType.Unit,
+        [
+            read_place(module_text, true, span),
+            read_place(instance_text, true, span),
+            publisher,
+            publisher_address,
+            original_address,
+            read_place(name_text, true, span),
+        ],
+        claimed,
+        span,
+    )
+    terminate_call(access, CalleeKind.StaticLoad(slot), [], plan_place(0, span), span)
+    access.finish(TerminatorKind.Return, span)
+    mut externals: list[ExternalFunction] = []
+    for external in access.externals:
+        externals.append(external.clone())
+    cell = StaticCell(slot=slot, ty=pointer, initializer=binding_seed_name(base), span=span)
+    frames = [
+        finished_frame(seed, pointer, span),
+        finished_frame(publish, PlanType.Unit, span),
+        finished_frame(access, pointer, span),
+    ]
+    return Ok((cell, frames, externals))
+
+
+def function_address(mut builder: Builder, pointer: Operand, span: SourceSpan) -> Operand:
+    """Expose a reified pointer's address, which keys the runtime's per-unit claim and callable-name registry."""
+    address = temporary(builder, PlanType.USize, span)
+    builder.emit(plan_assign(address, RvalueKind.FunctionAddress(pointer), span))
+    return read_place(address, false, span)
+
+
+def cache_frame(
+    program: ProgramContext,
+    name: str,
+    result: PlanType,
+    module_identity: str,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+    span: SourceSpan,
+) -> Builder:
+    """Open a parameterless synthetic frame in the declaring module; it has no source dispatch and no owners."""
+    mut builder = Builder(
+        program=program,
+        locals=[Local(ty=result, span=span)],
+        parameter_count=0,
+        blocks=[],
+        current=0,
+        source="",
+        file=str(span.file),
+        module_identity=module_identity,
+        callable_identity=None,
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=[],
+        closed=[],
+        iterators=[],
+        borrowed_items=[],
+        in_place_items=[],
+        partial_callables=[],
+        scalar_closures=[],
+        unproven_closures=[],
+        intrinsics=list(intrinsics),
+        local_offset=0,
+        consuming_closure_frame=false,
+        generator_handle=-1,
+        unions=unions,
+        instances=[],
+        type_parameters=[],
+        type_arguments=[],
+        function_pointer_locals=[],
+        name=name,
+        synthesized=[],
+        moved_tuple_fields=[],
+    )
+    _ = builder.new_block(span)
+    return builder
+
+
+def finished_frame(builder: Builder, result: PlanType, span: SourceSpan) -> Function:
+    """Retain a completed synthetic frame's storage and blocks as a planned function without parameters."""
+    return Function(
+        name=builder.name,
+        parameters=[],
+        return_type=result,
+        locals=builder.locals,
+        blocks=builder.blocks,
+        span=span,
+    )

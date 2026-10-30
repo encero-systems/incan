@@ -346,7 +346,7 @@ The outer bound and adoption syntax is unchanged. Function-type parameters gain 
 
 ### Why a trait around a function type
 
-A bare function type as the bound, `F with (int) -> str`, was considered and rejected. A function type is the type of a value; a `with` clause names capabilities, and today the checker refuses a type in bound position because no argument can satisfy it. Adoption makes the difference visible: `model TableRow with (str, int, float) -> str` reads as a claim that the model is a function type, which it is not; it has a call. `model TableRow with Callable[(str, int, float) -> str]` reads as what it is. Diagnostics follow the same line: "does not adopt `Callable[(int) -> str]`" names a capability the author can add.
+A bare function type as the bound, `F with (int) -> str`, was considered and rejected. A function type is the type of a value. A `with` bound that names a type constrains the parameter to exactly that type (RFC 107), so `F with (int) -> str` would admit only that function type, not the compatible functions, closures and callable objects a `Callable` bound admits. Adoption makes the difference visible: `model TableRow with (str, int, float) -> str` reads as a claim that the model is a function type, which it is not; it has a call. `model TableRow with Callable[(str, int, float) -> str]` reads as what it is. Diagnostics follow the same line: "does not adopt `Callable[(int) -> str]`" names a capability the author can add.
 
 ### Why `Callable` is compiler-known
 
