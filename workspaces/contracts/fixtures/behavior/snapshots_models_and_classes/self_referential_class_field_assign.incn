@@ -1,0 +1,29 @@
+# behavior: a self-referential class replaces its Option link through a mutable binding and through a mut method (#2475)
+# expect-stdout:
+#   5
+#   9
+#   none
+
+@derive(Clone)
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+    def cut(mut self) -> None:
+        self.next = None
+
+
+def show(node: Node) -> None:
+    match node.next:
+        Some(n) => println(n.value)
+        None => println("none")
+
+
+def main() -> None:
+    mut head = Node(value=1, next=None)
+    head.next = Some(Node(value=5, next=None))
+    show(head.clone())
+    head.next = Some(Node(value=9, next=None))
+    show(head.clone())
+    head.cut()
+    show(head)

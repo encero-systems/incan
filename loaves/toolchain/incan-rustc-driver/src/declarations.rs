@@ -222,6 +222,13 @@ fn admitted_value_ty_kind(kind: &PlanType, span: Span) -> ast::TyKind {
             None,
             ast::Path::from_ident(ident(&crate::shared_callables::name(signature), span)),
         ),
+        PlanType::Boxed(elements) => boxed_object_ast(
+            elements
+                .first()
+                .map(|referent| ty(referent, span))
+                .unwrap_or_else(|| ty(&PlanType::Unit, span)),
+            span,
+        ),
         PlanType::Closure(signature) | PlanType::ClosureOnce(signature) => boxed_object_ast(
             callable_object_ast(signature, span, matches!(kind, PlanType::ClosureOnce(_))),
             span,

@@ -275,7 +275,7 @@ from element_borrows import (
 )
 from option_tests import is_option_carrier, is_union_carrier, option_isinstance, enum_tag
 from derived_defaults import is_derived_default, lower_derived_default
-from models import field_path, field_projection
+from models import field_path, field_steps, field_step_type
 from newtype_hooks import lower_newtype_hook_result
 from newtype_sums import lower_newtype_sum_add, lower_newtype_sum_extract
 from validation_errors import lower_validation_error, display_validation_error, validation_error_reference
@@ -6904,12 +6904,31 @@ def model_field_operands(
                     text = display_operand(builder, value, span)?
                     operands.append(read_place(text, true, span))
                 else:
-                    operand = boundary_operand(builder, value, field_type, span)?
-                    # Generic inference has already selected this field's carrier; retain its widening just as a
-                    # call slot does.
-                    operands.append(coerce_numeric_operand(builder, operand, field_type, span)?)
+                    match field_type:
+                        PlanType.Boxed(referent) =>
+                            operand = boundary_operand(builder, value, referent[0], span)?
+                            stored = coerce_numeric_operand(builder, operand, referent[0], span)?
+                            operands.append(boxed_operand(builder, stored, referent[0], span))
+                        _ =>
+                            operand = boundary_operand(builder, value, field_type, span)?
+                            # Generic inference has already selected this field's carrier; retain its widening just
+                            # as a call slot does.
+                            operands.append(coerce_numeric_operand(builder, operand, field_type, span)?)
             None => return Err("unsupported Body IR spread model field")
     return Ok(operands)
+
+
+def boxed_operand(mut builder: Builder, value: Operand, referent: PlanType, span: SourceSpan) -> Operand:
+    """Move a checked field value onto the heap for a boxed class field, as `Box::new` does."""
+    path = "std::boxed::Box::new"
+    boxed = PlanType.Boxed([referent])
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[referent], parameters=[referent], return_type=boxed, span=span),
+    )
+    destination = temporary(builder, boxed, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [referent]), [value], destination, span)
+    builder.owned.append(destination.local)
+    return read_place(destination, true, span)
 
 
 def lower_string_field_assignment(
@@ -10294,7 +10313,7 @@ def read_element_field(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Read a field from a list element, copying scalars and function pointers while cloning owned values."""
-    selected = field_projection(
+    steps = field_steps(
         builder.constructors,
         builder.nominals,
         place_type(builder.locals, place),
@@ -10303,8 +10322,10 @@ def read_element_field(
         builder.unions,
         builder.intrinsics,
     )?
-    field = appended_field(place, selected, span)?
-    ty = selected.ty
+    mut field = place
+    for step in steps:
+        field = appended_field(field, step, span)?
+    ty = steps[len(steps) - 1].ty
     if ty == PlanType.String:
         return clone_text(builder, field, span)
     if is_nominal_type(ty):
@@ -12070,7 +12091,7 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
                             if not is_tuple_type(ty):
                                 return Err(list_projection_refusal(builder.name, ty, projection))
                         _ => return Err(list_projection_refusal(builder.name, ty, projection))
-                    ty = field_projection(
+                    ty = field_step_type(
                         builder.constructors,
                         builder.nominals,
                         ty,
@@ -12078,7 +12099,7 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
                         builder.enums,
                         builder.unions,
                         builder.intrinsics,
-                    )?.ty
+                    )?
         return scalar_place(builder, value, span)
     return list_base_place(builder, value, span)
 
@@ -13545,7 +13566,7 @@ pub def computed_static_type(
                 if is_list(ty):
                     continue
             _ => pass
-        ty = field_projection(
+        ty = field_step_type(
             builder.constructors,
             builder.nominals,
             ty,
@@ -13553,7 +13574,7 @@ pub def computed_static_type(
             builder.enums,
             builder.unions,
             builder.intrinsics,
-        )?.ty
+        )?
     return Ok(ty)
 
 
