@@ -3972,7 +3972,8 @@ impl TypeChecker {
     ) {
         let mut visiting = HashSet::new();
         if self.type_contains_direct_recursive_model(field_ty, class_name, false, &mut visiting) {
-            self.errors.push(errors::direct_recursive_class_field(class_name, field, span));
+            self.errors
+                .push(errors::direct_recursive_class_field(class_name, field, span));
         }
     }
 
@@ -5663,17 +5664,13 @@ impl TypeChecker {
         self.type_info
             .declarations
             .decorated_function_bindings_by_span
-            .insert(span, binding.clone());
+            .insert(span, binding);
 
         if let Some(symbol_id) = self.symbols.lookup(&func.name)
             && let Some(symbol) = self.symbols.get_mut(symbol_id)
         {
             match &mut symbol.kind {
                 SymbolKind::Function(_) => {
-                    self.type_info
-                        .declarations
-                        .decorated_function_bindings
-                        .insert(func.name.clone(), binding);
                     symbol.kind = SymbolKind::Variable(VariableInfo {
                         ty: binding_ty,
                         is_mutable: false,

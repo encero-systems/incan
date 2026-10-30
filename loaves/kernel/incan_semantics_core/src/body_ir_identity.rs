@@ -104,7 +104,7 @@ impl BodyIrModule {
         modules: &[BodyIrModule],
     ) -> bool {
         if binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation {
-            return binding.initializer.is_none() && self.is_well_formed_invocation_binding(binding);
+            return false;
         }
         let original = &binding.original_body;
         if let Some(initializer) = &binding.initializer {
@@ -145,7 +145,8 @@ impl BodyIrModule {
     }
 
     /// Validate a per-instantiation initializer against its original and wrapper, without granting module storage.
-    /// The same formal binders must govern both templates; another source declaration cannot provide either body.
+    /// All three frames retain their canonical direct-call identity and exact formal binders; another declaration
+    /// cannot provide any frame.
     fn is_well_formed_generic_decorated_binding(&self, original: &Body, initializer: &Body) -> bool {
         let Some(identity) = &original.canonical else {
             return false;
@@ -154,10 +155,6 @@ impl BodyIrModule {
             || original.type_parameters.is_empty()
             || original.type_parameters.iter().any(String::is_empty)
             || original.type_parameters.iter().collect::<BTreeSet<_>>().len() != original.type_parameters.len()
-            || original.params.iter().any(|parameter| {
-                crate::body_ir::decorated_signature_uses_parameters(&parameter.ty, &original.type_parameters)
-            })
-            || crate::body_ir::decorated_signature_uses_parameters(&original.return_type, &original.type_parameters)
             || original.is_async
             || initializer.is_async
             || !self.body_has_canonical_direct_call_id(original)
@@ -185,6 +182,8 @@ impl BodyIrModule {
         };
         wrappers.next().is_none()
             && wrapper.decl_id == original.decl_id
+            && self.body_has_canonical_direct_call_id(wrapper)
+            && !wrapper.is_async
             && wrapper.type_parameters == original.type_parameters
             && params.len() == wrapper.params.len()
             && params
@@ -192,44 +191,6 @@ impl BodyIrModule {
                 .zip(&wrapper.params)
                 .all(|(left, right)| decorated_parameter_matches(wrapper, left, right))
             && **return_type == wrapper.return_type
-    }
-
-    /// Require one source generic frame and its visible wrapper, with identical declared binders and no storage.
-    /// Only signatures using those binders have per-call semantics; closed signatures require the separate cache
-    /// policy.
-    fn is_well_formed_invocation_binding(&self, binding: &crate::body_ir::DecoratedBinding) -> bool {
-        let original = &binding.original_body;
-        let Some(identity) = original.canonical.as_ref() else {
-            return false;
-        };
-        if identity.kind != SemanticSourceTargetKind::Function
-            || original.type_parameters.is_empty()
-            || original.type_parameters.iter().any(String::is_empty)
-            || original.type_parameters.iter().collect::<BTreeSet<_>>().len() != original.type_parameters.len()
-            || original.is_async
-            || original.is_generator()
-            || !self.body_has_canonical_direct_call_id(original)
-            || self
-                .static_declarations
-                .iter()
-                .any(|storage| &storage.canonical == identity)
-        {
-            return false;
-        }
-        let uses_parameters =
-            original.params.iter().any(|parameter| {
-                crate::body_ir::decorated_signature_uses_parameters(&parameter.ty, &original.type_parameters)
-            }) || crate::body_ir::decorated_signature_uses_parameters(&original.return_type, &original.type_parameters);
-        uses_parameters
-            && self.callable_declaration_frames().any(|wrapper| {
-                wrapper.canonical.as_ref() == Some(identity)
-                    && wrapper.decl_id == original.decl_id
-                    && self.body_has_canonical_direct_call_id(wrapper)
-                    && wrapper.type_parameters == original.type_parameters
-                    && wrapper.params == original.params
-                    && wrapper.return_type == original.return_type
-                    && !wrapper.is_async
-            })
     }
 
     /// Whether a normal enum layout and every variant belong to their exact declared owner. A native enum may retain

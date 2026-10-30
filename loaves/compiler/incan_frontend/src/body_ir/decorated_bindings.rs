@@ -1,5 +1,4 @@
-//! RFC 036 originals with checked module, per-instantiation and per-invocation replacement frames, used exclusively by
-//! Body IR.
+//! RFC 036 originals with checked module and per-instantiation replacement frames, used exclusively by Body IR.
 
 use super::args::fixed_elements;
 use super::*;
@@ -99,11 +98,9 @@ fn shared_callable_receiver(mut shape: IncanType) -> IncanType {
     shape
 }
 
-/// Admit checked source callables without conflating closed cached originals with signatures using declaration binders.
-/// Open signatures preserve their return type and use the invocation wrapper. A closed generic signature, one that
-/// names none of its type parameters, such as an overload keyed on a type bound (`cast[T with Int](expr: Col)`,
-/// #1033), preserves its return type and keeps its own initializer template per instantiation. Factories retain their
-/// validated closed applications; extern delegations cannot bypass the visible replacement.
+/// Admit checked source callables with an initializer template per generic instantiation, including signatures using
+/// declaration binders and overloads keyed on a type bound (`cast[T with Int](expr: Col)`, #1033). Factories retain
+/// their validated closed applications; extern delegations cannot bypass the visible replacement.
 /// A nongeneric replacement may change required ordinary input types and passing modes; the wrapper retains the
 /// original as a separate callable and receives the replacement's checked signature.
 pub(super) fn supports_function(
@@ -162,8 +159,7 @@ pub(super) fn supports_function(
 }
 
 /// Retain originals and replacement initializers in source order, replacing their visible bodies with wrappers.
-/// Closed generic signatures retain initializer templates outside module statics; checked open signatures use
-/// invocation frames instead.
+/// Generic signatures retain initializer templates outside module statics, closed together with each callable instance.
 pub(super) fn collect(
     program: &ast::Program,
     facts: &BodyIrLoweringFacts<'_, '_>,
@@ -240,8 +236,7 @@ pub(super) fn collect(
 }
 
 /// Attach a replacement to the original declaration's canonical identity with its checked initialization scope.
-/// Closed generic originals retain the exact initializer template; open signatures use the checked invocation wrapper,
-/// and only nongeneric replacements become module statics.
+/// Generic originals retain the exact initializer template, and only nongeneric replacements become module statics.
 #[expect(
     clippy::too_many_arguments,
     reason = "Keep original and replacement signatures and their distinct binding and static outputs explicit at this boundary."
@@ -259,18 +254,7 @@ fn retain_binding(
     let Some(canonical) = body.canonical.clone() else {
         return;
     };
-    if !body.type_parameters.is_empty() && bir::decorated_signature_uses_parameters(&ty, &body.type_parameters) {
-        if let Some(wrapper) = invocation_wrapper(decorators, span, facts, body, &original_ty, &ty) {
-            let original_body = std::mem::replace(body, wrapper);
-            retained.push(bir::DecoratedBinding {
-                original_body,
-                initializer: None,
-                initialization: bir::DecoratedInitialization::PerInvocation,
-            });
-        }
-        return;
-    }
-    let initializer = initializer(decorators, span, facts, body, &original_ty, &ty, false);
+    let initializer = initializer(decorators, span, facts, body, &original_ty, &ty);
     let replacement = bir::StaticDeclaration {
         canonical,
         ty,
@@ -310,7 +294,6 @@ fn initializer(
     original: &bir::Body,
     original_ty: &IncanType,
     replacement_ty: &IncanType,
-    invocation: bool,
 ) -> bir::Body {
     let mut builder = BodyBuilder::new(facts, replacement_ty.clone());
     builder.type_parameters = original.type_parameters.clone();
@@ -319,13 +302,6 @@ fn initializer(
         .first()
         .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Receiver { mutable: false }));
     let scope = builder.new_scope(None, hir_span(span));
-    if invocation {
-        // Seed storage through the allocator without binding input names into the decorator's module scope.
-        for local in original.locals.iter().take(original.params.len()) {
-            let id = builder.new_temp(local.ty.clone(), scope, local.span);
-            builder.locals[id.index()] = local.clone();
-        }
-    }
     let mut statements = Vec::new();
 
     // ---- Context: the original callable with its checked passing parameters ----
@@ -386,10 +362,8 @@ fn initializer(
     let mut body = original.clone();
     body.return_type = replacement_ty.clone();
     body.locals = builder.locals;
-    if !invocation {
-        body.params.clear();
-        body.param_locals.clear();
-    }
+    body.params.clear();
+    body.param_locals.clear();
     body.scopes = builder.scopes;
     body.block = bir::Block {
         scope,
@@ -503,64 +477,6 @@ fn decorator_expression(decorator: &ast::Spanned<ast::Decorator>) -> Option<ast:
         _ => return None,
     };
     Some(ast::Spanned::new(expression, decorator.span))
-}
-
-/// Apply the checked decorator chain in the wrapper's own invocation frame, then forward its original arguments.
-/// Open signatures use this frame; closed generic signatures keep their distinct per-instantiation initializer cache.
-fn invocation_wrapper(
-    decorators: &[ast::Spanned<ast::Decorator>],
-    span: ast::Span,
-    facts: &BodyIrLoweringFacts<'_, '_>,
-    original: &bir::Body,
-    original_ty: &IncanType,
-    replacement_ty: &IncanType,
-) -> Option<bir::Body> {
-    let IncanType::Function { return_type, .. } = replacement_ty else {
-        return None;
-    };
-    let mut body = initializer(decorators, span, facts, original, original_ty, replacement_ty, true);
-    let returned = body.block.stmts.pop()?;
-    let bir::StatementKind::Return {
-        value: Some(bir::Operand::Place(callable)),
-    } = returned.kind
-    else {
-        return None;
-    };
-    body.return_type = *return_type.clone();
-    let result = bir::LocalId(body.locals.len().try_into().ok()?);
-    body.locals.push(bir::LocalDecl {
-        id: result,
-        name: None,
-        identity: None,
-        ty: body.return_type.clone(),
-        origin: bir::LocalOrigin::Temporary,
-        scope: body.block.scope,
-        span: body.span,
-    });
-    let arguments = forwarded_arguments(&body);
-    body.block.stmts.push(bir::Statement {
-        kind: bir::StatementKind::Call {
-            destination: Some(bir::Place::from_local(result)),
-            callee: bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
-                operand: callable,
-                binding: bir::ArgumentBinding::resolved_positional(body.params.len()),
-            })),
-            args: fixed_elements(arguments),
-            may_panic: false,
-        },
-        span: body.span,
-    });
-    body.block.stmts.push(bir::Statement {
-        kind: bir::StatementKind::Return {
-            value: Some(bir::Operand::place(
-                bir::Place::from_local(result),
-                bir::OwnershipFact::Move,
-                true,
-            )),
-        },
-        span: body.span,
-    });
-    Some(body)
 }
 
 /// Forward each wrapper input once under its existing checked receiver and ownership contract.
