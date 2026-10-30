@@ -21,7 +21,7 @@ from json_fields import required_text
 from observation import trace, trace_boundary
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
-from owner_protocol import Connection, Listener, digits_only, listen
+from core_ipc import Connection, Listener, digits_only, listen
 from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command

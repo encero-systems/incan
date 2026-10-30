@@ -3,7 +3,8 @@
 from rust::std::io import Write
 from rust::std::os::unix::net import UnixStream
 from std.json import JsonValue
-from owner_protocol import MAX_FRAME, Reply, Request, dial, length_of, listen, padded, reply_of, request_of
+from core_ipc import MAX_FRAME, dial, length_of, listen, padded
+from owner_protocol import Reply, Request, reply_of, request_of
 from scratch import scratch_directory
 
 
@@ -46,6 +47,8 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     mut listener = listen(path, true)?
     mut client = dial(path)?
     mut server = listener.accept()?
+    assert client.peer()?.uid == server.peer()?.uid
+    assert client.peer()?.gid == server.peer()?.gid
     # A request travels from the client to the server, and a reply back.
     request = Request(
         command="run",
