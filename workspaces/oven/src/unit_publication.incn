@@ -75,9 +75,14 @@ pub def published_identity(path: Path) -> Result[str, str]:
     """
     Name an unchanged published artifact without reading or hashing its payload.
 
-    Missing producer records and changed generations refuse; relocation must be admitted before naming the unit.
+    Missing producer records and changed generations refuse; relocation must be admitted before naming the unit. An
+    artifact of an installed registry entry is admitted under that entry's identity the first time it is named.
     """
-    record = available_record(path)?
+    mut record = available_record(path)?
+    if not record.is_file():
+        if let Some(entry) = registry_entry(path):
+            import_payload(path, entry)?
+            record = available_record(path)?
     if not record.is_file():
         return Err(f"unit identity refused: {path.0}: linked unit has no recorded producer identity")
     document = read_json(record)?
@@ -89,6 +94,24 @@ pub def published_identity(path: Path) -> Result[str, str]:
         return Err(f"{path.0}: published payload changed; admission is required")
     return required_text(document, "unit")
 
+
+def registry_entry(path: Path) -> Option[str]:
+    """
+    The identity of the registry entry an artifact belongs to: `<store>/entries/sha256-<digest>/artifacts/<file>`
+    names entry `sha256:<digest>`. Registry stores are content-named, so the entry directory is the producer identity.
+    """
+    artifacts = path.parent()
+    entry = artifacts.parent()
+    name = entry.name()
+    if artifacts.name() != "artifacts" or entry.parent().name() != "entries" or not name.startswith("sha256-"):
+        return None
+    digest = name[len("sha256-"):]
+    if len(digest) != 64:
+        return None
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return None
+    return Some(f"sha256:{digest}")
 
 pub def import_payload(path: Path, identity: str, expected_payload: str = "") -> Result[None, str]:
     """

@@ -1168,7 +1168,7 @@ def compile_local_rust_library(
         outputs = [artifact, graph, dependencies]
         record_portable(directory, key, outputs)?
         portable = directory.joinpath("library.portable-inputs")
-        seal_rust(store, identity, name, key.digest, directory, outputs, [portable], facet.project, linked)?
+        seal_rust(store, identity, name, key.digest, key.provenance, directory, outputs, [portable], facet.project, linked)?
     match library_artifact(directory, declared.crate_name, context, declared.kind)?:
         None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
         Some(viewed) =>
@@ -1193,9 +1193,13 @@ def baked_identity(
 ) -> Result[Option[str], str]:
     """The bakery identity of a Rust library and its graph, when its dependency evidence admits one."""
     match rust_library_producer_key(facet, directory, arguments, environment, request, toolchain):
-        Err(_) => return Ok(None)
+        Err(reason) =>
+            if directory.joinpath("library.d").is_file():
+                trace(f"unit {facet.project}: dependency evidence names no baked identity: {reason}")
+            return Ok(None)
         Ok(key) =>
             if key.refusal != "":
+                trace(f"unit {facet.project}: dependency evidence names no baked identity: {key.refusal}")
                 return Ok(None)
             return Ok(Some(rust_library_graph_key(key, toolchain.driver)?.digest))
 
