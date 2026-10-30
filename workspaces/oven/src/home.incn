@@ -7,8 +7,8 @@ standard packages come from.
   `<home>/toolchains/<toolchain>/loaves/<package>/<profile>`.
 - A path dependency's artifacts live in the target directory of the root project that reaches it, so one graph's
   unified features build it once: `<root>/target/incan/loaves/<package>/<profile>`.
-- The standard packages are the packages of the toolchain's standard-library directory, `INCAN_STDLIB`: each of its
-  immediate subdirectories that holds a `loaf.toml`.
+- The standard packages are the packages of the toolchain's standard-library directory, `INCAN_STDLIB` when set,
+  else the installed toolchain's `stdlib`: each of its immediate subdirectories that holds a `loaf.toml`.
 """
 
 from std.environ import get_or
@@ -59,12 +59,24 @@ pub def unit_ledger(project_root: str, name: str) -> Path:
     return Path(project_root).joinpath("target").joinpath("incan").joinpath("observations").joinpath(f"{name}.json")
 
 
+pub def standard_library_dir() -> Result[Path, str]:
+    """
+    The toolchain's standard-library directory: `INCAN_STDLIB` when set, else the standard sources the installed
+    toolchain ships in its `stdlib` directory.
+    """
+    configured = get_or("INCAN_STDLIB", "")
+    if configured != "":
+        return Ok(Path(configured))
+    shipped = home()?.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("stdlib")
+    if shipped.is_dir():
+        return Ok(shipped)
+    return Err(f"no standard library: {shipped.0} does not exist; set INCAN_STDLIB")
+
+
 pub def standard_packages(reader: ManifestReader = ManifestReader()) -> Result[list[StandardPackage], str]:
     """The toolchain's standard packages, in name order."""
-    root = get_or("INCAN_STDLIB", "")
-    if root == "":
-        return Err("no standard library: set INCAN_STDLIB to the toolchain's standard-library directory")
-    directory = Path(root)
+    directory = standard_library_dir()?
+    root = directory.0
     mut packages: list[StandardPackage] = []
     match directory.iterdir():
         Err(error) => return Err(f"cannot read the standard library at {root}: {error.message()}")

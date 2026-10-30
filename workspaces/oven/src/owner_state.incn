@@ -16,7 +16,7 @@ from std.environ import get_or
 from features import FeatureRequest
 from compiler_worker import generation_for
 from files import discard_file
-from home import owners_dir, standard_packages, unit_ledger
+from home import owners_dir, standard_library_dir, standard_packages, unit_ledger
 from incan_units import compile_executable, program_binary
 from intake import intake, ManifestReader
 from loaf_local_graph import unique
@@ -307,7 +307,7 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
     if registry_lock != "":
         paths.append(registry_lock)
     # 3. So does a change to the set of standard packages, or to the manifest of any of them.
-    paths.append(get_or("INCAN_STDLIB", ""))
+    paths.append(standard_library_dir()?.0)
     for package in standard_packages(unit.manifests)?:
         paths.append(Path(package.root).joinpath("loaf.toml").0)
     # 4. So does a rebuilt standard provider or compiler facade the unit links.
