@@ -59,6 +59,7 @@ pub def seal_rust(
     identity: str,
     name: str,
     producer: str,
+    provenance: list[str],
     directory: Path,
     outputs: list[Path],
     evidence: list[Path],
@@ -73,7 +74,7 @@ pub def seal_rust(
     """
     staged = staging(store, identity)?
     for output in outputs:
-        record_payload(output, producer)?
+        record_payload(output, producer, provenance)?
         clone_into(output, staged)?
         clone_into(record_path(output), staged)?
     for proof in evidence:
