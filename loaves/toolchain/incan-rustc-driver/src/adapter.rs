@@ -577,6 +577,7 @@ fn native_bridge_items(plan: &Plan, span: rustc_span::Span) -> Result<Vec<Box<as
     items.extend(crate::fallible_bridges::items(plan, span)?);
     items.extend(crate::fallible_bridges::ordinary_items(plan, span)?);
     items.extend(crate::callable_bridges::items(plan, span)?);
+    items.extend(crate::native_trait_bridges::items(plan, span)?);
     Ok(items)
 }
 

@@ -460,6 +460,29 @@ model Source with ReadsInt, ReadsStr:
         return value
 ```
 
+### Rust traits on a class
+
+A `class` adopts a trait imported with `from rust::...` the same way: `class Hooks with Callbacks`.
+
+- The class and the trait are concrete: neither has type parameters, and the trait declares only methods, no associated types or constants. Otherwise the adoption is refused (`INCAN-T0001`).
+- Each class method named like a trait method implements it. It is an instance method with a body and without type parameters; another method of that name is refused (`INCAN-T0001`). A method with a `for` target naming another trait implements only that trait.
+- A trait method the class does not declare keeps the trait's default.
+- Rust checks the implementation when the program is built. A missing required method (`E0046`) or a method whose receiver or signature differs from the trait's (`E0053`) refuses the build.
+
+```incan
+# The host crate declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`
+# and `struct Config { pub flags: Vec<String> }`.
+from rust::host import Callbacks, Config
+
+class Hooks with Callbacks:
+    calls: int = 0
+    flag: str
+
+    def config(mut self, mut config: &mut Config) -> None:
+        self.calls += 1
+        config.flags.append(self.flag)
+```
+
 ### `@requires(...)` (adopter contract)
 
 `@requires(field_a: TypeA, field_b: TypeB)` on a trait names fields that every model or class adopter declares, with compatible types.

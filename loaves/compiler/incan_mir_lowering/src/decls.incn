@@ -25,6 +25,7 @@ from comparison_methods import comparison_functions
 from fallible_methods import fallible_methods
 from iterator_methods import iterator_methods
 from callable_methods import callable_methods
+from native_traits import native_trait_adoptions
 from marker_traits import validate_marker_traits
 from nominal_instances import NominalInstance
 from library_model_arguments import library_model_arguments, local_generic_item
@@ -184,6 +185,7 @@ pub def lower_model_declarations(
                 callable_signature=callable_signature,
                 string_conversion_root=string_conversion_root,
                 string_conversion_trait=string_conversion_trait,
+                native_trait_adoptions=native_trait_adoptions(module, owner)?,
             ),
         )
     return Ok(models)

@@ -1605,9 +1605,11 @@ pub(super) fn collect_trait_argument_witnesses(
 /// Successful typechecking already proves adoption and method compatibility. This registry covers the adopter's local
 /// traits at their checked instantiations and every local supertrait those reach; each slot keeps the body that fills
 /// it and the type arguments that body's trait was adopted at. Imported traits without type parameters keep their own
-/// slots under the checked provider identities (see [`imported_trait_implementations`]). Unrecorded instantiations and
-/// overloaded implementations never gain a guessed target. A refused checked newtype constructor cannot contribute an
-/// implementation without its owner layout, nor can an enum whose layout was not retained.
+/// slots under the checked provider identities (see [`imported_trait_implementations`]). A class's Rust trait slots
+/// keep the methods checking bound to them; the native compiler, not this registry, proves that implementation.
+/// Unrecorded instantiations and overloaded implementations never gain a guessed target. A refused checked newtype
+/// constructor cannot contribute an implementation without its owner layout, nor can an enum whose layout was not
+/// retained.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -1651,6 +1653,14 @@ pub(super) fn collect_local_trait_implementations(
             program, type_info, adoptions, methods, owner,
         ));
         implementations.extend(derived_trait_implementations(type_info, methods, owner));
+        implementations.extend(
+            type_info
+                .declarations
+                .native_trait_implementations
+                .iter()
+                .filter(|implementation| &implementation.owner == owner)
+                .cloned(),
+        );
         let adopted = adopted_local_traits(program, type_info, adoptions);
         implementations.extend(property_implementations(type_info, &adopted, properties, owner));
         for slot_trait in &adopted {
