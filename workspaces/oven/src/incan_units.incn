@@ -58,9 +58,8 @@ pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> 
     key = unit_key(ready, toolchain)?
     # 2. An unchanged description is kept as it is.
     path = write_unit(ready, crate_name(ready), None, described_by(key))?
-    # 3. The record's identity covers the key and the complete invocation, so text and JSON reports are kept apart.
-    arguments = ["--check", path.0, toolchain.sysroot, "--format", format]
-    return check_or_replay(ready, toolchain, arguments, bakery()?, key)
+    # 3. The record's identity covers the key and the report format, so text and JSON reports are kept apart.
+    return check_or_replay(ready, toolchain, path, format, bakery()?, key)
 
 
 pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, check: bool) -> Result[i32, str]:
