@@ -5,6 +5,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.environ import get_or
 from std.fs import Path
+from files import write
 from pub::incan_platform.ipc import dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid
 from engine_channel import Channel, SendOutcome
@@ -304,6 +305,8 @@ def process_lifecycle() -> Result[None, str]:
     """Two real starters share one lifetime lock; drain settles requests and a disconnected idle service exits."""
     scratch = scratch_directory()?
     root = scratch.path()
+    source = root.joinpath("hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
     identity = Identity(
         store_id="process-store",
         profile="v1",
@@ -333,10 +336,10 @@ def process_lifecycle() -> Result[None, str]:
             request,
             Message.Submit(
                 Submit(
-                    command="build",
+                    command="run",
                     view="view",
-                    input_selection="inputs",
-                    requested_roots="roots",
+                    input_selection="debug",
+                    requested_roots=source.0,
                     options="",
                     observation_policy="",
                 ),
@@ -369,7 +372,8 @@ def process_lifecycle() -> Result[None, str]:
             Message.Accepted(_) => accepted = true
             Message.Captured(value) =>
                 assert accepted
-                assert value.epoch == "pending-capture"
+                assert len(value.epoch) == 64
+                assert value.snapshot != ""
                 captured = true
             Message.Complete(value) =>
                 assert captured
