@@ -1,0 +1,24 @@
+# behavior: slicing a Rust value that derefs to [u8] slices its deref target and gives bytes
+# expect-stdout:
+#   true
+#   3
+#   true
+#   true
+
+from rust::byte_views import Window
+
+
+def tail(window: &Window) -> bytes:
+    """Copy from an annotated borrowed native parameter without consuming its owner."""
+    return window[-6:]
+
+
+def main() -> None:
+    """Slice the inspected Deref target into independent bytes with signed Python-style bounds."""
+    window = Window.new()
+    part: bytes = window[2:5]
+    println(part == b"can")
+    println(len(part))
+    println(tail(window) == b"bakery")
+    whole: bytes = window[:]
+    println(whole == b"incan bakery")
