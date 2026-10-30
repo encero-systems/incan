@@ -1,49 +1,55 @@
 """
-A durable store of typed records in immutable segments behind an atomically switched manifest (DD-0012, decision 9).
+A durable store of typed records with an indexed directory and virtual views (DD-0012, decision 9; DD-0013 §1).
 
-This module is the storage substrate only. It knows full record keys, byte values, tombstones and content-named
-payload files; it names no compiler, unit or Oven type, so it can move into IncQL-DB unchanged.
+This module is the storage substrate; with `store_index` it names no compiler, unit or Oven type, so it can move into
+IncQL-DB unchanged.
 
 Layout under the store root:
 
 - `FORMAT`: the format this store is written in; a store in another format is refused, never read as empty.
 - `CURRENT`: the committed generation and the digest of its manifest; replaced by rename, never edited.
-- `snapshots/<generation>.<digest>.manifest`: one generation's parent, transaction and segment list, base first.
-- `segments/<sha256>.seg`: immutable segments. Each holds a sorted directory of 128-bit locators, frame positions
-  and frame digests, then the frames: full key and value, or full key alone for a tombstone.
+- `snapshots/<generation>.<digest>.manifest`: one generation's parent, transaction, segment inventory, and the index
+  root of each view.
+- `segments/<sha256>.seg`: immutable segments of frames: full key and value, or full key alone for a tombstone.
+- `indexes/<sha256>.page`: immutable copy-on-write B+tree pages from full keys to frame locations (`store_index`).
 - `payloads/<aa>/<sha256>`: content-named files the OS and other tools read directly.
 - `staging/<transaction>/`, `leases/<lease>`, `locks/publication`, `claims/<key>`.
 
-Reading: a snapshot is one validated generation and its open segments; it holds no decoded records. A lookup reads
-only the directory entries on its search path and the frame it finds, checks the frame's digest and full key, and
-answers `Found`, `Deleted` or `Absent`. Damage is a `StoreError`, never absence, and a read never falls through a
-damaged newer entry to an older value.
+Views: every generation names an index root per view. A view forked from another starts at the same root and shares
+every page; its first write copies only the pages on the changed path. A read uses its own view's root directly, never
+a chain of parents, and a parent's later writes never reach its forks.
 
-Writing: a transaction is begun on a snapshot, collects writes with their preconditions, and commits by staging one
-delta outside any lock, then, under the publication lock only, validating every precondition against the latest
-generation and installing the delta, the manifest and `CURRENT`, each synced with its directory, in that order. A
-transaction whose writes are all already present commits nothing and adds no bytes. Bakers of one key serialize on
-its claim; the kernel releases a dead holder's lock.
+Reading: a snapshot is one validated generation and one view's root; it holds no decoded records. A lookup reads the
+index pages on one root-to-leaf path and the one frame it finds, checks the page names, the frame digest and the full
+key, and answers `Found`, `Deleted` or `Absent`. Damage is a `StoreError`, never absence, and a read never falls
+through a damaged entry to an older value.
+
+Writing: a transaction begun on one view collects writes with their preconditions and commits by staging its delta
+segment and index pages outside any lock, then, under the publication lock only, validating every precondition
+against the latest generation and installing segment, pages, manifest and `CURRENT`, each synced with its directory,
+in that order. A transaction whose writes are all already present commits nothing and adds no bytes.
 """
 
 from rust::std::process import id
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
-from std.fs import File, Path
+from std.fs import Path
 from std.fs.locking import FileLock
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError, _BytesIO
+from store_index import Entry, IndexError, Location, build, entries as index_entries, find as index_find, insert
+from store_index import page_path, page_reads
 
-const FORMAT: str = "incan.segment-store/2"
-const MANIFEST_SCHEMA: str = "incan.segment-manifest/2"
+const FORMAT: str = "incan.segment-store/3"
+const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
 const LOCATOR_BYTES: int = 32
 const DIGEST_BYTES: int = 32
 const ENTRY_BYTES: int = 88
 const HEADER_BYTES: int = 16
 const KIND_VALUE: int = 0
 const KIND_TOMBSTONE: int = 1
-const MAX_DELTAS: int = 16
 
+pub const HOME_VIEW: str = "home"
 pub const EXPECT_ANY: int = 0
 pub const EXPECT_ABSENT: int = 1
 pub const EXPECT_ABSENT_OR_DAMAGED: int = 2
@@ -70,26 +76,28 @@ pub model StoreError:
         return f"store {self.kind} error in {self.object}: {self.detail}"
 
 
-pub model Segment:
-    """One open segment: its content name, the handle positional reads go through, and its entry count."""
+pub model ViewRoot:
+    """One view's index root in a generation."""
 
-    pub name: str
-    pub handle: File
-    pub count: int
+    pub view: str
+    pub root: str
 
 
 pub model Snapshot:
     """
-    One committed generation and its open segments, base first; it never changes after it is taken.
+    One committed generation seen through one view; it never changes after it is taken.
 
-    A snapshot is a handle, not a cache: it holds no decoded records, and each read touches only the directory entries
-    its search visits and the one frame it finds.
+    A snapshot is a descriptor, not a cache: it names the generation, the view and that view's index root, and the
+    generation's segment inventory and view roots for publication. It holds no decoded records.
     """
 
     pub root: Path
     pub generation: int
     pub digest: str
-    pub segments: list[Segment]
+    pub view: str
+    pub index: str
+    pub segments: list[str]
+    pub views: list[ViewRoot]
 
 
 pub model Write:
@@ -102,19 +110,22 @@ pub model Write:
 
 
 pub model Transaction:
-    """Writes begun on one generation; nothing is visible until `commit` publishes them."""
+    """Writes begun on one view's generation; nothing is visible until `commit` publishes them."""
 
     pub root: Path
     pub base: int
+    pub view: str
+    pub fork: str
     pub id: str
     pub writes: list[Write]
 
 
 pub model ReadCounts:
-    """What this process read from segments so far: records found and segment bytes read."""
+    """What this process read so far: records found, frame bytes read and index pages read."""
 
     pub records: int
     pub bytes: int
+    pub pages: int
 
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
@@ -127,8 +138,8 @@ pub def fingerprint(data: bytes) -> str:
 
 
 pub def read_counts() -> ReadCounts:
-    """The records and segment bytes this process has read."""
-    return ReadCounts(records=counted.get("records", 0), bytes=counted.get("bytes", 0))
+    """The records, frame bytes and index pages this process has read."""
+    return ReadCounts(records=counted.get("records", 0), bytes=counted.get("bytes", 0), pages=page_reads())
 
 
 def failure(kind: str, object: str, detail: str) -> StoreError:
@@ -141,45 +152,45 @@ def io_failure(object: Path, error: IoError) -> StoreError:
     return failure("io", object.0, error.message())
 
 
+def index_failure(error: IndexError) -> StoreError:
+    """A damaged or missing index page."""
+    return failure("integrity", error.object, error.detail)
+
+
 # ---- Snapshots ----
 
 
-pub def snapshot(root: Path) -> Result[Snapshot, StoreError]:
+pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreError]:
     """
-    The committed generation `CURRENT` selects, validated.
+    The committed generation `CURRENT` selects, seen through `view`, validated.
 
-    A store with no `CURRENT` is empty. An unreadable or malformed `CURRENT`, a manifest whose digest differs, an
-    unknown format or a missing or malformed segment is refused; none of them is read as an empty store.
+    A store with no `CURRENT` is empty. An unreadable or malformed `CURRENT`, a manifest whose digest differs or an
+    unknown format is refused; none of them is read as an empty store. A view the generation does not name is empty.
     """
     check_format(root)?
     pointer = root.joinpath("CURRENT")
     if not pointer.is_file():
-        return Ok(Snapshot(root=root, generation=0, digest="", segments=[]))
+        return Ok(Snapshot(root=root, generation=0, digest="", view=view, index="", segments=[], views=[]))
     text = pointer.read_text("utf-8", "strict").map_err((error) => io_failure(pointer, error))?
     fields = text.strip().split(" ")
     if len(fields) != 2 or len(fields[1]) != 64:
         return Err(failure("format", pointer.0, "malformed generation pointer"))
     match natural(fields[0]):
         None => return Err(failure("format", pointer.0, "malformed generation"))
-        Some(generation) =>
-            names = manifest_segments(root, generation, fields[1])?
-            mut segments: list[Segment] = []
-            for name in names:
-                segments.append(open_segment(root, name)?)
-            return Ok(Snapshot(root=root, generation=generation, digest=fields[1], segments=segments))
+        Some(generation) => return read_manifest(root, generation, fields[1], view)
 
 
 pub def current(view: Snapshot) -> Result[Snapshot, StoreError]:
-    """`view` while its generation is still committed, otherwise a new snapshot; a long-lived process keeps only this."""
+    """`view` while its generation is still committed, otherwise a new snapshot of the same view."""
     pointer = view.root.joinpath("CURRENT")
     if not pointer.is_file():
         if view.generation == 0:
             return Ok(view)
-        return snapshot(view.root)
+        return snapshot(view.root, view.view)
     text = pointer.read_text("utf-8", "strict").map_err((error) => io_failure(pointer, error))?
     if text.strip() == f"{view.generation} {view.digest}":
         return Ok(view)
-    return snapshot(view.root)
+    return snapshot(view.root, view.view)
 
 
 def check_format(root: Path) -> Result[None, StoreError]:
@@ -200,8 +211,8 @@ def manifest_path(root: Path, generation: int, digest: str) -> Path:
     return root.joinpath("snapshots").joinpath(f"{generation}.{digest[:16]}.manifest")
 
 
-def manifest_segments(root: Path, generation: int, digest: str) -> Result[list[str], StoreError]:
-    """The segment names of one committed generation, base first, after checking the manifest's digest."""
+def read_manifest(root: Path, generation: int, digest: str, view: str) -> Result[Snapshot, StoreError]:
+    """One committed generation, after checking its manifest's digest, seen through `view`."""
     path = manifest_path(root, generation, digest)
     data = path.read_bytes().map_err((error) => failure("integrity", path.0, error.message()))?
     if hexlify(sha256.digest(data)) != digest:
@@ -212,27 +223,24 @@ def manifest_segments(root: Path, generation: int, digest: str) -> Result[list[s
             lines = text.strip().split("\n")
             if len(lines) < 4 or lines[0] != MANIFEST_SCHEMA or lines[1] != f"generation {generation}":
                 return Err(failure("integrity", path.0, "malformed manifest"))
-            return Ok([line[len("segment "):] for line in lines[4:] if line.startswith("segment ")])
-
-
-def open_segment(root: Path, name: str) -> Result[Segment, StoreError]:
-    """Open one segment a manifest names and check its header and directory bounds."""
-    path = root.joinpath("segments").joinpath(f"{name}.seg")
-    handle = path.open("rb").map_err((error) => failure("integrity", path.0, error.message()))?
-    size = file_size(path)
-    mut segment = Segment(name=name, handle=handle, count=0)
-    match read_range(segment, 0, HEADER_BYTES):
-        None => return Err(failure("integrity", path.0, "truncated header"))
-        Some(header) =>
-            if header[:8] != segment_magic():
-                return Err(failure("integrity", path.0, "not a segment"))
-            match u64_in(header, 8):
-                None => return Err(failure("integrity", path.0, "malformed header"))
-                Some(count) =>
-                    if HEADER_BYTES + count * ENTRY_BYTES > size:
-                        return Err(failure("integrity", path.0, "directory runs past the end of the segment"))
-                    segment.count = count
-                    return Ok(segment)
+            mut segments: list[str] = []
+            mut views: list[ViewRoot] = []
+            mut index = ""
+            for line in lines[4:]:
+                fields = line.split(" ")
+                if len(fields) == 2 and fields[0] == "segment":
+                    segments.append(fields[1])
+                elif len(fields) == 3 and fields[0] == "view":
+                    views.append(ViewRoot(view=fields[1], root=fields[2]))
+                    if fields[1] == view:
+                        index = fields[2]
+                elif len(fields) == 2 and fields[0] == "view":
+                    views.append(ViewRoot(view=fields[1], root=""))
+                else:
+                    return Err(failure("integrity", path.0, f"malformed manifest line {line}"))
+            return Ok(
+                Snapshot(root=root, generation=generation, digest=digest, view=view, index=index, segments=segments, views=views),
+            )
 
 
 # ---- Reads ----
@@ -240,20 +248,16 @@ def open_segment(root: Path, name: str) -> Result[Segment, StoreError]:
 
 pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
     """
-    What the snapshot holds under the full `key`: deltas are searched newest first, then the base.
+    What the snapshot's view holds under the full `key`.
 
-    The first segment that holds the key answers; a damaged entry there is an error, so an older value is never
-    returned in its place.
+    The view's index names at most one frame for the key; a damaged page or frame is an error, so an older value is
+    never returned in its place.
     """
-    mut index = len(view.segments) - 1
-    while index >= 0:
-        match segment_lookup(view.segments[index], key)?:
-            Some(found) =>
-                counted["records"] = counted.get("records", 0) + 1
-                return Ok(found)
-            None => pass
-        index -= 1
-    return Ok(Lookup.Absent)
+    match index_find(view.root, view.index, key).map_err(index_failure)?:
+        None => return Ok(Lookup.Absent)
+        Some(location) =>
+            counted["records"] = counted.get("records", 0) + 1
+            return read_frame(view.root, key, location)
 
 
 pub def get(view: Snapshot, key: str) -> Result[Option[bytes], StoreError]:
@@ -264,123 +268,40 @@ pub def get(view: Snapshot, key: str) -> Result[Option[bytes], StoreError]:
         Lookup.Absent => return Ok(None)
 
 
-def segment_lookup(segment: Segment, key: str) -> Result[Option[Lookup], StoreError]:
-    """The entry for `key` in one segment, found by its locator and confirmed by its full key and frame digest."""
-    locator = fingerprint(key.encode("utf-8"))
-    mut position = first_with_locator(segment, locator)?
-    while position < segment.count:
-        entry = entry_at(segment, position)?
-        if entry_locator(segment, entry)? != locator:
-            return Ok(None)
-        frame = frame_of(segment, entry)?
-        if frame_key(segment, frame)? == key:
-            return Ok(Some(frame_outcome(segment, entry, frame)?))
-        position += 1
-    return Ok(None)
-
-
-def first_with_locator(segment: Segment, locator: str) -> Result[int, StoreError]:
-    """The first directory position whose locator is not below `locator`."""
-    mut low = 0
-    mut high = segment.count
-    while low < high:
-        middle = (low + high) // 2
-        if entry_locator(segment, entry_at(segment, middle)?)? < locator:
-            low = middle + 1
-        else:
-            high = middle
-    return Ok(low)
-
-
-def entry_at(segment: Segment, position: int) -> Result[bytes, StoreError]:
-    """One directory entry."""
-    match read_range(segment, HEADER_BYTES + position * ENTRY_BYTES, ENTRY_BYTES):
-        None => return Err(damaged(segment, "truncated directory entry"))
-        Some(entry) => return Ok(entry)
-
-
-def entry_locator(segment: Segment, entry: bytes) -> Result[str, StoreError]:
-    """The locator of a directory entry."""
-    match decode_text(entry[:LOCATOR_BYTES]):
-        None => return Err(damaged(segment, "malformed locator"))
-        Some(text) => return Ok(text)
-
-
-def frame_of(segment: Segment, entry: bytes) -> Result[bytes, StoreError]:
-    """The frame a directory entry points at, checked against the entry's digest."""
-    match u64_in(entry, LOCATOR_BYTES):
-        None => return Err(damaged(segment, "malformed frame offset"))
-        Some(offset) =>
-            match u64_in(entry, LOCATOR_BYTES + 8):
-                None => return Err(damaged(segment, "malformed frame length"))
-                Some(length) =>
-                    match read_range(segment, offset, length):
-                        None => return Err(damaged(segment, "frame runs past the end of the segment"))
-                        Some(frame) =>
-                            expected = entry[LOCATOR_BYTES + 16:LOCATOR_BYTES + 16 + DIGEST_BYTES]
-                            if sha256.digest(frame) != expected:
-                                return Err(damaged(segment, "frame does not match its digest"))
-                            return Ok(frame)
-
-
-def frame_key(segment: Segment, frame: bytes) -> Result[str, StoreError]:
-    """The full key a frame holds."""
+def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, StoreError]:
+    """The frame an index entry names, checked against the entry's digest and full key."""
+    path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
+    handle = path.open("rb").map_err((error) => failure("integrity", path.0, error.message()))?
+    handle.seek(location.offset, 0).map_err((error) => failure("integrity", path.0, error.message()))?
+    frame = handle.read_exact(location.length).map_err((error) => failure("integrity", path.0, error.message()))?
+    counted["bytes"] = counted.get("bytes", 0) + location.length
+    if sha256.digest(frame) != location.digest:
+        return Err(failure("integrity", path.0, "frame does not match its digest"))
     match u64_in(frame, 0):
-        None => return Err(damaged(segment, "malformed frame"))
+        None => return Err(failure("integrity", path.0, "malformed frame"))
         Some(size) =>
             if 8 + size > len(frame):
-                return Err(damaged(segment, "frame key runs past the frame"))
+                return Err(failure("integrity", path.0, "frame key runs past the frame"))
             match decode_text(frame[8:8 + size]):
-                None => return Err(damaged(segment, "frame key is not text"))
-                Some(text) => return Ok(text)
-
-
-def frame_outcome(segment: Segment, entry: bytes, frame: bytes) -> Result[Lookup, StoreError]:
-    """A value or a tombstone, from a checked frame."""
-    key = frame_key(segment, frame)?
-    kind = entry[LOCATOR_BYTES + 16 + DIGEST_BYTES:LOCATOR_BYTES + 17 + DIGEST_BYTES]
-    if kind == tombstone_kind():
-        return Ok(Lookup.Deleted)
-    if kind != value_kind():
-        return Err(damaged(segment, "unknown entry kind"))
-    return Ok(Lookup.Found(frame[8 + len(key.encode("utf-8")):]))
-
-
-def damaged(segment: Segment, detail: str) -> StoreError:
-    """An integrity error naming one segment."""
-    return failure("integrity", f"segments/{segment.name}.seg", detail)
+                None => return Err(failure("integrity", path.0, "frame key is not text"))
+                Some(found) =>
+                    if found != key:
+                        return Err(failure("integrity", path.0, "frame holds another key"))
+                    if location.tombstone:
+                        return Ok(Lookup.Deleted)
+                    return Ok(Lookup.Found(frame[8 + size:]))
 
 
 pub def keys(view: Snapshot) -> Result[list[str], StoreError]:
-    """Every full key whose newest state in the snapshot is a value, sorted; a maintenance read over every frame."""
-    mut seen: set[str] = set()
-    for segment in view.segments:
-        for position in range(segment.count):
-            frame = frame_of(segment, entry_at(segment, position)?)?
-            seen.add(frame_key(segment, frame)?)
+    """Every full key whose state in the view is a value, sorted; a maintenance read over every page."""
     mut live: list[str] = []
-    for key in sorted([key for key in seen]):
-        match lookup(view, key)?:
-            Lookup.Found(_) => live.append(key)
-            Lookup.Deleted => pass
-            Lookup.Absent => pass
+    for entry in index_entries(view.root, view.index).map_err(index_failure)?:
+        match entry.location:
+            Some(location) =>
+                if not location.tombstone:
+                    live.append(entry.key)
+            None => pass
     return Ok(live)
-
-
-def read_range(segment: Segment, offset: int, length: int) -> Option[bytes]:
-    """
-    The `length` bytes at `offset` of one segment: the single place the store reads segment bytes.
-
-    Reads are positional through the segment's own handle and copy only the bytes asked for; a short read is absent.
-    """
-    match segment.handle.seek(offset, 0):
-        Err(_) => return None
-        Ok(_) => pass
-    match segment.handle.read_exact(length):
-        Err(_) => return None
-        Ok(data) =>
-            counted["bytes"] = counted.get("bytes", 0) + length
-            return Some(data)
 
 
 # ---- Segments ----
@@ -388,33 +309,59 @@ def read_range(segment: Segment, offset: int, length: int) -> Option[bytes]:
 
 pub def encode_segment(writes: list[Write]) -> Result[bytes, StoreError]:
     """
-    The canonical bytes of a segment holding `writes`, the last write per key.
+    The canonical bytes of a segment holding `writes`, one frame per distinct key and value.
 
-    Entries are sorted by locator, then full key; frames follow the directory in that order. No time, location or
-    process state enters the encoding, so equal writes always give equal bytes.
+    Entries are sorted by locator, full key and frame digest; frames follow the directory in that order. No time,
+    location or process state enters the encoding, so equal writes always give equal bytes.
     """
-    mut by_key: Dict[str, Write] = {}
+    return Ok(encoded_frames(writes)?.data)
+
+
+pub model Encoded:
+    """A segment's bytes and, per write in sorted order, its key and frame location within the segment."""
+
+    pub data: bytes
+    pub keys: list[str]
+    pub offsets: list[int]
+    pub lengths: list[int]
+    pub digests: list[bytes]
+    pub tombstones: list[bool]
+
+
+def encoded_frames(writes: list[Write]) -> Result[Encoded, StoreError]:
+    """Encode `writes` canonically and say where each frame lies."""
+    mut frames: Dict[str, bytes] = {}
+    mut kinds: Dict[str, int] = {}
+    mut owners: Dict[str, str] = {}
     for write in writes:
-        by_key[write.key] = write
-    ordered = sorted([fingerprint(key.encode("utf-8")) + "\t" + key for key in by_key.keys()])
-    mut frames: list[bytes] = []
-    for item in ordered:
-        frames.append(encode_frame(by_key[item[LOCATOR_BYTES + 1:]])?)
+        frame = encode_frame(write)?
+        order = fingerprint(write.key.encode("utf-8")) + "\t" + write.key + "\t" + hexlify(sha256.digest(frame))
+        frames[order] = frame
+        kinds[order] = write.kind
+        owners[order] = write.key
+    ordered = sorted([order for order in frames.keys()])
     buffer = BytesIO(segment_magic())
     buffer.seek(0, 2).map_err((error) => failure("io", "segment", error.message()))?
     write_u64(buffer, len(ordered))?
     mut offset = HEADER_BYTES + len(ordered) * ENTRY_BYTES
-    for index in range(len(ordered)):
-        write = by_key[ordered[index][LOCATOR_BYTES + 1:]]
-        append(buffer, ordered[index][:LOCATOR_BYTES].encode("utf-8"))?
+    mut result = Encoded(data=b"", keys=[], offsets=[], lengths=[], digests=[], tombstones=[])
+    for order in ordered:
+        frame = frames[order]
+        append(buffer, order[:LOCATOR_BYTES].encode("utf-8"))?
         write_u64(buffer, offset)?
-        write_u64(buffer, len(frames[index]))?
-        append(buffer, sha256.digest(frames[index]))?
-        append(buffer, entry_tail(write.kind))?
-        offset += len(frames[index])
-    for frame in frames:
-        append(buffer, frame)?
-    return Ok(buffer.getvalue())
+        write_u64(buffer, len(frame))?
+        append(buffer, sha256.digest(frame))?
+        append(buffer, entry_tail(kinds[order]))?
+        result.keys.append(owners[order])
+        result.offsets.append(offset)
+        result.lengths.append(len(frame))
+        result.digests.append(sha256.digest(frame))
+        result.tombstones.append(kinds[order] == KIND_TOMBSTONE)
+        offset += len(frame)
+    for order in ordered:
+        append(buffer, frames[order])?
+    result.data = buffer.getvalue()
+    return Ok(result)
 
 
 def encode_frame(write: Write) -> Result[bytes, StoreError]:
@@ -435,16 +382,6 @@ def entry_tail(kind: int) -> bytes:
     return BytesIO(b"\x00\x00\x00\x00\x00\x00\x00\x00").getvalue()
 
 
-def value_kind() -> bytes:
-    """The kind byte of a value entry."""
-    return BytesIO(b"\x00").getvalue()
-
-
-def tombstone_kind() -> bytes:
-    """The kind byte of a tombstone entry."""
-    return BytesIO(b"\x01").getvalue()
-
-
 def append(buffer: _BytesIO, data: bytes) -> Result[None, StoreError]:
     """Append bytes to an encoding buffer."""
     buffer.write_bytes(data).map_err((error) => failure("io", "segment", error.message()))?
@@ -461,14 +398,36 @@ def write_u64(buffer: _BytesIO, value: int) -> Result[None, StoreError]:
             return Ok(None)
 
 
+def leaf_entries(encoded: Encoded, segment: str) -> list[Entry]:
+    """Index entries locating each frame of an encoded segment."""
+    mut result: list[Entry] = []
+    for position in range(len(encoded.keys)):
+        location = Location(
+            segment=segment,
+            offset=encoded.offsets[position],
+            length=encoded.lengths[position],
+            digest=encoded.digests[position],
+            tombstone=encoded.tombstones[position],
+        )
+        result.append(Entry(key=encoded.keys[position], location=Some(location), child=""))
+    return result
+
+
 # ---- Transactions ----
 
 
 pub def begin(view: Snapshot) -> Transaction:
-    """A transaction on `view`'s generation."""
+    """A transaction on `view`'s generation, writing to that view."""
     serial = counted.get("transactions", 0) + 1
     counted["transactions"] = serial
-    return Transaction(root=view.root, base=view.generation, id=f"{id()}-{serial}-{view.generation}", writes=[])
+    return Transaction(
+        root=view.root,
+        base=view.generation,
+        view=view.view,
+        fork="",
+        id=f"{id()}-{serial}-{view.generation}",
+        writes=[],
+    )
 
 
 pub def put(transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> Transaction:
@@ -485,41 +444,76 @@ pub def delete(transaction: Transaction, key: str) -> Transaction:
     return next
 
 
+pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
+    """
+    Create view `name` at `view`'s current root and return it.
+
+    The new view shares every index page with its source; the source's later writes never reach it. A view that
+    already exists is refused rather than replaced.
+    """
+    mut transaction = begin(view)
+    transaction.fork = name
+    published = commit(transaction)?
+    return snapshot(published.root, name)
+
+
 pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     """
-    Publish a transaction's writes and return the generation that holds them.
+    Publish a transaction's writes to its view and return the generation that holds them, seen through that view.
 
-    1. Stage the delta outside any lock, synced.
+    1. Stage the delta segment outside any lock, synced.
     2. Under the publication lock, validate every precondition against the latest generation; a write already present
        is dropped, and a conflicting one refuses the whole transaction.
     3. With nothing left to write, return the latest generation unchanged: no bytes are added.
-    4. Install the delta, then the manifest, then `CURRENT`, each synced with its directory, in that order.
+    4. Install the segment, then the index pages on changed paths, then the manifest, then `CURRENT`, each synced.
     """
     root = transaction.root
     ensure_directory(root.joinpath("locks"))?
     staged = root.joinpath("staging").joinpath(transaction.id)
     ensure_directory(staged)?
-    # 1. Encoding and syncing happen before the lock.
-    delta = staged.joinpath("delta.seg")
-    mut encoded = encode_segment(transaction.writes)?
-    place_synced(delta, encoded)?
     held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
-    latest = snapshot(root)?
+    latest = snapshot(root, transaction.view)?
+    if transaction.fork != "":
+        return publish_fork(root, latest, transaction, staged)
     # 2. and 3. Only what is not already committed is written.
     remaining = pending_writes(latest, transaction.writes)?
     if len(remaining) == 0:
         remove_tree(staged)
         return Ok(latest)
-    # 4. Each step is durable before the next one names it; a delta that kept every write is installed as staged.
-    if len(remaining) != len(transaction.writes):
-        encoded = encode_segment(remaining)?
-        place_synced(delta, encoded)?
-    name = install_segment(root, encoded, delta)?
-    published = switch(root, latest, segment_names(latest) + [name], transaction.id)?
+    # 4. Each step is durable before the next one names it.
+    encoded = encoded_frames(remaining)?
+    delta = staged.joinpath("delta.seg")
+    place_synced(delta, encoded.data)?
+    name = install_segment(root, encoded.data, delta)?
+    pages = staged.joinpath("pages")
+    index = insert(root, latest.index, pages, leaf_entries(encoded, name)).map_err(index_failure)?
+    install_pages(root, pages)?
+    mut segments = latest.segments
+    if name not in segments:
+        segments.append(name)
+    published = switch(root, latest, segments, with_view(latest.views, transaction.view, index), transaction.id)?
     remove_tree(staged)
-    if len(published.segments) > MAX_DELTAS + 1:
-        return compact_locked(root, published)
     return Ok(published)
+
+
+def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged: Path) -> Result[Snapshot, StoreError]:
+    """Name a new view at the source view's root; the caller holds the publication lock."""
+    for existing in latest.views:
+        if existing.view == transaction.fork:
+            remove_tree(staged)
+            return Err(failure("conflict", transaction.fork, "a view of this name already exists"))
+    published = switch(root, latest, latest.segments, with_view(latest.views, transaction.fork, latest.index), transaction.id)?
+    remove_tree(staged)
+    return Ok(published)
+
+
+def with_view(views: list[ViewRoot], view: str, index: str) -> list[ViewRoot]:
+    """`views` with `view` set to `index`, sorted by view name."""
+    mut by_name: Dict[str, str] = {}
+    for entry in views:
+        by_name[entry.view] = entry.root
+    by_name[view] = index
+    return [ViewRoot(view=name, root=by_name[name]) for name in sorted([name for name in by_name.keys()])]
 
 
 def pending_writes(latest: Snapshot, writes: list[Write]) -> Result[list[Write], StoreError]:
@@ -550,11 +544,6 @@ def needed(write: Write, found: Lookup) -> Result[bool, StoreError]:
         Lookup.Absent => return Ok(write.kind == KIND_VALUE)
 
 
-def segment_names(view: Snapshot) -> list[str]:
-    """The segment names of a snapshot, base first."""
-    return [segment.name for segment in view.segments]
-
-
 def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreError]:
     """
     Install a segment under its content name from `source`, a synced file holding exactly `data`; an existing object
@@ -573,13 +562,42 @@ def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreE
     return Ok(name)
 
 
-def switch(root: Path, latest: Snapshot, segments: list[str], transaction: str) -> Result[Snapshot, StoreError]:
+def install_pages(root: Path, pages: Path) -> Result[None, StoreError]:
+    """Install the staged index pages that are not installed yet, each synced, then sync the index directory once."""
+    if not pages.is_dir():
+        return Ok(None)
+    target_directory = root.joinpath("indexes")
+    ensure_directory(target_directory)?
+    for page in pages.iterdir().map_err((error) => io_failure(pages, error))?:
+        if not page.name().endswith(".page"):
+            continue
+        target = page_path(root, page.name()[:-5])
+        if target.is_file():
+            continue
+        sync_file(page)?
+        page.replace(target).map_err((error) => io_failure(target, error))?
+    target_directory.sync_directory().map_err((error) => io_failure(target_directory, error))?
+    return Ok(None)
+
+
+def switch(
+    root: Path,
+    latest: Snapshot,
+    segments: list[str],
+    views: list[ViewRoot],
+    transaction: str,
+) -> Result[Snapshot, StoreError]:
     """Write and sync the next manifest, then replace `CURRENT`; the caller holds the publication lock."""
     following = latest.generation + 1
     mut lines = [MANIFEST_SCHEMA, f"generation {following}", f"parent {latest.generation} {latest.digest}"]
     lines.append(f"transaction {transaction}")
     for name in segments:
         lines.append(f"segment {name}")
+    for entry in views:
+        if entry.root == "":
+            lines.append(f"view {entry.view}")
+        else:
+            lines.append(f"view {entry.view} {entry.root}")
     document = ("\n".join(lines) + "\n").encode("utf-8")
     digest = hexlify(sha256.digest(document))
     manifest = manifest_path(root, following, digest)
@@ -591,7 +609,7 @@ def switch(root: Path, latest: Snapshot, segments: list[str], transaction: str) 
         place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
     place_synced(root.joinpath("CURRENT"), f"{following} {digest}\n".encode("utf-8"))?
     root.sync_directory().map_err((error) => io_failure(root, error))?
-    return snapshot(root)
+    return snapshot(root, latest.view)
 
 
 pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
@@ -609,17 +627,18 @@ pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
 
 pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
     """
-    Register a lease on `view`'s generation for as long as the returned lock is held.
+    Register a lease on `view`'s generation and view for as long as the returned lock is held.
 
-    The lease file names the generation it pins, and its lock proves the holder is alive. Collection keeps every
-    generation a live lease names; until that protocol exists, the store collects nothing.
+    The lease file names the generation, its manifest digest and the view's index root it pins; its lock proves the
+    holder is alive. Collection, once it exists, keeps every root a live lease names, and only those of the leased
+    view: other views' entries in shared pages are not reachability roots for it.
     """
     leases = view.root.joinpath("leases")
     ensure_directory(leases)?
     serial = counted.get("leases", 0) + 1
     counted["leases"] = serial
     path = leases.joinpath(f"{id()}-{serial}")
-    place_synced(path, f"{view.generation} {view.digest}\n".encode("utf-8"))?
+    place_synced(path, f"{view.generation} {view.digest} {view.view} {view.index}\n".encode("utf-8"))?
     return path.lock_exclusive().map_err((error) => io_failure(path, error))
 
 
@@ -627,38 +646,82 @@ pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
 
 
 pub def compact(root: Path) -> Result[Snapshot, StoreError]:
-    """Merge the committed generation's segments into one canonical base that holds exactly the same contents."""
+    """
+    Content-preserving compaction: one canonical base segment and canonical indexes holding exactly what every view
+    held, tombstones included, so every lookup in every view answers as before.
+
+    The base's bytes and each index root depend only on those contents, so equal contents always give a byte-identical
+    base and the same roots.
+    """
     ensure_directory(root.joinpath("locks"))?
     held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
-    return compact_locked(root, snapshot(root)?)
-
-
-def compact_locked(root: Path, view: Snapshot) -> Result[Snapshot, StoreError]:
-    """
-    Content-preserving compaction under the publication lock.
-
-    Every key keeps its newest state, tombstones included, so every lookup answers as before. The base's bytes depend
-    only on those contents, so equal contents always give a byte-identical base.
-    """
-    if len(view.segments) <= 1:
-        return Ok(view)
-    mut newest: Dict[str, Write] = {}
-    for segment in view.segments:
-        for position in range(segment.count):
-            entry = entry_at(segment, position)?
-            frame = frame_of(segment, entry)?
-            key = frame_key(segment, frame)?
-            match frame_outcome(segment, entry, frame)?:
-                Lookup.Found(value) => newest[key] = Write(key=key, kind=KIND_VALUE, value=value, expect=EXPECT_ANY)
-                Lookup.Deleted => newest[key] = Write(key=key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY)
-                Lookup.Absent => pass
+    latest = snapshot(root)?
+    mut writes: list[Write] = []
+    mut per_view: Dict[str, list[Write]] = {}
+    for entry in latest.views:
+        mut held_writes: list[Write] = []
+        seen = snapshot(root, entry.view)?
+        for leaf in index_entries(root, seen.index).map_err(index_failure)?:
+            write = leaf_write(root, leaf)?
+            held_writes.append(write)
+            writes.append(write)
+        per_view[entry.view] = held_writes
     staged = root.joinpath("staging").joinpath(f"compact-{id()}")
+    encoded = encoded_frames(writes)?
     base = staged.joinpath("base.seg")
-    encoded = encode_segment([newest[key] for key in newest.keys()])?
-    place_synced(base, encoded)?
-    name = install_segment(root, encoded, base)?
+    place_synced(base, encoded.data)?
+    name = install_segment(root, encoded.data, base)?
+    mut views: list[ViewRoot] = []
+    for entry in latest.views:
+        held_encoded = encoded_frames(per_view[entry.view])?
+        relocated = in_key_order(relocate(leaf_entries(held_encoded, name), encoded))
+        index = build(staged.joinpath("pages"), relocated).map_err(index_failure)?
+        views.append(ViewRoot(view=entry.view, root=index))
+    install_pages(root, staged.joinpath("pages"))?
+    published = switch(root, latest, [name], views, "compaction")?
     remove_tree(staged)
-    return switch(root, view, [name], "compaction")
+    return Ok(published)
+
+
+def leaf_write(root: Path, leaf: Entry) -> Result[Write, StoreError]:
+    """The write a leaf entry's frame records."""
+    match leaf.location:
+        None => return Err(failure("integrity", "index", "inner entry in a leaf"))
+        Some(location) =>
+            match read_frame(root, leaf.key, location)?:
+                Lookup.Found(value) => return Ok(Write(key=leaf.key, kind=KIND_VALUE, value=value, expect=EXPECT_ANY))
+                Lookup.Deleted => return Ok(Write(key=leaf.key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY))
+                Lookup.Absent => return Err(failure("integrity", "index", "leaf without a frame"))
+
+
+def relocate(entries: list[Entry], base: Encoded) -> list[Entry]:
+    """A view's leaf entries pointed at the frames of the same key and digest in the base segment."""
+    mut by_frame: Dict[str, int] = {}
+    for position in range(len(base.keys)):
+        by_frame[base.keys[position] + "\t" + hexlify(base.digests[position])] = position
+    mut result: list[Entry] = []
+    for entry in entries:
+        match entry.location:
+            None => pass
+            Some(location) =>
+                position = by_frame[entry.key + "\t" + hexlify(location.digest)]
+                moved = Location(
+                    segment=location.segment,
+                    offset=base.offsets[position],
+                    length=base.lengths[position],
+                    digest=location.digest,
+                    tombstone=location.tombstone,
+                )
+                result.append(Entry(key=entry.key, location=Some(moved), child=""))
+    return result
+
+
+def in_key_order(entries: list[Entry]) -> list[Entry]:
+    """Leaf entries sorted by key."""
+    mut by_key: Dict[str, Entry] = {}
+    for entry in entries:
+        by_key[entry.key] = entry
+    return [by_key[key] for key in sorted([key for key in by_key.keys()])]
 
 
 # ---- Payloads ----
@@ -732,7 +795,7 @@ pub def drop_damaged_payload(root: Path, digest: str) -> bool:
 
 def segment_magic() -> bytes:
     """The header every segment starts with."""
-    return BytesIO(b"INCSEG\x00\x02").getvalue()
+    return BytesIO(b"INCSEG\x00\x03").getvalue()
 
 
 def decode_text(data: bytes) -> Option[str]:
