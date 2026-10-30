@@ -233,6 +233,21 @@ pub def drop_all_owned(mut builder: Builder, span: SourceSpan) -> None:
         drop_owned(builder, builder.owned[-1], span)
 
 
+pub def bind_read_value(mut builder: Builder, local: int, value: Operand, span: SourceSpan) -> None:
+    """
+    Initialize a pattern binding with the value its read produced, and give the binding exactly what that read owns.
+
+    A moved operand, a payload taken from its carrier or a fresh clone, hands its owner to the binding, which drops it
+    once when its scope ends; a copied operand, a scalar or a reference, owns nothing. This is the one ownership rule
+    for every value a match arm or `if let` binds, whatever its type.
+    """
+    track_rvalue_moves(builder, RvalueKind.Use(value))
+    builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
+    match value.kind:
+        OperandKind.Move(_moved) => builder.owned.append(local)
+        _ => pass
+
+
 pub def track_rvalue_moves(mut builder: Builder, value: RvalueKind) -> None:
     """Remove transferred whole owners before building cleanup edges."""
     match value:
