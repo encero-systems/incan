@@ -128,7 +128,8 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[None, str]:
             import_payload(path, required_text(native, "unit_identity")?, required_text(native, "payload_digest")?)?
         elif record_path(path).is_file():
             import_publication(path)?
-    # 2. A standard interface names the producer of its whole artifact set, including checking-only providers.
+        admit_recorded(path.parent(), path)?
+    # 2. A standard package names the producer of its whole artifact set, including checking-only providers.
     loaves = directory.joinpath("loaves")
     if not loaves.is_dir():
         return Ok(None)
@@ -136,9 +137,19 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[None, str]:
         if not package.is_dir():
             continue
         for profile in package.iterdir().map_err((error) => error.message())?:
-            interface = profile.joinpath(f"{package.name()}.incnlib")
-            if record_path(interface).is_file():
-                import_publication(interface)?
+            if profile.is_dir():
+                admit_recorded(profile, Path(""))?
+    return Ok(None)
+
+
+def admit_recorded(directory: Path, admitted: Path) -> Result[None, str]:
+    """
+    Admit every recorded artifact in one installed directory but `admitted`: an extern's checked interface beside it,
+    or a standard package's libraries and interface. Units name each of them by producer identity.
+    """
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.0 != admitted.0 and entry.is_file() and record_path(entry).is_file():
+            import_publication(entry)?
     return Ok(None)
 
 
