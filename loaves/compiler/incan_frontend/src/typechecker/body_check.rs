@@ -10,7 +10,7 @@ use super::type_info::{
     RustInteropArtifacts, TraitArtifacts, TypeCheckInfo,
 };
 use super::{TypeChecker, VisibilityPoint, YieldContext};
-use crate::ast::{FunctionDecl, MethodDecl, Span, Spanned, Statement, TypeParam};
+use crate::ast::{FunctionDecl, Span, Spanned, Statement};
 use crate::diagnostics::CompileError;
 use crate::symbols::ResolvedType;
 use std::collections::BTreeMap;
@@ -616,12 +616,14 @@ fn append_c_abi(target: &mut CAbiInteropArtifacts, local: CAbiInteropArtifacts) 
 }
 
 impl TypeChecker {
-    /// Check a function declaration once at its existing lexical boundary. Defaults see generic binders but no
-    /// callable parameters; statement checking consumes that prepared frame through its own local writer.
-    pub(super) fn check_function_declaration(&mut self, function: &FunctionDecl, span: Span) {
-        self.check_declaration_owner(span, |checker| {
-            checker.check_function_declaration_in_scope(function, span)
-        });
+    /// Coordinate a completed function declaration and its independent statement producer. Defaults see generic
+    /// binders but no callable parameters; statements consume the exact prepared frame without rechecking it.
+    pub(super) fn check_function(&mut self, function: &FunctionDecl, span: Span) {
+        let index = self.body_checks.len();
+        let prepared =
+            self.check_declaration_owner(span, |checker| checker.prepare_function_declaration(function, span));
+        self.check_prepared_function(function, span, prepared);
+        self.complete_function_declaration(function, span, index);
         #[cfg(test)]
         self.observe_body_local(span);
     }
@@ -629,20 +631,66 @@ impl TypeChecker {
     /// Run a declaration's actual semantic rules in the same scoped writer used for callable bodies. Constants keep
     /// their const-evaluation owner, statics retain registry initialization rules, and defaults retain declaration
     /// visibility. Reserve the publication position before nested bodies so traversal order remains source order.
-    pub(super) fn check_declaration_owner(&mut self, span: Span, check: impl FnOnce(&mut Self)) {
+    pub(super) fn check_declaration_owner<T>(&mut self, span: Span, check: impl FnOnce(&mut Self) -> T) -> T {
+        #[cfg(test)]
+        if self.legacy_body_checking {
+            return check(self);
+        }
+        self.check_work.declaration_local_checks += 1;
+        let index = self.body_checks.len();
+        let scope = BodyCheckScope::enter(self);
+        #[cfg(test)]
+        self.active_declaration_checks.push(span);
+        let prepared = check(self);
+        #[cfg(test)]
+        let _ = self.active_declaration_checks.pop();
+        let mut local = scope.finish(self);
+        local.owner = span;
+        local.kind = LocalOwnerKind::Declaration;
+        self.body_checks.insert(index, BodyCheckInput::Local(local));
+        prepared
+    }
+
+    /// Append post-body declaration work to its original output without checking the declaration again. The writer
+    /// resumes only that owner's facts; child bodies have already returned and retain their own output ownership.
+    pub(super) fn continue_declaration_owner(&mut self, index: usize, check: impl FnOnce(&mut Self)) {
         #[cfg(test)]
         if self.legacy_body_checking {
             check(self);
             return;
         }
-        self.check_work.declaration_local_checks += 1;
-        let index = self.body_checks.len();
+
+        // ---- Retain the declaration's prior output ----
+        let BodyCheckInput::Local(previous) = &mut self.body_checks[index] else {
+            unreachable!("a declaration continuation requires its fresh local producer output");
+        };
+        let mut previous = std::mem::take(previous);
+        let owner = previous.owner;
+        let order = previous.order;
+        let nested = std::mem::take(&mut previous.nested);
+        let mut diagnostics = std::mem::take(&mut previous.diagnostics);
+        let mut warnings = std::mem::take(&mut previous.warnings);
+
+        // ---- Resume post-body declaration work ----
         let scope = BodyCheckScope::enter(self);
+        previous.append(self);
+        #[cfg(test)]
+        self.active_declaration_checks.push(owner);
         check(self);
-        let mut local = scope.finish(self);
-        local.owner = span;
-        local.kind = LocalOwnerKind::Declaration;
-        self.body_checks.insert(index, BodyCheckInput::Local(local));
+        #[cfg(test)]
+        let _ = self.active_declaration_checks.pop();
+
+        // ---- Replace the invocation-owned output ----
+        let mut completed = scope.finish(self);
+        completed.owner = owner;
+        completed.kind = LocalOwnerKind::Declaration;
+        completed.order = order;
+        completed.nested.extend(nested);
+        diagnostics.append(&mut completed.diagnostics);
+        warnings.append(&mut completed.warnings);
+        completed.diagnostics = diagnostics;
+        completed.warnings = warnings;
+        self.body_checks[index] = BodyCheckInput::Local(completed);
     }
 
     /// Check one concrete callable's statements with prepared parameters, receiver, bounds and return context.
@@ -653,6 +701,13 @@ impl TypeChecker {
         span: Span,
         context: YieldContext,
     ) {
+        #[cfg(test)]
+        if !self.legacy_body_checking {
+            assert!(
+                self.active_declaration_checks.is_empty(),
+                "statement checking must consume completed declaration inputs"
+            );
+        }
         self.check_work.body_local_checks += 1;
         #[cfg(test)]
         if self.legacy_body_checking {
@@ -666,22 +721,35 @@ impl TypeChecker {
         self.body_checks.push(BodyCheckInput::Local(local));
     }
 
-    /// Validate method declarations independently of their concrete statement producer. Abstract declarations run
-    /// their declaration checks and defaults but never contribute a local body activation.
-    pub(super) fn check_method_with_self_ty(
-        &mut self,
-        method: &MethodDecl,
-        span: Span,
-        self_ty: ResolvedType,
-        owner: &[TypeParam],
-    ) {
-        self.check_declaration_owner(span, |checker| {
-            checker.check_method_in_scope(method, span, self_ty, owner)
-        });
+    /// Check one computed property's statements in its own writer, preserving its original synchronous block rules.
+    /// Property checking does not acquire callable-only iterator or resource finalization semantics at this boundary.
+    pub(super) fn check_property_body(&mut self, body: &[Spanned<Statement>], span: Span) {
         #[cfg(test)]
-        if method.body.is_some() {
-            self.observe_body_local(span);
+        if !self.legacy_body_checking {
+            assert!(
+                self.active_declaration_checks.is_empty(),
+                "property checking must consume completed declaration inputs"
+            );
         }
+        self.check_work.body_local_checks += 1;
+        self.check_work.property_bodies += 1;
+        #[cfg(test)]
+        if self.legacy_body_checking {
+            self.check_property_body_in_frame(body);
+            return;
+        }
+        let scope = BodyCheckScope::enter(self);
+        self.check_property_body_in_frame(body);
+        let mut local = scope.finish(self);
+        local.owner = span;
+        self.body_checks.push(BodyCheckInput::Local(local));
+    }
+    /// Apply the property's existing synchronous statement semantics under its prepared receiver and return scope.
+    /// Callable-only flow finalization stays outside this property boundary, matching the original checker.
+    fn check_property_body_in_frame(&mut self, body: &[Spanned<Statement>]) {
+        let previous_async = std::mem::replace(&mut self.in_async_body, false);
+        self.check_statement_block(body);
+        self.in_async_body = previous_async;
     }
 }
 
