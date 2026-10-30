@@ -29,7 +29,14 @@ from publication import place, publish
 from rust_activation import DependencyDomain
 from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits, is_dynamic_library
 from registry_metadata import complete_legacy
-from rust_target import decoded, deployment_target, run_text, target_configuration
+from rust_target import (
+    compiler_sysroot,
+    compiler_version,
+    decoded,
+    deployment_target,
+    inherited_deployment_selection,
+    target_configuration,
+)
 from toml_fields import optional_string, optional_strings, read_manifest, required_string
 from toolchain import NativeCrate, Toolchain, load_toolchain, located
 from unit_freshness import (
@@ -492,13 +499,14 @@ def native_compiler_fingerprint(rustc: str, project: str) -> Result[str, str]:
     """Identify the actual pinned compiler and SDK by content after resolving the installation's sysroot alias."""
     compiler = Path(rustc).resolve().map_err((error) => error.message())?
     libraries = toolchain_libraries(compiler.0, project)?
+    version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
     return fingerprint(
         [
             fingerprint(cache_identities([compiler.0])?)?,
-            libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"],
+            version,
             libraries.environment["INCAN_DRIVER_LIBRARY_DIGEST"],
             sdk_content_identity(compiler.parent().parent().0)?,
-            deployment_target(compiler.0, libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"])?,
+            deployment_target(compiler.0, version, inherited_deployment_selection()?)?,
         ],
     )
 
@@ -1526,8 +1534,8 @@ def toolchain_libraries(rustc: str, project: str) -> Result[ToolchainLibraries, 
     3. Its identity is the compiler's version output and the digest of the library's bytes.
     """
     # 1. The sysroot and host triple are the pinned compiler's own, so the library found is the one it was built with.
-    sysroot = run_text(rustc, ["--print", "sysroot"])?.strip()
-    compiler = run_text(rustc, ["-vV"])?
+    sysroot = compiler_sysroot(rustc)?
+    compiler = compiler_version(rustc)?
     mut host = ""
     for line in compiler.split("\n"):
         if line.startswith("host: "):
