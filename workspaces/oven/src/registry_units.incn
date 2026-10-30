@@ -51,6 +51,8 @@ pub model RegistryUnits:
     pub bindings: Dict[str, str] = {}
     pub anchors: list[Tuple[str, str]] = []
     pub recorded_bindings: list[Tuple[str, str]] = []
+    # Installation defaults are preferences; an authored project lock remains an exact producer constraint.
+    pub installation_bindings: list[Tuple[str, str]] = []
 
     def artifact_for(self, selection: RegistrySelection, domain: str) -> Result[str, str]:
         """Bind a root only from the graph's recorded selection, selecting a singleton request when needed."""
@@ -91,7 +93,9 @@ pub model RegistryUnits:
                 return Err(f"installed registry producer entry is absent: {entry}")
             pinned = extend(entries[entry], entries, pinned, domain)?
         names = ", ".join(sorted([request.selection.loaf for request in roots]))
-        solutions = resolve(roots, 0, entries, pinned, {}, self.bindings, self.recorded_bindings).map_err(
+        solutions = resolve(
+            roots, 0, entries, pinned, {}, self.bindings, self.recorded_bindings, self.installation_bindings, profile,
+        ).map_err(
             (reason) => f"no coherent compiled registry closure for {names}: {reason}",
         )?
         # 3. No ordering of stored artifacts is permission to break a tie between coherent feature graphs.
@@ -108,6 +112,7 @@ pub model RegistryUnits:
                 bindings=bindings,
                 anchors=self.anchors,
                 recorded_bindings=self.recorded_bindings,
+                installation_bindings=self.installation_bindings,
             ),
         )
 
@@ -132,12 +137,14 @@ def resolve(
     bindings: Dict[str, str],
     resolved: Dict[str, str],
     recorded: list[Tuple[str, str]],
+    installation: list[Tuple[str, str]],
+    profile: str,
 ) -> Result[list[Tuple[Dict[str, str], Dict[str, str]]], str]:
     """Backtrack exact producer closures, stopping after two distinct solutions prove ambiguity."""
     if index == len(roots):
         return Ok([(chosen, bindings)])
     demand = roots[index]
-    groups = candidate_groups([unit for unit in entries.values()], demand, resolved, recorded)?
+    groups = candidate_groups([unit for unit in entries.values()], demand, resolved, recorded, installation, profile)?
     mut refusals: list[str] = []
     for candidates in groups:
         mut solutions: list[Tuple[Dict[str, str], Dict[str, str]]] = []
@@ -147,7 +154,7 @@ def resolve(
                 Ok(next) =>
                     mut linked = bindings
                     linked[demand.key()] = identity(unit)
-                    match resolve(roots, index + 1, entries, next, linked, resolved, recorded):
+                    match resolve(roots, index + 1, entries, next, linked, resolved, recorded, installation, profile):
                         Err(reason) => refusals.append(reason)
                         Ok(found) => solutions = solutions + found
                     if len(solutions) > 1:
@@ -199,6 +206,8 @@ def candidate_groups(
     demand: RegistryDemand,
     resolved: Dict[str, str],
     recorded: list[Tuple[str, str]],
+    installation: list[Tuple[str, str]],
+    profile: str,
 ) -> Result[list[list[RegistryUnit]], str]:
     """Honor exact producer records, distinguishing an unavailable request from an incompatible recorded choice."""
     if demand.key() in resolved:
@@ -208,9 +217,18 @@ def candidate_groups(
     if len(locked) > 0:
         compatible = [unit for unit in locked if qualifies(unit, demand.selection)?]
         if len(compatible) > 0:
+            # Prefer the consumer's profile without overriding exact native producer anchors.
+            matching = [unit for unit in compatible if unit.profile == profile]
+            if profile != "" and len(matching) > 0:
+                return Ok([matching, compatible])
             return Ok([compatible])
         if len([unit for unit in units if qualifies(unit, demand.selection)?]) > 0:
             return Err(f"recorded registry closure does not satisfy {demand.key()}")
+    preferred = [unit for unit in units if (demand.domain, identity(unit)) in installation
+        and qualifies(unit, demand.selection)?]
+    mut groups: list[list[RegistryUnit]] = []
+    if len(preferred) > 0:
+        groups = profile_groups(preferred, profile)
     mut candidates: list[RegistryUnit] = []
     for domain in [demand.domain, "host", "target"]:
         candidates = [unit for unit in units if unit.domain == domain and qualifies(unit, demand.selection)?]
@@ -221,7 +239,15 @@ def candidate_groups(
         return Err(
             f"no compiled registry unit of {selected.loaf} satisfies {selected.requirement} with features {selected.features}",
         )
-    return Ok([candidates])
+    return Ok(groups + profile_groups(candidates, profile))
+
+
+def profile_groups(candidates: list[RegistryUnit], profile: str) -> list[list[RegistryUnit]]:
+    """Prefer the consumer profile while preserving coherent native anchors and ambiguity within each group."""
+    matching = [unit for unit in candidates if unit.profile == profile]
+    if profile != "" and len(matching) > 0:
+        return [matching, candidates]
+    return [candidates]
 
 
 def qualifies(unit: RegistryUnit, selection: RegistrySelection) -> Result[bool, str]:

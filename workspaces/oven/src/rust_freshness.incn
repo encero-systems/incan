@@ -4,8 +4,11 @@ from rust::std::env import VarError, var as env_var
 from std.fs import Path
 from files import read
 from observation import load_ledger, observe, skipped_directory, SETTLE_SECONDS
-from toolchain import Toolchain
+from toolchain import Toolchain, located
 from unit_freshness import Key, artifact_identity, compiler_fingerprint, fingerprint
+
+# How a key spells the project directory, so the same sources key alike in any checkout.
+const PROJECT: str = "<project>"
 
 
 pub def library_key(
@@ -22,17 +25,18 @@ pub def library_key(
     Key the actual compiler inputs; unavailable dependency evidence prevents reuse.
 
     1. Read the files and environment keys rustc recorded.
-    2. Reconcile their current contents and the exact linked libraries.
-    3. Bind them to the compiler, arguments and package environment.
+    2. Reconcile their current contents, read in this checkout, and the exact linked libraries.
+    3. Bind them to the compiler, arguments and package environment, spelling the project's own paths from it.
     """
-    # 1. Read the files and environment keys rustc recorded.
+    # 1. Read the files and environment keys rustc recorded, in whichever checkout it compiled.
     text = read(dependencies)?
     paths, variables = dependency_inputs(text)?
+    recorded = recorded_project(paths, project, crate_root(arguments))
     mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
     mut sources: list[str] = []
-    # 2. Reconcile their current contents and the exact linked libraries.
-    for path in sorted(paths + [project.joinpath("loaf.toml").0]):
-        sources.extend([path, ledger.digest(Path(path))?])
+    # 2. A source is keyed by where it sits relative to its project and by the bytes this checkout holds there.
+    for relative in sorted([relative_path(path, recorded) for path in paths] + ["loaf.toml"]):
+        sources.extend([relative, ledger.digest(Path(located(project, relative)))?])
     mut artifacts: list[str] = []
     for path in sorted(linked + extern_paths(arguments)):
         artifacts.extend([path, artifact_identity(Path(path))?])
@@ -41,10 +45,10 @@ pub def library_key(
     mut selected_compiler = compiler
     if selected_compiler == "":
         selected_compiler = compiler_fingerprint(toolchain)?
-    command = fingerprint(arguments)?
+    command = fingerprint([project_argument(argument, project) for argument in arguments])?
     authored = fingerprint(sources)?
     native = fingerprint(artifacts)?
-    ambient = fingerprint(environment_inputs(variables, environment)?)?
+    ambient = fingerprint(environment_inputs(variables, keyed_environment(environment, variables, project))?)?
     digest = fingerprint(["incan.oven.rust-library/2", selected_compiler, command, authored, native, ambient])?
     return Ok(
         Key(
@@ -58,6 +62,49 @@ pub def library_key(
             ],
         ),
     )
+
+
+def crate_root(arguments: list[str]) -> str:
+    """The crate root a producer command compiles: its first argument, ahead of every option."""
+    if len(arguments) == 0 or arguments[0].startswith("-"):
+        return ""
+    return arguments[0]
+
+
+def recorded_project(paths: list[str], project: Path, root: str) -> str:
+    """The project directory rustc's evidence was recorded in, found through the crate root path it names."""
+    if not root.startswith(project.0 + "/"):
+        return project.0
+    suffix = root[len(project.0):]
+    for path in paths:
+        if path.endswith(suffix):
+            return path[:len(path) - len(suffix)]
+    return project.0
+
+
+pub def relative_path(path: str, base: str) -> str:
+    """`path` as seen from the directory `base`, so one layout spells it alike in any checkout."""
+    if not path.startswith("/"):
+        return path
+    directories = [part for part in base.split("/") if part != ""]
+    parts = [part for part in path.split("/") if part != ""]
+    mut common = 0
+    while common < len(directories) and common < len(parts) and directories[common] == parts[common]:
+        common += 1
+    return "/".join([".." for _ in range(len(directories) - common)] + parts[common:])
+
+
+pub def project_argument(argument: str, project: Path) -> str:
+    """Spell a path inside the project from the project, so a command keys alike in any checkout."""
+    return argument.replace(project.0 + "/", PROJECT + "/")
+
+
+def keyed_environment(environment: Dict[str, str], variables: list[str], project: Path) -> Dict[str, str]:
+    """The package environment as keyed: the manifest directory stays a location unless the crate reads it."""
+    mut keyed = environment
+    if "CARGO_MANIFEST_DIR" in keyed and "CARGO_MANIFEST_DIR" not in variables:
+        keyed["CARGO_MANIFEST_DIR"] = PROJECT
+    return keyed
 
 
 pub def producer_arguments(arguments: list[str]) -> list[str]:

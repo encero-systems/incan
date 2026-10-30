@@ -4,29 +4,43 @@ from std.fs import Path
 from files import read
 from observation import SETTLE_SECONDS, Ledger, load_ledger, observe
 from publication import publish
-from rust_freshness import producer_arguments
+from rust_freshness import producer_arguments, project_argument
 from unit_freshness import Key, fingerprint
 
 
-pub def portable_key(native: Key, directory: Path, arguments: list[str]) -> Result[Key, str]:
+pub def portable_key(
+    native: Key,
+    directory: Path,
+    arguments: list[str],
+    project: Path,
+    compiler: str,
+) -> Result[Key, str]:
     """
-    Preserve a native producer's compiler, sources and environment while identifying relocated externs by bytes.
+    Preserve a native producer's sources and environment while identifying its compiler and externs by content.
 
-    1. Retain the checked native input dimensions that do not name an artifact store.
-    2. Normalize output and named extern locations, preserving all other compiler arguments.
-    3. Identify each named extern by its alias and exact content.
+    1. Retain the checked native input dimensions that name no machine location or filesystem identity.
+    2. Identify the compiler by its portable identity: another machine's copy of the same compiler proves alike.
+    3. Normalize output, project and named extern locations, preserving all other compiler arguments.
+    4. Identify each named extern by its alias and exact content.
     """
-    # 1. Source identity remains the selected source project, not an arbitrary replacement checkout.
-    mut parts = [part for part in native.parts if not part.startswith("command ") and not part.startswith("artifacts ")]
+    # 1. Sources are keyed by their place in the project and their bytes, so another checkout of them still proves.
+    mut parts = [part for part in native.parts if not machine_bound(part)]
     mut ledger = portable_ledger(directory)
-    # 2. Search directories are locators; selected extern aliases and every code-generation flag remain explicit.
-    command = fingerprint(normalized_arguments(producer_arguments(arguments), directory))?
+    # 2. The native compiler part names where rustc is installed; this one names only what it is.
+    parts.append(f"compiler {compiler}")
+    # 3. Search directories are locators; selected extern aliases and every code-generation flag remain explicit.
+    command = fingerprint(normalized_arguments(producer_arguments(arguments), directory, project))?
     parts.append(f"command {command}")
-    # 3. Only byte-identical dependencies can survive a changed path or filesystem identity.
+    # 4. Only byte-identical dependencies can survive a changed path or filesystem identity.
     artifacts = fingerprint(extern_contents(arguments, ledger)?)?
     parts.append(f"artifacts {artifacts}")
     ledger.save()?
     return Ok(Key(digest=fingerprint(["incan.oven.portable-native/1"] + parts)?, parts=parts))
+
+
+def machine_bound(part: str) -> bool:
+    """A native key part that names this machine's compiler, command paths or artifact files, not their content."""
+    return part.startswith("compiler ") or part.startswith("command ") or part.startswith("artifacts ")
 
 
 pub def portable_reusable(directory: Path, key: Key, outputs: list[Path]) -> Result[bool, str]:
@@ -77,8 +91,8 @@ pub def record_portable(directory: Path, key: Key, outputs: list[Path]) -> Resul
     return publish(stamp, text)
 
 
-def normalized_arguments(arguments: list[str], directory: Path) -> list[str]:
-    """Remove only output-store locations and the paths of explicitly named extern artifacts."""
+def normalized_arguments(arguments: list[str], directory: Path, project: Path) -> list[str]:
+    """Remove only output-store and project locations and the paths of explicitly named extern artifacts."""
     mut normalized: list[str] = []
     mut external = false
     for argument in arguments:
@@ -86,7 +100,7 @@ def normalized_arguments(arguments: list[str], directory: Path) -> list[str]:
             name = argument.split("=")[0]
             normalized.append(f"{name}=<native:{name}>")
         else:
-            normalized.append(argument.replace(directory.0, "<producer-output>"))
+            normalized.append(project_argument(argument.replace(directory.0, "<producer-output>"), project))
         external = argument == "--extern"
     return normalized
 
