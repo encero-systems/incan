@@ -6,7 +6,8 @@ from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
 from std.fs import Path
-from core_ipc import Connection, Listener, listen, readable, session_id, stale, digits_only
+from core_ipc import Connection, Listener, listen, readable, session_id, stale
+from decimal_text import digits_only
 from engine_channel import Channel, Envelope, SendOutcome
 from engine_endpoint import endpoint, owner_uid, transport
 from engine_messages import (
@@ -207,7 +208,7 @@ def accept(
     work: str,
 ) -> Result[None, Refusal]:
     """Accept bounded control work, explicitly labeling the placeholder epoch until the capture producer lands."""
-    if len(client.pending) == 4 or len(client.channel.pending) > 4:
+    if len(client.pending) == 4 or client.channel.pending.held() > 4:
         return Err(Refusal(kind=RefusalKind.Busy, detail="client admission window is full"))
     token = f"{hexlify(client.channel.session)}:{hexlify(request)}"
     state.accept(request, work, token)?
@@ -221,7 +222,7 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
     """Settle available requests, then replace the interest list after its iteration has ended."""
     mut waiting: list[Pending] = []
     for pending in client.pending:
-        if len(client.channel.pending) == 8:
+        if client.channel.pending.exhausted():
             waiting.append(pending)
             continue
         send(

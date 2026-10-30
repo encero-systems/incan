@@ -21,7 +21,9 @@ from json_fields import required_text
 from observation import trace, trace_boundary
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
-from core_ipc import Connection, Listener, digits_only, listen
+from core_ipc import Connection, Listener, listen
+from decimal_text import digits_only
+from owner_protocol import receive_document, send_document
 from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command
@@ -180,9 +182,9 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             mut connected = connected_socket
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
-            connected.send(request(toolchain, arguments, generation)?)?
+            send_document(connected, request(toolchain, arguments, generation)?)?
             # 3. A completed request grants only its actual exit code, never a retained checking result.
-            reply = connected.receive()?
+            reply = receive_document(connected)?
             record("driver_request", invocation_key(arguments), clock)
             # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
             if retired(reply):
@@ -382,7 +384,7 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
             Some(waiting) =>
                 mut connected = waiting
                 connected.wait_at_most(5)
-                document = connected.receive()?
+                document = receive_document(connected)?
                 if required_text(document, "schema")? != SCHEMA:
                     return Err("compiler worker readiness protocol mismatch")
                 if required_text(document, "generation")? != endpoint.generation:
