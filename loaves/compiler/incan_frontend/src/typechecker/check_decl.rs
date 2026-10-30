@@ -3951,7 +3951,7 @@ impl TypeChecker {
     /// Reject model fields whose resolved type contains the model itself without an indirection boundary.
     fn validate_direct_recursive_model_field(&mut self, model_name: &str, field_ty: &ResolvedType, span: Span) {
         let mut visiting = HashSet::new();
-        if self.type_contains_direct_recursive_model(field_ty, model_name, &mut visiting) {
+        if self.type_contains_direct_recursive_model(field_ty, model_name, true, &mut visiting) {
             self.errors.push(CompileError::type_error(
                 format!(
                     "Model '{model_name}' has a direct recursive field type '{field_ty}'. Use an indirection such as List[...] for recursive payloads."
@@ -3961,20 +3961,38 @@ impl TypeChecker {
         }
     }
 
-    /// Return whether a type contains the target model through only inline Rust-layout positions.
+    /// Reject a class field that holds its own class with no `Option` or collection in between: no value of such a
+    /// class can be built, and its layout has no finite size.
+    fn validate_direct_recursive_class_field(
+        &mut self,
+        class_name: &str,
+        field: &str,
+        field_ty: &ResolvedType,
+        span: Span,
+    ) {
+        let mut visiting = HashSet::new();
+        if self.type_contains_direct_recursive_model(field_ty, class_name, false, &mut visiting) {
+            self.errors.push(errors::direct_recursive_class_field(class_name, field, span));
+        }
+    }
+
+    /// Return whether a type contains the target model through only inline Rust-layout positions. With
+    /// `options_inline` false an `Option` is an indirection: a class field that reaches its own class through one is
+    /// stored behind a box.
     fn type_contains_direct_recursive_model(
         &self,
         ty: &ResolvedType,
         model_name: &str,
+        options_inline: bool,
         visiting: &mut HashSet<String>,
     ) -> bool {
         match ty {
             ResolvedType::Named(name) => {
-                self.nominal_type_contains_direct_recursive_model(name, &[], model_name, visiting)
+                self.nominal_type_contains_direct_recursive_model(name, &[], model_name, options_inline, visiting)
             }
             ResolvedType::Generic(name, args) if name == UNION_TYPE_NAME => args
                 .iter()
-                .any(|arg| self.type_contains_direct_recursive_model(arg, model_name, visiting)),
+                .any(|arg| self.type_contains_direct_recursive_model(arg, model_name, options_inline, visiting)),
             ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
                 Some(
                     CollectionTypeId::List
@@ -3985,14 +4003,17 @@ impl TypeChecker {
                     | CollectionTypeId::FrozenSet
                     | CollectionTypeId::Generator,
                 ) => false,
+                Some(CollectionTypeId::Option) if !options_inline => false,
                 Some(CollectionTypeId::Tuple | CollectionTypeId::Option | CollectionTypeId::Result) => args
                     .iter()
-                    .any(|arg| self.type_contains_direct_recursive_model(arg, model_name, visiting)),
-                None => self.nominal_type_contains_direct_recursive_model(name, args, model_name, visiting),
+                    .any(|arg| self.type_contains_direct_recursive_model(arg, model_name, options_inline, visiting)),
+                None => {
+                    self.nominal_type_contains_direct_recursive_model(name, args, model_name, options_inline, visiting)
+                }
             },
             ResolvedType::Tuple(items) => items
                 .iter()
-                .any(|item| self.type_contains_direct_recursive_model(item, model_name, visiting)),
+                .any(|item| self.type_contains_direct_recursive_model(item, model_name, options_inline, visiting)),
             ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)
             | ResolvedType::TypeToken(_)
@@ -4024,6 +4045,7 @@ impl TypeChecker {
         type_name: &str,
         type_args: &[ResolvedType],
         model_name: &str,
+        options_inline: bool,
         visiting: &mut HashSet<String>,
     ) -> bool {
         if type_name == model_name {
@@ -4049,7 +4071,7 @@ impl TypeChecker {
                 info.fields.values().any(|field| {
                     let field_ty = substitute_resolved_type(&field.ty, &subst);
                     let field_ty = self.expand_type_aliases(field_ty);
-                    self.type_contains_direct_recursive_model(&field_ty, model_name, visiting)
+                    self.type_contains_direct_recursive_model(&field_ty, model_name, options_inline, visiting)
                 })
             }
             Some(TypeInfo::Class(info)) => {
@@ -4057,14 +4079,14 @@ impl TypeChecker {
                 info.fields.values().any(|field| {
                     let field_ty = substitute_resolved_type(&field.ty, &subst);
                     let field_ty = self.expand_type_aliases(field_ty);
-                    self.type_contains_direct_recursive_model(&field_ty, model_name, visiting)
+                    self.type_contains_direct_recursive_model(&field_ty, model_name, options_inline, visiting)
                 })
             }
             Some(TypeInfo::Newtype(info)) => {
                 let subst = type_param_subst_map(&info.type_params, type_args);
                 let underlying = substitute_resolved_type(&info.underlying, &subst);
                 let underlying = self.expand_type_aliases(underlying);
-                self.type_contains_direct_recursive_model(&underlying, model_name, visiting)
+                self.type_contains_direct_recursive_model(&underlying, model_name, options_inline, visiting)
             }
             Some(TypeInfo::Enum(_) | TypeInfo::Builtin | TypeInfo::TypeAlias) | None => false,
         };
@@ -4405,6 +4427,7 @@ impl TypeChecker {
         for field in fields {
             let ty = self.resolve_type_checked(&field.node.ty);
             self.refuse_stored_trait_field("class", &class.name, &field.node, &ty);
+            self.validate_direct_recursive_class_field(&class.name, &field.node.name, &ty, field.span);
             self.refuse_member_without_automatic_derives(
                 "class",
                 &class.name,

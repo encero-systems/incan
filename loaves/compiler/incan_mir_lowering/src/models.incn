@@ -339,13 +339,52 @@ pub def field_path(
     mut ty = root
     mut fields: list[FieldProjection] = []
     for position in range(count):
-        field = field_projection(constructors, declarations, ty, projections[position], enums, unions, intrinsics)?
-        fields.append(field)
-        ty = field.ty
+        steps = field_steps(constructors, declarations, ty, projections[position], enums, unions, intrinsics)?
+        fields.extend(steps)
+        ty = steps[len(steps) - 1].ty
     return Ok(fields)
 
 
-pub def field_projection(
+pub def field_steps(
+    constructors: &ConstructorIndex,
+    declarations: &list[NominalDeclaration],
+    root: PlanType,
+    projection: &RustPlaceElem,
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+) -> Result[list[FieldProjection], str]:
+    """
+    Select one source field or payload as stored, ending at the value the source names.
+
+    A boxed class field adds a dereference through its box, so reading, borrowing, assigning and moving all reach the
+    stored value; every single-step field projection goes through here.
+    """
+    return Ok(stored_steps(field_projection(constructors, declarations, root, projection, enums, unions, intrinsics)?))
+
+
+pub def stored_steps(field: FieldProjection) -> list[FieldProjection]:
+    """Continue a projected stored field to the value the source names, dereferencing a boxed class field's box."""
+    match field.ty:
+        PlanType.Boxed(referent) => return [field, FieldProjection(slot=-1, ty=referent[0], dereferences=1)]
+        _ => return [field]
+
+
+pub def field_step_type(
+    constructors: &ConstructorIndex,
+    declarations: &list[NominalDeclaration],
+    root: PlanType,
+    projection: &RustPlaceElem,
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """The type of the value one source field step names, through a boxed class field's box."""
+    steps = field_steps(constructors, declarations, root, projection, enums, unions, intrinsics)?
+    return Ok(steps[len(steps) - 1].ty)
+
+
+def field_projection(
     constructors: &ConstructorIndex,
     declarations: &list[NominalDeclaration],
     root: PlanType,

@@ -54,6 +54,8 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 enum Scalar {
     CChar,
     RawPointer(bool, Vec<Scalar>),
+    // An owned heap box around exactly one referent.
+    Boxed(Vec<Scalar>),
     NativeStr,
     NativeSlice(Vec<Scalar>),
     NativeArray(Vec<Scalar>, i64),
@@ -213,6 +215,7 @@ fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::CChar => Scalar::CChar,
         PlanType::RawPointer(mutable, elements) => Scalar::RawPointer(*mutable, elements.iter().map(scalar).collect()),
+        PlanType::Boxed(elements) => Scalar::Boxed(elements.iter().map(scalar).collect()),
         PlanType::NativeStr => Scalar::NativeStr,
         PlanType::NativeSlice(elements) => Scalar::NativeSlice(elements.iter().map(scalar).collect()),
         PlanType::NativeArray(elements, length) => Scalar::NativeArray(elements.iter().map(scalar).collect(), *length),
@@ -713,6 +716,7 @@ fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Sca
         Scalar::EnumRef(owner) | Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
         Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) => Ok(Scalar::Tuple(elements)),
         Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) if elements.len() == 1 => Ok(elements[0].clone()),
+        Scalar::Boxed(elements) if elements.len() == 1 => Ok(elements[0].clone()),
         _ => Err(invalid(
             function,
             "field dereference requires a nominal receiver reference",
@@ -985,6 +989,7 @@ fn owns_values(ty: &Scalar) -> bool {
         | Scalar::NativeClosure(..)
         | Scalar::SharedCallable(_)
         | Scalar::ValidationError
+        | Scalar::Boxed(_)
         | Scalar::Future(_) => true,
         Scalar::Tuple(elements) => elements.iter().any(owns_values),
         _ => false,
@@ -1573,6 +1578,9 @@ fn source_signature_type(ty: &Scalar) -> bool {
 
     if let Scalar::Future(outputs) = ty {
         return matches!(outputs.as_slice(), [output] if source_signature_type(output));
+    }
+    if let Scalar::Boxed(referents) = ty {
+        return matches!(referents.as_slice(), [referent] if source_signature_type(referent));
     }
     if let Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) = ty {
         return source_signature_type(&Scalar::Tuple(elements.clone()));
@@ -2604,6 +2612,15 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             });
         };
         return validate_model_type(plan, pointee);
+    }
+    if let PlanType::Boxed(elements) = ty {
+        let [referent] = elements.as_slice() else {
+            return Err(PlanError::Invalid {
+                function: "boxed field".into(),
+                reason: "a box holds exactly one referent".into(),
+            });
+        };
+        return validate_model_type(plan, referent);
     }
     if let PlanType::NativeTraitObject(path, _, _) = ty
         && (path.is_empty() || !valid_library_item(path))

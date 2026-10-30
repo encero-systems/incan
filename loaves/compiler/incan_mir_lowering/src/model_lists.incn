@@ -3,7 +3,7 @@
 from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
 from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Place as OperandPlace
 from frame import Builder
-from models import model_prefix, field_projection
+from models import model_prefix, field_step_type
 from tuples import is_tuple_type
 from lowering import projected_element_read
 
@@ -55,7 +55,7 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
                 if not is_tuple_type(ty):
                     break
             _ => break
-        ty = field_projection(
+        ty = field_step_type(
             builder.constructors,
             builder.nominals,
             ty,
@@ -63,7 +63,7 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
             builder.enums,
             builder.unions,
             builder.intrinsics,
-        )?.ty
+        )?
         count += 1
     return Ok(Some((count, through_tuple)))
 
