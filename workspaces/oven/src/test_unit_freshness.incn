@@ -825,7 +825,9 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     assert read(test_report(tests.joinpath("app")))? == "[]"
     # A view replaced behind Oven's back is the user's; the next view restores the fact's executable.
     write(tests.joinpath("app"), "someone else's binary")?
-    assert read(fact_file(store, fact, "app").unwrap())? == "first build"
+    match fact_file(store, fact, "app"):
+        Some(payload) => assert read(payload)? == "first build"
+        None => return Err("the baked executable is absent")
     view_executable(store, fact, tests.joinpath("app"), "test")?
     assert read(tests.joinpath("app"))? == "first build"
     # Rust libraries retain rustc's file dependencies, including escaped paths outside the source directory.

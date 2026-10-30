@@ -103,7 +103,9 @@ pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[Non
     assert first.counters.in_reach.reads == 5 and first.counters.in_reach.hashes == 5
     assert len(epoch.inputs) == 5 and len(epoch.absent) == 2
     assert epoch.input(helper.0) is not None
-    assert epoch.input(app.joinpath("src/vocab.incn").0).unwrap().role == InputRole.Vocabulary
+    match epoch.input(app.joinpath("src/vocab.incn").0):
+        Some(vocabulary) => assert vocabulary.role == InputRole.Vocabulary
+        None => return Err("the declared vocabulary was not captured")
     second = capture(request, Some(epoch), admitted, 0)?
     assert second.outcome == CaptureOutcome.Unchanged
     assert second.counters.in_reach.reads == 0 and second.counters.in_reach.hashes == 0
@@ -223,7 +225,10 @@ pub def test_a_file_changing_during_its_read_is_retried_then_reported_unstable()
     assert once.outcome == CaptureOutcome.Changed
     assert once.counters.retries == 1 and once.counters.in_reach.reads == 6
     epoch = epoch_of(once)?
-    assert digest_of(epoch, helper) == epoch_of(capture(request, None, admitted, 0)?)?.input(helper.0).unwrap().digest
+    expected = epoch_of(capture(request, None, admitted, 0)?)?
+    match expected.input(helper.0):
+        Some(input) => assert digest_of(epoch, helper) == input.digest
+        None => return Err("the helper was not captured")
     always = capture_with(request, None, admitted, 0, (path) => disturbing(path, true))?
     assert always.outcome == CaptureOutcome.Unstable
     assert always.unstable == [helper.0] and always.epoch is None
