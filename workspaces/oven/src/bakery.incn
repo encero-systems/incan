@@ -28,10 +28,10 @@ from std.json import JsonValue
 from files import json_text, make_directory, read_json
 from home import home
 from json_fields import required_items, required_text, string_value
-from observation import trace
+from observation import observe, trace
 from publication import publish
+from unit_publication import record_path, record_verified_payload, source_origins
 from segment_store import (
-    EXPECT_ABSENT,
     EXPECT_REPAIR,
     Lookup,
     StoreError,
@@ -56,6 +56,7 @@ const VIEW_RECORD: str = "fact.json"
 const VERIFY: int = -2
 const OPEN_FILE: u32 = 420
 const OPEN_PROGRAM: u32 = 493
+const RECORD_SUFFIX: str = ".oven-unit"
 
 # Payload digests this process has read in full and found intact; it then trusts them while their sizes hold.
 static verified: dict[str, bool] = {}
@@ -226,23 +227,15 @@ pub def seal(
     base = snapshot(store).map_err(store_failure)?
     mut transaction = begin(base)
     record = encode_fact(fact, provenance)?.encode("utf-8")
-    transaction = put(transaction, record_key(identity), record, replace_expectation(store, identity)?)
+    # The caller holds the claim and bakes only after judging any existing record unusable: absent, damaged, or no
+    # longer current for its linked libraries. So this record may repair or replace it.
+    transaction = put(transaction, record_key(identity), record, EXPECT_REPAIR)
     transaction = put(transaction, name_key(name), identity.encode("utf-8"))
     published = commit(transaction).map_err(store_failure)?
     # 3. Staging belongs to this bake only.
     _ = staged.remove_tree()
     trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
     return Ok(fact)
-
-
-def replace_expectation(store: Path, identity: str) -> Result[int, str]:
-    """
-    What a new record of `identity` may replace: nothing intact, so two different bakes of one identity conflict; or a
-    record whose own bytes or payload files are damaged, which this bake repairs.
-    """
-    match find(store, identity)?:
-        Some(_) => return Ok(EXPECT_ABSENT)
-        None => return Ok(EXPECT_REPAIR)
 
 
 def stored_file(store: Path, staged: Path, relative: str) -> Result[FactFile, str]:
@@ -390,7 +383,11 @@ pub def view(store: Path, fact: Fact, relative: str, destination: Path) -> Resul
     """
     for file in fact.files:
         if file.path == relative:
-            return view_file(store, file, destination)
+            view_file(store, file, destination)?
+            for record in fact.files:
+                if record.path == relative + RECORD_SUFFIX and not record_path(destination).is_file():
+                    view_file(store, record, record_path(destination))?
+            return admit_view(destination)
     return Err(f"bakery unit {fact.identity[:12]} has no file {relative}")
 
 
@@ -449,6 +446,7 @@ pub def view_directory(store: Path, fact: Fact, destination: Path, prefix: str =
         marker = JsonValue.object({"identity": JsonValue.string(fact.identity)})
         publish(staged.joinpath(VIEW_RECORD), json_text(marker)?)?
     swap_in(staged, destination, store, files, prefix)?
+    admit_views(files, destination, prefix)?
     return Ok(None)
 
 
@@ -494,7 +492,11 @@ def same_file(source: Path, view: Path) -> bool:
 def all_same(store: Path, files: list[FactFile], view: Path, prefix: str) -> bool:
     """Whether a directory view still holds an unchanged clone of each of the unit's files."""
     for file in files:
-        if not same_file(payload_path(store, file.digest), view.joinpath(relative_to(file.path, prefix))):
+        target = view.joinpath(relative_to(file.path, prefix))
+        if is_record(file):
+            if not target.is_file():
+                return false
+        elif not same_file(payload_path(store, file.digest), target):
             return false
     return true
 
@@ -644,3 +646,40 @@ pub def claim_file(store: Path, identity: str) -> Path:
 pub def staging_root(store: Path) -> Path:
     """Where bakes in progress stage their files."""
     return store.joinpath("staging")
+
+
+def admit_views(files: list[FactFile], view: Path, prefix: str) -> Result[None, str]:
+    """
+    Bind each viewed artifact's producer record to the view itself.
+
+    A producer record names the file generation it describes. A view is a new generation of a verified payload, so its
+    record is republished for that generation; the unit and payload identities do not change.
+    """
+    for file in files:
+        if file.path.endswith(RECORD_SUFFIX):
+            continue
+        admit_view(view.joinpath(relative_to(file.path, prefix)))?
+    return Ok(None)
+
+
+def admit_view(artifact: Path) -> Result[None, str]:
+    """Republish one view's producer record for the view's own file generation, when the unit carries one."""
+    record = record_path(artifact)
+    if not record.is_file() or not artifact.is_file():
+        return Ok(None)
+    document = read_json(record)?
+    observation = observe(artifact)?.stamp
+    if required_text(document, "observation")? == observation:
+        return Ok(None)
+    return record_verified_payload(
+        artifact,
+        required_text(document, "unit")?,
+        required_text(document, "payload")?,
+        observation,
+        source_origins(artifact)?,
+    )
+
+
+def is_record(file: FactFile) -> bool:
+    """Whether a unit file is a producer record, which a view keeps once it is bound to the view."""
+    return file.path.endswith(RECORD_SUFFIX)
