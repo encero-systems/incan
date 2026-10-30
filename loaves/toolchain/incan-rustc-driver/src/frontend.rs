@@ -403,8 +403,11 @@ fn complete_dependency_context(
         .get_mut(program.entry)
         .ok_or("selected Body IR entry is missing")?
         .loaf_callables = loaf_callables;
-    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
+    // A Rust layout's storage stays rustc's: find the Rust items bodies hold only once the layouts are taken, so a
+    // field no body reads does not pull its type's private items into the unit. A read field's value is a checked
+    // body local or external signature type, which still counts.
     let layouts = take_rust_layouts(&mut program.modules)?;
+    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
     let native_enums = take_rust_enums(&mut program.modules)?;
     let owners: std::collections::HashSet<_> = layouts
         .iter()

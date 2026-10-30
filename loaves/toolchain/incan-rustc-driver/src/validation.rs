@@ -744,6 +744,9 @@ fn projected_field(
             .ok_or_else(|| invalid(function, "unknown tuple field"))?,
         Scalar::Model(owner) => {
             let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
+            if model.unavailable_native_fields.contains(&slot) {
+                return Err(invalid(function, "cannot project an opaque native field"));
+            }
             let field = usize::try_from(slot)
                 .ok()
                 .and_then(|slot| model.fields.get(slot))
@@ -1367,6 +1370,12 @@ fn model_aggregate_result(
         "model aggregate destination",
     )?;
     let model = model(plan, index).ok_or_else(|| invalid(function, "unknown constructed model"))?;
+    if !model.unavailable_native_fields.is_empty() {
+        return Err(invalid(
+            function,
+            "cannot construct a native layout with an opaque field",
+        ));
+    }
     if elements.len() != model.fields.len() {
         return Err(invalid(function, "model field count differs from declaration"));
     }
@@ -3159,6 +3168,12 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 reason: "native type arguments on a source-owned model".into(),
             });
         }
+        if !opaque_native_fields_valid(declaration) {
+            return Err(PlanError::Invalid {
+                function: declaration.name.clone(),
+                reason: "invalid opaque native field slots".into(),
+            });
+        }
         for field in &declaration.fields {
             if declaration.library_item.is_empty()
                 && borrowed_alias_in_source_type(plan, &field.ty, &mut BTreeSet::new())
@@ -3188,6 +3203,19 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         }
     }
     Ok(())
+}
+
+/// Only a native layout keeps opaque field slots, each named once, within its fields and with a unit placeholder.
+fn opaque_native_fields_valid(declaration: &crate::plan::ModelDeclaration) -> bool {
+    let slots = &declaration.unavailable_native_fields;
+    (slots.is_empty() || !declaration.library_item.is_empty())
+        && slots.iter().enumerate().all(|(position, slot)| {
+            !slots[..position].contains(slot)
+                && usize::try_from(*slot)
+                    .ok()
+                    .and_then(|index| declaration.fields.get(index))
+                    .is_some_and(|field| field.ty == PlanType::Unit)
+        })
 }
 
 /// Order native aliases after their argument dependencies, including referents, before metadata type queries run.

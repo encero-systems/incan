@@ -943,6 +943,9 @@ pub model ModelDeclaration:
     pub string_conversion_trait: str = ""
     # Rust traits a source class implements with its own methods; empty implements none.
     pub native_trait_adoptions: list[NativeTraitAdoption] = []
+    # Native field slots the plan cannot carry. Each keeps a unit placeholder type that never authorizes a read, a
+    # write or a construction of the layout.
+    pub unavailable_native_fields: list[int] = []
 
 
 @derive(Clone, PartialEq)

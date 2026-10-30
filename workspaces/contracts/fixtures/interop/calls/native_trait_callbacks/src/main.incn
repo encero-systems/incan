@@ -1,11 +1,11 @@
-# behavior: source classes implement Rust traits and pass as borrowed trait objects beside a native instance; stateful instances keep their own state (#2481)
+# behavior: source classes implement Rust traits and pass as borrowed trait objects beside a native instance; stateful instances keep their own state and write a field of a Rust struct whose other fields the program cannot hold (#2481)
 # expect-stdout:
-#   native []
-#   defaults []
-#   one [first]
+#   native [] 1 1
+#   defaults [] 1 1
+#   one [first] 1 1
 #   1 0
-#   two [second]
-#   three [second]
+#   two [second] 1 1
+#   three [second] 1 1
 #   1 2
 #   first 1
 #   second 2
