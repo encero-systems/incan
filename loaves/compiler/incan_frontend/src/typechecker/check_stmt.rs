@@ -597,6 +597,11 @@ impl TypeChecker {
     /// Validate assignment to an object field, including generic-owner field substitution. Mutable references expose
     /// their referent's fields; encountering a shared reference still refuses the write.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
+        self.refuse_iterated_place_replacement(
+            &field_assign.object,
+            Some(&field_assign.field),
+            field_assign.target_span,
+        );
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
         let mut obj_ty = &obj_ty;
@@ -875,6 +880,11 @@ impl TypeChecker {
         // this branch would turn every in-block `let` into a reassignment of the outer binding (#1072).
         let introduces_binding = Self::binding_introduces_name(assign.binding);
         if !introduces_binding {
+            self.refuse_iterated_place_replacement(
+                &Spanned::new(Expr::Ident(assign.name.clone()), target_span),
+                None,
+                target_span,
+            );
             self.record_write_target_identity(target_span, &assign.name);
         }
         let reassignment_ty = (!introduces_binding)
@@ -1903,6 +1913,11 @@ impl TypeChecker {
         let owns_items = self.plan_for_item_taking(for_stmt, &elem_ty);
 
         // The iterated place is resolved before the loop's bindings shadow it (`for items in items:`).
+        let previous_borrows = if owns_items {
+            self.iteration_borrows.len()
+        } else {
+            self.enter_iteration_borrow(&for_stmt.iter)
+        };
         let loop_view_param = self.loop_view_param(&for_stmt.iter);
         let derived_views = if loop_view_param.is_none() {
             self.read_only_derived_loop_views(&for_stmt.iter, &for_stmt.pattern.node)
@@ -1922,6 +1937,7 @@ impl TypeChecker {
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
 
         self.check_statement_block(&for_stmt.body);
+        self.iteration_borrows.truncate(previous_borrows);
         self.exit_for_loop_body(loop_body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
