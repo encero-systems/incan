@@ -81,3 +81,37 @@ fn collect(ty: &IncanType, types: &mut Vec<IncanType>) {
         _ => {}
     }
 }
+
+/// Whether any checked type in `modules` is a union: a program without one selects no union layout, so the Loaves
+/// that publish layouts need not be read for it.
+pub fn reaches_union(modules: &[bir::BodyIrModule]) -> bool {
+    let mut types = Vec::new();
+    for module in modules {
+        let frames = module.bodies.iter().chain(module.callable_declaration_frames());
+        for body in frames {
+            collect(&body.return_type, &mut types);
+            for local in &body.locals {
+                collect(&local.ty, &mut types);
+            }
+        }
+        for declaration in &module.nominal_declarations {
+            for ty in &declaration.field_types {
+                collect(ty, &mut types);
+            }
+        }
+        for declaration in &module.enum_declarations {
+            for variant in &declaration.variants {
+                for ty in &variant.fields {
+                    collect(ty, &mut types);
+                }
+            }
+        }
+        for declaration in &module.static_declarations {
+            collect(&declaration.ty, &mut types);
+        }
+        if !types.is_empty() {
+            return true;
+        }
+    }
+    false
+}
