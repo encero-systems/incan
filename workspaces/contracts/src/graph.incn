@@ -351,7 +351,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
 
     1. Build the provider. Its compiled Loaf carries a version-one binary graph that names no physical project root.
     2. A consumer reads the published graph, though the provider's source has since become invalid.
-    3. A corrupt view is restored; a corrupt stored payload is a miss: it is baked again, never reused.
+    3. A corrupt view is restored; stored damage refuses lookup until exact bytes are explicitly re-admitted.
     4. A provider with no published graph is exported once, and the export is stable.
     """
     provider = project.joinpath("deps").joinpath("checked")
@@ -386,7 +386,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     if original.code != Some(0) or published.code != Some(0) or original.stdout != published.stdout:
         return Err(f"published dependency graph was rechecked from source: {published.stderr}")
     write(source, before)?
-    # 3. A corrupt view in target/ is harmless and restored; a corrupt stored payload is a miss and is baked again.
+    # 3. Views are restored automatically; stored damage requires explicit verified re-admission.
     stored = stored_payload(publications[0])?
     for graph in publications:
         write_bytes(graph, b"\x7f\x00\x00\x00")?
@@ -395,10 +395,18 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
         return Err(f"a corrupt view in target/ reached the published graph: {restored.stderr}")
     if read_bytes(publications[0])? == b"\x7f\x00\x00\x00":
         return Err("a corrupt view in target/ was not restored from the published graph")
+    replacement = project.joinpath("verified-graph-replacement")
+    write_bytes(replacement, read_bytes(stored)?)?
     corrupt_fact(stored)?
-    rebaked = invoke(incan, arguments, project)?
-    if rebaked.code != Some(0) or rebaked.stdout != original.stdout:
-        return Err(f"a corrupt stored graph was not baked again: {rebaked.stderr}")
+    refused = invoke(incan, arguments, project)?
+    if refused.code == Some(0) or "store integrity error" not in refused.stderr:
+        return Err(f"stored damage was not reported: {refused.stderr}")
+    repaired = invoke(incan, ["bakery", "repair-payload", stored.name(), replacement.0], project)?
+    if repaired.code != Some(0):
+        return Err(f"verified graph re-admission failed: {repaired.stderr}")
+    restored_fact = invoke(incan, arguments, project)?
+    if restored_fact.code != Some(0) or restored_fact.stdout != original.stdout:
+        return Err(f"re-admitted graph differs from its publication: {restored_fact.stderr}")
     # 4. A provider with no published graph is exported once, and a second export gives the same answer.
     for graph in publications:
         remove(graph)?

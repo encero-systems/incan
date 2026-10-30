@@ -6,6 +6,7 @@ from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, read, remove, write as write_file
+from segment_store import readmit_payload
 from bakery import fact_file, find, forget_verified, seal, staging
 from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
 from incan_units import executable_outputs, test_report, view_executable
@@ -396,13 +397,21 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     edited = unit_key(setup.unit, setup.toolchain)?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
-    # A damaged retained refusal is a miss: the next ask compiles and retains it again, and the one after replays it.
-    damage(retained_refusal(cache, edited)?, "incomplete document")?
+    # A damaged retained refusal is an error until its exact bytes are explicitly re-admitted.
+    retained_path = retained_refusal(cache, edited)?
+    replacement = scratch.joinpath("verified-refusal")
+    retained_path.copy(replacement, true, true).map_err((error) => error.message())?
+    damage(retained_path, "incomplete document")?
     forget_verified()
+    match compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test"):
+        Ok(_) =>
+            assert false, "a damaged refusal was treated as absence"
+        Err(error) =>
+            assert "integrity" in error, error
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
+    readmit_payload(cache, replacement, retained_path.name()).map_err((error) => error.message())?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
-    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
     # 3. Retry crashes, signals, I/O failures and success without artifacts.
     for mode in ["crash", "signal", "io", "missing"]:
         write(source, mode)?

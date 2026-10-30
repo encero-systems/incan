@@ -11,7 +11,7 @@ progress, and `roots/<project>/<identity>` for the identities each project's bui
 
 Asking is one path for cold and warm builds: find the record, or claim its identity, look again, bake into a private
 staging directory, store the payloads and publish the record. Concurrent askers wait on the claim and then find the
-record. The store reports a damaged record or payload; this adapter bakes such a unit again. Collection is
+record. The store reports a damaged record or payload; lookup refuses damage until an explicit repair or verified re-admission. Collection is
 disabled until it honors live snapshot leases; the store has no size ceiling.
 """
 
@@ -21,7 +21,7 @@ from rust::std::process import id
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.environ import get_or
-from std.hash import sha256
+from std.hash import file_digest, sha256
 from std.fs import Path
 from std.fs.locking import FileLock
 from std.json import JsonValue
@@ -39,7 +39,9 @@ from segment_store import (
     begin,
     claim as claim_key,
     commit,
-    drop_damaged_payload,
+    quarantine_record,
+    quarantine_payload,
+    readmit_payload,
     get,
     keys,
     lookup as store_lookup,
@@ -58,9 +60,8 @@ const VERIFY: int = -2
 const OPEN_FILE: u32 = 420
 const OPEN_PROGRAM: u32 = 493
 const RECORD_SUFFIX: str = ".oven-unit"
-
-# Payload digests this process has read in full and found intact; it then trusts them while their sizes hold.
-static verified: dict[str, bool] = {}
+# Payload digests verified against exact metadata observations; external changes require a fresh digest.
+static verified: dict[str, str] = {}
 
 
 pub model FactFile:
@@ -137,58 +138,46 @@ pub def find(store: Path, identity: str) -> Result[Option[Fact], str]:
 
 
 def find_unit(store: Path, identity: str) -> Result[Option[Fact], str]:
-    """
-    The baked unit of `identity`, or nothing.
-
-    The store reports a damaged record as an integrity error, and so does this adapter's payload check. A compiled
-    unit is reproducible from its complete inputs, so this adapter treats either as a unit to bake again: it says so,
-    drops a damaged payload, and the caller recomputes and republishes the record. Any other store error is refused.
-    """
+    """Find an intact unit; damage names its object and requires an explicit owner repair."""
     view = snapshot(store).map_err(store_failure)?
-    match store_lookup(view, record_key(identity)):
-        Err(error) =>
-            if error.kind != "integrity":
-                return Err(error.message())
-            trace(f"bakery {identity[:12]}: {error.message()}; baked again")
-            return Ok(None)
-        Ok(found) =>
-            match found:
-                Lookup.Found(value) => return checked_fact(store, identity, value)
-                Lookup.Deleted => return Ok(None)
-                Lookup.Absent => return Ok(None)
+    match store_lookup(view, record_key(identity)).map_err(store_failure)?:
+        Lookup.Found(value) => return checked_fact(store, identity, value)
+        Lookup.Deleted => return Ok(None)
+        Lookup.Absent => return Ok(None)
 
 
 def checked_fact(store: Path, identity: str, value: bytes) -> Result[Option[Fact], str]:
-    """A decoded unit record whose payload files are intact; otherwise the unit is baked again."""
+    """Decode a selected unit and verify its payloads without mutating the store on failure."""
+    object = record_key(identity)
     match decode_fact(value):
-        None =>
-            trace(f"bakery {identity[:12]}: unit record is not a unit, baked again")
-            return Ok(None)
+        None => return Err(StoreError(kind="integrity", object=object, detail="invalid unit record").message())
         Some(fact) =>
             if fact.identity != identity:
-                trace(f"bakery {identity[:12]}: unit record names another identity, baked again")
-                return Ok(None)
+                return Err(StoreError(kind="integrity", object=object, detail="unit names another identity").message())
             for file in fact.files:
                 if not payload_current(store, file):
-                    trace(f"bakery {identity[:12]}: payload {file.path} is damaged, baked again")
-                    _ = drop_damaged_payload(store, file.digest)
-                    return Ok(None)
+                    path = payload_path(store, file.digest)
+                    return Err(StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message())
             return Ok(Some(fact))
 
 
 def payload_current(store: Path, file: FactFile) -> bool:
-    """Whether a payload file still has its recorded size, and, the first time in this process, its digest."""
+    """Whether a payload matches its digest, revalidated whenever its metadata observation changes."""
     path = payload_path(store, file.digest)
     match metadata(path.0):
         Err(_) => return false
         Ok(info) =>
             if int(info.len()) != file.size:
                 return false
-    if verified.get(file.digest, false):
+    stamp = match observe(path):
+        Ok(observed) => observed.stamp
+        Err(_) => return false
+
+    if verified.get(file.digest, "") == stamp:
         return true
     if not payload_intact(store, file.digest):
         return false
-    verified[file.digest] = true
+    verified[file.digest] = stamp
     return true
 
 
@@ -263,7 +252,7 @@ def stored_file(staged: Path, relative: str, digest: str) -> Result[FactFile, st
     """Describe one staged file stored under `digest`."""
     path = staged.joinpath(relative)
     info = metadata(path.0).map_err((error) => f"{path.0}: {error}")?
-    verified[digest] = true
+    verified[digest] = ""
     program = int(info.permissions().mode()) // 64 % 2 == 1
     return Ok(FactFile(path=relative, digest=digest, size=int(info.len()), program=program))
 
@@ -372,22 +361,20 @@ def fact_file_entry(entry: JsonValue) -> Result[FactFile, str]:
                 Some(found) => program = found
                 None => return Err("program")
         None => return Err("program")
-    return Ok(FactFile(path=required_text(entry, "path")?, digest=required_text(entry, "sha256")?, size=size, program=program))
+    return Ok(
+        FactFile(path=required_text(entry, "path")?, digest=required_text(entry, "sha256")?, size=size, program=program),
+    )
 
 
 pub def lookup(store: Path, name: str) -> Result[Option[str], str]:
-    """The identity `name` was last baked under, if any bake recorded one."""
-    match get(snapshot(store).map_err(store_failure)?, name_key(name)):
-        Err(error) =>
-            trace(f"bakery name {name}: {error.message()}")
-            return Ok(None)
-        Ok(found) =>
-            match found:
-                None => return Ok(None)
-                Some(value) =>
-                    match RustString.from_utf8(value):
-                        Ok(text) => return Ok(Some(str(text)))
-                        Err(_) => return Ok(None)
+    """The identity last selected by a name; a damaged binding is an error, never absence."""
+    key = name_key(name)
+    match get(snapshot(store).map_err(store_failure)?, key).map_err(store_failure)?:
+        None => return Ok(None)
+        Some(value) =>
+            match RustString.from_utf8(value):
+                Ok(text) => return Ok(Some(str(text)))
+                Err(_) => return Err(StoreError(kind="integrity", object=key, detail="invalid name binding").message())
 
 
 # ---- Views ----
@@ -555,7 +542,7 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     The current view of the unit a directory was viewed from, for readers of a library's artifacts.
 
     A view whose files were changed or removed is cloned again. A view whose unit is no longer baked, or is damaged, is
-    not a view: the caller treats the library as absent and bakes it again.
+    refused with a named integrity error; normal lookup never repairs frozen bytes.
     """
     record = directory.joinpath(VIEW_RECORD)
     if not record.is_file():
@@ -572,7 +559,7 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
 pub def forget_verified() -> None:
     """Forget which payloads this process verified, as a new process would; the next find reads them again."""
     for digest in [name for name in verified.keys()]:
-        verified[digest] = false
+        verified[digest] = ""
 
 
 # ---- Roots and collection ----
@@ -605,7 +592,7 @@ pub def verify_all(store: Path) -> Result[list[str], str]:
     """
     Read every byte of every unit's payloads and compare them with their digests; return what was damaged.
 
-    A damaged record is named. A damaged payload is named and dropped, so its unit is baked again by the next build.
+    Verification only reports. A damaged payload remains untouched until explicit verified re-admission.
     """
     current = snapshot(store).map_err(store_failure)?
     mut damaged: list[str] = []
@@ -616,12 +603,25 @@ pub def verify_all(store: Path) -> Result[list[str], str]:
             Err(error) => damaged.append(error.message())
             Ok(found) =>
                 if let Some(value) = found:
-                    if let Some(fact) = decode_fact(value):
-                        for file in fact.files:
-                            if not payload_intact(store, file.digest):
-                                damaged.append(f"bakery unit {fact.identity}: payload file {file.path} is damaged")
-                                _ = drop_damaged_payload(store, file.digest)
+                    damaged.extend(verify_record(store, key, value))
     return Ok(damaged)
+
+
+def verify_record(store: Path, key: str, value: bytes) -> list[str]:
+    """Audit a record's schema, exact identity and every payload; report all damage without mutations."""
+    mut damaged: list[str] = []
+    match decode_fact(value):
+        None => damaged.append(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
+        Some(fact) =>
+            if record_key(fact.identity) != key:
+                damaged.append(StoreError(kind="integrity", object=key, detail="unit names another identity").message())
+            for file in fact.files:
+                if not payload_intact(store, file.digest):
+                    path = payload_path(store, file.digest)
+                    damaged.append(
+                        StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message(),
+                    )
+    return damaged
 
 
 # ---- Command line ----
@@ -668,8 +668,7 @@ pub def bakery_command(request: int) -> Result[i32, str]:
         return Ok(0)
     collected = collect(store, request)?
     println(
-        f"kept {collected.kept} units, removed {collected.removed}, dropped {collected.roots_dropped} roots, "
-        + f"cleared {collected.staging_cleared} staging directories",
+        f"kept {collected.kept} units, removed {collected.removed}, dropped {collected.roots_dropped} roots, " + f"cleared {collected.staging_cleared} staging directories",
     )
     return Ok(0)
 
@@ -719,3 +718,53 @@ def admit_view(artifact: Path) -> Result[None, str]:
 def is_record(file: FactFile) -> bool:
     """Whether a unit file is a producer record, which a view keeps once it is bound to the view."""
     return file.path.endswith(RECORD_SUFFIX)
+
+
+pub def repair_derived(
+    store: Path,
+    identity: str,
+    staged: Path,
+    kind: str,
+    name: str,
+    reaches: list[str],
+    provenance: str,
+) -> Result[Fact, str]:
+    """
+    Publish an explicitly recomputed derived unit after preserving damage as quarantine evidence.
+
+    The owner must supply a complete bake from verified inputs under this exact identity, not frozen imported facts.
+    This operation claims the identity, preserves a damaged selected frame, quarantines damaged matching payloads,
+    and publishes a new record transaction. Ordinary reads and verification never invoke it.
+    """
+    held = claim(store, identity)?
+    view = snapshot(store).map_err(store_failure)?
+    match store_lookup(view, record_key(identity)):
+        Err(error) =>
+            if error.kind != "integrity":
+                return Err(error.message())
+            quarantine_record(view, record_key(identity)).map_err(store_failure)?
+        Ok(found) =>
+            match found:
+                Lookup.Found(value) =>
+                    if let Some(fact) = decode_fact(value):
+                        for file in fact.files:
+                            if not payload_current(store, file):
+                                quarantine_payload(store, file.digest).map_err(store_failure)?
+                Lookup.Deleted => pass
+                Lookup.Absent => pass
+    for relative in staged_files(staged, "")?:
+        source = staged.joinpath(relative)
+        digest = hexlify(file_digest(source, "sha256").map_err((error) => error.message())?)
+        quarantine_payload(store, digest).map_err(store_failure)?
+    forget_verified()
+    return seal(store, identity, staged, kind, name, reaches, provenance)
+
+
+pub def repair_payload_command(arguments: list[str]) -> Result[i32, str]:
+    """Re-admit a payload only from an explicit replacement whose full digest matches its committed name."""
+    if len(arguments) != 3:
+        return Err("usage: incan bakery repair-payload SHA256 FILE")
+    readmit_payload(bakery()?, Path(arguments[2]), arguments[1]).map_err(store_failure)?
+    forget_verified()
+    println(f"re-admitted payload {arguments[1]}")
+    return Ok(0)

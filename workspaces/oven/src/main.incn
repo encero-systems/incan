@@ -5,7 +5,7 @@ from rust::std::io import Write, stderr
 from rust::std::process import exit
 from rust::std::string import String as RustString
 from std.fs import Path
-from bakery import bakery_command, parse_bakery
+from bakery import bakery_command, parse_bakery, repair_payload_command
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
@@ -126,6 +126,9 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(options) => finish("toolchain", toolchain_command(options))
         return
     if command == "bakery":
+        if len(rest) > 0 and rest[0] == "repair-payload":
+            finish("bakery", repair_payload_command(rest))
+            return
         match parse_bakery(rest):
             Err(reason) => argument_error("bakery", reason)
             Ok(keep_days) => finish("bakery", bakery_command(keep_days))
