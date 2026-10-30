@@ -6,7 +6,7 @@
 
 | Module | Holds |
 | --- | --- |
-| `protocol` | The request, reply and readiness documents: admission of a request for this worker generation, and the reply encoding. |
+| `protocol` | The shared request, reply and readiness documents: request construction and admission, reply encoding and completion validation, and readiness encoding and validation. Oven imports this module as the client. |
 | `lifecycle` | The retirement policy, apart from any socket: idle period, footprint margin, outcomes. |
 | `endpoint` | The worker's socket file, its withdrawal, the idle watchdog, and what a departed caller ends. |
 | `host` | The listener, peer identity, one activation at a time, replies and retirement. |
