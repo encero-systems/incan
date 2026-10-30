@@ -1555,6 +1555,7 @@ impl TypeChecker {
     /// published for lowering as a copy, unless its type cannot be copied (a `Generator`, a type holding one),
     /// which is refused with `INCAN-T0117` too.
     pub(in crate::typechecker) fn resolve_mut_arguments(&mut self) {
+        self.check_work.mutation_settlements += 1;
         let changed = self.mut_param_change_closure();
         let pending = std::mem::take(&mut self.mut_params.pending);
         for argument in pending {
