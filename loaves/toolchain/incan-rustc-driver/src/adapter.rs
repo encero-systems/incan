@@ -51,6 +51,20 @@ pub enum DriverError {
     Invocation(String),
 }
 
+/// Make the process-global compilation slots usable again after a contained panic: clear the poison the panic left
+/// on them and drop the plan and failure of the compilation it ended.
+pub(crate) fn recover() {
+    COMPILATION.clear_poison();
+    PLAN.clear_poison();
+    FAILURE.clear_poison();
+    if let Ok(mut plan) = PLAN.lock() {
+        *plan = None;
+    }
+    if let Ok(mut failure) = FAILURE.lock() {
+        *failure = None;
+    }
+}
+
 /// Read the active plan without retaining the slot lock while rustc resolves callees.
 fn active_plan() -> Result<Arc<Plan>, DriverError> {
     PLAN.lock()
