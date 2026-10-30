@@ -201,7 +201,10 @@ mod tests {
             assert!(view.slice(offset, length).is_none());
         }
         assert!(mapping.view(i64::MAX, i64::MAX).is_none());
-        assert_eq!(mapping.view(2, 4).map(|copied| copied.to_bytes()), Some(b"2345".to_vec()));
+        assert_eq!(
+            mapping.view(2, 4).map(|copied| copied.to_bytes()),
+            Some(b"2345".to_vec())
+        );
         Ok(())
     }
 
