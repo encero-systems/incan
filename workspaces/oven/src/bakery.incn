@@ -46,7 +46,7 @@ from segment_store import (
     payload_intact,
     payload_path,
     put,
-    put_payload,
+    put_payloads,
     snapshot,
 )
 from unit import UnitDescription
@@ -237,9 +237,11 @@ pub def seal(
     """
     clock = begin_work()
     # 1. Payload files are stored before any record names them.
+    relatives = staged_files(staged, "")?
+    digests = put_payloads(store, [staged.joinpath(relative) for relative in relatives]).map_err(store_failure)?
     mut files: list[FactFile] = []
-    for relative in staged_files(staged, "")?:
-        files.append(stored_file(store, staged, relative)?)
+    for index in range(len(relatives)):
+        files.append(stored_file(staged, relatives[index], digests[index])?)
     fact = Fact(identity=identity, kind=kind, name=name, reaches=reaches, files=files)
     # 2. A reader's snapshot holds either no record or the whole unit; a damaged older record is replaced.
     base = snapshot(store).map_err(store_failure)?
@@ -257,11 +259,10 @@ pub def seal(
     return Ok(fact)
 
 
-def stored_file(store: Path, staged: Path, relative: str) -> Result[FactFile, str]:
-    """Store one staged file as a payload and describe it."""
+def stored_file(staged: Path, relative: str, digest: str) -> Result[FactFile, str]:
+    """Describe one staged file stored under `digest`."""
     path = staged.joinpath(relative)
     info = metadata(path.0).map_err((error) => f"{path.0}: {error}")?
-    digest = put_payload(store, path).map_err(store_failure)?
     verified[digest] = true
     program = int(info.permissions().mode()) // 64 % 2 == 1
     return Ok(FactFile(path=relative, digest=digest, size=int(info.len()), program=program))

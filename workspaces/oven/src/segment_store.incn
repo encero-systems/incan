@@ -500,7 +500,9 @@ pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     staged = root.joinpath("staging").joinpath(transaction.id)
     ensure_directory(staged)?
     # 1. Encoding and syncing happen before the lock.
-    place_synced(staged.joinpath("delta.seg"), encode_segment(transaction.writes)?)?
+    delta = staged.joinpath("delta.seg")
+    mut encoded = encode_segment(transaction.writes)?
+    place_synced(delta, encoded)?
     held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
     latest = snapshot(root)?
     # 2. and 3. Only what is not already committed is written.
@@ -508,8 +510,11 @@ pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     if len(remaining) == 0:
         remove_tree(staged)
         return Ok(latest)
-    # 4. Each step is durable before the next one names it.
-    name = install_segment(root, encode_segment(remaining)?, staged)?
+    # 4. Each step is durable before the next one names it; a delta that kept every write is installed as staged.
+    if len(remaining) != len(transaction.writes):
+        encoded = encode_segment(remaining)?
+        place_synced(delta, encoded)?
+    name = install_segment(root, encoded, delta)?
     published = switch(root, latest, segment_names(latest) + [name], transaction.id)?
     remove_tree(staged)
     if len(published.segments) > MAX_DELTAS + 1:
@@ -550,8 +555,11 @@ def segment_names(view: Snapshot) -> list[str]:
     return [segment.name for segment in view.segments]
 
 
-def install_segment(root: Path, data: bytes, staged: Path) -> Result[str, StoreError]:
-    """Install a segment under its content name; an existing object must hold exactly those bytes."""
+def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreError]:
+    """
+    Install a segment under its content name from `source`, a synced file holding exactly `data`; an existing object
+    must hold exactly those bytes.
+    """
     name = hexlify(sha256.digest(data))
     target = root.joinpath("segments").joinpath(f"{name}.seg")
     ensure_directory(target.parent())?
@@ -560,8 +568,6 @@ def install_segment(root: Path, data: bytes, staged: Path) -> Result[str, StoreE
         if hexlify(found) != name:
             return Err(failure("integrity", target.0, "an installed segment does not match its name"))
         return Ok(name)
-    source = staged.joinpath("install.seg")
-    place_synced(source, data)?
     source.replace(target).map_err((error) => io_failure(target, error))?
     target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
     return Ok(name)
@@ -647,8 +653,10 @@ def compact_locked(root: Path, view: Snapshot) -> Result[Snapshot, StoreError]:
                 Lookup.Deleted => newest[key] = Write(key=key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY)
                 Lookup.Absent => pass
     staged = root.joinpath("staging").joinpath(f"compact-{id()}")
-    ensure_directory(staged)?
-    name = install_segment(root, encode_segment([newest[key] for key in newest.keys()])?, staged)?
+    base = staged.joinpath("base.seg")
+    encoded = encode_segment([newest[key] for key in newest.keys()])?
+    place_synced(base, encoded)?
+    name = install_segment(root, encoded, base)?
     remove_tree(staged)
     return switch(root, view, [name], "compaction")
 
@@ -663,20 +671,43 @@ pub def payload_path(root: Path, digest: str) -> Path:
 
 pub def put_payload(root: Path, source: Path) -> Result[str, StoreError]:
     """Store `source` under its content digest, read-only and synced; an existing payload must hold those bytes."""
-    digest = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
-    target = payload_path(root, digest)
-    if target.is_file():
-        if payload_intact(root, digest):
-            return Ok(digest)
-        return Err(failure("integrity", target.0, "a stored payload does not match its name"))
+    digests = put_payloads(root, [source])?
+    return Ok(digests[0])
+
+
+pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[str], StoreError]:
+    """
+    Store each source under its content digest, read-only, in order; an existing payload must hold those bytes.
+
+    Each new file is synced before it is renamed into place, and each payload directory that received one is synced
+    once after all of them, before the caller's commit names them.
+    """
+    mut digests: list[str] = []
+    mut touched: set[str] = set()
+    for source in sources:
+        digest = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
+        target = payload_path(root, digest)
+        if target.is_file():
+            if not payload_intact(root, digest):
+                return Err(failure("integrity", target.0, "a stored payload does not match its name"))
+        else:
+            install_payload(source, target)?
+            touched.add(target.parent().0)
+        digests.append(digest)
+    for directory in sorted([name for name in touched]):
+        Path(directory).sync_directory().map_err((error) => io_failure(Path(directory), error))?
+    return Ok(digests)
+
+
+def install_payload(source: Path, target: Path) -> Result[None, StoreError]:
+    """Copy one payload beside its place, sync it, make it read-only and rename it into place."""
     ensure_directory(target.parent())?
     temporary = Path(f"{target.0}.{id()}.tmp")
     source.copy(temporary, true, true).map_err((error) => io_failure(temporary, error))?
     sync_file(temporary)?
     temporary.chmod(true).map_err((error) => io_failure(temporary, error))?
     temporary.replace(target).map_err((error) => io_failure(target, error))?
-    target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
-    return Ok(digest)
+    return Ok(None)
 
 
 pub def payload_intact(root: Path, digest: str) -> bool:
