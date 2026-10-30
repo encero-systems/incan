@@ -80,7 +80,7 @@ pub(super) fn lower_getter_body(
                 .type_info
                 .is_closure_returning_type(property.node.return_type.span),
         }),
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         params: vec![bir::CallableParam {
             local: receiver,
             kind: IncanCallableParamKind::Normal,

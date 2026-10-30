@@ -123,7 +123,7 @@ fn retain_native_type_identities(modules: &mut [BodyIrModule], native: &[BodyIrM
     for module in modules {
         for body in &mut module.bodies {
             for (name, identity) in &identities {
-                body.named_type_identities
+                std::sync::Arc::make_mut(&mut body.named_type_identities)
                     .entry(name.clone())
                     .or_insert_with(|| identity.clone());
             }
@@ -434,13 +434,17 @@ fn complete_dependency_context(
     program.modules.splice(program.own..program.own, held);
     program.entry += held_modules;
     program.own += held_modules;
+    // A program whose checked types hold no union selects no union layout; its producers' manifests stay unread.
+    let layouts = if incan_frontend::body_ir::reaches_union(&program.modules) {
+        native_union_layouts(loaves)
+    } else {
+        Vec::new()
+    };
     let entry_module = program
         .modules
         .get_mut(program.entry)
         .ok_or("selected Body IR entry is missing")?;
-    entry_module
-        .native_union_declarations
-        .extend(native_union_layouts(loaves));
+    entry_module.native_union_declarations.extend(layouts);
     Ok(program)
 }
 

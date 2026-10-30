@@ -74,7 +74,7 @@ pub(super) fn retain_returns(
             refine_block(
                 &mut body.block.stmts,
                 &mut body.locals,
-                &mut body.named_type_identities,
+                std::sync::Arc::make_mut(&mut body.named_type_identities),
                 &ReturnContext {
                     nominals: &nominals,
                     implementations: &implementations,
@@ -137,7 +137,7 @@ fn retain_return_annotation(body: &mut bir::Body, program: &ast::Program, facts:
     let Some(name) = type_base(&declared) else {
         return;
     };
-    body.named_type_identities.insert(name.to_owned(), identity.clone());
+    std::sync::Arc::make_mut(&mut body.named_type_identities).insert(name.to_owned(), identity.clone());
 }
 
 /// Find the physical return annotation for one frame; nested method spans must match exactly within their owner.
@@ -167,7 +167,7 @@ fn signature(body: &bir::Body) -> ReturnSignature {
         original: body.return_type.clone(),
         carrier: body.return_type.clone(),
         parameters: body.type_parameters.clone(),
-        identities: body.named_type_identities.clone(),
+        identities: (*body.named_type_identities).clone(),
         opaque: trait_type(&body.return_type, &body.named_type_identities),
         hidden_inputs: body
             .params
