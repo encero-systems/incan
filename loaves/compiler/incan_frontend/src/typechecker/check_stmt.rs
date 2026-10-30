@@ -851,9 +851,14 @@ impl TypeChecker {
     /// Validate an assignment statement, then remember a local bound directly to a module static (see
     /// [`Self::note_static_alias_binding`]).
     ///
-    /// A new binding of a capturing callable takes the callable's own type, and a reassignment of one, or to one, is
-    /// refused (see `capturing_callables.rs`).
+    /// A discard checks its value without introducing a symbol or retaining binding facts. A new binding of a
+    /// capturing callable takes the callable's own type, and a reassignment of one, or to one, is refused (see
+    /// `capturing_callables.rs`).
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+        if assign.name == "_" {
+            self.check_discard_assignment(assign, span);
+            return;
+        }
         self.check_assignment_binding(assign, span);
         self.refuse_owned_native_tuple_field(assign);
         self.note_static_alias_binding(assign);
@@ -865,6 +870,20 @@ impl TypeChecker {
         } else {
             self.refuse_capturing_reassignment(Some(&assign.name), &assign.value, assign.name_span);
         }
+    }
+
+    /// Check a discarded value and its optional annotation without making `_` a readable or writable binding.
+    /// Each discard owns its type independently; open Rust generics must resolve here because no later read can
+    /// constrain them. Retain the value's checked carrier for Body IR, but no local ownership or alias facts.
+    fn check_discard_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+        let annotated_ty = assign
+            .ty
+            .as_ref()
+            .map(|annotation| self.resolve_type_checked(annotation));
+        let value_ty = self.check_expr_with_expected(&assign.value, annotated_ty.as_ref());
+        let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
+        self.record_assignment_binding_type(span, ty);
+        self.reject_discarded_open_rust_generic_call(assign.value.span);
     }
 
     /// Validate assignment statements, including declarations, reassignments, and local annotation compatibility.
