@@ -5573,7 +5573,8 @@ impl TypeChecker {
     }
 
     /// Type-check a slicing expression (`base[start:end:step]`) and return the sliced type. Text and byte slices
-    /// produce owned values, including when the receiver is frozen; every bound is checked exactly once.
+    /// produce owned values, including when the receiver is frozen. Native byte views use their inspected Deref
+    /// targets and retain an ordinary borrowed slice call; every bound is checked exactly once.
     pub(in crate::typechecker::check_expr) fn check_slice(
         &mut self,
         base: &Spanned<Expr>,
@@ -5598,6 +5599,13 @@ impl TypeChecker {
                 check_intlike_ty(ty, expr.span, errors);
             }
         };
+
+        if self.retain_rust_byte_slice(base, &base_ty, span).is_some() {
+            check_component(start_ty.as_ref(), slice.start.as_deref(), &mut self.errors);
+            check_component(end_ty.as_ref(), slice.end.as_deref(), &mut self.errors);
+            check_component(step_ty.as_ref(), slice.step.as_deref(), &mut self.errors);
+            return ResolvedType::Bytes;
+        }
 
         match base_ty {
             ty if self.is_user_operator_receiver(&ty) => {

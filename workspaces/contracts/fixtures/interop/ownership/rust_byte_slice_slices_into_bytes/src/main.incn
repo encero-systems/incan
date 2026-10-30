@@ -1,0 +1,20 @@
+# behavior: slicing a borrowed Rust &[u8] gives bytes copied out of the borrowed view
+# expect-stdout:
+#   true
+#   5
+#   true
+#   true
+
+from rust::byte_views import Window
+
+
+def main() -> None:
+    """Copy a native borrowed view into independent bytes, retaining omitted and negative bounds."""
+    window = Window.new()
+    part: bytes = window.view()[0:5]
+    println(part == b"incan")
+    println(len(part))
+    reversed: bytes = window.view()[4::-1]
+    println(reversed == b"nacni")
+    empty: bytes = window.view()[5:5]
+    println(empty == b"")

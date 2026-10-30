@@ -379,10 +379,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_assign_temp(bir::Rvalue::Format(ir_parts), ty, scope, hir_span_value, out)
     }
 
-    /// Lower `base[start:end:step]` (each component independently optional) into a value read through a
-    /// [`bir::PlaceElem::Slice`] projection, mirroring how `Expr::Index` builds an `[index]`-projected place read
-    /// in [`Self::lower_expr_to_operand`] (including that same arm's index-before-base evaluation order, extended
-    /// here to start-then-end-then-step-then-base).
+    /// Lower `base[start:end:step]` through its checked native call or a builtin [`bir::PlaceElem::Slice`] projection.
+    /// Native targets and dereference steps come only from the checker. Both routes retain independently optional
+    /// parts and the builtin start-then-end-then-step-then-base evaluation order, extending `Expr::Index`'s
+    /// index-before-base order in [`Self::lower_expr_to_operand`].
     pub(super) fn lower_slice(
         &mut self,
         base: &ast::Spanned<ast::Expr>,
@@ -391,6 +391,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        if let Some(call) = self.type_info.rust.checked_calls.get(&span).cloned() {
+            return self.lower_checked_slice(base, slice, &call, span, scope, out);
+        }
         let start = slice.start.as_ref().map(|e| {
             let value = self.lower_expr_to_operand(e, scope, out);
             Box::new(self.retain_evaluated_value_read(e, value, scope, out))
@@ -408,6 +411,60 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(span);
         let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
         bir::Operand::place(place, fact, last_use)
+    }
+
+    /// Materialize a checked native slice as its already selected call. Parts retain builtin start/end/step-before-base
+    /// evaluation order and typed absent endpoints; the borrowed receiver follows only checked adjustment calls.
+    fn lower_checked_slice(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        slice: &ast::SliceExpr,
+        call: &crate::typechecker::RustCheckedCall,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let option_int = IncanType::Generic {
+            base: "Option".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        };
+        let mut parts = Vec::new();
+        for part in [&slice.start, &slice.end, &slice.step] {
+            let value = match part {
+                Some(expression) => {
+                    let payload = self.lower_expr_to_operand(expression, scope, out);
+                    let payload = self.retain_evaluated_value_read(expression, payload, scope, out);
+                    bir::Rvalue::Aggregate(bir::AggregateKind::OptionSome, fixed_elements(vec![payload]))
+                }
+                None => bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::None)),
+            };
+            parts.push(self.push_assign_temp(value, option_int.clone(), scope, hir_span(span), out));
+        }
+        let mut receiver = match self.lower_native_adjustment_value(base, &call.receiver_adjustments, scope, out) {
+            Ok(value) => value,
+            Err(reason) => return self.unsupported_operand(reason, scope, hir_span(span), out),
+        };
+        if let bir::Operand::Place(read) = &mut receiver {
+            self.retain_argument_borrow(read, false);
+        }
+        let mut arguments = vec![bir::ArgumentElement::One(receiver)];
+        arguments.extend(parts.into_iter().map(bir::ArgumentElement::One));
+        self.emit_checked_rust_call(
+            call,
+            arguments,
+            bir::ArgumentBinding::resolved_positional(4),
+            span,
+            scope,
+            out,
+        )
+        .unwrap_or_else(|| {
+            self.unsupported_operand(
+                "native slice without checked storage".to_string(),
+                scope,
+                hir_span(span),
+                out,
+            )
+        })
     }
 
     /// Lower `expr?` (`ast::Expr::Try`) into a single [`bir::StatementKind::TryPropagate`] primitive rather than
