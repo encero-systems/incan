@@ -135,7 +135,7 @@ pub def read_registry_units(
         if unit.directory not in search:
             search.append(unit.directory)
     record_work("registry_index", path.0, clock)
-    completed = complete_legacy(units)?
+    completed = complete_legacy(units, path)?
     registry = RegistryUnits(
         units=completed,
         search=search,
