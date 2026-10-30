@@ -78,6 +78,9 @@ A requirement must match an available toolchain registry unit. Declaration does 
 | `profile` | String | Authored profile intent; CLI unit commands default to `debug` and accept `--profile`. |
 | `rust-edition` | String | Authored Rust edition intent. |
 | `registry-lock` | Nonempty string | Path to an `incan.oven.closure/1` producer record, relative to the project or absolute. Its `units` select exact registry `entry` identities in `host` or `target` domains, overriding the installation's standard selection. Missing entries, incompatible requirements and undecided ambiguities are refused. Omitted by default. |
+| `unstable-features` | Array of distinct Rust identifiers | Unstable features of the pinned compiler that the Loaf's Incan units enable, such as `rustc_private`. Empty by default. |
+| `toolchain-components` | Array of distinct component names | Components of the pinned toolchain that the Loaf's Incan units require, such as `rustc-dev`. A name uses ASCII letters, digits, `-` and `_`. Empty by default. |
+| `sysroot-dependencies` | Array of distinct Rust identifiers | Libraries of the pinned toolchain that the Loaf's Incan units link, such as `rustc_driver`. Empty by default. |
 
 Declaring a target or profile does not install its artifacts.
 
@@ -91,7 +94,7 @@ Accepted fields are `name`, `type`, `edition`, `source`, `bin` and `lib`. `name`
 
 `[rust.source]` accepts a required string `root`, relative to the project. The library source is `src/lib.rs` under that directory, or under the project when `root` is omitted. `rust.lib` does not override this discovery.
 
-Each `[[rust.bin]]` requires string fields `name` and `path`; the source path is relative to the project. `unstable_features` and `sysroot_dependencies` are optional string lists, empty by default. A nonempty list enables unstable-feature compilation or pinned-sysroot library linking, respectively, for the project's Rust binaries.
+Each `[[rust.bin]]` requires string fields `name` and `path`; the source path is relative to the project. It also accepts `unstable_features`, `toolchain_components` and `sysroot_dependencies`, which take the values of the `[build]` keys spelled with hyphens. Other keys are refused. A nonempty `unstable_features` or `sysroot_dependencies` enables unstable-feature compilation or pinned-sysroot library linking, respectively, for the project's Rust binaries.
 
 ## `[vocab]`
 

@@ -38,8 +38,9 @@ from rust_target import (
     inherited_deployment_selection,
     target_configuration,
 )
-from toml_fields import optional_string, optional_strings, read_manifest, required_string
+from toml_fields import optional_string, read_manifest, required_string
 from toolchain import NativeCrate, Toolchain, load_toolchain, located
+from toolchain_access import BINARY_SEPARATOR, read_access
 from unit_freshness import (
     Key,
     artifact_identity,
@@ -362,26 +363,25 @@ def library_type(document: TomlValue, library: Path) -> Result[str, str]:
 
 
 def read_binaries(document: TomlValue, root: Path) -> Result[RustBinaries, str]:
-    """The `[[rust.bin]]` crates, and whether any needs unstable features or the toolchain's own libraries."""
+    """The `[[rust.bin]]` crates, and whether any declares unstable features or links the toolchain's own libraries."""
+    manifest = root.joinpath("loaf.toml").0
     mut crates: list[Tuple[str, str]] = []
     mut unstable = false
     mut sysroot = false
-    for binary in declared_binaries(document)?:
+    binaries = declared_binaries(document)?
+    for index in range(len(binaries)):
+        binary = binaries[index]
         name = required_string(binary, "name")?
         path = required_string(binary, "path")?
         crates.append((name, root.joinpath(path).0))
-        if declares_any(binary, "unstable_features")?:
+        values = binary.as_table().map_err((error) => error.message())?
+        field = ["rust", "bin", str(index)]
+        access = read_access(values, BINARY_SEPARATOR, manifest, field).map_err((error) => error.message())?
+        if len(access.unstable_features) > 0:
             unstable = true
-        if declares_any(binary, "sysroot_dependencies")?:
+        if len(access.sysroot_dependencies) > 0:
             sysroot = true
     return Ok(RustBinaries(crates=crates, unstable=unstable, sysroot=sysroot))
-
-
-def declares_any(table: TomlValue, key: str) -> Result[bool, str]:
-    """Whether a manifest table declares a non-empty list of strings at `key`."""
-    match optional_strings(table, key)?:
-        Some(names) => return Ok(len(names) > 0)
-        None => return Ok(false)
 
 
 pub def facet_slot(facet: LocalFacet, profile: str) -> str:
