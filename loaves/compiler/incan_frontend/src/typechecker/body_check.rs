@@ -690,8 +690,10 @@ mod tests;
 
 /// A completed local output and its separately ordered settlement diagnostics. Publication consumes this value only
 /// after the local checker and the effect producer have finished; it never enters `check_callable_body` again.
+/// Body IR combines these local facts with separate declaration and BodyFacts inputs. Later module publication
+/// projections, including native-newtype and empty-list facts, are not recreated by this view.
 #[derive(Debug, Clone)]
-pub(super) struct CheckedBodyView {
+pub(crate) struct CheckedBodyView {
     local: Arc<BodyLocal>,
     effect_reads: super::mut_arguments::MutEffectReads,
     mutation: Vec<(usize, CompileError)>,
@@ -962,4 +964,90 @@ fn append_ordered_decisions(
             .iter()
             .map(|(order, error)| (current + (order - old), error.clone())),
     );
+}
+
+impl TypeChecker {
+    /// Read a callable's settled statement result by its revision-local declaration span. A missing result means
+    /// this activation has not settled that body or the declaration has no body; this accessor never checks it.
+    pub(crate) fn checked_body(&self, declaration: Span) -> Option<&CheckedBodyView> {
+        self.checked_bodies
+            .iter()
+            .find(|body| body.local.owner == declaration)
+            .map(AsRef::as_ref)
+    }
+
+    /// Read settled declaration/default/initializer facts independently of statement facts. The span belongs to this
+    /// checked source revision; callers must use the record adapter's identity and position binding across edits.
+    pub(crate) fn checked_declaration(&self, declaration: Span) -> Option<&CheckedBodyView> {
+        self.checked_declarations
+            .iter()
+            .find(|body| body.local.owner == declaration)
+            .map(AsRef::as_ref)
+    }
+}
+
+impl CheckedBodyView {
+    /// Revision-local declaration span selecting this immutable local result, never a persistent semantic key.
+    pub(crate) fn owner(&self) -> Span {
+        self.local.owner
+    }
+
+    /// Settled local expression, ownership, destination and control-flow facts. Shared declaration inputs remain with
+    /// their own producer and are not recreated or copied into this view.
+    pub(crate) fn expressions(&self) -> &ExpressionArtifacts {
+        &self.local.expressions
+    }
+
+    /// Local canonical references and write-target identities used by Body IR construction.
+    pub(crate) fn references(&self) -> &ReferenceArtifacts {
+        &self.local.references
+    }
+
+    /// Local checked calls, substitutions, argument carriers and constructor decisions.
+    pub(crate) fn calls(&self) -> &CallArtifacts {
+        &self.local.calls
+    }
+
+    /// Local checked iteration, indexing and operator protocol facts.
+    pub(crate) fn protocols(&self) -> &ProtocolArtifacts {
+        &self.local.protocols
+    }
+
+    /// Local Rust-call and coercion facts; shared Rust declaration inputs stay with their declaration views.
+    pub(crate) fn rust(&self) -> &RustInteropArtifacts {
+        &self.local.rust
+    }
+
+    /// Local trait-dispatch and result-carrier decisions, excluding shared trait declarations.
+    pub(crate) fn traits(&self) -> &TraitArtifacts {
+        &self.local.traits
+    }
+
+    /// Local verified C-boundary uses; declared native binding facts remain separate inputs.
+    pub(crate) fn c_abi(&self) -> &CAbiInteropArtifacts {
+        &self.local.c_abi
+    }
+
+    /// Read a checked sum-iterator item carrier owned by this body, without consulting another body or a module map.
+    pub(crate) fn iterator_sum_item(&self, expression: Span) -> Option<&ResolvedType> {
+        self.local.iterator_sum_items.get(&expression)
+    }
+
+    /// Read a nested declaration's canonical identity from this owner's checked lexical facts.
+    pub(crate) fn nested_declaration_identity(
+        &self,
+        declaration: Span,
+    ) -> Option<&incan_semantics_core::CanonicalSymbolId> {
+        self.local.nested.get(&declaration)
+    }
+
+    /// Whether local checking or deferred settlement refused this owner. Successful checking of another owner does
+    /// not turn a refused result into usable Body IR input. A false result does not establish whole-module admission;
+    /// declaration and module refusals remain independent inputs.
+    pub(crate) fn is_refused(&self) -> bool {
+        !self.local.diagnostics.is_empty()
+            || !self.mutation.is_empty()
+            || !self.dictionary.is_empty()
+            || !self.open.is_empty()
+    }
 }

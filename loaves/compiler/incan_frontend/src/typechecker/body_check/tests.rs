@@ -56,6 +56,23 @@ impl TypeChecker {
                 );
             }
         }
+        for declaration in &program.declarations {
+            let crate::ast::Declaration::Function(function) = &declaration.node else {
+                continue;
+            };
+            let statement = checker
+                .checked_body(declaration.span)
+                .ok_or("missing settled statement view")?;
+            let declaration_view = checker
+                .checked_declaration(declaration.span)
+                .ok_or("missing settled declaration view")?;
+            assert_eq!(statement.owner(), declaration.span);
+            assert_eq!(statement.is_refused(), function.name == "refused");
+            assert!(
+                !declaration_view.is_refused(),
+                "a body refusal belongs to its statement result"
+            );
+        }
         for body in &checker.checked_bodies {
             assert!(
                 checker.checked_declarations.iter().all(|owner| {
