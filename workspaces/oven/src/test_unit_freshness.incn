@@ -361,6 +361,7 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     helper = reconcile(scratch.path(), testing)?
     assert helper.key != before.key
     verify_refusal_replay(scratch.path().joinpath("refusals"))?
+    verify_relocated_refusal(scratch.path().joinpath("relocated-refusals"))?
     verify_check_replay(scratch.path().joinpath("checks"))?
     verify_import_records(scratch.path().joinpath("imports"))?
     return Ok(None)
@@ -497,6 +498,55 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     after_missing = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
     assert after_missing == before_missing + "xx"
     return Ok(None)
+
+
+def verify_relocated_refusal(scratch: Path) -> Result[None, str]:
+    """
+    A refusal retained in one project replays in a copy at another path in the copy's own locations, byte for byte
+    what a fresh compilation of the copy prints. The counted compiler names the description and an entry beside it.
+    """
+    first = fixture(scratch.joinpath("first"))?
+    second = fixture(scratch.joinpath("second"))?
+    attempts = scratch.joinpath("attempts")
+    driver = Path(first.toolchain.driver)
+    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    script += f"printf x >> '{attempts.0}'\nprintf 'incan.compiler-refusal/1\\n' > \"$7\"\n"
+    script += "printf 'refused: %s\\n' \"$2\"; printf '%s/src/main.incn:1:1: refused\\n' \"${2%/target/*}\" >&2\nexit 1\n"
+    write(driver, script)?
+    make_executable(driver)?
+    mut producer = first.toolchain
+    producer.console = scratch.joinpath("produced").0
+    mut consumer = second.toolchain
+    consumer.driver = driver.0
+    consumer.console = scratch.joinpath("replayed").0
+    produced = unit_key(first.unit, producer)?
+    relocated = unit_key(second.unit, consumer)?
+    assert produced.digest == relocated.digest, "the same project at another path has another key"
+    cache = scratch.joinpath("bakery")
+    options = ["--library"]
+    assert compile_or_replay(first.unit, producer, located(first), options, cache, produced, "test")? == 1
+    assert compile_or_replay(second.unit, consumer, located(second), options, cache, relocated, "test")? == 1
+    assert read(attempts)? == "x"
+    mut fresh = consumer
+    fresh.console = scratch.joinpath("fresh").0
+    alone = scratch.joinpath("fresh-bakery")
+    assert compile_or_replay(second.unit, fresh, located(second), options, alone, relocated, "test")? == 1
+    assert read(attempts)? == "xx"
+    replayed = console_streams(consumer)?
+    assert replayed == console_streams(fresh)?
+    assert second.root.0 in replayed and first.root.0 not in replayed, replayed
+    return Ok(None)
+
+
+def located(setup: Fixture) -> list[str]:
+    """A compilation request whose description lives in the project's own target, as Oven writes it."""
+    description = setup.root.joinpath("target").joinpath("incan").joinpath("units").joinpath("app.json")
+    return ["--unit", description.0, "app", "app.rlib", setup.toolchain.sysroot]
+
+
+def console_streams(toolchain: Toolchain) -> Result[str, str]:
+    """The stdout and stderr a request-local console received, as one text."""
+    return Ok(read(Path(f"{toolchain.console}.out"))? + "\n--\n" + read(Path(f"{toolchain.console}.err"))?)
 
 
 def verify_check_replay(scratch: Path) -> Result[None, str]:
