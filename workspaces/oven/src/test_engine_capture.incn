@@ -1,5 +1,6 @@
 """Request capture contracts: frozen inputs are never touched, and an editable one is read only when it changed."""
 
+from rust::std::fs import hard_link, remove_file
 from std.fs import Path
 from files import make_directory, read, write
 from scratch import scratch_directory
@@ -184,6 +185,19 @@ pub def test_an_edited_file_gets_a_new_digest() -> Result[None, str]:
     return Ok(None)
 
 
+def relinking(path: Path) -> Result[bytes, str]:
+    """
+    Read a file; reading a `helper.incn` adds a hard link to it and removes it again, as a concurrent move does. That
+    changes the file's status change time and nothing else.
+    """
+    content = path.read_bytes().map_err((error) => error.message())?
+    if path.name() == "helper.incn":
+        link = path.parent().joinpath("helper.moving")
+        hard_link(path.0, link.0).map_err((error) => str(error))?
+        remove_file(link.0).map_err((error) => str(error))?
+    return Ok(content)
+
+
 def disturbing(path: Path, always: bool) -> Result[bytes, str]:
     """
     Read a file; reading a `helper.incn` appends to it afterwards, as a concurrent editor would: every time, or once
@@ -215,6 +229,22 @@ pub def test_a_file_changing_during_its_read_is_retried_then_reported_unstable()
     assert always.unstable == [helper.0] and always.epoch is None
     assert always.counters.retries == READ_ATTEMPTS - 1
     assert always.counters.in_reach.reads == 4 + READ_ATTEMPTS
+    return Ok(None)
+
+
+pub def test_a_status_change_during_a_read_is_not_a_change_of_the_file() -> Result[None, str]:
+    """A concurrent move that only changes a file's status change time does not make its read unstable or retried."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    helper = app.joinpath("src/helper.incn")
+    request = run_request(app.joinpath("src/main.incn"), [LookupWitness(path=helper.0, resolved=true)])
+    moved = capture_with(request, None, admitted, 0, (path) => relinking(path))?
+    assert moved.outcome == CaptureOutcome.Changed and moved.counters.retries == 0
+    epoch = epoch_of(moved)?
+    # The recorded metadata are those after the read, so the next capture finds the file unchanged.
+    again = capture(request, Some(epoch), admitted, 0)?
+    assert again.outcome == CaptureOutcome.Unchanged and again.counters.in_reach.reads == 0
     return Ok(None)
 
 
