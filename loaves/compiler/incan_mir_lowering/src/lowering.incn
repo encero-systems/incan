@@ -14301,7 +14301,7 @@ def bind_enum_fields(
                     value = boundary_plan_operand(builder, payload, ty, span)?
                     track_rvalue_moves(builder, RvalueKind.Use(value))
                     builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
-                    if ty == PlanType.String or is_nominal_type(ty):
+                    if ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty):
                         builder.owned.append(local)
             _ =>
                 if pattern_binds(fields[slot]):
