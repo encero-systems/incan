@@ -203,6 +203,17 @@ impl TypeChecker {
     ) -> Result<(), Vec<crate::diagnostics::CompileError>> {
         let preserve_dependencies = std::mem::take(&mut self.dependency_semantics_pending);
         self.reset_program_check(program, preserve_dependencies);
+        self.legacy_collect_program_declarations(program);
+        self.prepare_program_body_facts();
+        self.check_program_declaration_bodies(program);
+        self.legacy_record_program_lowering_facts(program);
+        let result = self.finish_program_check(program);
+        self.clear_nominal_identity_cache();
+        result
+    }
+
+    /// Collect fresh legacy headers without extracted influence scans or early publication.
+    pub(super) fn legacy_collect_program_declarations(&mut self, program: &crate::ast::Program) {
         self.prepare_program_declaration_names(program);
         if !self.pending_trait_supertraits.is_empty() {
             self.resolve_pending_trait_supertraits();
@@ -217,12 +228,6 @@ impl TypeChecker {
         self.validate_static_dependencies();
         self.collect_testing_fixture_names(program);
         self.legacy_plan_closure_holding_callables(program);
-        self.prepare_program_body_facts();
-        self.check_program_declaration_bodies(program);
-        self.legacy_record_program_lowering_facts(program);
-        let result = self.finish_program_check(program);
-        self.clear_nominal_identity_cache();
-        result
     }
 
     /// Install the legacy requirements exactly where the original declaration pass did, without the new influence

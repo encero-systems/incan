@@ -52,6 +52,7 @@ mod check_stmt;
 mod collect;
 mod collection_annotations;
 mod const_eval;
+mod declaration_views;
 mod decorated_method_receivers;
 mod derive_contract;
 mod derive_requirements;
@@ -71,6 +72,7 @@ mod reachability;
 mod receiver_change;
 mod reserved_names;
 mod source_signatures;
+pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
 mod trait_bound_relations;
 mod type_info;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
@@ -702,6 +704,8 @@ pub struct TypeChecker {
     pub const_eval_cache: HashMap<String, const_eval::ConstEvalResult>,
     /// Reusable typechecker output for downstream stages.
     pub type_info: TypeCheckInfo,
+    /// Current source-order boundary for borrowed declaration/environment readers.
+    visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.
     pub dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
     /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
@@ -1028,6 +1032,7 @@ impl TypeChecker {
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
+            visibility_point: VisibilityPoint::default(),
             dependency_exports: HashMap::new(),
             dependency_member_symbols: HashMap::new(),
             dependency_member_type_aliases: HashMap::new(),
@@ -3105,8 +3110,7 @@ impl TypeChecker {
     ///   - `symbols.lookup(name)` → `Option<SymbolId>`
     ///   - `symbols.get(id)` → `Option<&Symbol>`
     pub fn lookup_symbol(&self, name: &str) -> Option<&Symbol> {
-        let id = self.symbols.lookup(name)?;
-        self.symbols.get(id)
+        self.check_environment().lookup(name).map(|binding| binding.symbol)
     }
 
     /// Return the generic-parameter name for a type-like placeholder visible in the current scope.
@@ -7076,16 +7080,20 @@ impl TypeChecker {
         self.collect_program_check_declarations(program);
         self.record_program_header_facts();
         self.record_source_declaration_identities(program);
+        self.visibility_point = VisibilityPoint::Collected;
         self.prepare_program_body_facts();
         self.check_program_declaration_bodies(program);
         self.record_program_lowering_facts(program);
-        self.finish_program_check(program)
+        let result = self.finish_program_check(program);
+        self.visibility_point = VisibilityPoint::Finished;
+        result
     }
 
     /// Clear per-program observations before collecting declarations. Dependency semantic inventories survive only
     /// for an explicitly prepared imported program; symbol registration and alias validation keep their prior order.
     fn reset_program_check(&mut self, program: &Program, preserve_dependency_semantics: bool) {
         self.check_work = CheckWork::default();
+        self.visibility_point = VisibilityPoint::Collecting;
         self.checking_nominal_scope.get_mut().take();
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
@@ -7214,12 +7222,12 @@ impl TypeChecker {
         self.validate_source_type_names = true;
         for decl in &program.declarations {
             if matches!(decl.node, Declaration::Const(_)) {
-                self.check_declaration(decl);
+                self.check_environment_declaration(decl);
             }
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
-                self.check_declaration(decl);
+                self.check_environment_declaration(decl);
             }
         }
         self.resolve_mut_arguments();
