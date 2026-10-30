@@ -2,13 +2,15 @@
 
 from rust::std::fs import OpenOptions, metadata
 from rust::std::process import Command
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, read, remove, write as write_file
 from compiler_refusals import check_or_replay, compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
 from intake import ManifestReader
-from observation import file_digest, load_ledger
+from observation import SETTLE_SECONDS, file_digest, load_ledger, now_seconds, observe
 from vocabulary import published_workers, stage_vocabulary
 from native_closure_input import NativeClosureInput, native_bindings
 from standalone_rust import published_bindings
@@ -37,6 +39,7 @@ from rust_units import (
 )
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
+from rust_target import compiler_version, deployment_target
 from toolchain import NativeCrate, Toolchain, admit_compiler_facts, read_toolchain
 from compiler_facts import admit_fact
 from unit import UnitDescription, UnitLoaf
@@ -611,7 +614,10 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
 
 
 pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
-    """Compiler, native, ABI, recorded producer selection and target changes each invalidate a unit's generation."""
+    """
+    Compiler, native, ABI, recorded producer selection, target and deployment changes each invalidate a unit's
+    generation, and an unchanged compiler is not asked for its target again.
+    """
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = compiler_fingerprint(setup.toolchain)?
@@ -649,12 +655,68 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     write(Path(setup.toolchain.externs[0].path), "runtime three, once more different")?
     record_payload(Path(setup.toolchain.externs[0].path), fingerprint(["runtime three"])?)?
     assert reconcile(scratch.path(), setup)?.key != before.key
+    # The compiler's own answers are part of its identity, and an unchanged compiler is not asked them again.
+    check_compiler_probes(scratch.path(), setup.toolchain)?
     # Older installed producers can be used locally, but their bytes cannot invent an input identity.
     remove(record_path(Path(setup.toolchain.externs[0].path)))?
     legacy = unit_key(setup.unit, setup.toolchain)?
     assert legacy.digest == ""
     assert "unit identity refused:" in legacy.refusal
     assert "no recorded producer identity" in legacy.refusal
+    return Ok(None)
+
+
+def check_compiler_probes(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
+    """
+    The selected rustc is asked for its version and deployment target once per installation and deployment selection.
+
+    1. A first identification asks rustc both questions; an unchanged repeat asks nothing.
+    2. Another deployment selection is another question, answered once.
+    3. A replaced rustc is asked again, and identifies another compiler.
+    """
+    # 1. The probing rustc records each question it is asked.
+    probes = scratch.joinpath("probes")
+    rustc = scratch.joinpath("rust").joinpath("bin").joinpath("rustc")
+    probing_rustc(rustc, probes, "1.98.0")?
+    settled(rustc)?
+    mut probing = toolchain
+    probing.sysroot = scratch.joinpath("rust").0
+    probing.target = ""
+    first = compiler_fingerprint(probing)?
+    asked = read(probes)?
+    assert asked == "-vV\n--print deployment-target\n"
+    assert compiler_fingerprint(probing)? == first
+    assert read(probes)? == asked
+    # 2. rustc answers the deployment target from the selection it runs with.
+    version = compiler_version(rustc.0)?
+    assert deployment_target(rustc.0, version, [("MACOSX_DEPLOYMENT_TARGET", "12.3")])? == "12.3\n"
+    assert deployment_target(rustc.0, version, [("MACOSX_DEPLOYMENT_TARGET", "12.3")])? == "12.3\n"
+    assert read(probes)? == asked + "--print deployment-target\n"
+    # 3. Another rustc at the same path is another installation.
+    probing_rustc(rustc, probes, "1.98.1")?
+    assert compiler_fingerprint(probing)? != first
+    assert read(probes)? == asked + "--print deployment-target\n" + asked
+    return Ok(None)
+
+
+def probing_rustc(path: Path, probes: Path, release: str) -> Result[None, str]:
+    """Install a rustc that records each question in `probes` and answers its version and deployment target."""
+    mut script = "#!/bin/sh\n" + f"printf '%s\\n' \"$*\" >> '{probes.0}'\n"
+    script += f"[ \"$1\" = -vV ] && printf 'rustc {release}\\nhost: aarch64-apple-darwin\\n' && exit 0\n"
+    script += "printf '%s\\n' \"${MACOSX_DEPLOYMENT_TARGET:-11.0}\"\n"
+    if path.is_file():
+        remove(path)?
+    write(path, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().map_err((error) => str(error))?.success()
+    return Ok(None)
+
+
+def settled(path: Path) -> Result[None, str]:
+    """Wait until `path` is old enough that what is learned from it is retained (see `observation`)."""
+    observed = observe(path)?
+    while now_seconds() < observed.newest + SETTLE_SECONDS:
+        sleep(Duration.from_millis(100))
     return Ok(None)
 
 

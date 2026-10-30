@@ -3,20 +3,12 @@
 from std.fs import Path
 from std.json import JsonValue
 from files import read, remove, write
-from owner_endpoint import (
-    Endpoint,
-    attach,
-    bindable,
-    deployment_configuration,
-    endpoint_for,
-    greeted,
-    socket_prefix,
-    timeout_for,
-)
+from owner_endpoint import Endpoint, attach, bindable, endpoint_for, greeted, socket_prefix, timeout_for
 from owner_protocol import Connection, Reply, Request, listen
 from owner_state import Owner, unchanged, watch
 from scratch import scratch_directory
 from intake import ManifestReader
+from rust_target import deployment_configuration
 from rust_units import registry_record_path
 
 

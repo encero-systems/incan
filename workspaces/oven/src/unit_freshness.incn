@@ -13,16 +13,14 @@ from manifest_vocabulary import manifest_vocabulary
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
 from jec import begin, record as record_work
 from publication import place, publish
-from toolchain import NativeCrate, Toolchain
+from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitDescription
 from unit_publication import published_identity, record_payload
 from source_identity import entry_scope, source_inputs
 from compiler_facts import fact_identity
-from rust_target import deployment_target
+from rust_target import compiler_version, deployment_target, inherited_deployment_selection
 from apple_sdk import selected_sdk
 from std.environ import get_or
-from rust::std::process import Command
-from rust::std::string import String as RustString
 
 const UNIT_DOMAIN: str = "incan.oven.unit/2"
 
@@ -135,8 +133,9 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     # 2. Native dependencies carry identities recorded by their producers, never inferred from payloads.
     natives = native_identities(toolchain.externs)?
     # 3. Registry selection and search directories locate providers; the exact linked identities select them.
+    #    The compiler's own answers are probed once per rustc installation and deployment selection.
     target = compiler_target(toolchain)?
-    facts.extend([target, deployment_target(Path(toolchain.sysroot).joinpath("bin/rustc").0, target)?])
+    facts.extend([target, deployment_target(rust_compiler(toolchain), target, inherited_deployment_selection()?)?])
     return fingerprint(facts + natives + [sdk_content_identity(toolchain.sysroot)?])
 
 
@@ -154,13 +153,7 @@ def compiler_target(toolchain: Toolchain) -> Result[str, str]:
     """Read the installed compiler's version and host without retaining its physical sysroot location."""
     if toolchain.target != "":
         return Ok(toolchain.target)
-    mut command = Command.new(Path(toolchain.sysroot).joinpath("bin/rustc").0)
-    output = command.arg("-vV").output().map_err((error) => str(error))?
-    if not output.status.success():
-        return Err("cannot identify the selected Rust compiler target")
-    match RustString.from_utf8(output.stdout):
-        Ok(value) => return Ok(str(value))
-        Err(error) => return Err(str(error))
+    return compiler_version(rust_compiler(toolchain))
 
 
 pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
