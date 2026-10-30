@@ -1,16 +1,17 @@
-# RFC 165: Indexed graphs and snapshot-bound graph access
+# RFC 166: Indexed graphs and snapshot-bound graph access
 
 - **Status:** Draft
 - **Created:** 2026-10-30
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
+    - RFC 164 (explicit ownership and borrowing contracts)
     - RFC 030 (extended collections)
     - RFC 047 (lightweight directed graph types)
     - RFC 101 (ordinal maps)
     - RFC 106 (compiler-backed context graphs)
     - RFC 115 (fallible iteration)
     - RFC 161 (semantic core IR)
-    - RFC 164 (typed embedded storage)
+    - RFC 165 (typed embedded storage)
 - **Issue:** —
 - **RFC PR:** —
 - **Written against:** v0.6.0-dev.9
@@ -49,7 +50,7 @@ A performant native graph is not merely a native executable holding two lists. F
 ## Non-Goals
 
 - A graph query language, a relational optimizer or a domain relationship vocabulary.
-- A persistence engine inside `std.graph`; RFC 164 owns the standard storage surface.
+- A persistence engine inside `std.graph`; RFC 165 owns the standard storage surface.
 - Inferring ownership, approval, authority, causality or invalidation from an unlabeled structural edge.
 - Requiring every graph to be acyclic, connected, durable or loaded entirely in memory.
 - A UI tree, renderer, event dispatcher, effect runner or automatic distributed synchronization mechanism.
@@ -105,7 +106,7 @@ def region_dependencies() -> Result[RelationGraph[Region, ReadsState], GraphErro
 
 `ReadsState` is one application-declared relationship type; `StateField` is its finite domain vocabulary, not a universal graph predicate. Generic graph storage does not know what editing a title means. A framework may instead use a checked field descriptor when it needs to follow model declarations directly.
 
-For relationships between distinct model families, RFC 164's `Relation[S, T, P]` validates source, target and payload types. Its graph adapter preserves those family and relation identities; it must not accept reversed endpoint types merely because both are encoded as integers.
+For relationships between distinct model families, RFC 165's `Relation[S, T, P]` validates source, target and payload types. Its graph adapter preserves those family and relation identities; it must not accept reversed endpoint types merely because both are encoded as integers.
 
 ### Read only the selected graph
 
@@ -182,9 +183,11 @@ An adapter may normalize backend-specific keys into a tagged key type, but the m
 
 ### Read scopes, ownership and cursor lifetime
 
+RFC 164 owns the proposed explicit borrowing surface. A borrowed in-memory reader and its cursor must preserve their source dependencies. A database reader may instead own a lease retaining one immutable selection and may outlive the local snapshot binding when its complete resource contract permits that escape. Neither `Owned` nor a cursor type name alone proves independent retention. Views into reusable buffers remain borrowed until their last dependent use; advancing must not invalidate them. Concrete reader and cursor declarations must be reviewed against RFC 164, whose syntax remains Draft.
+
 A traversal must observe one consistent read revision. The default in-memory `read_view()` holds a scoped read borrow preventing conflicting mutation and cannot outlive its source. A separate explicit snapshot operation may retain an immutable version with a documented copy or copy-on-write cost. Neither may quietly mix pre-edit and post-edit adjacency, and opening a reader must not conceal a whole-graph copy.
 
-Database readers inherit the snapshot lease and retention guarantees of RFC 164. A cursor must retain the read scope and any frontier state needed to resume safely. Cursor creation, continuation and disposal must account for that state; cursors must not hide unbounded copies of the graph.
+Database readers inherit the snapshot lease and retention guarantees of RFC 165. A cursor must retain the read scope and any frontier state needed to resume safely. Cursor creation, continuation and disposal must account for that state; cursors must not hide unbounded copies of the graph.
 
 Resuming against another snapshot, graph selection, ordering or traversal profile must fail. A caller wanting a newer graph must start a new traversal or explicitly compute a diff. Releasing the last reader/cursor releases its retained state and lease; detached read scopes require explicit ownership transfer rather than a dangling borrow.
 
@@ -206,7 +209,7 @@ Given the same graph revision, selection, ordering and deterministic budgets, pa
 
 ### Observation, dependency evidence and graph changes
 
-Storage-backed observations must be able to contribute to RFC 164 read traces. The trace must include negative node/edge lookups, empty adjacency, selected relation/index profiles and the ranges actually examined. Inserting a new relevant edge must invalidate an observation that previously found no edge.
+Storage-backed observations must be able to contribute to RFC 165 read traces. The trace must include negative node/edge lookups, empty adjacency, selected relation/index profiles and the ranges actually examined. Inserting a new relevant edge must invalidate an observation that previously found no edge.
 
 A graph edge is not automatically an invalidation edge. Consumers must specify the dependency relation and the value projection they subscribed to. A compiler may depend on a declaration's checked signature; a renderer may depend on a title but not the body; a UI region may observe one state field. The graph library must not infer these semantic dependencies from containment or references.
 
@@ -240,7 +243,7 @@ Performance evidence must include narrow and high-degree reads, cold and warm ru
 
 ### Relationship to `std.db`
 
-`std.graph` owns graph structure and algorithms, not storage publication or durable identity. RFC 164's adapter implements the read protocol over selected typed families and indexes. The adapter owns conversion between persistent record references and graph keys; it must preserve snapshot and family scope without allocating a duplicate graph.
+`std.graph` owns graph structure and algorithms, not storage publication or durable identity. RFC 165's adapter implements the read protocol over selected typed families and indexes. The adapter owns conversion between persistent record references and graph keys; it must preserve snapshot and family scope without allocating a duplicate graph.
 
 An application can choose memory graphs, a memory database or a durable database according to its needs. A pure graph dependency must not pull in the database, an analytical backend, a protocol compiler or a UI runtime. The platform substrate must not depend on graph algorithms or a downstream query library merely to store records.
 
@@ -274,14 +277,14 @@ Read scopes, typed failures, cursors and completeness add concepts beyond a smal
 ## Layers affected
 
 - **Standard library:** indexed graph containers, typed edge payloads, the read protocol, bounded algorithms and resource reporting.
-- **Storage adapters:** snapshot-bound reading, typed endpoint preservation, index access and dependency evidence through RFC 164.
+- **Storage adapters:** snapshot-bound reading, typed endpoint preservation, index access and dependency evidence through RFC 165.
 - **Type checking and ownership:** ordinary generic protocol dispatch and safe reader lifetimes; unsupported language requirements must be explicit.
 - **Tooling and contracts:** observable traversal reports, compatibility checks and cross-backend conformance, without claiming a new query language.
 
 ## Unresolved questions
 
 - Which migration window and diagnostics should cover the existing public container fields before their storage representation can become opaque?
-- Which ownership surface can express a scoped reader and its resumable cursor without allowing mutation or escape while that borrow remains live? The default is a scoped read borrow; an unresolved language limitation must be tracked explicitly rather than replaced by a hidden graph copy.
+- Which concrete reader and resumable-cursor declarations instantiate RFC 164's source-dependency contract for memory graphs and owned lease retention for database graphs? RFC 164 owns the general borrowing syntax. The default memory reader remains a scoped read borrow, and neither implementation may substitute a hidden graph copy.
 - Should bounded algorithms expose a fallible iterator in addition to pages at initial adoption? Either surface must preserve identical completeness, resource and scope rules; an iterator must not hide an unbounded frontier.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

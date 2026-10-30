@@ -1,9 +1,10 @@
-# RFC 164: Typed embedded storage with `std.db`
+# RFC 165: Typed embedded storage with `std.db`
 
 - **Status:** Draft
 - **Created:** 2026-10-30
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
+    - RFC 164 (explicit ownership and borrowing contracts)
     - RFC 024 (extensible derive protocol)
     - RFC 047 (lightweight directed graph types)
     - RFC 086 (schema descriptors and adapters)
@@ -13,7 +14,7 @@
     - RFC 124 (store unit identity and cross-plan artifact sharing)
     - RFC 145 (storage lifecycle, retention and compact evidence)
     - RFC 161 (semantic core IR)
-    - RFC 165 (indexed graphs and snapshot-bound graph access)
+    - RFC 166 (indexed graphs and snapshot-bound graph access)
 - **Issue:** —
 - **RFC PR:** —
 - **Written against:** v0.6.0-dev.9
@@ -21,7 +22,7 @@
 
 ## Summary
 
-Introduce `std.db`, an embedded, typed, transactional record store with memory-only and local-durable profiles. Incan models define stored values; explicit identities, immutable revisions, indexed relationships and snapshot-bound reads define how those values are retained and connected. The public standard-library API wraps one generic platform storage substrate rather than creating a second engine. Compiler tooling, document publishers, interactive applications and higher-level query libraries can share that substrate without sharing domain policy, requiring a server, or importing a query engine. RFC 165 defines the graph-reading interface over these records and ordinary in-memory graphs.
+Introduce `std.db`, an embedded, typed, transactional record store with memory-only and local-durable profiles. Incan models define stored values; explicit identities, immutable revisions, indexed relationships and snapshot-bound reads define how those values are retained and connected. The public standard-library API wraps one generic platform storage substrate rather than creating a second engine. Compiler tooling, document publishers, interactive applications and higher-level query libraries can share that substrate without sharing domain policy, requiring a server, or importing a query engine. RFC 166 defines the graph-reading interface over these records and ordinary in-memory graphs.
 
 ## Core model
 
@@ -44,7 +45,7 @@ Application models, producers, query and rendering libraries
                          |
           mapping, durable I/O and coordination
 
-std.db graph views implement RFC 165's storage-independent
+std.db graph views implement RFC 166's storage-independent
 std.graph reading interface; std.graph does not import std.db.
 ```
 
@@ -135,7 +136,7 @@ A publisher can declare a relationship from `Document` records to `Asset` record
 
 The same mechanism can represent a diagnostic referring to a declaration, a surface referring to a model revision, or an activity citing evidence. The database preserves those distinctions; it does not decide that any of them establishes ownership or approval.
 
-RFC 165 exposes indexed traversal of these relationships without exporting every node and edge into a separate graph container.
+RFC 166 exposes indexed traversal of these relationships without exporting every node and edge into a separate graph container.
 
 ### Incremental readers and interactive state
 
@@ -242,6 +243,10 @@ Storage selectors may use declared indexes, key ranges and supported typed predi
 
 Point reads, graph access and projected batches must agree on the same snapshot's logical contents. Batch access must contribute the same kind of selection and negative-read evidence as other reads, so an incremental consumer cannot reuse an answer after newly matching records appear. Efficient batches are a storage capability; parity with an established analytical engine requires separate query-engine and workload evidence.
 
+### Ownership of projected access
+
+RFC 164 owns the proposed explicit borrowing language contract. A projection borrowing a batch or snapshot must retain its checked source dependency. An independently retained batch or cursor may instead own buffer handles and a lease over its immutable selection; ownership of the handle does not require a complete decoded model per row or exclusive allocation of every page. A view into that batch remains bounded by the buffer owner it actually borrows. The compiler must not silently acquire a lease or materialize records to repair an escaping borrow. Concrete projection signatures must be reviewed against RFC 164 before either draft is treated as a complete implementation contract.
+
 ### Read traces, changes and invalidation
 
 A trace must identify its snapshot, schema and index profiles, selectors and the aspects actually read: whole value, declared field projection, existence, ordered range, relationship direction or named configuration. It must include successful reads, absent lookups and selection boundaries. A new record matching a previously empty selector must invalidate an observation of that empty selection.
@@ -302,7 +307,7 @@ No elapsed-time improvement is established by a zero-copy counter alone. Cold, w
 
 ### Module and dependency boundaries
 
-`incan_platform.store` owns one generic substrate implementation. `std.db` owns the public typed API and does not call compiler services or a higher-level query library. `std.graph` remains storage-independent; the database supplies a graph adapter implementing RFC 165. Generic mechanisms must not contain consumer names, model families or policies.
+`incan_platform.store` owns one generic substrate implementation. `std.db` owns the public typed API and does not call compiler services or a higher-level query library. `std.graph` remains storage-independent; the database supplies a graph adapter implementing RFC 166. Generic mechanisms must not contain consumer names, model families or policies.
 
 The database must be a separately selectable standard-library capability. Importing an unrelated standard module must not select it. The dependency closure must not require DataFusion, Substrait, `protoc`, SQL support or a renderer. Build receipts must make the selected closure verifiable.
 
@@ -344,7 +349,7 @@ The standard library would acquire a long-lived storage-format and recovery comm
 
 ## Unresolved questions
 
-- What is the precise author-facing type for a borrowed typed field projection, given the existing borrowing and declaration-metadata contracts? Ordinary `get` is owned; this question does not change that materialization boundary.
+- Which concrete field and batch projection signatures instantiate RFC 164's borrowing contract, and which explicitly own buffer retention? RFC 164 owns the general syntax and lifetime questions. Ordinary `get` is owned; this question does not change that materialization boundary.
 - Which existing schema-descriptor facilities are sufficient for `Record`, and which require a separately specified extension before its derive can be accepted? There must be no compiler-private descriptor shortcut.
 - Which filesystem and target profiles will claim local-durable support at first adoption, and what independently reproducible power-loss evidence is required for each?
 
