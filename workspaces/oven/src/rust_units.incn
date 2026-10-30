@@ -15,7 +15,7 @@ from std.fs import Path
 from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
-from codegen import remap_arguments, rust_arguments, unit_metadata
+from codegen import remap_arguments, rust_arguments, rust_incremental_arguments, rust_metadata, unit_metadata
 from driver_command import driver_command
 from files import json_text, parse_json, read, read_json
 from home import dependency_artifact_dir, unit_ledger
@@ -924,7 +924,7 @@ def installed_rust_library(
     # 2. A filename selects a candidate; only the complete producer proof authorizes its reuse.
     directory = artifact.parent()
     reading = directory.lock_exclusive().map_err((error) => error.message())?
-    arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
+    arguments = library_compile_arguments(facet, declared, directory, request, built, search, false)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain).map_err(
         (error) => f"installed native {declared.crate_name} has no current producer proof: {error}",
@@ -975,12 +975,16 @@ pub def library_compile_arguments(
     request: RustBuild,
     built: Dict[str, BuiltUnit],
     search: list[str],
+    iteration: bool = true,
 ) -> Result[list[str], str]:
-    """Frame one facet's exact native command for both local production and installed-producer verification."""
+    """Frame one facet's native command; immutable installed producers retain their qualification policy."""
     unit = artifact_context(facet, declared, request.profile)?
     dependencies = directory.joinpath("library.d")
     arguments = library_arguments(declared)
-    outputs = ["--out-dir", directory.0, "-C", "metadata=incan-unit", "-C", f"extra-filename=-{unit}"]
+    mut metadata = "metadata=incan-unit"
+    if iteration:
+        metadata = rust_metadata(request.profile, unit + "-" + declared.version)
+    outputs = ["--out-dir", directory.0, "-C", metadata, "-C", f"extra-filename=-{unit}"]
     return Ok(
         arguments + outputs + ["--emit", f"link,dep-info={dependencies.0}"] + linking(facet, request, built, search)? + remap_arguments(
             facet.project,
@@ -993,7 +997,7 @@ pub def artifact_context(facet: LocalFacet, declared: RustFacet, profile: str) -
     Name compiler outputs by their location-independent selection context, never a source directory hash.
 
     rustc records its extra filename in crate metadata, so it is a real invocation fact rather than mere provenance.
-    The full unit identity, separately derived from all effective inputs, controls rustc's symbol disambiguator.
+    The full unit identity controls qualification's symbol disambiguator; iteration keeps this context stable.
     """
     digest = fingerprint(
         [declared.crate_name, declared.edition, declared.kind, facet.domain.value()] + sorted(facet.features) + rust_arguments(
@@ -1186,7 +1190,9 @@ def compile_local_rust_library(
     identified = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
     trace(f"unit {declared.crate_name} rust: compiled identity={identified.digest} (no current library proof)")
     pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
-    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + materialized_arguments(
+    scratch = incremental_directory(request, facet, "library")
+    incremental = rust_incremental_arguments(scratch, arguments)
+    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + incremental + materialized_arguments(
         arguments,
         identified,
     )
@@ -1387,7 +1393,14 @@ pub def compile_binary(
         "-o",
         staged.0,
     ]
-    invoke_rustc(request.rustc, emitted, environment, declared.unstable, name)?
+    scratch = incremental_directory(request, facet, output_name)
+    invoke_rustc(
+        request.rustc,
+        emitted + rust_incremental_arguments(scratch, arguments),
+        environment,
+        declared.unstable,
+        name,
+    )?
     current = binary_key(output_name, directory, staged_dependencies, facet, declared, request, arguments, environment)?
     if (
         current.digest != inputs.digest
@@ -1397,6 +1410,12 @@ pub def compile_binary(
     install_all([staged, staged_dependencies], outputs, stamp, current)?
     println(f"compiled {name}")
     return Ok(binary.0)
+
+
+def incremental_directory(request: RustBuild, facet: LocalFacet, role: str) -> Path:
+    """Keep per-unit rustc scratch in the requesting build's target, even when artifacts publish into a home."""
+    slot = facet_slot(facet, request.profile)
+    return rust_output(Path(request.project), request.profile).joinpath("incremental").joinpath(f"{slot}-{role}")
 
 
 pub def binary_arguments(
@@ -1424,8 +1443,11 @@ pub def binary_arguments(
         return Err(f"Rust test graph has no selected production library {library}")
     if library in built and (not testing or source != declared.library):
         selected = selected + ["--extern", f"{declared.crate_name}={built[library].artifact}"]
+    mut context = artifact_context(facet, declared, request.profile)? + "-" + declared.version + "-" + name
+    if testing:
+        context = context + "-test"
     return Ok(
-        selected + ["-C", "metadata=incan-unit"] + linking(facet, request, built, search)? + remap_arguments(
+        selected + ["-C", rust_metadata(request.profile, context)] + linking(facet, request, built, search)? + remap_arguments(
             facet.project,
         ),
     )

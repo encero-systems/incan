@@ -7,6 +7,8 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export LC_ALL=C
+# Qualification never inherits a developer's Rust iteration policy.
+export INCAN_RUST_INCREMENTAL=0
 
 fail() {
     echo "release-dev8: $*" >&2
