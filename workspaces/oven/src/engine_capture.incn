@@ -32,6 +32,7 @@ from intake import parse_document
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
 from toolchain import Toolchain, described_toolchain, toolchain_file
+from unit import manifest_candidates
 
 const EPOCH_SCHEMA: str = "incan.engine.build-epoch/1"
 # How many times a file that changes while it is read is read before it is reported unstable.
@@ -441,7 +442,7 @@ model Capture:
             match self.editable(path, InputRole.Root)?:
                 Admission.Missing => return Err(f"{path}: no such source file")
                 _ => pass
-            _ = self.manifest_lookup(Path(path).parent(), previous)?
+            _ = self.manifest_lookup(Path(path), previous)?
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
@@ -449,17 +450,11 @@ model Capture:
             return Err(f"{manifest}: no such manifest")
         return Ok([self.source_root(path)?])
 
-    def manifest_lookup(mut self, start: Path, previous: Option[BuildEpoch]) -> Result[bool, str]:
-        """Look for `loaf.toml` at `start` and upward, as the unit description does; each miss is an absent lookup."""
-        mut directory = start
-        while true:
-            candidate = directory.joinpath("loaf.toml").0
-            if not self.is_frozen(candidate) and self.manifest(candidate, previous)?:
+    def manifest_lookup(mut self, source: Path, previous: Option[BuildEpoch]) -> Result[bool, str]:
+        """Look up the manifest of `source` where the unit description does; each miss is an absent lookup."""
+        for candidate in manifest_candidates(source):
+            if not self.is_frozen(candidate.0) and self.manifest(candidate.0, previous)?:
                 return Ok(true)
-            parent = directory.parent()
-            if parent.0 == directory.0 or parent.0 in ["", "."]:
-                return Ok(false)
-            directory = parent
         return Ok(false)
 
     def manifest(mut self, path: str, previous: Option[BuildEpoch]) -> Result[bool, str]:
