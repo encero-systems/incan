@@ -30,9 +30,10 @@ against the latest generation and installing segment, pages, manifest and `CURRE
 in that order. A transaction whose writes are all already present commits nothing and adds no bytes.
 """
 
-from rust::std::process import id
+from rust::std::process import id, exit as process_exit
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
+from std.environ import get_or
 from std.fs import Path
 from std.fs.locking import FileLock
 from std.hash import file_digest, sha256
@@ -48,7 +49,6 @@ const ENTRY_BYTES: int = 88
 const HEADER_BYTES: int = 16
 const KIND_VALUE: int = 0
 const KIND_TOMBSTONE: int = 1
-
 pub const HOME_VIEW: str = "home"
 pub const EXPECT_ANY: int = 0
 pub const EXPECT_ABSENT: int = 1
@@ -164,12 +164,14 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
     """
     The committed generation `CURRENT` selects, seen through `view`, validated.
 
-    A store with no `CURRENT` is empty. An unreadable or malformed `CURRENT`, a manifest whose digest differs or an
+    An uninitialized store is empty. A missing committed `CURRENT`, an unreadable or malformed pointer, or an
     unknown format is refused; none of them is read as an empty store. A view the generation does not name is empty.
     """
     check_format(root)?
     pointer = root.joinpath("CURRENT")
-    if not pointer.is_file():
+    if not pointer.exists() and not pointer.is_symlink():
+        if root.joinpath("FORMAT").exists():
+            return Err(failure("integrity", pointer.0, "committed store has no CURRENT pointer"))
         return Ok(Snapshot(root=root, generation=0, digest="", view=view, index="", segments=[], views=[]))
     text = pointer.read_text("utf-8", "strict").map_err((error) => io_failure(pointer, error))?
     fields = text.strip().split(" ")
@@ -239,7 +241,15 @@ def read_manifest(root: Path, generation: int, digest: str, view: str) -> Result
                 else:
                     return Err(failure("integrity", path.0, f"malformed manifest line {line}"))
             return Ok(
-                Snapshot(root=root, generation=generation, digest=digest, view=view, index=index, segments=segments, views=views),
+                Snapshot(
+                    root=root,
+                    generation=generation,
+                    digest=digest,
+                    view=view,
+                    index=index,
+                    segments=segments,
+                    views=views,
+                ),
             )
 
 
@@ -461,16 +471,15 @@ pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     """
     Publish a transaction's writes to its view and return the generation that holds them, seen through that view.
 
-    1. Stage the delta segment outside any lock, synced.
-    2. Under the publication lock, validate every precondition against the latest generation; a write already present
+    1. Acquire the publication lock and read the selected committed generation.
+    2. Validate every precondition against that generation; a write already present
        is dropped, and a conflicting one refuses the whole transaction.
-    3. With nothing left to write, return the latest generation unchanged: no bytes are added.
+    3. With nothing left to write, return the latest generation before creating staging or writing bytes.
     4. Install the segment, then the index pages on changed paths, then the manifest, then `CURRENT`, each synced.
     """
     root = transaction.root
     ensure_directory(root.joinpath("locks"))?
     staged = root.joinpath("staging").joinpath(transaction.id)
-    ensure_directory(staged)?
     held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
     latest = snapshot(root, transaction.view)?
     if transaction.fork != "":
@@ -478,16 +487,20 @@ pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     # 2. and 3. Only what is not already committed is written.
     remaining = pending_writes(latest, transaction.writes)?
     if len(remaining) == 0:
-        remove_tree(staged)
         return Ok(latest)
+    ensure_directory(staged)?
+    publication_boundary("staging-created")
     # 4. Each step is durable before the next one names it.
     encoded = encoded_frames(remaining)?
     delta = staged.joinpath("delta.seg")
     place_synced(delta, encoded.data)?
     name = install_segment(root, encoded.data, delta)?
+    publication_boundary("segment-installed")
     pages = staged.joinpath("pages")
     index = insert(root, latest.index, pages, leaf_entries(encoded, name)).map_err(index_failure)?
+    publication_boundary("pages-staged")
     install_pages(root, pages)?
+    publication_boundary("pages-installed")
     mut segments = latest.segments
     if name not in segments:
         segments.append(name)
@@ -502,7 +515,13 @@ def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged:
         if existing.view == transaction.fork:
             remove_tree(staged)
             return Err(failure("conflict", transaction.fork, "a view of this name already exists"))
-    published = switch(root, latest, latest.segments, with_view(latest.views, transaction.fork, latest.index), transaction.id)?
+    published = switch(
+        root,
+        latest,
+        latest.segments,
+        with_view(latest.views, transaction.fork, latest.index),
+        transaction.id,
+    )?
     remove_tree(staged)
     return Ok(published)
 
@@ -604,11 +623,13 @@ def switch(
     ensure_directory(manifest.parent())?
     place_synced(manifest, document)?
     manifest.parent().sync_directory().map_err((error) => io_failure(manifest.parent(), error))?
+    publication_boundary("manifest-directory-synced")
     marker = root.joinpath("FORMAT")
     if not marker.is_file():
         place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
     place_synced(root.joinpath("CURRENT"), f"{following} {digest}\n".encode("utf-8"))?
     root.sync_directory().map_err((error) => io_failure(root, error))?
+    publication_boundary("root-synced")
     return snapshot(root, latest.view)
 
 
@@ -777,17 +798,10 @@ pub def payload_intact(root: Path, digest: str) -> bool:
     """Whether the stored payload of `digest` still has exactly that content."""
     target = payload_path(root, digest)
     if not target.is_file():
-        return False
+        return false
     match file_digest(target, "sha256"):
         Ok(found) => return hexlify(found) == digest
-        Err(_) => return False
-
-
-pub def drop_damaged_payload(root: Path, digest: str) -> bool:
-    """Remove a payload that no longer matches its digest, so it can be stored again; an intact one is kept."""
-    if payload_intact(root, digest):
-        return False
-    return removed_file(payload_path(root, digest))
+        Err(_) => return false
 
 
 # ---- Files ----
@@ -841,16 +855,6 @@ def file_size(path: Path) -> int:
                 Err(_) => return 0
 
 
-def removed_file(path: Path) -> bool:
-    """Remove one file, read-only or not; false when it could not be removed."""
-    match path.chmod(false):
-        Ok(_) => pass
-        Err(_) => return False
-    match path.unlink():
-        Ok(_) => return True
-        Err(_) => return False
-
-
 def remove_tree(path: Path) -> None:
     """Remove a staging directory; a failure leaves it for recovery and never fails a commit."""
     match path.remove_tree():
@@ -870,10 +874,129 @@ def sync_file(path: Path) -> Result[None, StoreError]:
 
 
 def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
-    """Write a complete file beside `target`, sync it, then rename it into place."""
+    """Write a complete file beside its destination, synchronize it, then atomically publish its name."""
     ensure_directory(target.parent())?
     temporary = Path(f"{target.0}.{id()}.tmp")
     temporary.write_bytes(data).map_err((error) => io_failure(temporary, error))?
+    boundary = publication_kind(target)
+    publication_boundary(f"{boundary}-written")
     sync_file(temporary)?
+    publication_boundary(f"{boundary}-synced")
     temporary.replace(target).map_err((error) => io_failure(target, error))?
+    publication_boundary(f"{boundary}-replaced")
+    return Ok(None)
+
+
+def publication_kind(target: Path) -> str:
+    """Name the durability phase used by the process-exit proof without exposing format details to callers."""
+    if target.name() == "CURRENT":
+        return "current"
+    if target.name().endswith(".manifest"):
+        return "manifest"
+    if target.name() == "delta.seg":
+        return "delta"
+    return "object"
+
+
+def publication_boundary(name: str) -> None:
+    """Terminate only at an explicitly requested fault-injection boundary; ordinary publication has no effects here."""
+    if get_or("INCAN_STORE_CRASH_AFTER", "") == name:
+        process_exit(86)
+
+
+pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
+    """
+    Explicitly select a previously committed snapshot after verifying all its selected index paths and frames.
+
+    The caller supplies a snapshot retained from a successful commit or open, never a discovered staging manifest.
+    This maintenance operation does not infer a root from generation order and never recomputes frozen records.
+    A damaged candidate refuses repair. Existing payload admission remains the owning adapter's responsibility.
+    """
+    root = committed.root
+    if committed.generation == 0 or committed.digest == "":
+        return Err(failure("conflict", root.0, "repair requires a previously committed root"))
+    held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
+    check_format(root)?
+    candidate = read_manifest(root, committed.generation, committed.digest, committed.view)?
+    for selected in candidate.views:
+        for entry in index_entries(root, selected.root).map_err(index_failure)?:
+            match entry.location:
+                None => return Err(failure("integrity", entry.key, "leaf has no frame location"))
+                Some(location) => read_frame(root, entry.key, location)?
+    pointer = root.joinpath("CURRENT")
+    place_synced(pointer, f"{candidate.generation} {candidate.digest}\n".encode("utf-8"))?
+    root.sync_directory().map_err((error) => io_failure(root, error))?
+    return snapshot(root, committed.view)
+
+
+pub def quarantine_record(view: Snapshot, key: str) -> Result[None, StoreError]:
+    """
+    Preserve a damaged frame's segment as evidence before an owner recomputes the derived record.
+
+    The shared segment remains in place for other keys and older snapshots; repair publishes a new frame through
+    an explicit transaction. Index damage cannot be repaired one record at a time and is returned to the owner.
+    """
+    match lookup(view, key):
+        Ok(_) => return Err(failure("conflict", key, "only damaged records can be quarantined"))
+        Err(error) =>
+            if error.kind != "integrity":
+                return Err(error)
+    match index_find(view.root, view.index, key).map_err(index_failure)?:
+        None => return Err(failure("conflict", key, "no selected frame to quarantine"))
+        Some(location) =>
+            source = view.root.joinpath("segments").joinpath(f"{location.segment}.seg")
+            target = quarantine_path(view.root, location.segment)?
+            if source.is_file():
+                source.copy(target, true, true).map_err((error) => io_failure(target, error))?
+            else:
+                target
+                    .write_bytes(f"missing {source.0}\n".encode("utf-8"))
+                    .map_err((error) => io_failure(target, error))?
+            sync_file(target)?
+            target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
+    return Ok(None)
+
+
+pub def quarantine_payload(root: Path, digest: str) -> Result[None, StoreError]:
+    """
+    Move damaged content out of its canonical name before explicit recomputation or verified re-admission.
+
+    This never edits frozen bytes in place. The caller must have already verified complete authoritative replacement
+    inputs; normal lookup and verification never call it. Intact content remains untouched.
+    """
+    held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
+    source = payload_path(root, digest)
+    if not source.exists() and not source.is_symlink():
+        return Ok(None)
+    if not source.is_symlink() and payload_intact(root, digest):
+        return Ok(None)
+    target = quarantine_path(root, digest)?
+    source.replace(target).map_err((error) => io_failure(source, error))?
+    source.parent().sync_directory().map_err((error) => io_failure(source.parent(), error))?
+    target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
+    return Ok(None)
+
+
+def quarantine_path(root: Path, object: str) -> Result[Path, StoreError]:
+    """A private evidence name, never a selectable record or a replacement canonical object."""
+    serial = counted.get("quarantines", 0) + 1
+    counted["quarantines"] = serial
+    directory = root.joinpath("quarantine")
+    ensure_directory(directory)?
+    return Ok(directory.joinpath(f"{object}.{id()}.{serial}"))
+
+
+pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[None, StoreError]:
+    """
+    Explicitly re-admit exact frozen bytes from a trusted replacement without editing the damaged inode.
+
+    The committed reference already pins the complete digest. Verify the replacement before quarantining anything;
+    an invalid replacement leaves every retained object unchanged. Admission cannot change a namespace or revision.
+    """
+    actual = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
+    if actual != expected:
+        return Err(failure("integrity", source.0, "replacement differs from the committed payload digest"))
+    quarantine_payload(root, expected)?
+    if put_payload(root, source)? != expected:
+        return Err(failure("integrity", source.0, "replacement changed during re-admission"))
     return Ok(None)

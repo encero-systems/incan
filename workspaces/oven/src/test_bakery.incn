@@ -18,7 +18,10 @@ from bakery import (
     seal,
     staging,
     staging_root,
+    verify_all,
+    repair_derived,
 )
+from segment_store import readmit_payload
 from files import make_directory, read, write as write_file
 from incan_units import compile_executable
 from scratch import scratch_directory
@@ -168,11 +171,11 @@ pub def test_a_claimed_identity_is_baked_once_and_waiters_find_it() -> Result[No
 
 pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() -> Result[None, str]:
     """
-    A baker that died mid-bake leaves a staging directory and no claim; a damaged payload is a miss, baked again.
+    A dead baker releases its claim; damage is reported until explicit recomputation or verified re-admission.
 
     1. The dead baker's staging directory is not a unit, and its claim is free.
     2. The next asker bakes the unit.
-    3. A payload damaged behind the store's back is a miss: the next ask bakes it again, and no build fails.
+    3. Lookup and verification report damage without changing it; explicit repair uses authoritative inputs.
     """
     scratch = scratch_directory()?
     store = scratch.path().joinpath("bakery")
@@ -185,24 +188,38 @@ pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() 
     # 2. The next asker bakes.
     assert bake(store, identity, "complete")?
     assert payload_text(store, identity, "payload")? == "complete"
-    # 3. A stored payload is read-only; one damaged anyway is a miss.
+    # 3. Damage is an error, and verification preserves evidence for an explicit owner repair.
     payload = stored_payload(store, identity, "payload")?
     match payload.write_text("damaged", "utf-8", "strict", None):
         Ok(_) =>
             assert false, "a stored payload file was writable"
         Err(_) => pass
+    replacement = scratch.path().joinpath("verified-replacement")
+    payload.copy(replacement, true, true).map_err((error) => error.message())?
+    digest = payload.name()
     damage(payload, "damaged!")?
     forget_verified()
-    assert not found(find(store, identity)?)
-    assert bake(store, identity, "rebaked")?
+    match find(store, identity):
+        Ok(_) =>
+            assert false, "damage became absence"
+        Err(error) =>
+            assert payload.0 in error and "integrity" in error, error
+    assert len(verify_all(store)?) == 1
+    assert read(payload)? == "damaged!"
+    readmit_payload(store, replacement, digest).map_err((error) => error.message())?
+    assert payload_text(store, identity, "payload")? == "complete"
+    damage(payload, "damaged!")?
+    forget_verified()
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), "rebaked")?
+    repair_derived(store, identity, staged, "library", "dep", [], "verified-test-inputs")?
+    assert store.joinpath("quarantine").is_dir()
     assert payload_text(store, identity, "payload")? == "rebaked"
     return Ok(None)
 
 
 pub def test_collection_is_refused_and_removes_nothing() -> Result[None, str]:
-    """
-    `incan bakery gc` is refused until collection honors live snapshot leases, and nothing it could reach is removed.
-    """
+    """`incan bakery gc` is refused until collection honors live snapshot leases, and nothing it could reach is removed."""
     scratch = scratch_directory()?
     store = scratch.path().joinpath("bakery")
     library = digest_of("d4")
@@ -211,8 +228,10 @@ pub def test_collection_is_refused_and_removes_nothing() -> Result[None, str]:
     assert bake(store, orphan, "orphan")?
     register_root(store, scratch.path().joinpath("project").0, library)?
     match collect(store, -1):
-        Ok(_) => assert false, "collection ran without its lease protocol"
-        Err(reason) => assert "disabled" in reason, reason
+        Ok(_) =>
+            assert false, "collection ran without its lease protocol"
+        Err(reason) =>
+            assert "disabled" in reason, reason
     assert found(find(store, library)?)
     assert found(find(store, orphan)?)
     return Ok(None)
