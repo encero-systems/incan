@@ -1,0 +1,225 @@
+"""
+The `incan.compiler-worker/1` documents: one JSON document per frame, each carrying the protocol's schema.
+
+A request names the compiler command and its arguments, the caller's working directory and the files that receive the
+command's console output. A reply gives the status the command exits with, a reason when the worker could not run it,
+and whether the worker retires after it. Readiness tells the process that started the worker that it listens.
+"""
+
+from rust::std::string import String as RustString
+from std.json import JsonValue, parse
+
+pub const SCHEMA: str = "incan.compiler-worker/1"
+# The status Rust gives a process whose main thread panics; a request whose compilation panicked reports it.
+pub const PANIC_STATUS: int = 101
+pub const MISMATCH: str = "compiler worker generation or protocol mismatch"
+
+
+pub enum WorkerCommand:
+    """The compiler commands a worker serves, each the same entry point its short-lived command runs."""
+
+    # `--unit UNIT CRATE OUTPUT SYSROOT ...`: compile a unit.
+    Unit
+    # `--check UNIT SYSROOT ...`: check a unit.
+    Check
+    # `--fmt UNIT PATH ...`: format sources with the unit's vocabulary.
+    Format
+
+
+pub model CompileRequest:
+    """One admitted compiler invocation, as the compiler entry runs it."""
+
+    pub command: WorkerCommand
+    # The command's arguments after its command flag.
+    pub arguments: list[str]
+    # The files that receive the command's standard output and error, and the directory it runs in; all absolute.
+    pub stdout: str
+    pub stderr: str
+    pub cwd: str
+
+
+pub enum Fault:
+    """Why an activation ended without the command's own status."""
+
+    # The compiler panicked; its entry contained the panic and restored its own state.
+    Panicked
+    # The process could not be restored after the activation, so it cannot serve another.
+    UnsafeCleanup(str)
+
+
+pub enum Reply:
+    """The answer to one request."""
+
+    # The command ran and exits with this status.
+    Completed(int)
+    # The request was not run: it was not a valid request for this worker, or its activation could not begin.
+    Refused(str)
+    # The command started and failed inside the compiler.
+    CompilerFault(Fault)
+
+
+pub enum Admission:
+    """What a received document is to this worker."""
+
+    Admitted(CompileRequest)
+    Refused(str)
+    # A request of another protocol or compiler generation, which this worker never serves.
+    Incompatible
+
+
+pub def admit(payload: bytes, generation: str) -> Admission:
+    """
+    The request a frame's payload carries, admitted for this worker generation.
+
+    1. The payload is one UTF-8 JSON document of this protocol and generation.
+    2. The arguments name a served command, complete, with the paths it reads and writes absolute.
+    3. The console files and working directory are absolute.
+    """
+    # 1. A document of another schema or generation is incompatible, not merely malformed.
+    document = decoded(payload)
+    match document:
+        Err(reason) => return Admission.Refused(reason)
+        Ok(found) =>
+            if not text_is(found, "schema", SCHEMA) or not text_is(found, "generation", generation):
+                return Admission.Incompatible
+            match request_of(found):
+                Ok(request) => return Admission.Admitted(request)
+                Err(reason) => return Admission.Refused(reason)
+
+
+def decoded(payload: bytes) -> Result[JsonValue, str]:
+    """One UTF-8 JSON document."""
+    match RustString.from_utf8(payload):
+        Ok(text) => return parse(str(text)).map_err((error) => error.message())
+        Err(_) => return Err("the frame is not UTF-8")
+
+
+def request_of(document: JsonValue) -> Result[CompileRequest, str]:
+    """
+    The request a compatible document describes.
+
+    1. The command and its arguments; a command's unit, output and sysroot paths are absolute, because the worker's
+       directory is not its caller's.
+    2. The console files and working directory, absolute.
+    """
+    # 1. Arguments come first, so a request for an unserved command is refused before its paths are read.
+    arguments = strings(document, "arguments")?
+    command = command_of(arguments)?
+    # 2. The caller supplies its sinks and directory; the worker never writes to a process-global console.
+    return Ok(
+        CompileRequest(
+            command=command,
+            arguments=arguments[1:],
+            stdout=absolute_field(document, "stdout")?,
+            stderr=absolute_field(document, "stderr")?,
+            cwd=absolute_field(document, "cwd")?,
+        ),
+    )
+
+
+def command_of(arguments: list[str]) -> Result[WorkerCommand, str]:
+    """
+    The served command of an argument list whose required paths are absolute: `--unit UNIT CRATE OUTPUT SYSROOT ...`,
+    `--check UNIT SYSROOT ...` and `--fmt UNIT PATH ...`. A formatted path resolves against the caller's directory.
+    """
+    if len(arguments) == 0:
+        return Err("a compiler worker accepts only --unit, --check and --fmt requests")
+    mut command = WorkerCommand.Unit
+    mut minimum = 5
+    mut absolute: list[int] = [1, 3, 4]
+    if arguments[0] == "--check":
+        command = WorkerCommand.Check
+        minimum = 3
+        absolute = [1, 2]
+    elif arguments[0] == "--fmt":
+        command = WorkerCommand.Format
+        minimum = 3
+        absolute = [1]
+    elif arguments[0] != "--unit":
+        return Err("a compiler worker accepts only --unit, --check and --fmt requests")
+    if len(arguments) < minimum:
+        return Err(f"a compiler worker {arguments[0]} request is incomplete")
+    for index in absolute:
+        if not arguments[index].startswith("/"):
+            return Err("compiler worker unit, output and sysroot paths must be absolute")
+    return Ok(command)
+
+
+def absolute_field(document: JsonValue, name: str) -> Result[str, str]:
+    """A required absolute path field."""
+    match text(document, name):
+        None => return Err(f"missing `{name}`")
+        Some(path) =>
+            if not path.startswith("/"):
+                return Err(f"compiler worker `{name}` path must be absolute")
+            return Ok(path)
+
+
+def text_is(document: JsonValue, name: str, expected: str) -> bool:
+    """Whether the string field `name` is exactly `expected`."""
+    match text(document, name):
+        Some(found) => return found == expected
+        None => return false
+
+
+def text(document: JsonValue, name: str) -> Option[str]:
+    """The string field `name`, when the document has one."""
+    match document.get(name):
+        Some(value) => return value.as_str()
+        None => return None
+
+
+def strings(document: JsonValue, name: str) -> Result[list[str], str]:
+    """The required array of strings `name`."""
+    match document.get(name):
+        None => return Err(f"missing `{name}`")
+        Some(value) =>
+            match value.as_array():
+                None => return Err(f"`{name}` is not an array of strings")
+                Some(items) =>
+                    mut result: list[str] = []
+                    for item in items:
+                        match item.as_str():
+                            Some(found) => result.append(found)
+                            None => return Err(f"`{name}` is not an array of strings")
+                    return Ok(result)
+
+
+pub def encode_reply(reply: Reply, retired: bool) -> bytes:
+    """
+    A reply's document: the status the command exits with and the reason it did not run, which is empty when it ran.
+    A retiring worker marks its reply, so its caller does not dial it again.
+    """
+    mut exit = 1
+    mut reason = ""
+    match reply:
+        Reply.Completed(code) => exit = code
+        Reply.Refused(why) => reason = why
+        Reply.CompilerFault(fault) =>
+            match fault:
+                Fault.Panicked => exit = PANIC_STATUS
+                Fault.UnsafeCleanup(why) => reason = why
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(SCHEMA)
+    fields["exit"] = JsonValue.int(exit)
+    fields["reason"] = JsonValue.string(reason)
+    if retired:
+        fields["retired"] = JsonValue.bool(true)
+    return encoded(JsonValue.object(fields))
+
+
+pub def encode_ready(generation: str, pid: int) -> bytes:
+    """The readiness document a started worker sends the process that started it."""
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(SCHEMA)
+    fields["generation"] = JsonValue.string(generation)
+    fields["status"] = JsonValue.string("ready")
+    fields["pid"] = JsonValue.int(pid)
+    return encoded(JsonValue.object(fields))
+
+
+def encoded(document: JsonValue) -> bytes:
+    """A document's compact JSON text in UTF-8; a document of strings, integers and booleans always serializes."""
+    match document.to_json():
+        Ok(found) => return found.encode("utf-8")
+        Err(_) => return "{}".encode("utf-8")

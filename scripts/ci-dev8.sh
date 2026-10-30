@@ -114,12 +114,17 @@ build_runner() {
     [[ -x "$runner" ]] || fail "runner build produced no executable at $runner"
 }
 
-# Test every Oven unit through the installed toolchain; dev.8 test takes one source file per invocation.
+# Test every Oven unit, and every Loaf's Incan test sources from that Loaf, through the installed toolchain; dev.8 test
+# takes one source file per invocation. The expected ids cover both.
 run_oven_tests() {
     local file status=0 passed failed
     for file in "$ROOT"/workspaces/oven/src/test_*.incn; do
         [[ -f "$file" ]] || fail 'Oven test sources are absent'
         (cd "$ROOT/workspaces/oven" && "$oven" test "$file") >> "$run/oven-tests.log" 2>&1 || status=1
+    done
+    for file in "$ROOT"/loaves/*/*/tests/test_*.incn; do
+        [[ -f "$file" ]] || continue
+        (cd "${file%/tests/*}" && "$oven" test "$file") >> "$run/oven-tests.log" 2>&1 || status=1
     done
     passed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {n++} END {print n+0}' "$run/oven-tests.log")
     failed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ (FAILED|XPASS)( |$)/ {n++} END {print n+0}' "$run/oven-tests.log")

@@ -7,6 +7,7 @@ It carries bytes and the OS identity of the peer, nothing else: what a payload e
 from rust::std::fs import File, Permissions, set_permissions
 from rust::std::io import ErrorKind, Read, Write
 from rust::std::net import Shutdown
+from rust::std::os::fd import AsRawFd
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::os::unix::net import UnixListener, UnixStream
 from rust::std::cell import RefCell
@@ -43,6 +44,13 @@ pub class Connection:
     def close(self) -> Result[None, str]:
         """Close both directions of this socket without relying on the last shared wrapper being dropped."""
         return self.stream.borrow().shutdown(Shutdown.Both).map_err((error) => f"cannot close socket: {error}")
+
+    def descriptor(self) -> int:
+        """
+        The OS descriptor number of this socket, valid while the connection is open. It lends the socket to native
+        code that only observes it; ownership stays with this connection.
+        """
+        return int(self.stream.borrow().as_raw_fd())
 
     def read_part(mut self, count: int, bound: int) -> Result[bytes, str]:
         """Read exactly a bounded part, checking its length before allocating the receive buffer."""
@@ -163,11 +171,17 @@ pub class Listener:
             Err(error) => return Err(f"cannot accept: {error}")
 
     def poll(mut self) -> Result[Option[Connection], str]:
-        """The next client if one is waiting, without waiting for one; the listener must be non-blocking."""
+        """
+        The next client if one is waiting, without waiting for one; the listener must be non-blocking. The client's
+        connection blocks, with the bounds its caller sets, as an accepted one does: some systems, macOS among them,
+        hand it the listener's non-blocking mode, so a frame still on its way would read as an error.
+        """
         match self.socket.borrow_mut().accept():
             Ok(accepted) =>
                 stream, peer = accepted
-                return Ok(Some(connection(stream)))
+                match stream.set_nonblocking(false):
+                    Ok(_) => return Ok(Some(connection(stream)))
+                    Err(error) => return Err(f"cannot accept: {error}")
             Err(error) =>
                 if error.kind() == ErrorKind.WouldBlock:
                     return Ok(None)
