@@ -1,8 +1,14 @@
 """Bounded engine observations over a separate append-only channel, with process-monotonic span clocks."""
 
 from rust::std::env import var_os
-from rust::std::fs import OpenOptions
-from rust::std::io import Write
+from rust::std::fs import File, OpenOptions
+from rust::std::io import BufWriter, Cursor, Write
+from rust::std::sync import Arc, Mutex
+from rust::std::ops import DerefMut
+from rust::serde_json import Error as JsonError, to_writer
+from rust::std::vec import Vec
+from rust::serde import Serialize as RustSerialize
+from rust::std::string import String as RustString
 from rust::std::process import id
 from rust::std::thread import current
 from rust::std::time import Instant, SystemTime, UNIX_EPOCH
@@ -10,6 +16,8 @@ from rust::std::time import Instant, SystemTime, UNIX_EPOCH
 pub const SCHEMA: str = "incan.engine.trace/1"
 pub const MAX_TEXT: int = 4096
 pub const MAX_RECORD: int = 65536
+pub const BUFFER_BYTES: usize = 65536
+const MAX_CHANNELS: int = 8
 
 
 pub enum TraceError:
@@ -59,6 +67,92 @@ model Origin:
 
 
 static ORIGIN: Origin = Origin()
+
+
+pub model Writer:
+    """A retained, bounded native writer; copies share the channel and its serialization lock."""
+
+    output: Arc[Mutex[BufWriter[File]]]
+    scratch: Arc[Mutex[Vec[u8]]]
+
+    @staticmethod
+    def open(destination: str) -> Result[Writer, TraceError]:
+        """Open a bounded native buffer once; ownership stays behind the typed writer API."""
+        if destination == "" or destination == "-":
+            return Err(TraceError.Channel)
+        mut options = OpenOptions.new()
+        options.create(true).append(true)
+        output = options.open(destination).map_err((_) => TraceError.Channel)?
+        return Ok(
+            Writer(
+                output=Arc.new(Mutex.new(BufWriter.with_capacity(BUFFER_BYTES, output))),
+                scratch=Arc.new(Mutex.new(encoding_buffer())),
+            ),
+        )
+
+    def record(self, span: &EngineSpan) -> Result[None, TraceError]:
+        """Encode into the retained fixed slice; only a complete, bounded record reaches the file buffer."""
+        row = wire_record(span)?
+        mut scratch = self.scratch.lock().map_err((_) => TraceError.Channel)?
+        used = fill(scratch.deref_mut(), row)?
+        mut output = self.output.lock().map_err((_) => TraceError.Channel)?
+        output.write_all(scratch.as_slice().split_at(used).0).map_err((_) => TraceError.Channel)?
+        return Ok(None)
+
+    def append(self, text: &str) -> Result[None, TraceError]:
+        """Queue one bounded record; the native buffer drains with back-pressure at its size bound."""
+        payload = RustString.from(text).into_bytes()
+        return self.write_bytes(payload)
+
+    def write_bytes(self, payload: Vec[u8]) -> Result[None, TraceError]:
+        """Write already encoded bytes without allocating another text or byte representation."""
+        if len(payload) > MAX_RECORD:
+            return Err(TraceError.RecordBound)
+        mut output = self.output.lock().map_err((_) => TraceError.Channel)?
+        output.write_all(payload).map_err((_) => TraceError.Channel)?
+        return Ok(None)
+
+    def flush(self) -> Result[None, TraceError]:
+        """Drain the channel, reporting an incomplete observation if its write fails."""
+        mut output = self.output.lock().map_err((_) => TraceError.Channel)?
+        output.flush().map_err((_) => TraceError.Channel)?
+        return Ok(None)
+
+
+model Channels:
+    """The process's small channel inventory; the bound limits open writers, never trace storage."""
+
+    writers: Dict[str, Writer] = {}
+
+    def append(mut self, destination: str, text: &str) -> Result[None, TraceError]:
+        """Open each channel once, reporting failed opens instead of silently dropping records."""
+        return self.writer(destination)?.append(text)
+
+    def record(mut self, destination: str, span: &EngineSpan) -> Result[None, TraceError]:
+        """Encode into native bytes and send them directly to the retained writer."""
+        return self.writer(destination)?.record(span)
+
+    def writer(mut self, destination: str) -> Result[Writer, TraceError]:
+        """Find the process's one writer for this channel, opening only its first record."""
+        if destination not in self.writers:
+            if len(self.writers) >= MAX_CHANNELS:
+                return Err(TraceError.Channel)
+            self.writers[destination] = open_writer(destination)?
+        return Ok(self.writers[destination])
+
+    def flush(self) -> Result[None, TraceError]:
+        """Try every writer even if one failed; any failure marks the observation incomplete."""
+        mut failed = false
+        for writer in self.writers.values():
+            match writer.flush():
+                Ok(_) => pass
+                Err(_) => failed = true
+        if failed:
+            return Err(TraceError.Channel)
+        return Ok(None)
+
+
+static CHANNELS: Channels = Channels()
 
 
 pub model Counters:
@@ -144,104 +238,157 @@ pub def complete(
     )
 
 
-pub def encode(span: EngineSpan) -> Result[str, TraceError]:
+@rust.derive(RustSerialize)
+model TraceRecord:
+    """The flat wire projection of a completed span; native serde owns the entire encoding pass."""
+
+    schema: str
+    kind: str
+    run: str
+    request: str
+    work: str
+    producer: str
+    operation: str
+    key: str
+    snapshot: str
+    thread: str
+    outcome: str
+    clock: str
+    clock_id: str
+    span: int
+    parent: int
+    process: int
+    start_ns: int
+    end_ns: int
+    bytes: int
+    records: int
+    calls: int
+    cpu_ns: Option[int]
+
+
+pub def encode(span: &EngineSpan) -> Result[str, TraceError]:
+    """Expose the same bounded native wire encoding as text for schema readers and compatibility tools."""
+    mut scratch = encoding_buffer()
+    used = fill(scratch, wire_record(span)?)?
+    # Native JSON serialization guarantees UTF-8; this converts only the initialized prefix to owned text.
+    return Ok(str(RustString.from_utf8_lossy(scratch.as_slice().split_at(used).0)))
+
+
+def wire_record(span: &EngineSpan) -> Result[TraceRecord, TraceError]:
     """
-    Encode one versioned JSONL record, bounded before output.
+    Validate a completed span and project its fields into the flat wire schema.
 
     1. Validate numeric invariants.
-    2. Bound and escape each text field.
-    3. Bound the complete record.
+    2. Bound every source text field before serialization.
     """
     # 1. Durations and aggregate counters cannot be negative.
     if span.span <= 0 or span.parent < 0 or span.process < 0 or span.start_ns < 0 or span.end_ns < span.start_ns:
         return Err(TraceError.InvalidSpan)
     if span.counters.bytes < 0 or span.counters.records < 0 or span.counters.calls < 0:
         return Err(TraceError.InvalidSpan)
-    # 2. Field bounds are checked before escaping, whose worst-case expansion is six bytes per input byte.
-    mut fields = [
-        field("schema", SCHEMA)?,
-        field("kind", "span")?,
-        field("run", span.run)?,
-        field("request", span.request)?,
-        field("work", span.work)?,
-        field("producer", span.producer)?,
-        field("operation", span.operation)?,
-        field("key", span.key)?,
-        field("snapshot", span.snapshot)?,
-        field("thread", span.thread)?,
-        field("outcome", span.outcome)?,
-        field("clock", "process-monotonic")?,
-        field("clock_id", span.clock_id)?,
-    ]
-    fields.extend(
-        [
-            f"\"span\":{span.span}",
-            f"\"parent\":{span.parent}",
-            f"\"process\":{span.process}",
-            f"\"start_ns\":{span.start_ns}",
-            f"\"end_ns\":{span.end_ns}",
-            f"\"bytes\":{span.counters.bytes}",
-            f"\"records\":{span.counters.records}",
-            f"\"calls\":{span.counters.calls}",
-            cpu_field(span.cpu_ns)?,
-        ],
+    match span.cpu_ns:
+        Some(value) =>
+            if value < 0:
+                return Err(TraceError.InvalidSpan)
+        None => pass
+    # 2. Bound source fields before the native serializer can expand their escapes.
+    if not fields_bounded(span):
+        return Err(TraceError.FieldBound)
+    row = TraceRecord(
+        schema=SCHEMA,
+        kind="span",
+        run=span.run,
+        request=span.request,
+        work=span.work,
+        producer=span.producer,
+        operation=span.operation,
+        key=span.key,
+        snapshot=span.snapshot,
+        thread=span.thread,
+        outcome=span.outcome,
+        clock="process-monotonic",
+        clock_id=span.clock_id,
+        span=span.span,
+        parent=span.parent,
+        process=span.process,
+        start_ns=span.start_ns,
+        end_ns=span.end_ns,
+        bytes=span.counters.bytes,
+        records=span.counters.records,
+        calls=span.counters.calls,
+        cpu_ns=span.cpu_ns,
     )
-    # 3. A synchronous write is the bounded producer buffer and supplies back-pressure without dropping events.
-    text = "{" + ",".join(fields) + "}\n"
-    if len(text) > MAX_RECORD:
-        return Err(TraceError.RecordBound)
-    if len(text.encode("utf-8")) > MAX_RECORD:
-        return Err(TraceError.RecordBound)
-    return Ok(text)
+    return Ok(row)
 
 
-pub def record(destination: str, span: EngineSpan) -> Result[None, TraceError]:
+def encoding_buffer() -> Vec[u8]:
+    """Allocate exactly the fixed encoding capacity, with every byte initialized before lending its slice."""
+    mut buffer: Vec[u8] = Vec.new()
+    buffer.resize(BUFFER_BYTES, 0u8)
+    return buffer
+
+
+def fill(mut buffer: &mut Vec[u8], row: &TraceRecord) -> Result[usize, TraceError]:
+    """Lend fixed storage to native serde; the cursor refuses overflow without growing or publishing a prefix."""
+    mut cursor = Cursor.new(buffer.as_mut_slice())
+    to_writer(Write.by_ref(cursor), row).map_err(encoding_error)?
+    cursor.write_all(b"\x0a").map_err((_) => TraceError.RecordBound)?
+    match cursor.position().try_resize[usize]():
+        Some(used) => return Ok(used)
+        None => return Err(TraceError.RecordBound)
+
+
+def encoding_error(error: JsonError) -> TraceError:
+    """A fixed cursor's exhausted capacity is a record bound; other serialization failures are invalid values."""
+    if error.is_io():
+        return TraceError.RecordBound
+    return TraceError.InvalidSpan
+
+
+def fields_bounded(span: &EngineSpan) -> bool:
+    """Check borrowed fields without allocating an inventory of copied strings for each event."""
+    return (
+        bounded(span.run)
+        and bounded(span.request)
+        and bounded(span.work)
+        and bounded(span.producer)
+        and bounded(span.operation)
+        and bounded(span.key)
+        and bounded(span.snapshot)
+        and bounded(span.thread)
+        and bounded(span.outcome)
+        and bounded(span.clock_id)
+    )
+
+
+def bounded(value: &str) -> bool:
+    """Whether a source string fits its UTF-8 wire bound before native JSON escaping."""
+    return int(value.len()) <= MAX_TEXT
+
+
+pub def record(destination: str, span: &EngineSpan) -> Result[None, TraceError]:
     """Append one complete schema record to a file; no schema output can select a console stream."""
     if destination == "":
         return Ok(None)
     if destination == "-":
         return Err(TraceError.Channel)
-    return append(destination, encode(span)?)
+    return CHANNELS.record(destination, span)
 
 
-pub def append(destination: str, text: str) -> Result[None, TraceError]:
-    """Write one bounded record with OS back-pressure; failures are explicit, with no console diagnostics."""
+pub def append(destination: str, text: &str) -> Result[None, TraceError]:
+    """Queue one bounded record on a retained channel; callers flush at their process lifecycle boundary."""
     if destination == "" or destination == "-":
         return Err(TraceError.Channel)
     if len(text) > MAX_RECORD:
         return Err(TraceError.RecordBound)
-    if len(text.encode("utf-8")) > MAX_RECORD:
-        return Err(TraceError.RecordBound)
-    mut options = OpenOptions.new()
-    options.create(true).append(true)
-    mut output = options.open(destination).map_err((_) => TraceError.Channel)?
-    output.write_all(text.encode("utf-8")).map_err((_) => TraceError.Channel)?
-    return Ok(None)
+    return CHANNELS.append(destination, text)
 
 
-def field(name: str, value: str) -> Result[str, TraceError]:
-    """A JSON string field; reject unsupported control bytes rather than emitting invalid JSON."""
-    if len(value) > MAX_TEXT:
-        return Err(TraceError.FieldBound)
-    if len(value.encode("utf-8")) > MAX_TEXT:
-        return Err(TraceError.FieldBound)
-    escaped = value
-        .replace("\\", "\\\\")
-        .replace("\"", "\\\"")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    for byte in escaped.encode("utf-8"):
-        if int(byte) < 32:
-            return Err(TraceError.InvalidSpan)
-    return Ok(f"\"{name}\":\"{escaped}\"")
+pub def flush() -> Result[None, TraceError]:
+    """Drain all process channels before normal return or explicit exit; this never writes console diagnostics."""
+    return CHANNELS.flush()
 
 
-def cpu_field(value: Option[int]) -> Result[str, TraceError]:
-    """A measured CPU duration or explicit unavailability."""
-    match value:
-        None => return Ok("\"cpu_ns\":null")
-        Some(nanoseconds) =>
-            if nanoseconds < 0:
-                return Err(TraceError.InvalidSpan)
-            return Ok(f"\"cpu_ns\":{nanoseconds}")
+pub def open_writer(destination: str) -> Result[Writer, TraceError]:
+    """Open an independently owned bounded file channel; its owner must flush before explicit process exit."""
+    return Writer.open(destination)
