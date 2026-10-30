@@ -881,6 +881,22 @@ pub model FallibleIteratorMethods:
 
 
 @derive(Clone, PartialEq)
+pub model NativeTraitMethod:
+    """A Rust trait method filled by a planned source method; rustc checks the implementation's signature."""
+
+    pub name: str
+    pub function: str
+
+
+@derive(Clone, PartialEq)
+pub model NativeTraitAdoption:
+    """A class's request to implement a concrete Rust trait; rustc proves the implementation, not this record."""
+
+    pub path: str
+    pub methods: list[NativeTraitMethod]
+
+
+@derive(Clone, PartialEq)
 pub model ModelDeclaration:
     """
     Checked field layout and implicit derives for one concrete source nominal layout.
@@ -922,6 +938,8 @@ pub model ModelDeclaration:
     # Empty paired fields grant no conversion, independently of serde's native Rust TryFrom contract.
     pub string_conversion_root: str = ""
     pub string_conversion_trait: str = ""
+    # Rust traits a source class implements with its own methods; empty implements none.
+    pub native_trait_adoptions: list[NativeTraitAdoption] = []
 
 
 @derive(Clone, PartialEq)

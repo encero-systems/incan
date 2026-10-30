@@ -4374,9 +4374,18 @@ impl TypeChecker {
     /// separately from explicit class derives. Later member-surface checks reuse the same resolved inventory.
     fn check_class_trait_adoptions(&mut self, class: &ClassDecl, derives: &[String]) -> Vec<ResolvedTraitAdoption> {
         let mut resolved_trait_adoptions = Vec::new();
+        let mut native_adoptions = Vec::new();
         for trait_ref in &class.traits {
             let trait_name = trait_ref.node.name.as_str();
-            if self.lookup_trait_info(trait_name).is_some() {
+            if let Some((trait_path, trait_metadata)) = self.imported_rust_trait_candidate(trait_name) {
+                native_adoptions.extend(self.check_native_class_adoption(
+                    class,
+                    &trait_ref.node,
+                    trait_ref.span,
+                    &trait_path,
+                    trait_metadata.as_deref(),
+                ));
+            } else if self.lookup_trait_info(trait_name).is_some() {
                 let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
                 else {
                     continue;
@@ -4412,6 +4421,14 @@ impl TypeChecker {
         }
         let adoption_derives = self.adopted_serde_derives(&class.traits);
         self.record_body_ir_trait_adoptions(&class.name, &resolved_trait_adoptions);
+        if !native_adoptions.is_empty() {
+            self.type_info
+                .declarations
+                .body_ir_trait_adoptions
+                .entry(class.name.clone())
+                .or_default()
+                .extend(native_adoptions);
+        }
         if !adoption_derives.is_empty() {
             self.type_info
                 .declarations
@@ -4419,6 +4436,115 @@ impl TypeChecker {
                 .insert(class.name.clone(), adoption_derives);
         }
         resolved_trait_adoptions
+    }
+
+    /// Record a concrete class's request to implement an inspected Rust trait, with every trait method slot it fills.
+    ///
+    /// This is not a conformance proof: the native compiler checks the implementation against the trait's signatures,
+    /// required methods, defaults and supertraits. Only a concrete class and a concrete trait that declares nothing but
+    /// methods qualify.
+    fn check_native_class_adoption(
+        &mut self,
+        class: &ClassDecl,
+        bound: &TraitBound,
+        span: Span,
+        path: &str,
+        metadata: Option<&RustItemMetadata>,
+    ) -> Option<super::type_info::BodyIrCheckedTraitAdoption> {
+        let concrete = match metadata.map(|metadata| &metadata.kind) {
+            Some(RustItemKind::Trait(info)) => (class.type_params.is_empty()
+                && bound.type_args.is_empty()
+                && info.type_params.is_empty()
+                && info
+                    .items
+                    .iter()
+                    .all(|item| matches!(item, RustTraitAssoc::Function { .. })))
+            .then_some(info),
+            _ => None,
+        };
+        let identity = |name: &str| {
+            self.symbols
+                .lookup(name)
+                .and_then(|id| self.symbols.identity_of(id))
+                .cloned()
+        };
+        let (Some(info), Some(mut trait_identity), Some(owner)) =
+            (concrete, identity(&bound.name), identity(&class.name))
+        else {
+            self.errors
+                .push(errors::class_rust_trait_adoption_unsupported(&class.name, path, span));
+            return None;
+        };
+        // The inspected metadata establishes a trait; the imported path still names it.
+        trait_identity.kind = SemanticSourceTargetKind::Trait;
+        trait_identity.namespace = incan_semantics_core::SymbolNamespace::OrdinaryLexical;
+        trait_identity.scope_discriminant = None;
+        let mut slots = Vec::new();
+        for item in &info.items {
+            let RustTraitAssoc::Function { name, .. } = item else {
+                continue;
+            };
+            let slot = Self::synthetic_member_identity(&trait_identity, name, SemanticSourceTargetKind::Method);
+            self.bind_native_trait_methods(class, bound, path, &owner, &slot)?;
+            slots.push(slot);
+        }
+        Some(super::type_info::BodyIrCheckedTraitAdoption {
+            trait_identity,
+            arguments: Vec::new(),
+            methods: Some(slots),
+            fields: Vec::new(),
+            span,
+        })
+    }
+
+    /// Fill one Rust trait method slot with the class method of the same name, by the method's canonical identity.
+    /// A method aimed at another trait does not fill it; an unfilled slot keeps the trait's default.
+    fn bind_native_trait_methods(
+        &mut self,
+        class: &ClassDecl,
+        bound: &TraitBound,
+        path: &str,
+        owner: &CanonicalSymbolId,
+        slot: &CanonicalSymbolId,
+    ) -> Option<()> {
+        for method in &class.methods {
+            if method.node.name != slot.declaration_name
+                || method
+                    .node
+                    .trait_target
+                    .as_ref()
+                    .is_some_and(|target| target.node.name != bound.name)
+            {
+                continue;
+            }
+            let implementation = self
+                .type_info
+                .declarations
+                .member_declaration_identities
+                .get(&method.span)
+                .cloned();
+            let Some(implementation) = implementation.filter(|_| {
+                method.node.type_params.is_empty() && method.node.receiver.is_some() && method.node.body.is_some()
+            }) else {
+                self.errors.push(errors::class_rust_trait_method_unsupported(
+                    &class.name,
+                    &method.node.name,
+                    path,
+                    method.span,
+                ));
+                return None;
+            };
+            self.type_info.declarations.native_trait_implementations.push(
+                incan_semantics_core::body_ir::TraitImplementation {
+                    owner: owner.clone(),
+                    method: slot.clone(),
+                    implementation,
+                    slot_arguments: Vec::new(),
+                    type_arguments: Vec::new(),
+                },
+            );
+        }
+        Some(())
     }
 
     /// Consume active class fields in source order, retaining checked types and defaults before JSON-form checks.

@@ -58,6 +58,8 @@ pub from pub::incan_mir_plan import (
     Local,
     ModelDeclaration,
     NativeAttribute,
+    NativeTraitAdoption,
+    NativeTraitMethod,
     Operand,
     OperandKind,
     Parameter,
