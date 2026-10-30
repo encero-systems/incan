@@ -15,11 +15,13 @@ from files import json_text, read_json
 from graph_queries import nested, text
 from home import home
 from json_fields import required_text
-from observation import SETTLE_SECONDS, Observation, now_seconds, observe
+from observation import SETTLE_SECONDS, Observation, file_digest, now_seconds, observe
 from publication import publish
 from jec import begin, record, text_size
 
 const SCHEMA: str = "incan.oven.retained-reading/2"
+# The selection under which an installed file's SHA-256 is retained.
+pub const INSTALLED_DIGEST: str = "sha256"
 
 
 pub model Reading:
@@ -59,6 +61,22 @@ pub def retained_reading(source: Path, selected: list[str]) -> Result[Reading, s
     value["digest"] = JsonValue.string(reading.digest)
     retain(source, selection, observed, JsonValue.object(value))
     return Ok(reading)
+
+
+pub def installed_digest(source: Path) -> Result[str, str]:
+    """
+    The SHA-256 of an installed file's bytes, hashed once per file generation for the whole home.
+
+    A toolchain file such as the pinned `rustc_driver` library belongs to the installation, not to a project, so a
+    new project or checkout finds the digest instead of hashing the file again.
+    """
+    observed = observe(source)?
+    if let Some(value) = recall(source, INSTALLED_DIGEST, observed.stamp):
+        if let Some(digest) = value.as_str():
+            return Ok(digest)
+    digest = file_digest(source)?
+    retain(source, INSTALLED_DIGEST, observed, JsonValue.string(digest))
+    return Ok(digest)
 
 
 pub def recall(source: Path, selection: str, stamp: str) -> Option[JsonValue]:
