@@ -8,10 +8,10 @@ from graph_dependencies import unit_natives
 from graph_incan import inspect_incan
 from graph_queries import text
 from home import standard_artifact_dir, standard_packages
-from intake import library_source
+from intake import ManifestReader, library_source
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, read_registry_units, registry_selection, selected_registry, target_configuration
+from rust_units import RegistryUnits, RustBuild, project_registry, registry_selection, selected_registry, target_configuration
 from toolchain import Toolchain, rust_compiler
 
 
@@ -20,6 +20,7 @@ pub def standard_graphs(
     profile: str,
     toolchain: Toolchain,
     units: list[GraphUnit],
+    registry: RegistryUnits,
     exclude: str = "",
 ) -> Result[list[GraphUnit], str]:
     """
@@ -48,7 +49,7 @@ pub def standard_graphs(
                 None => pass
                 Some(name) =>
                     seen.append(name)
-                    unit = standard_graph(owner, profile, toolchain, name, available[name])?
+                    unit = standard_graph(owner, profile, toolchain, name, available[name], registry)?
                     graphs.append(unit)
                     queue.append(unit)
     return Ok(graphs)
@@ -69,6 +70,7 @@ def standard_graph(
     toolchain: Toolchain,
     package: str,
     source_root: str,
+    registry: RegistryUnits,
 ) -> Result[GraphUnit, str]:
     """
     Read a published standard graph, or cache a legacy source export entirely under the requesting project.
@@ -88,7 +90,7 @@ def standard_graph(
         project=owner.0,
         profile=profile,
         rustc=rustc,
-        registry=selected_registry(read_registry_units(Path(toolchain.registry_units), source_root)?, facets, profile)?,
+        registry=selected_registry(project_registry(registry, source_root, ManifestReader())?, facets, profile)?,
         toolchain_search=toolchain.search,
         toolchain=Some(toolchain),
     )
@@ -97,7 +99,7 @@ def standard_graph(
             continue
         source = library_source(Path(source_root))?
         natives = unit_natives(facet, {}, request)?
-        legacy = inspect_incan(source, toolchain, natives, {}, facet.features, false, [], Some(owner))?
+        legacy = inspect_incan(source, toolchain, natives, {}, facet.features, false, [], Some(owner), Some(registry))?
         return Ok(GraphUnit(path=legacy, root=Path(f"@std/{package}"), package=package, source_root=source_root))
     return Err(f"no standard graph source selected for {package}")
 

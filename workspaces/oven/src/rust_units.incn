@@ -147,7 +147,7 @@ pub def read_registry_units(
     return project_registry(registry, project, reader)
 
 
-def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
+pub def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
     """A project's explicit build.registry-lock supersedes the installation's standard-producer root selection."""
     path = registry_record_path(project, reader)?
     if path == "":

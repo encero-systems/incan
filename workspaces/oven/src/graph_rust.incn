@@ -57,7 +57,7 @@ pub def inspect_rust(
     prepared = prepare_graph(root, profile, features, substitutes, toolchain, [], published_only)?
     mut paths = prepared.paths
     if len(paths) > 0:
-        paths = paths + standard_graphs(root, profile, toolchain, paths)?
+        paths = paths + standard_graphs(root, profile, toolchain, paths, prepared.registry)?
     # 2. Every Rust export is keyed by the compiler, the libraries built and the registry artifacts it links against.
     context = native_context(prepared, toolchain)?
     registry = registry_artifacts(prepared.facets, prepared.request)?
