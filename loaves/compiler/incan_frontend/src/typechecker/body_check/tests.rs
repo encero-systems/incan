@@ -4,6 +4,90 @@ use super::{BodyLocal, TypeChecker};
 use crate::ast::Span;
 
 impl TypeChecker {
+    /// Declaration-owned defaults never become statement-body inputs, and the separate owner keeps the checked
+    /// expression even when the body is refused. Constant and static rules are exercised by the cold matrix.
+    pub(in crate::typechecker) fn assert_declaration_expression_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "model Item:\n    value: int = 5\nclass Other:\n    value: int = 6\nconst seed: int = 3\nstatic total: int = 4\ndef first(value: int = seed + 1) -> int:\n    return value\ndef refused(value: int = 2) -> int:\n    return \"wrong\"\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("expected the invalid return to be refused")?;
+        assert_eq!(errors.len(), 1, "nested owners retain each diagnostic once");
+        assert_eq!(checker.checked_declarations.len(), 6);
+        for declaration in &program.declarations {
+            let defaults = match &declaration.node {
+                crate::ast::Declaration::Function(function) => function
+                    .params
+                    .iter()
+                    .filter_map(|param| param.node.default.as_ref())
+                    .collect::<Vec<_>>(),
+                crate::ast::Declaration::Model(model) => model
+                    .fields
+                    .iter()
+                    .filter_map(|field| field.node.default.as_ref())
+                    .collect::<Vec<_>>(),
+                crate::ast::Declaration::Class(class) => class
+                    .fields
+                    .iter()
+                    .filter_map(|field| field.node.default.as_ref())
+                    .collect::<Vec<_>>(),
+                _ => continue,
+            };
+            let owner = checker
+                .checked_declarations
+                .iter()
+                .find(|owner| owner.local.owner == declaration.span)
+                .ok_or("missing checked declaration")?;
+            for default in defaults {
+                assert!(
+                    owner.local.expressions.expr_types.contains_key(&default.span),
+                    "the declaration retains its checked default even when its statement body is refused"
+                );
+                assert!(
+                    checker.checked_bodies.iter().all(|body| !body
+                        .local
+                        .expressions
+                        .expr_types
+                        .contains_key(&default.span)),
+                    "a statement output must not own its declaration's default expression"
+                );
+            }
+        }
+        for body in &checker.checked_bodies {
+            assert!(
+                checker.checked_declarations.iter().all(|owner| {
+                    owner
+                        .local
+                        .nested
+                        .keys()
+                        .all(|span| !body.local.nested.contains_key(span))
+                }),
+                "nested body declarations have one output owner"
+            );
+        }
+        assert_eq!(
+            checker.check_work.callable_defaults, 2,
+            "each default expression is checked once"
+        );
+        assert_eq!(checker.check_work.declaration_local_checks, 6);
+        assert_eq!(checker.check_work.declaration_finalizations, 6);
+        assert_eq!(checker.check_work.field_defaults, 2);
+        assert_eq!(checker.check_work.body_local_checks, 2);
+        assert_eq!(checker.check_work.body_finalizations, 2);
+        eprintln!(
+            "declaration-owners\towners={}\tbodies={}\tdefault_checks={}\tfield_default_checks={}\tdefaults_in_body=0\trefusals={}",
+            checker.check_work.declaration_local_checks,
+            checker.check_work.body_local_checks,
+            checker.check_work.callable_defaults,
+            checker.check_work.field_defaults,
+            errors.len()
+        );
+        Ok(())
+    }
+
     /// Capture all local fact families and ordered pending decisions after a body. These verification snapshots never
     /// become producer inputs; only unordered Debug containers are sorted and every ordered element is retained.
     pub(in crate::typechecker) fn observe_body_local(&mut self, span: Span) {
@@ -15,6 +99,9 @@ impl TypeChecker {
             let errors = self.errors.clone();
             let warnings = self.warnings.clone();
             enclosing.clone().install(self);
+            for local in self.body_enclosing_observations.clone() {
+                local.append(self);
+            }
             for input in self.body_checks.clone() {
                 let mut local = input.local().clone();
                 local.diagnostics.clear();
@@ -113,7 +200,7 @@ impl TypeChecker {
     pub(in crate::typechecker) fn assert_body_edit_reuse() -> Result<(), Box<dyn std::error::Error>> {
         let program_text = |body: &str| {
             format!(
-                "def touch(mut items: list[int]) -> None:\n    {body:<24}\ndef first() -> None:\n    items = [1]\n    touch(items)\ndef second() -> None:\n    items = [2]\n    touch(items)\ndef sibling() -> int:\n    return 3\n"
+                "def touch(mut items: list[int]) -> None:\n    {body:<24}\ndef first() -> None:\n    items = [1]\n    touch(items)\ndef second() -> None:\n    items = [2]\n    touch(items)\ndef sibling(value: int = 3) -> int:\n    return value\n"
             )
         };
         let parse = |source: &str| -> Result<crate::ast::Program, Box<dyn std::error::Error>> {
@@ -134,14 +221,15 @@ impl TypeChecker {
         let mut base = TypeChecker::new();
         assert!(base.check_program(&original).is_ok());
         assert_eq!(base.checked_bodies.len(), 4);
+        assert_eq!(base.check_work.callable_defaults, 1);
         for (body, expected_finalizations, expected_reuses) in
             [("println(2)", 1, 3), ("touch(items)", 1, 3), ("items.append(2)", 3, 1)]
         {
             let edited = parse(&program_text(body))?;
             let mut candidate = TypeChecker::new();
             candidate.prepare_body_edit_program(&edited);
-            // This fixture has no imports, decorators, defaults or signature influences. Its complete G1
-            // declaration projection must still be byte-equal before a sibling is admitted for reuse.
+            // This fixture has no imports, decorators or signature influences. The default-bearing sibling's
+            // exact syntax and the complete G1 projection must be equal before its declaration output is reused.
             assert_eq!(
                 canonical_debug(&format!(
                     "{:?}",
@@ -162,6 +250,12 @@ impl TypeChecker {
                         declaration, &original.declarations[index],
                         "exact local syntax/coordinate precondition"
                     );
+                    let declaration_value = base
+                        .checked_declarations
+                        .iter()
+                        .find(|checked| checked.local.owner == declaration.span)
+                        .ok_or("missing sibling declaration value")?;
+                    candidate.reuse_checked_declaration(std::sync::Arc::clone(declaration_value));
                     let checked = base
                         .checked_bodies
                         .iter()
@@ -170,72 +264,95 @@ impl TypeChecker {
                     candidate.reuse_checked_body(std::sync::Arc::clone(checked));
                 }
             }
-            candidate.settle_body_checks();
-            candidate.record_program_lowering_facts(&edited);
-            let result = candidate.finish_program_check(&edited);
-            let mut legacy = TypeChecker::new();
-            let fresh = legacy.legacy_check_program(&edited);
-            assert_eq!(result, fresh, "complete ordered diagnostics after edit");
-            candidate.observe_body_local(Span::default());
-            legacy.observe_body_local(Span::default());
-            assert_eq!(
-                candidate.body_local_observations.last(),
-                legacy.body_local_observations.last(),
-                "all final fact families after edit"
-            );
-            assert_eq!(
-                candidate.type_info.semantic_fact_store(&[]).render_snapshot(),
-                legacy.type_info.semantic_fact_store(&[]).render_snapshot(),
-                "complete semantic facts after edit"
-            );
-            assert_eq!(
-                candidate.type_info.declarations.nested_declaration_identities,
-                legacy.type_info.declarations.nested_declaration_identities,
-                "unused lexical declarations survive reuse"
-            );
+            let errors = candidate.assert_body_edit_result(
+                &edited,
+                &base,
+                original.declarations[0].span,
+                expected_finalizations,
+                expected_reuses,
+            )?;
             let work = candidate.check_work();
-
-            assert_eq!(work.body_local_checks, 1);
-            assert_eq!(work.body_finalizations, expected_finalizations);
-            assert_eq!(work.body_view_reuses, expected_reuses);
-            assert_eq!(work.callable_defaults, 0);
-            assert_eq!(
-                work.mutation_arguments,
-                legacy.check_work().mutation_arguments,
-                "cached obligations receive the current traversal binding"
-            );
-            for previous in base
-                .checked_bodies
-                .iter()
-                .filter(|checked| checked.local.owner != original.declarations[0].span)
-            {
-                let current = candidate
-                    .checked_bodies
-                    .iter()
-                    .find(|checked| checked.local.owner == previous.local.owner)
-                    .ok_or("missing final sibling")?;
-                let subscribed = !previous.effect_reads.is_empty();
-                assert_eq!(
-                    std::sync::Arc::ptr_eq(previous, current),
-                    expected_reuses == 3 || !subscribed
-                );
-                assert!(
-                    std::sync::Arc::ptr_eq(&previous.local, &current.local),
-                    "caller local facts are reused even when its effect decision changes"
-                );
-            }
             eprintln!(
-                "body-edit\tbody={body}\tlocal_checks={}\tfinalizations={}\treused_views={}\tcomponents={}\tmembers={}\terrors={}\tdifferences=0",
+                "body-edit\tbody={body}\tlocal_checks={}\tfinalizations={}\treused_views={}\tdeclaration_reuses={}\tdefault_checks={}\tcomponents={}\tmembers={}\terrors={}\tdifferences=0",
                 work.body_local_checks,
                 work.body_finalizations,
                 work.body_view_reuses,
+                work.declaration_view_reuses,
+                work.callable_defaults,
                 work.mutation_components,
                 work.mutation_member_visits,
-                result.as_ref().err().map_or(0, Vec::len)
+                errors
             );
         }
         Ok(())
     }
+    /// Settle the edited records and compare every final fact and diagnostic with an independently checked program.
+    fn assert_body_edit_result(
+        &mut self,
+        edited: &crate::ast::Program,
+        base: &Self,
+        changed: Span,
+        expected_finalizations: usize,
+        expected_reuses: usize,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        self.settle_body_checks();
+        self.record_program_lowering_facts(edited);
+        let result = self.finish_program_check(edited);
+        let mut legacy = TypeChecker::new();
+        let fresh = legacy.legacy_check_program(edited);
+        assert_eq!(result, fresh, "complete ordered diagnostics after edit");
+        self.observe_body_local(Span::default());
+        legacy.observe_body_local(Span::default());
+        assert_eq!(
+            self.body_local_observations.last(),
+            legacy.body_local_observations.last(),
+            "all final fact families after edit"
+        );
+        assert_eq!(
+            self.type_info.semantic_fact_store(&[]).render_snapshot(),
+            legacy.type_info.semantic_fact_store(&[]).render_snapshot(),
+            "complete semantic facts after edit"
+        );
+        assert_eq!(
+            self.type_info.declarations.nested_declaration_identities,
+            legacy.type_info.declarations.nested_declaration_identities,
+            "unused lexical declarations survive reuse"
+        );
+        let work = self.check_work();
+
+        assert_eq!(work.body_local_checks, 1);
+        assert_eq!(work.body_finalizations, expected_finalizations);
+        assert_eq!(work.body_view_reuses, expected_reuses);
+        assert_eq!(work.declaration_view_reuses, 3);
+        assert_eq!(work.callable_defaults, 0);
+        assert_eq!(
+            work.mutation_arguments,
+            legacy.check_work().mutation_arguments,
+            "cached obligations receive the current traversal binding"
+        );
+        for previous in base
+            .checked_bodies
+            .iter()
+            .filter(|checked| checked.local.owner != changed)
+        {
+            let current = self
+                .checked_bodies
+                .iter()
+                .find(|checked| checked.local.owner == previous.local.owner)
+                .ok_or("missing final sibling")?;
+            let subscribed = !previous.effect_reads.is_empty();
+            assert_eq!(
+                std::sync::Arc::ptr_eq(previous, current),
+                expected_reuses == 3 || !subscribed
+            );
+            assert!(
+                std::sync::Arc::ptr_eq(&previous.local, &current.local),
+                "caller local facts are reused even when its effect decision changes"
+            );
+        }
+        Ok(result.as_ref().err().map_or(0, Vec::len))
+    }
+
     /// Prepare exactly the production G1 envelope before a test driver admits any reused body.
     fn prepare_body_edit_program(&mut self, program: &crate::ast::Program) {
         self.reset_program_check(program, false);

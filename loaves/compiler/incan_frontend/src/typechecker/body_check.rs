@@ -1,19 +1,28 @@
-//! One callable's checked output and deferred decisions, before the existing module settlement passes.
+//! Declaration and callable-statement outputs and deferred decisions, before module settlement.
 //!
-//! Declaration inputs remain with G1. The bootstrap scope redirects the existing checker into empty local fact
-//! tables, then consumes its result into the invocation-local compatibility view. No body is rechecked to settle it.
+//! Collected declaration inputs remain with G1. Declaration validation, defaults and initializers own outputs
+//! independently from statement bodies. Each operation uses the same local writer and existing semantic rules;
+//! settlement consumes those outputs without rechecking an expression or statement.
 
 use super::mut_arguments::MutBodyLocal;
 use super::type_info::{
     CAbiInteropArtifacts, CallArtifacts, ExpressionArtifacts, ProtocolArtifacts, ReferenceArtifacts,
     RustInteropArtifacts, TraitArtifacts, TypeCheckInfo,
 };
-use super::{TypeChecker, VisibilityPoint};
-use crate::ast::{FunctionDecl, MethodDecl, Span, TypeParam};
+use super::{TypeChecker, VisibilityPoint, YieldContext};
+use crate::ast::{FunctionDecl, MethodDecl, Span, Spanned, Statement, TypeParam};
 use crate::diagnostics::CompileError;
 use crate::symbols::ResolvedType;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// Semantic operation that owns one local output; declaration expressions never count as statement-body checks.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum LocalOwnerKind {
+    #[default]
+    Body,
+    Declaration,
+}
 
 /// Owned local checked output. Open-value groups keep body-local indices until the compatibility join relocates
 /// them; mutation and dictionary decisions remain pending for their existing module-order settlement owners.
@@ -21,6 +30,8 @@ use std::sync::Arc;
 pub(super) struct BodyLocal {
     /// Revision-local owner handle; semantic identity is supplied separately by the record adapter.
     owner: Span,
+    /// Declaration/default output is settled independently from callable statement output.
+    kind: LocalOwnerKind,
     order: BodyDiagnosticOrder,
     /// Body-owned lexical declarations retained independently of a later whole-symbol-table export.
     nested: BTreeMap<Span, incan_semantics_core::CanonicalSymbolId>,
@@ -43,28 +54,35 @@ pub(super) struct BodyLocal {
 pub(super) struct BodyCheckScope {
     enclosing: BodyLocal,
     symbol_start: usize,
+    output_start: usize,
     order: BodyDiagnosticOrder,
     diagnostic_start: usize,
     warning_start: usize,
+    child_start: usize,
     visibility: VisibilityPoint,
 }
 
 impl BodyCheckScope {
-    /// Borrow G1's current visibility point before taking mutable local tables. Declaration/default validation runs
-    /// once inside the existing callable operation; declaration-owned tables and symbols remain its read authority.
+    /// Borrow G1's current visibility point before taking local tables. Declaration validation and prepared
+    /// statement checking enter independently; collected tables and symbols remain their read authority.
     pub(super) fn enter(checker: &mut TypeChecker) -> Self {
         let visibility = checker.check_environment().visibility_point();
         let mut enclosing = BodyLocal::take(checker);
         enclosing.install_shared_inputs(checker);
+        enclosing.mutation.enter_statement_frame(&mut checker.mut_params);
+        #[cfg(test)]
+        checker.body_enclosing_observations.push(enclosing.clone());
         Self {
             enclosing,
             symbol_start: checker.symbols.all_symbols().len(),
+            output_start: checker.body_checks.len(),
             order: BodyDiagnosticOrder {
                 mutation: checker.check_work.mutation_arguments,
                 dictionary: checker.check_work.dictionary_lookups,
             },
             diagnostic_start: checker.errors.len(),
             warning_start: checker.warnings.len(),
+            child_start: checker.diagnostic_owner_ranges.len(),
             visibility,
         }
     }
@@ -77,13 +95,43 @@ impl BodyCheckScope {
         local.nested = checker
             .symbols
             .nested_declaration_identities_from(self.symbol_start)
+            .filter(|(span, _)| {
+                !checker.body_checks[self.output_start..]
+                    .iter()
+                    .any(|child| child.local().nested.contains_key(span))
+            })
             .map(|(span, identity)| (span, identity.clone()))
             .collect();
         local.order = self.order;
-        local.diagnostics = checker.errors.split_off(self.diagnostic_start);
-        local.warnings = checker.warnings.split_off(self.warning_start);
+        local.diagnostics = checker.errors[self.diagnostic_start..]
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                !checker.diagnostic_owner_ranges[self.child_start..]
+                    .iter()
+                    .any(|(errors, _)| errors.contains(&(index + self.diagnostic_start)))
+            })
+            .map(|(_, error)| error.clone())
+            .collect();
+        local.warnings = checker.warnings[self.warning_start..]
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                !checker.diagnostic_owner_ranges[self.child_start..]
+                    .iter()
+                    .any(|(_, warnings)| warnings.contains(&(index + self.warning_start)))
+            })
+            .map(|(_, error)| error.clone())
+            .collect();
+        checker.diagnostic_owner_ranges.push((
+            self.diagnostic_start..checker.errors.len(),
+            self.warning_start..checker.warnings.len(),
+        ));
+        local.mutation.return_statement_frame(&mut self.enclosing.mutation);
         local.restore_shared_inputs(&mut self.enclosing);
         self.enclosing.install(checker);
+        #[cfg(test)]
+        let _ = checker.body_enclosing_observations.pop();
         local
     }
 }
@@ -112,6 +160,7 @@ impl BodyLocal {
         } = &mut checker.type_info;
         Self {
             owner: Span::default(),
+            kind: LocalOwnerKind::Body,
             order: BodyDiagnosticOrder::default(),
             nested: BTreeMap::new(),
             expressions: std::mem::take(expressions),
@@ -567,27 +616,58 @@ fn append_c_abi(target: &mut CAbiInteropArtifacts, local: CAbiInteropArtifacts) 
 }
 
 impl TypeChecker {
-    /// Run the existing function operation once with declaration inputs and a fresh body writer.
-    pub(super) fn check_function(&mut self, function: &FunctionDecl, span: Span) {
-        self.check_work.body_local_checks += 1;
-        #[cfg(test)]
-        if self.legacy_body_checking {
-            self.check_function_in_scope(function, span);
-            self.observe_body_local(span);
-            return;
-        }
-        let scope = BodyCheckScope::enter(self);
-        self.check_function_in_scope(function, span);
-        let mut local = scope.finish(self);
-        local.owner = span;
-        self.errors.extend(local.diagnostics.iter().cloned());
-        self.warnings.extend(local.warnings.iter().cloned());
-        self.body_checks.push(BodyCheckInput::Local(local));
+    /// Check a function declaration once at its existing lexical boundary. Defaults see generic binders but no
+    /// callable parameters; statement checking consumes that prepared frame through its own local writer.
+    pub(super) fn check_function_declaration(&mut self, function: &FunctionDecl, span: Span) {
+        self.check_declaration_owner(span, |checker| {
+            checker.check_function_declaration_in_scope(function, span)
+        });
         #[cfg(test)]
         self.observe_body_local(span);
     }
 
-    /// Keep abstract method validation outside the body boundary; each concrete method checks one local body.
+    /// Run a declaration's actual semantic rules in the same scoped writer used for callable bodies. Constants keep
+    /// their const-evaluation owner, statics retain registry initialization rules, and defaults retain declaration
+    /// visibility. Reserve the publication position before nested bodies so traversal order remains source order.
+    pub(super) fn check_declaration_owner(&mut self, span: Span, check: impl FnOnce(&mut Self)) {
+        #[cfg(test)]
+        if self.legacy_body_checking {
+            check(self);
+            return;
+        }
+        self.check_work.declaration_local_checks += 1;
+        let index = self.body_checks.len();
+        let scope = BodyCheckScope::enter(self);
+        check(self);
+        let mut local = scope.finish(self);
+        local.owner = span;
+        local.kind = LocalOwnerKind::Declaration;
+        self.body_checks.insert(index, BodyCheckInput::Local(local));
+    }
+
+    /// Check one concrete callable's statements with prepared parameters, receiver, bounds and return context.
+    pub(super) fn check_callable_body(
+        &mut self,
+        body: &[Spanned<Statement>],
+        is_async: bool,
+        span: Span,
+        context: YieldContext,
+    ) {
+        self.check_work.body_local_checks += 1;
+        #[cfg(test)]
+        if self.legacy_body_checking {
+            self.check_callable_body_in_frame(body, is_async, context);
+            return;
+        }
+        let scope = BodyCheckScope::enter(self);
+        self.check_callable_body_in_frame(body, is_async, context);
+        let mut local = scope.finish(self);
+        local.owner = span;
+        self.body_checks.push(BodyCheckInput::Local(local));
+    }
+
+    /// Validate method declarations independently of their concrete statement producer. Abstract declarations run
+    /// their declaration checks and defaults but never contribute a local body activation.
     pub(super) fn check_method_with_self_ty(
         &mut self,
         method: &MethodDecl,
@@ -595,26 +675,13 @@ impl TypeChecker {
         self_ty: ResolvedType,
         owner: &[TypeParam],
     ) {
-        if method.body.is_none() {
-            self.check_method_in_scope(method, span, self_ty, owner);
-            return;
-        }
-        self.check_work.body_local_checks += 1;
+        self.check_declaration_owner(span, |checker| {
+            checker.check_method_in_scope(method, span, self_ty, owner)
+        });
         #[cfg(test)]
-        if self.legacy_body_checking {
-            self.check_method_in_scope(method, span, self_ty, owner);
+        if method.body.is_some() {
             self.observe_body_local(span);
-            return;
         }
-        let scope = BodyCheckScope::enter(self);
-        self.check_method_in_scope(method, span, self_ty, owner);
-        let mut local = scope.finish(self);
-        local.owner = span;
-        self.errors.extend(local.diagnostics.iter().cloned());
-        self.warnings.extend(local.warnings.iter().cloned());
-        self.body_checks.push(BodyCheckInput::Local(local));
-        #[cfg(test)]
-        self.observe_body_local(span);
     }
 }
 
@@ -622,7 +689,7 @@ impl TypeChecker {
 mod tests;
 
 /// A completed local output and its separately ordered settlement diagnostics. Publication consumes this value only
-/// after the local checker and the effect producer have finished; it never enters `check_function` again.
+/// after the local checker and the effect producer have finished; it never enters `check_callable_body` again.
 #[derive(Debug, Clone)]
 pub(super) struct CheckedBodyView {
     local: Arc<BodyLocal>,
@@ -642,6 +709,7 @@ impl BodyLocal {
     ) -> CheckedBodyView {
         // ---- Complete lexical destinations ----
         let owner = self.owner;
+        let kind = self.kind;
         let order = self.order;
         let nested = std::mem::take(&mut self.nested);
         let diagnostics = std::mem::take(&mut self.diagnostics);
@@ -656,6 +724,7 @@ impl BodyLocal {
         local.restore_shared_inputs(&mut enclosing);
         enclosing.install(checker);
         local.owner = owner;
+        local.kind = kind;
         local.order = order;
         local.nested = nested;
         local.diagnostics = diagnostics;
@@ -676,7 +745,11 @@ impl BodyLocal {
                 })
             })
             .collect();
-        checker.check_work.body_finalizations += 1;
+        if local.kind == LocalOwnerKind::Declaration {
+            checker.check_work.declaration_finalizations += 1;
+        } else {
+            checker.check_work.body_finalizations += 1;
+        }
         CheckedBodyView {
             effect_reads: local.mutation.effect_reads(effects),
             local: Arc::new(local),
@@ -751,7 +824,11 @@ impl TypeChecker {
             published.mutation.clear_pending_arguments();
             published.dictionary.clear();
             published.append(self);
-            self.checked_bodies.push(checked);
+            if checked.local.kind == LocalOwnerKind::Declaration {
+                self.checked_declarations.push(checked);
+            } else {
+                self.checked_bodies.push(checked);
+            }
         }
         render_decisions(mutation, &mut self.errors, true);
         render_decisions(dictionary, &mut self.errors, false);
@@ -800,12 +877,20 @@ impl BodyCheckInput {
             Self::Reuse { checked, .. } => {
                 let reads = checked.local.mutation.effect_reads(effects);
                 if reads == checked.effect_reads {
-                    checker.check_work.body_view_reuses += 1;
+                    if checked.local.kind == LocalOwnerKind::Declaration {
+                        checker.check_work.declaration_view_reuses += 1;
+                    } else {
+                        checker.check_work.body_view_reuses += 1;
+                    }
                     return checked;
                 }
                 let mut mutation = Vec::new();
                 checked.local.mutation.finalize_arguments(effects, &mut mutation);
-                checker.check_work.body_finalizations += 1;
+                if checked.local.kind == LocalOwnerKind::Declaration {
+                    checker.check_work.declaration_finalizations += 1;
+                } else {
+                    checker.check_work.body_finalizations += 1;
+                }
                 Arc::new(CheckedBodyView {
                     local: Arc::clone(&checked.local),
                     effect_reads: reads,
@@ -819,9 +904,22 @@ impl BodyCheckInput {
 }
 
 impl TypeChecker {
+    /// Accept an unchanged declaration/default result whose declaration inputs and source binding the caller has
+    /// already validated. Reusing a statement body alone never supplies its declaration's checked expressions.
+    pub(super) fn reuse_checked_declaration(&mut self, checked: Arc<CheckedBodyView>) {
+        debug_assert_eq!(checked.local.kind, LocalOwnerKind::Declaration);
+        self.reuse_checked_local(checked);
+    }
+
     /// Accept a previous body only after its source, declaration/default/name inputs and position binding have been
     /// proved applicable by the caller. This is a bootstrap adapter, never an implicit cache lookup by body name.
     pub(super) fn reuse_checked_body(&mut self, checked: Arc<CheckedBodyView>) {
+        debug_assert_eq!(checked.local.kind, LocalOwnerKind::Body);
+        self.reuse_checked_local(checked);
+    }
+
+    /// Bind one validated prior output to this activation's traversal order without replaying semantic checks.
+    fn reuse_checked_local(&mut self, checked: Arc<CheckedBodyView>) {
         self.errors.extend(checked.local.diagnostics.iter().cloned());
         self.warnings.extend(checked.local.warnings.iter().cloned());
         let order = BodyDiagnosticOrder {
