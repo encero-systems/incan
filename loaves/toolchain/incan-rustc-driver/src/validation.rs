@@ -737,6 +737,9 @@ fn projected_field(
             .ok_or_else(|| invalid(function, "unknown tuple field"))?,
         Scalar::Model(owner) => {
             let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
+            if model.unavailable_native_fields.contains(&slot) {
+                return Err(invalid(function, "cannot project an opaque native field"));
+            }
             let field = usize::try_from(slot)
                 .ok()
                 .and_then(|slot| model.fields.get(slot))
@@ -1112,6 +1115,29 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         RvalueKind::PointerAddress(pointer) => pointer_address_result(plan, function, pointer),
         RvalueKind::MutBorrow(value) => borrow_result(plan, function, value, true),
         RvalueKind::Borrow(value) => borrow_result(plan, function, value, false),
+        RvalueKind::UnsizeTraitObject(value, source, target) => {
+            require(
+                function,
+                operand(plan, function, value)?,
+                scalar(source),
+                "trait object source",
+            )?;
+            let target_scalar = scalar(target);
+            let valid = match (&target_scalar, scalar(source)) {
+                (Scalar::ScalarRef(inner), Scalar::ModelRef(..) | Scalar::ScalarRef(_))
+                | (Scalar::ScalarMutRef(inner), Scalar::ModelMutRef(..) | Scalar::ScalarMutRef(_)) => {
+                    matches!(inner.as_slice(), [Scalar::NativeTraitObject(..)])
+                }
+                _ => false,
+            };
+            if !valid {
+                return Err(invalid(
+                    function,
+                    "trait object conversion must preserve reference mutability",
+                ));
+            }
+            Ok(target_scalar)
+        }
         RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
             Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
             Scalar::StrArrayRef(_) => Ok(Scalar::StrSlice),
@@ -1356,6 +1382,9 @@ fn model_aggregate_result(
         "model aggregate destination",
     )?;
     let model = model(plan, index).ok_or_else(|| invalid(function, "unknown constructed model"))?;
+    if !model.unavailable_native_fields.is_empty() {
+        return Err(invalid(function, "cannot construct a native model with opaque fields"));
+    }
     if elements.len() != model.fields.len() {
         return Err(invalid(function, "model field count differs from declaration"));
     }
@@ -1706,11 +1735,11 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier borrows primitive storage, a checked tuple, a function pointer, or a sized shared
-/// reference. Borrowing a reference preserves its referent and does not make that referent writable; exclusive
-/// reference values do not acquire copying authority.
+/// The scalar reference carrier borrows primitive storage, a native trait object, a checked tuple, a function pointer,
+/// or a shared reference. Borrowing a reference preserves its referent and does not make that referent writable;
+/// exclusive reference values do not acquire copying authority.
 fn scalar_referent(ty: &Scalar) -> bool {
-    if shared_reference(ty) {
+    if shared_reference(ty) || matches!(ty, Scalar::NativeTraitObject(..)) {
         return true;
     }
     if matches!(ty, Scalar::FunctionPointer(_) | Scalar::Tuple(_)) {
@@ -2660,7 +2689,8 @@ fn validate_nested_carrier_components(plan: &Plan, ty: &PlanType) -> Result<(), 
             if !matches!(elements.as_slice(), [inner] if scalar_referent(&scalar(inner))) {
                 return Err(PlanError::Unsupported {
                     function: "scalar reference".into(),
-                    reason: "scalar reference requires one admitted sized scalar or shared-reference referent".into(),
+                    reason: "scalar reference requires one admitted scalar, native trait object, or reference referent"
+                        .into(),
                 });
             }
             for element in elements {
@@ -3091,6 +3121,24 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             return Err(PlanError::Unsupported {
                 function: declaration.name.clone(),
                 reason: "native type arguments on a source-owned model".into(),
+            });
+        }
+        if (!declaration.unavailable_native_fields.is_empty() && declaration.library_item.is_empty())
+            || declaration
+                .unavailable_native_fields
+                .iter()
+                .enumerate()
+                .any(|(position, slot)| {
+                    declaration.unavailable_native_fields[..position].contains(slot)
+                        || usize::try_from(*slot)
+                            .ok()
+                            .and_then(|index| declaration.fields.get(index))
+                            .is_none_or(|field| field.ty != PlanType::Unit)
+                })
+        {
+            return Err(PlanError::Invalid {
+                function: declaration.name.clone(),
+                reason: "invalid opaque native field slots".into(),
             });
         }
         for field in &declaration.fields {

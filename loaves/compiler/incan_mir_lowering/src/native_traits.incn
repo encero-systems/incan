@@ -1,0 +1,36 @@
+"""Forward inspected foreign trait slots to canonical source bodies without claiming native conformance."""
+
+from rust::incan_semantics_core import SymbolOrigin
+from rust::incan_semantics_core::body_ir import BodyIrModule
+from pub::incan_mir_plan import NativeTraitAdoption, NativeTraitMethod
+from classes import function_name
+
+
+pub def native_trait_adoptions(module: &BodyIrModule, owner: int) -> Result[list[NativeTraitAdoption], str]:
+    """Resolve explicit native implementations by identity; defaults and required slots remain rustc-owned."""
+    declaration = module.nominal_declarations[owner]
+    mut result: list[NativeTraitAdoption] = []
+    for adoption in declaration.trait_adoptions:
+        mut path: str = ""
+        match adoption.trait_identity.origin:
+            SymbolOrigin.RustCrate(parts) => path = "::".join(list(parts))
+            _ => continue
+        mut methods: list[NativeTraitMethod] = []
+        match adoption.methods:
+            None => return Err("missing inspected native trait slots")
+            Some(slots) =>
+                for slot in slots:
+                    for implementation in module.trait_implementations:
+                        if implementation.owner != declaration.canonical or implementation.method != slot:
+                            continue
+                        mut selected: str = ""
+                        for body in module.bodies:
+                            if body.canonical == Some(implementation.implementation.clone()):
+                                if selected != "" or len(body.type_parameters) != 0:
+                                    return Err("ambiguous or open native trait source method")
+                                selected = function_name(module, body)
+                        if selected == "":
+                            return Err("missing native trait source method body")
+                        methods.append(NativeTraitMethod(name=str(slot.declaration_name), function=selected))
+        result.append(NativeTraitAdoption(path=path, methods=methods))
+    return Ok(result)

@@ -7468,6 +7468,11 @@ def borrow_scalar_operand(
                 return Err("unsupported Body IR scalar reference without an exclusive borrow fact")
             owner = scalar_borrow_owner(builder, read, referent, mutable, span)?
             actual = place_type(builder.locals, owner)
+            match referent:
+                PlanType.NativeTraitObject(_path, _send, _sync) =>
+                    if actual != referent:
+                        return borrow_native_object(builder, owner, actual, referent, mutable, span)
+                _ => pass
             # An exact reference-valued referent needs another loan; an additional existing loan is reborrowed.
             if actual != referent:
                 match actual:
@@ -7495,6 +7500,31 @@ def borrow_scalar_operand(
         operation = RvalueKind.MutBorrow(owner)
     output = temporary(builder, reference, span)
     builder.emit(plan_assign(output, operation, span))
+    return Ok(read_place(output, mutable, span))
+
+
+def borrow_native_object(
+    mut builder: Builder,
+    owner: Place,
+    actual: PlanType,
+    referent: PlanType,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Keep the concrete owner alive through its loan; the native boundary proves unsizing and all object bounds."""
+    mut source = shared_receiver_type(actual)?
+    mut target = PlanType.ScalarRef([referent])
+    mut operation = RvalueKind.Borrow(owner)
+    if mutable:
+        source = mutable_receiver_type(actual)?
+        target = PlanType.ScalarMutRef([referent])
+        operation = RvalueKind.MutBorrow(owner)
+    loan = temporary(builder, source, span)
+    builder.emit(plan_assign(loan, operation, span))
+    output = temporary(builder, target, span)
+    builder.emit(
+        plan_assign(output, RvalueKind.UnsizeTraitObject(read_place(loan, mutable, span), source, target), span),
+    )
     return Ok(read_place(output, mutable, span))
 
 

@@ -403,8 +403,11 @@ fn complete_dependency_context(
         .get_mut(program.entry)
         .ok_or("selected Body IR entry is missing")?
         .loaf_callables = loaf_callables;
-    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
+    // Native layouts keep their real storage in rustc. Discover held owners after extracting those layouts:
+    // an unused foreign field must not pull its private carrier graph into the consumer's selected closure.
+    // Accessed field values remain represented by checked body locals and external signatures.
     let layouts = take_rust_layouts(&mut program.modules)?;
+    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
     let native_enums = take_rust_enums(&mut program.modules)?;
     let owners: std::collections::HashSet<_> = layouts
         .iter()

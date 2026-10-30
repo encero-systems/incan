@@ -50,6 +50,7 @@ mod native_loans;
 mod native_search;
 mod native_shared;
 mod native_timing;
+mod native_trait_bridges;
 mod panic_hooks;
 mod plan;
 mod program_entries;

@@ -1,4 +1,6 @@
-# Local compiler authoring experiment result
+# Initial compiler library-entry result
+
+**Follow-up:** [COMPILER_CALLBACK_RESULTS.md](COMPILER_CALLBACK_RESULTS.md) records working native and Incan-authored callbacks. This file preserves the prior library-entry stage and its then-open gaps.
 
 The per-invocation compiler-private linkage patch builds successfully from the dev.8 seed. It compiles an independent Incan rustc enum consumer and a direct `rustc_driver.main()` consumer. The latter reports rustc target configuration without spawning a compiler subprocess. No Incan-authored callback or typed-body injection has executed.
 

@@ -441,6 +441,9 @@ pub fn rvalue<'tcx>(
         RvalueKind::Borrow(value) => {
             mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?)
         }
+        RvalueKind::UnsizeTraitObject(value, source, target) => {
+            unsize_trait_object(tcx, sources, value, source, target, destination_type)?
+        }
         RvalueKind::UnsizeSlice(value) => mir::Rvalue::Cast(
             mir::CastKind::PointerCoercion(
                 rustc_middle::ty::adjustment::PointerCoercion::Unsize,
@@ -450,6 +453,48 @@ pub fn rvalue<'tcx>(
             native_type(tcx, destination_type)?,
         ),
     })
+}
+
+/// Require rustc to prove the complete concrete-reference conversion before constructing a fat pointer.
+/// Both the principal trait and auto traits participate; a retained plan is never itself conformance evidence.
+fn unsize_trait_object<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    value: &Operand,
+    source: &PlanType,
+    target: &PlanType,
+    destination: &PlanType,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    use rustc_infer::infer::TyCtxtInferExt;
+    use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt;
+
+    let invalid = || PlanError::Invalid {
+        function: "native trait object conversion".into(),
+        reason: format!("rustc cannot prove {source:?} coerces to {target:?}"),
+    };
+    let source = native_type(tcx, source)?;
+    let target = native_type(tcx, target)?;
+    if target != native_type(tcx, destination)? {
+        return Err(invalid());
+    }
+    let trait_id = tcx.lang_items().coerce_unsized_trait().ok_or_else(invalid)?;
+    let (infcx, environment) = tcx
+        .infer_ctxt()
+        .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
+    let obligation = rustc_infer::traits::Obligation::new(
+        tcx,
+        rustc_middle::traits::ObligationCause::dummy(),
+        environment,
+        ty::TraitRef::new(tcx, trait_id, [source, target]),
+    );
+    if !infcx.predicate_must_hold_modulo_regions(&obligation) {
+        return Err(invalid());
+    }
+    Ok(mir::Rvalue::Cast(
+        mir::CastKind::PointerCoercion(ty::adjustment::PointerCoercion::Unsize, mir::CoercionSource::Implicit),
+        operand(tcx, sources, value)?,
+        target,
+    ))
 }
 
 /// Resolve a retained executor callback before reifying its safe no-argument, unit-returning function pointer.

@@ -449,9 +449,39 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             Ok(None) => {}
             Err(error) => refuse(tcx, error),
         }
-        for model in self.plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-            if let Err(error) = verify_library_layout(tcx, model) {
+        let mut unsupported_fields = Vec::new();
+        for (owner, model) in self
+            .plan
+            .models
+            .iter()
+            .enumerate()
+            .filter(|(_, model)| !model.library_item.is_empty())
+        {
+            match verify_library_layout(tcx, model) {
+                Ok(fields) => unsupported_fields.extend(fields.into_iter().map(|field| (owner, field))),
+                Err(error) => refuse(tcx, error),
+            }
+        }
+        if !unsupported_fields.is_empty() {
+            // Refine the immutable plan only after native metadata is available. Unsupported unused fields stay
+            // opaque; revalidation refuses every projection or aggregate that would rely on those fields.
+            let mut plan = self.plan.as_ref().clone();
+            for (owner, field) in unsupported_fields {
+                plan.models[owner].fields[field].ty = PlanType::Unit;
+                let slot = match i64::try_from(field) {
+                    Ok(slot) => slot,
+                    Err(_) => tcx.dcx().fatal("native field slot overflow"),
+                };
+                plan.models[owner].unavailable_native_fields.push(slot);
+            }
+            // Entry-kind requirements were checked before the session; all declaration/body contracts run again.
+            if let Err(error) = validation::validate(&plan, true) {
                 refuse(tcx, error);
+            }
+            self.plan = Arc::new(plan);
+            match PLAN.lock() {
+                Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
+                Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
             }
         }
         for value in self.plan.enums.iter().filter(|value| !value.library_item.is_empty()) {
@@ -592,6 +622,7 @@ fn native_bridge_items(plan: &Plan, span: rustc_span::Span) -> Result<Vec<Box<as
     items.extend(crate::fallible_bridges::items(plan, span)?);
     items.extend(crate::fallible_bridges::ordinary_items(plan, span)?);
     items.extend(crate::callable_bridges::items(plan, span)?);
+    items.extend(crate::native_trait_bridges::items(plan, span)?);
     Ok(items)
 }
 
@@ -636,8 +667,9 @@ fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> b
 
 /// Check a retained native layout against its crate's metadata at the plan's explicit type arguments, including their
 /// bounds. Fields keep their names and instantiated types in order; a field marked public must be public in metadata.
-/// An opaque carrier grants no projection; a field-bearing layout requires a native struct after alias instantiation.
-fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
+/// Return fields whose carrier cannot preserve the exact native type, so the caller marks them opaque and revalidates
+/// every use. Names, slot order, visibility, bounds and Copy remain mandatory even for unused fields.
+fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<Vec<usize>, PlanError> {
     let invalid = |reason: &str| PlanError::Unsupported {
         function: model.library_item.clone(),
         reason: reason.into(),
@@ -646,7 +678,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
         types::native_trait_object(tcx, def, &model.library_type_arguments)?;
         return if model.fields.is_empty() {
-            Ok(())
+            Ok(Vec::new())
         } else {
             Err(invalid("native trait object grants no field layout"))
         };
@@ -665,7 +697,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         }
     }
     if model.fields.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let native = tcx.type_of(def).instantiate(tcx, arguments).skip_normalization();
     let rustc_middle::ty::Adt(adt, arguments) = native.kind() else {
@@ -680,13 +712,14 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
+    let mut unsupported = Vec::new();
     for (slot, (field, planned)) in declared.iter().zip(&model.fields).enumerate() {
         if model.field_public.get(slot) == Some(&true) && !field.vis.is_public() {
             return Err(invalid("public native field is private in metadata"));
         }
-        if field.name.as_str() != planned.name
-            || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
-        {
+        let index = i64::try_from(slot).map_err(|_| invalid("native field slot overflow"))?;
+        let opaque = model.unavailable_native_fields.contains(&index);
+        if field.name.as_str() != planned.name {
             return Err(invalid(&format!(
                 "stdlib layout field `{}` at slot {slot} differs from metadata: native {}, planned {:?}",
                 planned.name,
@@ -694,8 +727,11 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
                 planned.ty,
             )));
         }
+        if !opaque && field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)? {
+            unsupported.push(slot);
+        }
     }
-    Ok(())
+    Ok(unsupported)
 }
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against

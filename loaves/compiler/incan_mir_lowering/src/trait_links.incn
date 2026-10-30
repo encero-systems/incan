@@ -43,6 +43,10 @@ pub def validate_project_implementation(
         ):
             return Ok(None)
         return Err("invalid Body IR trait implementation without a retained declaration")
+    if inspected_native_slot(module, implementation):
+        if retains_body(modules, implementation.implementation):
+            return Ok(None)
+        return Err("native trait implementation has no retained source body")
     if not declares_slot(modules, implementation.method):
         return Err("invalid Body IR trait implementation without its declaring trait")
     if not retains_body(modules, implementation.implementation):
@@ -158,3 +162,23 @@ def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> 
 pub def contains(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool:
     """Whether the owner's declaration span encloses the member's; callers compare origins, as spans of files nest."""
     return owner.declaration_span.start <= member.declaration_span.start and member.declaration_span.end <= owner.declaration_span.end
+
+
+def inspected_native_slot(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+    """Require an inspected foreign adoption on this exact owner; rustc independently validates its native ABI."""
+    match implementation.method.origin:
+        SymbolOrigin.RustCrate(_path) => pass
+        _ => return false
+    for declaration in module.nominal_declarations:
+        if declaration.canonical != implementation.owner:
+            continue
+        for adoption in declaration.trait_adoptions:
+            if adoption.trait_identity.origin != implementation.method.origin:
+                continue
+            match adoption.methods:
+                Some(slots) =>
+                    for slot in slots:
+                        if slot == implementation.method:
+                            return true
+                None => pass
+    return false

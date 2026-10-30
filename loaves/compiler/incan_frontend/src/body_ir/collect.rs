@@ -1614,7 +1614,7 @@ pub(super) fn collect_local_trait_implementations(
     nominal_declarations: &[bir::NominalDeclaration],
     enum_declarations: &[bir::EnumDeclaration],
 ) -> Vec<bir::TraitImplementation> {
-    let mut implementations = Vec::new();
+    let mut implementations = type_info.declarations.native_trait_implementations.clone();
     for declaration in &program.declarations {
         let (adoptions, methods, properties) = match &declaration.node {
             ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => (

@@ -1113,6 +1113,8 @@ pub struct DeclarationArtifacts {
     /// Body IR-only canonical trait adoptions, retaining marker protocols and ordered checked arguments.
     /// Legacy conformance, derive selection, and method tables never consume this snapshot.
     pub body_ir_trait_adoptions: HashMap<String, Vec<BodyIrCheckedTraitAdoption>>,
+    /// Inspected foreign slots bound to source methods; rustc still validates the native implementation ABI.
+    pub native_trait_implementations: Vec<incan_semantics_core::body_ir::TraitImplementation>,
     /// Body IR-only checked local inheritance and ordered ancestor field identities; legacy class layouts stay intact.
     pub body_ir_class_inheritance: HashMap<String, BodyIrClassInheritance>,
     /// Body IR-only source trait slots adopted by checked derive bundles, keyed by the adopting declaration.

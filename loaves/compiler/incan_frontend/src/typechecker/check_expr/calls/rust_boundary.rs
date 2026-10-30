@@ -1227,7 +1227,7 @@ impl TypeChecker {
 
     /// Return whether complete Rust metadata proves that an argument type implements a trait-object boundary.
     fn rust_type_implements_trait_object(&self, arg_ty: &ResolvedType, trait_object_display: &str) -> bool {
-        let Some(trait_path) = trait_object_display.trim().strip_prefix("dyn ").map(str::trim) else {
+        let Some(_) = trait_object_display.trim().strip_prefix("dyn ") else {
             return false;
         };
         let Some((actual_path, _, _, _)) = self.rust_identity_for_type(arg_ty) else {
@@ -1236,8 +1236,29 @@ impl TypeChecker {
         let Some(metadata) = self.rust_item_metadata_for_complete_type(actual_path.as_str()) else {
             return false;
         };
-        let trait_definition = self.rust_definition_for_path(trait_path);
-        Self::rust_type_metadata_implements_trait(&metadata, trait_path, trait_definition.as_deref())
+        let Ok(syn::Type::TraitObject(object)) = syn::parse_str::<syn::Type>(trait_object_display) else {
+            return false;
+        };
+        // Each bound is a separate obligation. A principal implementation never grants Send or Sync.
+        !object.bounds.is_empty()
+            && object.bounds.iter().all(|bound| {
+                let syn::TypeParamBound::Trait(bound) = bound else {
+                    return matches!(bound, syn::TypeParamBound::Lifetime(_));
+                };
+                if bound.lifetimes.is_some()
+                    || !matches!(bound.modifier, syn::TraitBoundModifier::None)
+                    || bound
+                        .path
+                        .segments
+                        .iter()
+                        .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+                {
+                    return false;
+                }
+                let path = bound.path.to_token_stream().to_string().replace(' ', "");
+                let definition = self.rust_definition_for_path(&path);
+                Self::rust_type_metadata_implements_trait(&metadata, &path, definition.as_deref())
+            })
     }
 
     /// Reject an immutable source binding when a planned Rust boundary borrow is exclusive, and record the exclusive

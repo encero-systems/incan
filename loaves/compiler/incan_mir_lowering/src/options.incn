@@ -189,7 +189,13 @@ pub def intrinsic_declarations(
     for nominal_position in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
         for ty in declaration.field_types:
-            retain_carrier(constructors, module, declarations, ty, file)?
+            # Native owners keep their actual layout. Unsupported unused fields grant no projection authority.
+            if declaration.native_item != "":
+                match retain_carrier(constructors, module, declarations, ty, file):
+                    Ok(_unit) => pass
+                    Err(_reason) => pass
+            else:
+                retain_carrier(constructors, module, declarations, ty, file)?
     for enum_position in range(len(module.enum_declarations)):
         declaration = borrowed_at(module.enum_declarations, enum_position)
         for variant in declaration.variants:

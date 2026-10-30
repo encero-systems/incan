@@ -1132,6 +1132,19 @@ impl TypeChecker {
                 retained.push(fact);
             }
         }
+        if let Some(native) = self.type_info.declarations.body_ir_trait_adoptions.get(owner) {
+            retained.extend(
+                native
+                    .iter()
+                    .filter(|adoption| {
+                        matches!(
+                            adoption.trait_identity.origin,
+                            incan_semantics_core::SymbolOrigin::RustCrate(_)
+                        )
+                    })
+                    .cloned(),
+            );
+        }
         self.type_info
             .declarations
             .body_ir_trait_adoptions
@@ -4353,7 +4366,9 @@ impl TypeChecker {
         let mut resolved_trait_adoptions = Vec::new();
         for trait_ref in &class.traits {
             let trait_name = trait_ref.node.name.as_str();
-            if self.lookup_trait_info(trait_name).is_some() {
+            if let Some((path, metadata)) = self.imported_rust_trait_candidate(trait_name) {
+                self.record_native_class_adoption(class, &trait_ref.node, trait_ref.span, &path, metadata.as_deref());
+            } else if self.lookup_trait_info(trait_name).is_some() {
                 let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
                 else {
                     continue;
@@ -4396,6 +4411,131 @@ impl TypeChecker {
                 .insert(class.name.clone(), adoption_derives);
         }
         resolved_trait_adoptions
+    }
+
+    /// Authenticate a concrete foreign trait request and its source method identities without inventing native
+    /// conformance. The native compiler checks omitted required slots, ABI compatibility and every supertrait.
+    fn record_native_class_adoption(
+        &mut self,
+        class: &ClassDecl,
+        bound: &TraitBound,
+        span: Span,
+        path: &str,
+        metadata: Option<&RustItemMetadata>,
+    ) {
+        let Some(RustItemMetadata {
+            kind: RustItemKind::Trait(info),
+            ..
+        }) = metadata
+        else {
+            self.errors
+                .push(errors::type_mismatch("inspected native trait", path, span));
+            return;
+        };
+        if !class.type_params.is_empty()
+            || !bound.type_args.is_empty()
+            || !info.type_params.is_empty()
+            || info
+                .items
+                .iter()
+                .any(|item| !matches!(item, RustTraitAssoc::Function { .. }))
+        {
+            self.errors.push(errors::type_mismatch(
+                "concrete method-only native trait adoption",
+                path,
+                span,
+            ));
+            return;
+        }
+        let Some(mut trait_identity) = self
+            .symbols
+            .lookup(&bound.name)
+            .and_then(|id| self.symbols.identity_of(id))
+            .cloned()
+        else {
+            self.errors
+                .push(errors::type_mismatch("retained native trait identity", path, span));
+            return;
+        };
+        // The inspected metadata authenticates the trait category; its imported path remains the identity owner.
+        trait_identity.kind = SemanticSourceTargetKind::Trait;
+        trait_identity.namespace = incan_semantics_core::SymbolNamespace::OrdinaryLexical;
+        trait_identity.scope_discriminant = None;
+        let owner = self
+            .symbols
+            .lookup(&class.name)
+            .and_then(|id| self.symbols.identity_of(id))
+            .cloned();
+        let Some(owner) = owner else {
+            self.errors.push(errors::type_mismatch(
+                "retained native owner identity",
+                &class.name,
+                span,
+            ));
+            return;
+        };
+        let mut slots = Vec::new();
+        for item in &info.items {
+            let RustTraitAssoc::Function { name, .. } = item else {
+                continue;
+            };
+            let slot = Self::synthetic_member_identity(&trait_identity, name, SemanticSourceTargetKind::Method);
+            slots.push(slot.clone());
+            for method in class.methods.iter().filter(|method| &method.node.name == name) {
+                if !method.node.type_params.is_empty()
+                    || method.node.receiver.is_none()
+                    || method.node.body.is_none()
+                    || method
+                        .node
+                        .trait_target
+                        .as_ref()
+                        .is_some_and(|target| target.node.name != bound.name)
+                {
+                    self.errors.push(errors::type_mismatch(
+                        "concrete native instance method",
+                        name,
+                        method.span,
+                    ));
+                    return;
+                }
+                let Some(implementation) = self
+                    .type_info
+                    .declarations
+                    .member_declaration_identities
+                    .get(&method.span)
+                    .cloned()
+                else {
+                    self.errors.push(errors::type_mismatch(
+                        "retained native method identity",
+                        name,
+                        method.span,
+                    ));
+                    return;
+                };
+                self.type_info.declarations.native_trait_implementations.push(
+                    incan_semantics_core::body_ir::TraitImplementation {
+                        owner: owner.clone(),
+                        method: slot.clone(),
+                        implementation,
+                        slot_arguments: Vec::new(),
+                        type_arguments: Vec::new(),
+                    },
+                );
+            }
+        }
+        // The existing native-origin record retains inspected slots, not a claim that the source ABI implements them.
+        self.type_info
+            .declarations
+            .body_ir_trait_adoptions
+            .entry(class.name.clone())
+            .or_default()
+            .push(super::type_info::BodyIrCheckedTraitAdoption {
+                trait_identity,
+                arguments: Vec::new(),
+                methods: Some(slots),
+                fields: Vec::new(),
+                span,
+            });
     }
 
     /// Consume active class fields in source order, retaining checked types and defaults before JSON-form checks.
