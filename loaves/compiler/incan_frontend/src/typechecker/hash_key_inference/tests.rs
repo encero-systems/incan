@@ -55,6 +55,7 @@ fn influence_facts_match_fresh_legacy_inference() -> Result<(), Box<dyn std::err
         "../../../../../../workspaces/contracts/fixtures/behavior/codegen_functions_and_aliases/decorated_generic_closed_signatures.incn"
     ))?;
     assert_body_local_matrix()?;
+    TypeChecker::assert_body_edit_reuse()?;
     assert_environment_matrix()?;
     assert_imported_influences()?;
     assert_check_work_scope()?;
