@@ -362,6 +362,8 @@ pub def capture_with(
     4. Check every recorded lookup, resolved or absent, unless it lies under a frozen root.
     5. Compare with the previous epoch.
     """
+    if request.selection.command not in ["run", "build", "bake"]:
+        return Err(f"capture knows the roots of `run`, `build` and `bake`, not of `{request.selection.command}`")
     mut state = Capture(admitted=admitted, settle=settle, reader=reader)
     state.remember(previous)
     # 1. Frozen roots come first, so that nothing under them is ever checked.
