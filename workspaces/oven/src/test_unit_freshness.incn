@@ -863,8 +863,14 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     request.installed["data"] = [artifact.0, artifact.0]
     require_installed_refusal(facet, declared, output, request, built, "unique")?
     request.installed["data"] = [artifact.0]
+    # Without a location-bound stamp the content proof alone vouches for the installed producer; with neither, it
+    # is stale.
     remove(stamp)?
+    proof = installed.joinpath("library.portable-inputs")
+    saved_proof = read(proof)?
+    remove(proof)?
     require_installed_refusal(facet, declared, output, request, built, "no stored build")?
+    write(proof, saved_proof)?
     record(stamp, key, [artifact, graph, dependencies])?
     facet.features = ["alloc"]
     require_installed_refusal(facet, declared, output, request, built, "features")?
@@ -1010,7 +1016,9 @@ def verify_installed_graph_refresh(
     assert graph.read_text("utf-8", "strict").map_err((error) => error.message())? == "new checked graph"
     assert artifact_identity(artifact)? == native_before
     assert artifact_identity(dependencies)? == dependencies_before
+    # The mutating observer stays with this case; later cases refresh graphs with the ordinary one.
     write(included, "one included value")?
+    write(driver, script)?
     return Ok(None)
 
 
