@@ -162,6 +162,8 @@ enum Leaf {
     Enum(i64),
     U8,
     USize,
+    /// An exact-width scalar, compared through the plan's canonical numeric mapping.
+    Numeric(Numeric),
     Unit,
     Decimal,
     FrozenStr,
@@ -193,6 +195,7 @@ impl Leaf {
             ListLeaf::Reference(elements) => Leaf::Reference(elements.iter().map(scalar).collect()),
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::USize => Leaf::USize,
+            ListLeaf::Numeric(kind) => Leaf::Numeric(numeric(kind)),
             ListLeaf::Unit => Leaf::Unit,
             ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::FrozenStr => Leaf::FrozenStr,
@@ -1938,6 +1941,16 @@ fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result
             function,
             "model hashed storage requires retained Hash layout authority",
         )),
+        Scalar::Set(Leaf::Numeric(element))
+        | Scalar::SetRef(Leaf::Numeric(element))
+        | Scalar::SetMutRef(Leaf::Numeric(element))
+        | Scalar::Dict(Leaf::Numeric(element), _)
+        | Scalar::DictRef(Leaf::Numeric(element), _)
+        | Scalar::DictMutRef(Leaf::Numeric(element), _)
+            if matches!(element, Numeric::F32 | Numeric::F64) =>
+        {
+            Err(invalid(function, "floating-point hashed keys lack Eq and Hash"))
+        }
         Scalar::Set(Leaf::Float)
         | Scalar::SetRef(Leaf::Float)
         | Scalar::SetMutRef(Leaf::Float)

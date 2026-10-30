@@ -350,13 +350,13 @@ from options import (
     clone_tuple_operand,
 )
 from numbers import float_operand
+from pub::incan_mir_plan import sized_plan_type
 from numerics import (
     integer_conversion,
     float_conversion,
     numeric_constant,
     sized_numeric,
     has_sized_numeric,
-    sized_plan_type,
     numeric_name,
     numeric_zero,
     numeric_carrier,

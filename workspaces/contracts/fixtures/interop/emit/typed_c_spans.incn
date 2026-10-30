@@ -1,10 +1,12 @@
-# behavior: a byte span moves its buffer into a span whose pointer and count reach a bounded C symbol, and a mutable byte span reports its capacity and finishes with its first written bytes or refuses a count outside its capacity (rust-22af)
+# behavior: a byte span moves its buffer into a span whose pointer and count reach a bounded C symbol, and a mutable byte span reports its capacity and finishes with its first written bytes or refuses a count outside its capacity and f32 spans retain exact-width elements (#2438; rust-22af)
 # expect-stdout:
 #   907060870 0
 #   4 2 ab
 #   4 4 abcd
 #   written count is outside the span capacity
 #   written count is outside the span capacity
+#   2
+#   2 0.3
 
 from std.interop import c
 
@@ -48,3 +50,17 @@ def main() -> None:
     println(finish_bytes(4))
     println(finish_bytes(5))
     println(finish_bytes(-1))
+    observe_f32_spans()
+
+
+def observe_f32_spans() -> None:
+    first: f32 = 0.1
+    second: f32 = 0.2
+    source = c.f32_span([first, second])
+    mut target = c.mutable_f32_span([first, second])
+    unsafe:
+        println(source.element_count())
+        capacity = target.element_capacity()
+        match target.into_f32s(2):
+            Ok(values) => println(f"{capacity} {values[0] + values[1]}")
+            Err(error) => println(error)
