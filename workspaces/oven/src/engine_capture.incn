@@ -306,17 +306,19 @@ pub model AdmittedHome:
     # The standard Loaves' sources.
     pub standard_library: str
 
-    def frozen_roots(self, admitted: list[str]) -> list[str]:
-        """The home's content-named stores and standard Loaves, and the admitted roots the pin names."""
+    def frozen_roots(self) -> list[str]:
+        """
+        The frozen roots the home itself holds: its content-named store and bakery, and the standard Loaves' artifacts
+        and sources. The toolchain pin names the rest.
+        """
         store = Path(self.home)
         installed = Path(self.pin).parent()
-        homes = [
+        return [
             store.joinpath("store").0,
             store.joinpath("bakery").0,
             installed.joinpath("loaves").0,
             self.standard_library,
         ]
-        return sorted(unique(homes + admitted))
 
 
 pub model CaptureResult:
@@ -363,16 +365,16 @@ pub def capture_with(
     mut state = Capture(admitted=admitted, settle=settle, reader=reader)
     state.remember(previous)
     # 1. Frozen roots come first, so that nothing under them is ever checked.
-    state.take_frozen_roots(previous)?
+    state.take_frozen_roots()?
     # 2. The roots and their configuration are always in reach.
     mut membership: list[str] = []
     for root in request.roots:
-        membership.extend(state.root(absolute(root), request.selection.command, previous)?)
+        membership.extend(state.root(absolute(root), request.selection.command)?)
     # 3. A package's membership is listed with the compiler's collection rules.
     for directory in membership:
         state.members(directory)?
     # 4. Recorded lookups are checked at their exact paths, and nowhere else.
-    state.lookups(request.witnesses, previous)?
+    state.lookups(request.witnesses)?
     # 5. The previous epoch is returned unchanged when nothing differs.
     return state.result(request, previous)
 
@@ -383,17 +385,22 @@ model Capture:
     admitted: AdmittedHome
     settle: int
     reader: (Path) -> Result[bytes, str]
-    # The frozen roots, held as a set: a path is frozen when it or one of its ancestors is in it.
-    frozen: Dict[str, bool] = {}
+    # The frozen roots: the home's own, and those the pin names (sorted and distinct). A path is frozen when it or one
+    # of its ancestors is one of them.
+    frozen: list[str] = []
     pinned: list[str] = []
     counters: CaptureCounters = CaptureCounters()
     found: Dict[str, CapturedInput] = {}
     missing: Dict[str, InputPath] = {}
     listed: Dict[str, CapturedListing] = {}
     unstable: list[str] = []
+    declared: Dict[str, Declarations] = {}
+    # The previous epoch, indexed once so that no step copies it.
     recorded: Dict[str, CapturedInput] = {}
     recorded_listings: Dict[str, CapturedListing] = {}
-    declared: Dict[str, Declarations] = {}
+    recorded_declarations: Dict[str, Declarations] = {}
+    recorded_admitted: list[str] = []
+    recorded_witnesses: list[str] = []
 
     def remember(mut self, previous: Option[BuildEpoch]) -> None:
         """Index the previous epoch's records by path."""
@@ -404,8 +411,12 @@ model Capture:
                     self.recorded[item.path] = item
                 for listing in epoch.listings:
                     self.recorded_listings[listing.path] = listing
+                for declarations in epoch.declarations:
+                    self.recorded_declarations[declarations.manifest] = declarations
+                self.recorded_admitted = epoch.admitted
+                self.recorded_witnesses = [witness.path for witness in epoch.witnesses()]
 
-    def take_frozen_roots(mut self, previous: Option[BuildEpoch]) -> Result[None, str]:
+    def take_frozen_roots(mut self) -> Result[None, str]:
         """
         Derive the frozen roots once: from the home, and from what the toolchain pin names.
 
@@ -418,16 +429,12 @@ model Capture:
             Admission.Read(content) => self.pinned = pinned_roots(self.admitted.pin, content)?
             Admission.Missing => return Err(f"{self.admitted.pin}: no toolchain is installed")
             # 2. An unchanged pin names what it named before.
-            Admission.Reused =>
-                match previous:
-                    Some(epoch) => self.pinned = epoch.admitted
-                    None => pass
+            Admission.Reused => self.pinned = self.recorded_admitted
             _ => pass
-        for frozen_root in self.admitted.frozen_roots(self.pinned):
-            self.frozen[frozen_root] = true
+        self.frozen = self.admitted.frozen_roots()
         return Ok(None)
 
-    def root(mut self, path: str, command: str, previous: Option[BuildEpoch]) -> Result[list[str], str]:
+    def root(mut self, path: str, command: str) -> Result[list[str], str]:
         """
         Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
 
@@ -442,22 +449,22 @@ model Capture:
             match self.editable(path, InputRole.Root)?:
                 Admission.Missing => return Err(f"{path}: no such source file")
                 _ => pass
-            _ = self.manifest_lookup(Path(path), previous)?
+            _ = self.manifest_lookup(Path(path))?
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
-        if not self.manifest(manifest, previous)?:
+        if not self.manifest(manifest)?:
             return Err(f"{manifest}: no such manifest")
         return Ok([self.source_root(path)?])
 
-    def manifest_lookup(mut self, source: Path, previous: Option[BuildEpoch]) -> Result[bool, str]:
+    def manifest_lookup(mut self, source: Path) -> Result[bool, str]:
         """Look up the manifest of `source` where the unit description does; each miss is an absent lookup."""
         for candidate in manifest_candidates(source):
-            if not self.is_frozen(candidate.0) and self.manifest(candidate.0, previous)?:
+            if not self.is_frozen(candidate.0) and self.manifest(candidate.0)?:
                 return Ok(true)
         return Ok(false)
 
-    def manifest(mut self, path: str, previous: Option[BuildEpoch]) -> Result[bool, str]:
+    def manifest(mut self, path: str) -> Result[bool, str]:
         """
         Capture a manifest and the files it declares; `false` when there is none at `path`.
 
@@ -473,7 +480,7 @@ model Capture:
             Admission.Checked => return Ok(true)
             Admission.Read(content) => self.declared[path] = declarations_of(path, content)
             # 2. Declarations are derived from the manifest's bytes, so an unchanged manifest keeps them.
-            Admission.Reused => self.declared[path] = recorded_declarations(path, previous)
+            Admission.Reused => self.declared[path] = self.recorded_declarations_of(path)
         # 3. The lock and the declared files are in reach whether or not they exist.
         declared_files = [item for item in self.declared[path].files]
         for item in declared_files:
@@ -545,13 +552,16 @@ model Capture:
                 self.listed[directory] = listing
                 return Ok(Some(listing))
 
-    def lookups(mut self, witnesses: list[LookupWitness], previous: Option[BuildEpoch]) -> Result[None, str]:
+    def recorded_declarations_of(self, manifest: str) -> Declarations:
+        """What the previous epoch recorded `manifest` as declaring; a manifest it does not know declares nothing."""
+        if manifest in self.recorded_declarations:
+            return self.recorded_declarations[manifest]
+        return Declarations(manifest=manifest)
+
+    def lookups(mut self, witnesses: list[LookupWitness]) -> Result[None, str]:
         """Check each recorded lookup at its exact path: the request's and the previous epoch's, once each."""
-        mut paths = [witness.path for witness in witnesses]
-        match previous:
-            Some(epoch) => paths.extend([witness.path for witness in epoch.witnesses()])
-            None => pass
-        for path in sorted(unique(paths)):
+        paths = [witness.path for witness in witnesses] + self.recorded_witnesses
+        for path in unique(paths):
             if self.is_frozen(path):
                 self.counters.frozen.inputs += 1
                 continue
@@ -634,10 +644,10 @@ model Capture:
         return Ok(Admission.Unstable)
 
     def is_frozen(self, path: str) -> bool:
-        """Whether `path` lies under a root the home admitted: one set lookup per ancestor, however many roots."""
+        """Whether `path` lies under a root the home admitted: per ancestor, one search of the pinned roots."""
         mut current = Path(path)
         while true:
-            if current.0 in self.frozen:
+            if current.0 in self.frozen or sorted_contains(self.pinned, current.0):
                 return true
             parent = current.parent()
             if parent.0 == current.0 or parent.0 in ["", "."]:
@@ -685,6 +695,19 @@ model Capture:
         )
 
 
+def sorted_contains(values: list[str], value: str) -> bool:
+    """Whether the sorted `values` hold `value`: a binary search."""
+    mut low = 0
+    mut high = len(values)
+    while low < high:
+        middle = (low + high) // 2
+        if values[middle] < value:
+            low = middle + 1
+        else:
+            high = middle
+    return low < len(values) and values[low] == value
+
+
 def stable_across_read(before: FileMetadata, after: FileMetadata) -> bool:
     """
     Whether a read saw one file generation. The status change time is left out: a concurrent move that unlinks a hard
@@ -710,7 +733,7 @@ def toolchain_roots(toolchain: Toolchain) -> list[str]:
     for named in [toolchain.registry_units, toolchain.registry_lock, toolchain.c_compiler]:
         if named != "":
             roots.append(Path(named).parent().0)
-    return sorted(unique([root for root in roots if root != ""]))
+    return unique([root for root in roots if root != ""])
 
 
 def declarations_of(manifest: str, content: bytes) -> Declarations:
@@ -736,17 +759,6 @@ def declarations_of(manifest: str, content: bytes) -> Declarations:
             if let Some(declared_root) = intent.source_root:
                 source_root = declared_root
             return Declarations(manifest=manifest, files=files, source_root=source_root)
-
-
-def recorded_declarations(manifest: str, previous: Option[BuildEpoch]) -> Declarations:
-    """What the previous epoch recorded `manifest` as declaring; a manifest it does not know declares nothing."""
-    match previous:
-        Some(epoch) =>
-            for item in epoch.declarations:
-                if item.manifest == manifest:
-                    return item
-        None => pass
-    return Declarations(manifest=manifest)
 
 
 def read_file(path: Path) -> Result[bytes, str]:
