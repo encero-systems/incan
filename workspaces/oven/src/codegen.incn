@@ -1,5 +1,9 @@
 """Select optimization flags for native units and frame the flags the Incan compiler receives."""
 
+from rust::std::process import id
+
+pub const SOURCE_PREFIX: str = "source"
+
 
 model CodegenProfile:
     """Effective native compiler flags for each authored unit language."""
@@ -39,3 +43,23 @@ pub def driver_arguments(profile: str) -> list[str]:
         forwarded.append("--rustc-arg")
         forwarded.append(argument)
     return forwarded
+
+
+pub def unit_metadata(identity: str) -> str:
+    """Derive symbol identity from the unit's conservative external identity; refused local bakes stay ephemeral."""
+    if identity == "":
+        return f"metadata=incan-local-{id()}"
+    return "metadata=incan-unit-" + identity.replace("sha256:", "")
+
+
+pub def remap_arguments(project: str) -> list[str]:
+    """Keep compile-time source filenames independent of the checkout containing their bytes."""
+    return ["--remap-path-prefix", f"{project}={SOURCE_PREFIX}"]
+
+
+pub def compiled_arguments(profile: str, identity: str, project: str) -> list[str]:
+    """Use one effective profile and symbol identity for Oven and direct native source producers."""
+    mut arguments = driver_arguments(profile) + ["--rustc-arg", "-C" + unit_metadata(identity)]
+    for argument in remap_arguments(project):
+        arguments.extend(["--rustc-arg", argument])
+    return arguments

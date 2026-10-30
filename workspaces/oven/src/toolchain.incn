@@ -9,7 +9,8 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
   installed toolchain names its `sysroot` link, which points at the machine's Rust installation.
 - `rust_abi`: the ABI caches of the toolchain's Rust crates (`std`, `core`, `alloc`): the Rust facts checking reads.
 - `externs`: the crates every unit may name, each `{"name", "path"}`: the runtime and its support crates. An explicit
-  manifest dependency takes precedence over a support crate's ambient alias.
+  manifest dependency takes precedence over a support crate's ambient alias. Packed references also carry
+  `unit_identity` and `payload_digest` for admission without deriving a producer identity from its bytes.
 - `search`: the directories the dependencies of those crates live in.
 - `registry_units`: the prepared registry closure (`incan.oven.closure/1`) available to this toolchain.
 - `registry_lock`: an optional producer closure whose exact entries decide registry root selection.
@@ -22,11 +23,19 @@ used as written (a bootstrap home that has not been packed).
 """
 
 from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
 from std.json import JsonValue
-from files import read_json
+from files import read, read_json
 from home import TOOLCHAIN, home
-from json_fields import array, field, strings, text_field
+from observation import observe
+from publication import publish
+from json_fields import array, field, strings, text_field, required_items, required_text
 from native_closure_input import NativeClosureInput
+from unit_publication import import_payload, import_publication, record_path
+from compiler_facts import admit_fact
+from apple_sdk import selected_sdk
+from std.environ import get_or
 
 pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
 
@@ -61,6 +70,8 @@ pub model Toolchain:
     pub native_closures: NativeClosureInput = NativeClosureInput()
     pub registry_lock: str = ""
     pub c_compiler: str = ""
+    # Explicit target facts for synthetic or cross-target toolchains; empty selects rustc's reported host.
+    pub target: str = ""
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
@@ -74,23 +85,127 @@ pub def toolchain_directory() -> Result[Path, str]:
 
 
 pub def load_toolchain() -> Result[Toolchain, str]:
-    """Read the installed toolchain through its physical directory so aliases share native preparation and exports."""
-    directory = toolchain_directory()?
+    """
+    Read the installed toolchain through its physical directory so aliases share native preparation and exports.
+
+    Its payloads are frozen: they are admitted once per installed generation at its location, not on every command.
+    """
+    mut directory = toolchain_directory()?
     if directory.is_dir():
-        physical = directory.resolve().map_err((error) => error.message())?
-        return read_toolchain(physical)
-    return read_toolchain(directory)
+        directory = directory.resolve().map_err((error) => error.message())?
+    if admitted(directory)?:
+        toolchain, _ = parsed_toolchain(directory)?
+        return Ok(toolchain)
+    toolchain = read_toolchain(directory)?
+    record_admission(directory)?
+    return Ok(toolchain)
 
 
 pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
-    """Read the same toolchain contract for installed use or staged installation verification."""
+    """Read the same toolchain contract for installed use or staged installation verification, admitting its payloads."""
+    toolchain, document = parsed_toolchain(directory)?
+    admit_toolchain(document, directory)?
+    admit_compiler_facts(toolchain)?
+    return Ok(toolchain)
+
+
+def parsed_toolchain(directory: Path) -> Result[tuple[Toolchain, JsonValue], str]:
+    """The toolchain contract and its description document, without admitting anything it names."""
     path = directory.joinpath("toolchain.json")
     if not path.is_file():
         return Err(f"no toolchain {TOOLCHAIN} is installed: {path.0} does not exist")
     document = read_json(path)?
     match toolchain_of(document, directory):
-        Ok(toolchain) => return Ok(toolchain)
+        Ok(toolchain) => return Ok((toolchain, document))
         Err(failed) => return Err(f"{path.0}: `{".".join(failed)}` is missing or malformed")
+
+
+def admission_marker(directory: Path) -> Result[Path, str]:
+    """Where this home records that the toolchain installed at `directory` had its payloads admitted."""
+    located = hexlify(sha256.digest(directory.0.encode("utf-8")))
+    return Ok(home()?.joinpath("cache/toolchain-admissions").joinpath(f"{located}.stamp"))
+
+
+def admitted(directory: Path) -> Result[bool, str]:
+    """Whether this installed generation, at this location, was admitted; a reinstall or a move admits again."""
+    marker = admission_marker(directory)?
+    if not marker.is_file():
+        return Ok(False)
+    return Ok(read(marker)? == observe(directory.joinpath("toolchain.json"))?.stamp)
+
+
+def record_admission(directory: Path) -> Result[None, str]:
+    """Record a completed admission; a failed or interrupted one leaves no marker and is repeated."""
+    marker = admission_marker(directory)?
+    marker.parent().mkdir(true, true).map_err((error) => error.message())?
+    return publish(marker, observe(directory.joinpath("toolchain.json"))?.stamp)
+
+
+pub def admit_compiler_facts(toolchain: Toolchain) -> Result[None, str]:
+    """Admit compiler, Rust fact caches and SDK settings before any unit asks for their content identities."""
+    for path in [toolchain.driver] + toolchain.rust_abi:
+        admit_fact(Path(path))?
+    compiler = Path(toolchain.sysroot).joinpath("bin/rustc")
+    if compiler.is_file():
+        admit_fact(compiler)?
+    mut sdk = selected_sdk(toolchain.sysroot)?
+    if sdk == "":
+        sdk = get_or("SDKROOT", "")
+    if sdk != "":
+        admit_fact(Path(sdk).joinpath("SDKSettings.json"))?
+    return Ok(None)
+
+
+def admit_toolchain(document: JsonValue, directory: Path) -> Result[None, str]:
+    """
+    Admit transported payloads at installation selection, before unit identification reads only producer identities.
+
+    1. Verify native artifacts and their checked interfaces against transported publication records.
+    2. Admit the registry producers that ambient standard closures may name without a Rust facet.
+    3. Verify each standard provider's published artifact set after an installation moves.
+    """
+    # 1. Packed native references carry both identities even when their registry store is read-only.
+    for native in required_items(document, "externs")?:
+        path = Path(located(directory, required_text(native, "path")?))
+        if native.get("unit_identity") != None:
+            import_payload(path, required_text(native, "unit_identity")?, required_text(native, "payload_digest")?)?
+        elif record_path(path).is_file():
+            import_publication(path)?
+        admit_provider(path.parent())?
+    # 2. A fresh home cannot rely on a preceding Rust facet to admit ambient registry dependencies.
+    admit_registry(document, directory)?
+    # 3. Standard native libraries and checked interfaces both retain their producers after transport.
+    loaves = directory.joinpath("loaves")
+    if not loaves.is_dir():
+        return Ok(None)
+    for package in loaves.iterdir().map_err((error) => error.message())?:
+        if not package.is_dir():
+            continue
+        for profile in package.iterdir().map_err((error) => error.message())?:
+            if profile.is_dir():
+                admit_provider(profile)?
+    return Ok(None)
+
+
+def admit_provider(directory: Path) -> Result[None, str]:
+    """Admit every transported payload with a producer record before a consumer names its identity."""
+    for record in directory.iterdir().map_err((error) => error.message())?:
+        if record.is_file() and record.name().endswith(".oven-unit"):
+            import_publication(Path(record.0[:-10]))?
+    return Ok(None)
+
+
+def admit_registry(document: JsonValue, directory: Path) -> Result[None, str]:
+    """Admit payloads under the producer identities recorded in the selected toolchain's registry closure."""
+    source = Path(located(directory, required_text(document, "registry_units")?))
+    if not source.is_file():
+        return Ok(None)
+    externs = read_json(source)?.require("externs").map_err((error) => error.message())?
+    for identity in externs.keys():
+        native = externs.require(identity).map_err((error) => error.message())?
+        artifact = Path(located(source.parent(), required_text(native, "path")?))
+        import_payload(artifact, identity)?
+    return Ok(None)
 
 
 pub def located(directory: Path, path: str) -> str:

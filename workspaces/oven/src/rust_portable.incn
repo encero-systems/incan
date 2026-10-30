@@ -4,43 +4,8 @@ from std.fs import Path
 from files import read
 from observation import SETTLE_SECONDS, Ledger, load_ledger, observe
 from publication import publish
-from rust_freshness import producer_arguments, project_argument
-from unit_freshness import Key, fingerprint
-
-
-pub def portable_key(
-    native: Key,
-    directory: Path,
-    arguments: list[str],
-    project: Path,
-    compiler: str,
-) -> Result[Key, str]:
-    """
-    Preserve a native producer's sources and environment while identifying its compiler and externs by content.
-
-    1. Retain the checked native input dimensions that name no machine location or filesystem identity.
-    2. Identify the compiler by its portable identity: another machine's copy of the same compiler proves alike.
-    3. Normalize output, project and named extern locations, preserving all other compiler arguments.
-    4. Identify each named extern by its alias and exact content.
-    """
-    # 1. Sources are keyed by their place in the project and their bytes, so another checkout of them still proves.
-    mut parts = [part for part in native.parts if not machine_bound(part)]
-    mut ledger = portable_ledger(directory)
-    # 2. The native compiler part names where rustc is installed; this one names only what it is.
-    parts.append(f"compiler {compiler}")
-    # 3. Search directories are locators; selected extern aliases and every code-generation flag remain explicit.
-    command = fingerprint(normalized_arguments(producer_arguments(arguments), directory, project))?
-    parts.append(f"command {command}")
-    # 4. Only byte-identical dependencies can survive a changed path or filesystem identity.
-    artifacts = fingerprint(extern_contents(arguments, ledger)?)?
-    parts.append(f"artifacts {artifacts}")
-    ledger.save()?
-    return Ok(Key(digest=fingerprint(["incan.oven.portable-native/1"] + parts)?, parts=parts))
-
-
-def machine_bound(part: str) -> bool:
-    """A native key part that names this machine's compiler, command paths or artifact files, not their content."""
-    return part.startswith("compiler ") or part.startswith("command ") or part.startswith("artifacts ")
+from unit_freshness import Key
+from unit_publication import record_verified_payload
 
 
 pub def portable_reusable(directory: Path, key: Key, outputs: list[Path]) -> Result[bool, str]:
@@ -51,6 +16,8 @@ pub def portable_reusable(directory: Path, key: Key, outputs: list[Path]) -> Res
     2. Compare all output names and exact bytes, excluding concurrent replacements.
     """
     # 1. Neither a missing proof nor another native producer may authorize relocation.
+    if key.refusal != "":
+        return Ok(false)
     stamp = directory.joinpath("library.portable-inputs")
     if not stamp.is_file():
         return Ok(false)
@@ -66,7 +33,13 @@ pub def portable_reusable(directory: Path, key: Key, outputs: list[Path]) -> Res
     mut ledger = portable_ledger(directory)
     current = output_contents(outputs, ledger)?
     ledger.save()?
-    return Ok(recorded[first:] == current and output_observations(outputs)? == before)
+    if recorded[first:] != current or output_observations(outputs)? != before:
+        return Ok(false)
+    for index in range(len(outputs)):
+        output = outputs[index]
+        digest = current[index][len(output.name()) + 1:]
+        record_verified_payload(output, key.digest, digest, before[index], key.provenance)?
+    return Ok(true)
 
 
 pub def record_portable(directory: Path, key: Key, outputs: list[Path]) -> Result[None, str]:
@@ -77,6 +50,8 @@ pub def record_portable(directory: Path, key: Key, outputs: list[Path]) -> Resul
     2. Publish the complete native input key and output content identities together.
     """
     # 1. Callers retain their producer lock and validate source/native inputs before publishing this proof.
+    if key.refusal != "":
+        return Ok(None)
     before = output_observations(outputs)?
     mut ledger = portable_ledger(directory)
     contents = output_contents(outputs, ledger)?
@@ -89,31 +64,6 @@ pub def record_portable(directory: Path, key: Key, outputs: list[Path]) -> Resul
     if stamp.is_file() and read(stamp)? == text:
         return Ok(None)
     return publish(stamp, text)
-
-
-def normalized_arguments(arguments: list[str], directory: Path, project: Path) -> list[str]:
-    """Remove only output-store and project locations and the paths of explicitly named extern artifacts."""
-    mut normalized: list[str] = []
-    mut external = false
-    for argument in arguments:
-        if external and "=" in argument:
-            name = argument.split("=")[0]
-            normalized.append(f"{name}=<native:{name}>")
-        else:
-            normalized.append(project_argument(argument.replace(directory.0, "<producer-output>"), project))
-        external = argument == "--extern"
-    return normalized
-
-
-def extern_contents(arguments: list[str], mut ledger: Ledger) -> Result[list[str], str]:
-    """Identify each named extern by its explicit alias and content rather than its physical store path."""
-    mut contents: list[str] = []
-    for index in range(1, len(arguments)):
-        if arguments[index - 1] == "--extern" and "=" in arguments[index]:
-            binding = arguments[index].split("=")
-            contents.append(binding[0])
-            contents.append(ledger.digest(Path("=".join(binding[1:])))?)
-    return Ok(contents)
 
 
 def output_contents(outputs: list[Path], mut ledger: Ledger) -> Result[list[str], str]:
