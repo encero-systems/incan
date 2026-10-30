@@ -1121,7 +1121,16 @@ impl SymbolTable {
     /// already closed. Requiring the symbol site to equal the identity's declaration site excludes aliases and
     /// compiler-generated refinements, which carry another declaration's identity at a different binding site.
     pub fn nested_declaration_identities(&self) -> impl Iterator<Item = (Span, &CanonicalSymbolId)> + '_ {
-        self.symbols.iter().enumerate().filter_map(|(id, symbol)| {
+        self.nested_declaration_identities_from(0)
+    }
+
+    /// Export only lexical declarations registered since a body scope's symbol cursor. The cursor is invocation-local,
+    /// never a semantic identity; the same ownership/origin rules govern full and local export.
+    pub(crate) fn nested_declaration_identities_from(
+        &self,
+        start: usize,
+    ) -> impl Iterator<Item = (Span, &CanonicalSymbolId)> + '_ {
+        self.symbols.iter().enumerate().skip(start).filter_map(|(id, symbol)| {
             if symbol.scope == 0 || symbol.span == Span::default() || self.dependency_interface_symbol_ids.contains(&id)
             {
                 return None;
