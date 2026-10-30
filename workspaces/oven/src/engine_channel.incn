@@ -1,6 +1,6 @@
 """Bounded engine frames, correlated sessions and data-credit back-pressure over the core Unix transport."""
 
-from core_ipc import Connection, Credits
+from pub::incan_platform.ipc import Connection, Credits
 from engine_codec import decode, encode
 from engine_messages import Ack, Message
 from engine_wire import CONTROL, DATA_CREDITS, HEADER_SIZE, MAX_PAYLOAD, Header, Refusal, RefusalKind

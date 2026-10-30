@@ -3,7 +3,7 @@
 from rust::std::io import Write
 from rust::std::os::unix::net import UnixStream
 from std.json import JsonValue
-from core_ipc import MAX_FRAME, dial, length_of, listen, padded
+from pub::incan_platform.ipc import MAX_FRAME, dial, length_of, listen, padded
 from owner_protocol import Reply, Request, receive_document, reply_of, request_of, send_document
 from scratch import scratch_directory
 

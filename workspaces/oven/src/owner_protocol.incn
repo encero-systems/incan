@@ -9,7 +9,7 @@ resolved (command, entry, profile, features), never a unit description.
 
 from rust::std::string import String as RustString
 from std.json import JsonValue, parse
-from core_ipc import Connection
+from pub::incan_platform.ipc import Connection
 from json_fields import boolean, field, strings, text_field
 
 

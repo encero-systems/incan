@@ -22,10 +22,10 @@ from rust::std::time import Duration
 from std.environ import get_optional, get_or
 from std.fs import Path
 from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, Listener, dial_live, listen
 from files import discard_file
 from home import home, owners_dir
 from observation import observe, relay
-from core_ipc import Connection, Listener, dial_live, listen
 from decimal_text import digits_only
 from owner_protocol import PROTOCOL, Reply, Request, discard_reply, prepares_executable, receive_document, reply_of
 from owner_protocol import send_document, send_quietly
