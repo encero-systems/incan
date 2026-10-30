@@ -468,11 +468,12 @@ A `class` adopts a trait imported with `from rust::...` the same way: `class Hoo
 - Each class method named like a trait method implements it. It is an instance method with a body and without type parameters; another method of that name is refused (`INCAN-T0001`). A method with a `for` target naming another trait implements only that trait.
 - A trait method the class does not declare keeps the trait's default.
 - Rust checks the implementation when the program is built. A missing required method (`E0046`) or a method whose receiver or signature differs from the trait's (`E0053`) refuses the build.
+- A class value passes to a Rust parameter that takes a reference to a trait object (`&dyn Trait`, `&mut (dyn Trait + Send)`) by a borrow of the value. A mutable borrow needs a `mut` binding; another binding is refused (`INCAN-T0001`). A Rust value passes the same way when its type implements the trait.
 
 ```incan
-# The host crate declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`
-# and `struct Config { pub flags: Vec<String> }`.
-from rust::host import Callbacks, Config
+# The host crate declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`,
+# `struct Config { pub flags: Vec<String> }` and `fn run(callbacks: &mut (dyn Callbacks + Send))`.
+from rust::host import Callbacks, Config, run
 
 class Hooks with Callbacks:
     calls: int = 0
@@ -481,6 +482,12 @@ class Hooks with Callbacks:
     def config(mut self, mut config: &mut Config) -> None:
         self.calls += 1
         config.flags.append(self.flag)
+
+def main() -> None:
+    mut hooks = Hooks(flag="first")
+    run(hooks)        # accepted: lends hooks as &mut (dyn Callbacks + Send)
+    shared = Hooks(flag="second")
+    run(shared)       # refused: needs a mutable borrow (INCAN-T0001)
 ```
 
 ### `@requires(...)` (adopter contract)

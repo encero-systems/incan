@@ -7473,6 +7473,11 @@ def borrow_scalar_operand(
                 return Err("unsupported Body IR scalar reference without an exclusive borrow fact")
             owner = scalar_borrow_owner(builder, read, referent, mutable, span)?
             actual = place_type(builder.locals, owner)
+            match referent:
+                PlanType.NativeTraitObject(_path, _send, _sync) =>
+                    if actual != referent:
+                        return borrow_as_trait_object(builder, owner, actual, referent, mutable, span)
+                _ => pass
             # An exact reference-valued referent needs another loan; an additional existing loan is reborrowed.
             if actual != referent:
                 match actual:
@@ -7500,6 +7505,36 @@ def borrow_scalar_operand(
         operation = RvalueKind.MutBorrow(owner)
     output = temporary(builder, reference, span)
     builder.emit(plan_assign(output, operation, span))
+    return Ok(read_place(output, mutable, span))
+
+
+def borrow_as_trait_object(
+    mut builder: Builder,
+    owner: Place,
+    actual: PlanType,
+    referent: PlanType,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Lend a concrete value as a Rust trait object, keeping the value in place for the loan.
+
+    The loan borrows the value as its own type first, then converts that reference to the object reference. rustc
+    proves the value implements every bound of the object before it builds the conversion.
+    """
+    mut source = shared_receiver_type(actual)?
+    mut target = PlanType.ScalarRef([referent])
+    mut operation = RvalueKind.Borrow(owner)
+    if mutable:
+        source = mutable_receiver_type(actual)?
+        target = PlanType.ScalarMutRef([referent])
+        operation = RvalueKind.MutBorrow(owner)
+    loan = temporary(builder, source, span)
+    builder.emit(plan_assign(loan, operation, span))
+    output = temporary(builder, target, span)
+    builder.emit(
+        plan_assign(output, RvalueKind.UnsizeTraitObject(read_place(loan, mutable, span), source, target), span),
+    )
     return Ok(read_place(output, mutable, span))
 
 

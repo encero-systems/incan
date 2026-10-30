@@ -522,6 +522,9 @@ pub enum RvalueKind:
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)
+    # A reference to a concrete value, as a reference to a Rust trait object of the same mutability: source type, then
+    # target type. rustc proves the value implements the object's every bound before the conversion is built.
+    UnsizeTraitObject(Operand, PlanType, PlanType)
     FunctionItem(Callee)
     ReifyFunction(Operand)
     # Expose a checked function pointer's address without changing its argument or return signature.
