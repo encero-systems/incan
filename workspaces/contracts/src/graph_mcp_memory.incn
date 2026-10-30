@@ -1,0 +1,123 @@
+"""MCP memory expectations: a session holds no records between requests, whatever its project depends on."""
+
+from rust::std::cell import RefCell
+from rust::std::fs import File
+from rust::std::process import Child, Command, Stdio
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from std.json import JsonValue
+from files import make_directory, remove, write
+
+# The standard modules a project can import; together they reach every standard Loaf.
+const STANDARD_MODULES: FrozenList[str] = [
+    "std.fs", "std.json", "std.io", "std.environ", "std.collections", "std.datetime", "std.graph", "std.checksum",
+    "std.encoding", "std.compression", "std.logging", "std.telemetry", "std.testing", "std.interop", "std.async",
+    "std.web", "std.vocab",
+]
+# What a long session may hold beyond a short one: protocol state and the allocator's slack, never records.
+const REPEAT_GROWTH_KIB: int = 32768
+# Requests in the short and the long session; each round asks for a summary, a query and a context pack.
+const SHORT_ROUNDS: int = 1
+const LONG_ROUNDS: int = 8
+
+
+pub def check_mcp_memory(incan: str, project: Path) -> Result[None, str]:
+    """
+    Require that an MCP session over a project importing the whole standard library does not grow per request.
+
+    1. Write the project into the fixture's build directory, where graph discovery never looks.
+    2. Serve a short and a long session, sampling the server's resident memory.
+    3. The long session's peak exceeds the short one's by at most the bound.
+    """
+    # 1. The project imports every standard module and declares one function to ask about.
+    standard = project.joinpath("target").joinpath("mcp-standard")
+    make_directory(standard.joinpath("src"))?
+    manifest = "[project]\nname = \"mcp_standard\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    write(standard.joinpath("loaf.toml"), manifest)?
+    imports = "\n".join([f"import {module}" for module in STANDARD_MODULES])
+    body = "\n\n\ndef helper() -> int:\n    return 1\n\n\ndef main() -> None:\n    println(helper())\n"
+    write(standard.joinpath("src").joinpath("main.incn"), imports + body)?
+    # 2. The short session also prepares every graph, so the long one measures serving alone.
+    short = session_peak(incan, standard, SHORT_ROUNDS)?
+    long = session_peak(incan, standard, LONG_ROUNDS)?
+    # 3. Records read for one request are released before the next.
+    if long - short > REPEAT_GROWTH_KIB:
+        return Err(f"MCP memory grew with repeated requests: {short} KiB after one round, {long} KiB after {LONG_ROUNDS}")
+    return Ok(None)
+
+
+def session_peak(incan: str, project: Path, rounds: int) -> Result[int, str]:
+    """Serve `rounds` rounds of graph requests from a file and return the server's sampled peak resident KiB."""
+    requests = project.joinpath(".mcp-memory-requests")
+    write(requests, session_requests(rounds)?)?
+    mut command = Command.new(incan)
+    command.arg("mcp").arg(".").current_dir(project.0)
+    command.stdin(File.open(requests.0).map_err((error) => str(error))?)
+    command.stdout(Stdio.null())
+    command.stderr(Stdio.null())
+    child = Rc.new(RefCell.new(command.spawn().map_err((error) => str(error))?))
+    pid = int(child.borrow().id())
+    mut peak = 0
+    while true:
+        sample = resident_kib(pid)
+        if sample > peak:
+            peak = sample
+        match child.borrow_mut().try_wait().map_err((error) => str(error))?:
+            Some(status) =>
+                remove(requests)?
+                if not status.success():
+                    return Err("MCP server failed while serving the memory session")
+                return Ok(peak)
+            None => sleep(Duration.from_millis(20))
+    return Ok(peak)
+
+
+def resident_kib(pid: int) -> int:
+    """The process's resident memory in KiB as `ps` reports it; an exited process reads as 0."""
+    mut command = Command.new("ps")
+    command.arg("-o").arg("rss=").arg("-p").arg(str(pid))
+    match command.output():
+        Err(_) => return 0
+        Ok(output) =>
+            match RustString.from_utf8(output.stdout):
+                Err(_) => return 0
+                Ok(value) =>
+                    text = str(value).strip()
+                    if text == "":
+                        return 0
+                    for character in text:
+                        if character not in "0123456789":
+                            return 0
+                    return int(text)
+
+
+def session_requests(rounds: int) -> Result[str, str]:
+    """Initialization followed by `rounds` rounds of a summary, a definition query and a context pack."""
+    mut lines = [
+        message(1, "initialize", JsonValue.object({
+            "protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object({}),
+            "clientInfo": JsonValue.object({"name": JsonValue.string("graph-memory"), "version": JsonValue.string("1")}),
+        })).to_json().map_err((error) => error.message())?,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
+    ]
+    for round in range(rounds):
+        base = 10 + round * 3
+        for offset, name, arguments in [
+            (0, "graph_summary", JsonValue.object({})),
+            (1, "graph_query", JsonValue.object({"kind": JsonValue.string("defs"), "term": JsonValue.string("helper")})),
+            (2, "context_for_task", JsonValue.object({"task": JsonValue.string("helper"), "budget": JsonValue.int(4096)})),
+        ]:
+            call = message(base + offset, "tools/call", JsonValue.object({"name": JsonValue.string(name), "arguments": arguments}))
+            lines.append(call.to_json().map_err((error) => error.message())?)
+    return Ok("\n".join(lines) + "\n")
+
+
+def message(identifier: int, method: str, params: JsonValue) -> JsonValue:
+    """One JSON-RPC request."""
+    return JsonValue.object({
+        "jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier),
+        "method": JsonValue.string(method), "params": params,
+    })
