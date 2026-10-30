@@ -84,6 +84,15 @@ A requirement must match an available toolchain registry unit. Declaration does 
 
 Declaring a target or profile does not install its artifacts.
 
+The Loaf's Incan units are its programs, its tests and its library. A unit enables only the unstable features its Loaf declares and links only the toolchain libraries its Loaf declares; a library the Loaf does not declare is refused when a `rust::` import names it. A declared component that the pinned toolchain does not have installed is refused, as is a declared sysroot dependency that does not name exactly one library in the toolchain's `lib/rustlib/HOST/lib`. A declared library is importable through `rust::`. An executable that links one loads it, with the standard library it was built with, from the pinned toolchain's sysroot, and never links shared development libraries. The declaration is part of each unit's identity: declaring, changing or removing it compiles the unit again.
+
+```toml
+[build]
+unstable-features = ["rustc_private"]
+toolchain-components = ["rustc-dev"]
+sysroot-dependencies = ["rustc_driver"]
+```
+
 ## `[envs.NAME]`
 
 An environment accepts `dependencies` and `rust-dependencies` tables with the same edge fields as their root counterparts. `incan test` selects the root project's `test` environment in addition to its production dependencies, including for a Rust facet's unit-test harness. Ordinary builds do not select that overlay, and a dependency's own test environment does not propagate to consumers.
