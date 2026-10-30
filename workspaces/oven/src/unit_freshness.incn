@@ -238,7 +238,8 @@ def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[s
     for entry in unit.program_entries:
         contents.extend(["program-entry"] + source_inputs([entry], root, project)?)
     if let Some(entry) = unit.vocab_entry:
-        contents.extend(["vocabulary-entry"] + source_inputs([entry], root, project)?)
+        located = Path(unit.project_root).joinpath(entry).0
+        contents.extend(["vocabulary-entry"] + source_inputs([located], root, project)?)
     for schema in unit.contract_models:
         contents.extend(["contract-model", project.digest(Path(unit.project_root).joinpath(schema))?])
     for header in unit.c_headers:
