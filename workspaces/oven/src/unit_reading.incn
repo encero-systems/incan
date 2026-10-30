@@ -3,6 +3,7 @@
 from std.json import JsonValue
 from json_fields import required_items, required_text, strings
 from toolchain import NativeCrate
+from toolchain_access import ToolchainAccess
 from unit import UnitDescription, UnitLoaf, UNIT_DESCRIPTION_SCHEMA
 
 
@@ -39,8 +40,23 @@ pub def read_unit(value: JsonValue) -> Result[UnitDescription, str]:
             vocab_admissions=texts(value, "vocab_admissions")?,
             vocab_policy=required_text(value, "vocab_policy")?,
             vocab_desugarer=flag(value, "vocab_desugarer")?,
+            toolchain_access=read_access(value)?,
         ),
     )
+
+
+def read_access(value: JsonValue) -> Result[ToolchainAccess, str]:
+    """Read a prepared declaration of rustc-internal access; a description that names none declares none."""
+    match value.get("toolchain_access"):
+        None => return Ok(ToolchainAccess())
+        Some(declared) =>
+            return Ok(
+                ToolchainAccess(
+                    unstable_features=texts(declared, "unstable_features")?,
+                    toolchain_components=texts(declared, "toolchain_components")?,
+                    sysroot_dependencies=texts(declared, "sysroot_dependencies")?,
+                ),
+            )
 
 
 def read_loaf(value: JsonValue) -> Result[UnitLoaf, str]:
