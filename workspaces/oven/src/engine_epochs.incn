@@ -1,0 +1,84 @@
+"""Persist request capture through the record store; idle services retain only descriptor handles."""
+
+from rust::std::str import from_utf8
+from std.fs import Path
+from engine_capture import (
+    BuildEpoch,
+    CaptureRequest,
+    CaptureCounters,
+    InputSelection,
+    admitted_home,
+    capture,
+    decoded_epoch,
+)
+from engine_messages import Submit
+from segment_store import Lookup, Snapshot, begin, commit, lookup, owned, put, snapshot
+from unit_freshness import fingerprint
+
+
+pub model CapturedRequest:
+    """The committed capture and its measured work, scoped to this activation."""
+
+    pub epoch: BuildEpoch
+    pub revision: str
+    pub snapshot: Snapshot
+    pub counters: CaptureCounters
+
+
+pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
+    """
+    Capture a file request and persist its revision without holding decoded inputs between requests.
+
+    1. Validate the supported request selection and read its previous captured revision.
+    2. Capture through the single metadata-first capture implementation.
+    3. Commit the epoch and the request head together; unchanged requests commit no bytes.
+    """
+    # 1. This stage accepts one program file and one profile, with no implicit option fallbacks.
+    if submit.command not in ["run", "build"]:
+        return Err(f"unit records do not implement `{submit.command}`")
+    if submit.input_selection not in ["debug", "release"] or submit.options != "":
+        return Err("unit records require a debug or release profile and no additional build options")
+    source = Path(submit.requested_roots).absolute().map_err((error) => error.message())?
+    if not source.0.endswith(".incn") or submit.view == "":
+        return Err("unit records require one Incan program file and a project view")
+    admitted = admitted_home()?
+    head = f"incan.engine.capture-head\t{fingerprint([submit.view, source.0, submit.input_selection, admitted.pin])?}"
+    before = snapshot(store).map_err((error) => error.message())?
+    previous = previous_epoch(before, head)?
+    # 2. Build and run select the same program inputs; the verb is an execution action, not a compiled identity.
+    request = CaptureRequest(roots=[source.0], selection=InputSelection(command="run", profile=submit.input_selection))
+    captured = capture(request, previous, admitted)?
+    match captured.epoch:
+        None => return Err(f"capture could not settle inputs: {captured.unstable}")
+        Some(epoch) =>
+            # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
+            encoded = epoch.encoded()?
+            revision = fingerprint([encoded])?
+            mut transaction = begin(before)
+            transaction = put(transaction, epoch_key(revision), encoded.encode("utf-8"))
+            transaction = put(transaction, head, revision.encode("utf-8"))
+            published = commit(transaction).map_err((error) => error.message())?
+            return Ok(CapturedRequest(epoch=epoch, revision=revision, snapshot=published, counters=captured.counters))
+
+
+def previous_epoch(view: Snapshot, head: str) -> Result[Option[BuildEpoch], str]:
+    """Read exactly the selected capture head and epoch; damage is a refusal, never a cold miss."""
+    match record_text(view, head)?:
+        None => return Ok(None)
+        Some(revision) =>
+            match record_text(view, epoch_key(revision))?:
+                None => return Err("capture head names a missing epoch record")
+                Some(text) => return Ok(Some(decoded_epoch(text)?))
+
+
+pub def record_text(view: Snapshot, key: str) -> Result[Option[str], str]:
+    """Decode one selected UTF-8 record at the store boundary, preserving typed store failures as messages."""
+    match lookup(view, key).map_err((error) => error.message())?:
+        Lookup.Found(value) => return Ok(Some(str(from_utf8(owned(value)).map_err((error) => str(error))?)))
+        Lookup.Absent => return Ok(None)
+        Lookup.Deleted => return Ok(None)
+
+
+def epoch_key(revision: str) -> str:
+    """The store family for one exact capture revision."""
+    return f"incan.engine.build-epoch\t{revision}"

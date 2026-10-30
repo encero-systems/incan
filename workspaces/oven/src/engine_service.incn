@@ -23,6 +23,8 @@ from engine_messages import (
     EffectDisposition,
 )
 from engine_state import Identity, ServiceState
+from engine_epochs import capture_submit
+from engine_messages import Submit
 from engine_wire import Refusal, RefusalKind, zero_id
 from files import discard_file
 
@@ -35,6 +37,7 @@ pub model Pending:
     pub request: bytes
     pub token: str
     pub command: str
+    pub snapshot: str
 
 
 pub class Client:
@@ -76,7 +79,7 @@ pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None
         return Err(transport("another engine owns this store"))
     withdraw_stale(selected.socket)?
     mut listener = listen(selected.socket, false).map_err(transport)?
-    mut state = ServiceState(identity=identity, last_active=0)
+    mut state = ServiceState(identity=identity, store=root, last_active=0)
     outcome = event_loop(listener, state, idle)
     discard_file(Path(selected.socket))
     return outcome
@@ -166,7 +169,7 @@ def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Resu
     request = frame.header.request
     match frame.message:
         Message.Ack(_) => return Ok(None)
-        Message.Submit(submit) => return accept(client, state, request, submit.command, submit.input_selection)
+        Message.Submit(submit) => return accept(client, state, request, submit)
         Message.Cancel(cancel) =>
             if cancel.interest_token not in [item.token for item in client.pending]:
                 return Err(
@@ -200,22 +203,25 @@ def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Resu
         _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
 
 
-def accept(
-    mut client: Client,
-    mut state: ServiceState,
-    request: bytes,
-    command: str,
-    work: str,
-) -> Result[None, Refusal]:
-    """Accept bounded control work, explicitly labeling the placeholder epoch until the capture producer lands."""
+def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: Submit) -> Result[None, Refusal]:
+    """Accept bounded work before capture, then return the actual committed epoch and snapshot handles."""
     if len(client.pending) == 4 or client.channel.pending.held() > 4:
         return Err(Refusal(kind=RefusalKind.Busy, detail="client admission window is full"))
     token = f"{hexlify(client.channel.session)}:{hexlify(request)}"
-    state.accept(request, work, token)?
-    client.pending.append(Pending(request=request, token=token, command=command))
+    state.accept(request, submit.requested_roots, token)?
     send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
-    send(client.channel, request, Message.Captured(Captured(epoch="pending-capture", snapshot="")))?
-    return send(client.channel, request, Message.Event(Event(status="CaptureUnavailable", trace_handle="")))
+    match capture_submit(state.store, submit):
+        Err(reason) =>
+            state.detach(request, token)?
+            return Err(transport(reason))
+        Ok(captured) =>
+            selected = captured.snapshot.digest
+            client.pending.append(Pending(request=request, token=token, command=submit.command, snapshot=selected))
+            return send(
+                client.channel,
+                request,
+                Message.Captured(Captured(epoch=captured.epoch.identity().map_err(transport)?, snapshot=selected)),
+            )
 
 
 def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
@@ -230,7 +236,7 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
             pending.request,
             Message.Complete(
                 Complete(
-                    snapshot="",
+                    snapshot=pending.snapshot,
                     admission_proof="",
                     result_handles="",
                     binding_outcome=BindingOutcome.NotSelected,
