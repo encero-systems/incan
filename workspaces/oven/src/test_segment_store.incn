@@ -285,6 +285,15 @@ pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_
     segments = count_files(root.joinpath("segments"))
     pages = count_files(root.joinpath("indexes"))
     bytes_before = retained_bytes(root)?
+    before_invalid = retained_inventory(root)?
+    for invalid in ["", "two words", "line\nbreak"]:
+        assert error_kind(fork(home, invalid)) == "format", f"invalid view {invalid} was accepted"
+        assert error_kind(snapshot(root, invalid)) == "format"
+        if invalid != "":
+            mut invalid_transaction = begin(home)
+            invalid_transaction.fork = invalid
+            assert error_kind(commit(invalid_transaction)) == "format"
+        assert retained_inventory(root)? == before_invalid, "an invalid fork changed the committed store"
     test_view = fork(home, "test").map_err((error) => error.message())?
     assert test_view.index == home.index
     assert count_files(root.joinpath("segments")) == segments
