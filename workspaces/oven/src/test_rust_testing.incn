@@ -1,8 +1,10 @@
 """Rust facets use their test dependencies and report both passing and failing unit tests."""
 
 from std.fs import Path
+from std.environ import get_or
 from std.testing import fail
-from files import make_directory, write
+from codegen import compiled_arguments, rust_incremental_arguments, rust_iteration_enabled
+from files import make_directory, read, write
 from rust_testing import build_rust_tests
 from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
@@ -20,9 +22,11 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     2. Compile and run both tests, requiring a failing command outcome.
     3. Repair the failing assertion and require the same harness path to rebuild and pass.
     4. Compile procedural macro unit and integration harnesses in their producer's host domain.
+    5. Require optimized qualification and iteration to preserve the same edit/revert behavior.
     """
     temporary = scratch_directory()?
     root = temporary.path()
+    verify_incremental_policy(root)?
     project = root.joinpath("project")
     helper = root.joinpath("helper")
     make_directory(project.joinpath("src"))?
@@ -66,6 +70,7 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     assert rebuilt == programs
     for program in rebuilt:
         assert run_rust_harness(Path(program), project)? == 0
+    verify_incremental_revert(request, helper, helper_source, project)?
     # 4. A procedural macro retains its crate kind and sysroot proc_macro binding.
     macro = root.joinpath("macro")
     make_directory(macro.joinpath("src"))?
@@ -89,6 +94,56 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     verify_macro_domains(macro, helper, macro_request)?
     for program in macro_programs:
         assert run_rust_harness(Path(program), macro)? == 0
+    # 5. Optimized qualification and opt-in iteration obey the same edit/revert contract.
+    mut optimized = request
+    optimized.profile = "release"
+    for program in build_rust_tests(optimized)?:
+        assert run_rust_harness(Path(program), project)? == 0
+    verify_incremental_revert(optimized, helper, helper_source, project)?
+    return Ok(None)
+
+
+def verify_incremental_policy(root: Path) -> Result[None, str]:
+    """Rust iteration uses local scratch, while generated units and qualification retain their ordinary flags."""
+    assert rust_iteration_enabled("debug", "")
+    assert not rust_iteration_enabled("release", "")
+    assert rust_iteration_enabled("release", "1")
+    assert not rust_iteration_enabled("debug", "0")
+    assert not rust_iteration_enabled("release", "true")
+    assert not rust_iteration_enabled("unknown", "1")
+    scratch = root.joinpath("target/incremental/library")
+    ordinary = ["-C", "metadata=incan-unit"]
+    iteration = ["-C", "metadata=incan-iteration-library"]
+    assert rust_incremental_arguments(scratch, ordinary) == []
+    assert rust_incremental_arguments(scratch, iteration) == ["-C", f"incremental={scratch.0}"]
+    for profile in ["debug", "release"]:
+        generated = compiled_arguments(profile, "sha256:fixture", root.0)
+        assert rust_incremental_arguments(scratch, generated) == []
+        for argument in generated:
+            assert "incremental=" not in argument
+    return Ok(None)
+
+
+def verify_incremental_revert(request: RustBuild, helper: Path, original: str, project: Path) -> Result[None, str]:
+    """A dependency body edit changes executable behavior; reverting restores it through the same scratch cache."""
+    if rust_iteration_enabled(request.profile, get_or("INCAN_RUST_INCREMENTAL", "")):
+        root = helper.resolve().map_err((error) => error.message())?
+        facet = local_facet(root.0, DependencyDomain.Target, "helper")
+        slot = facet_slot(facet, request.profile)
+        output = rust_output(project, request.profile)
+        directory = output.joinpath(f"helper-{slot}")
+        scratch = output.joinpath("incremental").joinpath(f"{slot}-library")
+        assert scratch.is_dir(), f"missing Rust scratch in {scratch.0}"
+        assert "incremental=" not in read(directory.joinpath("library.oven-inputs"))?
+    source = helper.joinpath("src/lib.rs")
+    write(source, original.replace("{ 7 }", "{ 9 }"))?
+    changed = build_rust_tests(request)?
+    assert run_rust_harness(Path(changed[0]), project)? == 1
+    write(source, original)?
+    restored = build_rust_tests(request)?
+    assert restored == changed
+    for program in restored:
+        assert run_rust_harness(Path(program), project)? == 0
     return Ok(None)
 
 
