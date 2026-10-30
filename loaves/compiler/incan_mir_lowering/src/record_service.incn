@@ -1,0 +1,182 @@
+"""Compiler record-service contracts from DD-0013; handles carry no compiler heap representation."""
+
+from records import RecordKey, RecordReads
+
+pub const RECORD_SERVICE_SCHEMA: str = "incan.compiler-record-service/1"
+
+
+pub enum ProducerStage:
+    """Compiler-owned phases, ordered within the namespace import rank."""
+
+    Discover
+    Signature
+    Layout
+    Default
+    CheckBody
+    BodyIr
+    Instance
+    PlanFunction
+    NativeInterface
+
+
+pub model RecordRoot:
+    """An immutable store root's canonical digest, never a locator, table position or process pointer."""
+
+    pub digest: str
+
+
+pub model InputSnapshot:
+    """A captured input root protected by the caller's snapshot lease for the entire operation."""
+
+    pub root: RecordRoot
+
+
+pub model ProducerProfile:
+    """Exact compiler generation, producer schema and semantic options, admitted before preparation."""
+
+    pub identity: RecordRoot
+
+
+pub model ProducerRank:
+    """A compiler-certified namespace order, phase and phase-local dependency order."""
+
+    pub namespace: int
+    pub stage: ProducerStage
+    pub dependency: int
+
+
+pub model DemandPage:
+    """One bounded page of logical output keys; continuation is handled before evaluation, never by a retry loop."""
+
+    pub keys: list[RecordKey]
+
+
+pub model RankCertificate:
+    """The immutable evidence that every possible supplier is final before this producer's certified rank."""
+
+    pub rank: ProducerRank
+    pub evidence: RecordRoot
+
+
+pub model PreparedInputs:
+    """Final input envelope for one output, bound to the captured snapshot and exact producer profile."""
+
+    pub output: RecordKey
+    pub snapshot: InputSnapshot
+    pub profile: ProducerProfile
+    pub required_keys: list[RecordKey]
+    pub rank_certificate: RankCertificate
+    pub selector_witnesses: RecordRoot
+
+
+pub model NeedPrerequisite:
+    """Preparation needs these earlier-rank suppliers; this is scheduling information, never a source diagnostic."""
+
+    pub keys: list[RecordKey]
+    pub earlier_rank: ProducerRank
+
+
+pub model SemanticRefusal:
+    """Compiler-owned diagnostics and the exact reads supporting them, including failed speculative reads."""
+
+    pub diagnostics: RecordRoot
+    pub read_witness_root: RecordRoot
+
+
+pub enum CompilerFaultKind:
+    """Typed contract or infrastructure failures; no variant is a language-level refusal."""
+
+    UnfinishedSupplier(RecordKey)
+    SnapshotMismatch
+    ProfileMismatch
+    InvalidPreparation
+    UnsupportedProducer(ProducerStage)
+    RecordReadFailed(RecordKey)
+    InvalidRecord(RecordKey)
+
+
+pub model CompilerFault:
+    """A failed producer operation; details refer to structured evidence rather than a refusal string."""
+
+    pub kind: CompilerFaultKind
+    pub details: RecordRoot
+
+
+pub enum Preparation:
+    """Preparation either certifies final inputs, requests earlier work, refuses source or reports a fault."""
+
+    Prepared(PreparedInputs)
+    NeedPrerequisite(NeedPrerequisite)
+    SemanticRefusal(SemanticRefusal)
+    CompilerFault(CompilerFault)
+
+
+pub model ReadyWork:
+    """One logical output selected for value evaluation after all preparation has settled."""
+
+    pub output: RecordKey
+    pub stage: ProducerStage
+    pub profile: ProducerProfile
+
+
+pub model ValueReference:
+    """The produced logical record and immutable value root, valid under the caller's staging ownership."""
+
+    pub key: RecordKey
+    pub root: RecordRoot
+
+
+pub model ProducerCounters:
+    """Work performed by this call, excluding reuse and native compilation owned by other components."""
+
+    pub evaluations: int
+    pub records_read: int
+    pub bytes_read: int
+
+
+pub model Produced:
+    """A staged answer with semantic identity, exact read evidence, diagnostics and measured work."""
+
+    pub value_ref: ValueReference
+    pub semantic_digest: RecordRoot
+    pub read_witness_root: RecordRoot
+    pub diagnostic_root: RecordRoot
+    pub counters: ProducerCounters
+
+
+pub enum Evaluation:
+    """A final value, semantic refusal or compiler fault; unfinished suppliers cannot masquerade as diagnostics."""
+
+    Produced(Produced)
+    SemanticRefusal(SemanticRefusal)
+    CompilerFault(CompilerFault)
+
+
+pub trait CompilerRecordService:
+    """
+    Prepare and evaluate compiler-owned records without running the whole-program check or lowering path.
+
+    The reader is the existing keyed read API. Its table positions and boolean witnesses are bootstrap-local;
+    revision-bound mapped handles and exact witness roots are required before a producer can publish `Produced`.
+    No implementation of this contract is supplied until the checker can consume a final keyed environment.
+    """
+
+    def prepare(
+        mut self,
+        stage: ProducerStage,
+        input_snapshot: InputSnapshot,
+        demand_page: DemandPage,
+        producer_profile: ProducerProfile,
+    ) -> Preparation:
+        """Discover suppliers without evaluating the output; return NeedPrerequisite only for earlier ranks."""
+        pass
+
+    def evaluate(
+        mut self,
+        ready_work: ReadyWork,
+        input_snapshot: InputSnapshot,
+        prepared_inputs: PreparedInputs,
+        mut scoped_reader: RecordReads,
+    ) -> Evaluation:
+        """Evaluate once from final inputs; an unfinished read is CompilerFaultKind.UnfinishedSupplier."""
+        pass
