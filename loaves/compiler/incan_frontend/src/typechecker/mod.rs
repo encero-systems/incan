@@ -69,6 +69,7 @@ mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
+mod source_signatures;
 mod trait_bound_relations;
 mod type_info;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
@@ -7070,6 +7071,7 @@ impl TypeChecker {
         self.reset_program_check(program, preserve_dependency_semantics);
         self.collect_program_check_declarations(program);
         self.record_program_header_facts();
+        self.record_source_declaration_identities(program);
         self.prepare_program_body_facts();
         self.check_program_declaration_bodies(program);
         self.record_program_lowering_facts(program);

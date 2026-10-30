@@ -65,6 +65,7 @@ mod tests {
     /// Dependency interface restoration, same-spelled declarations and alias imports retain fresh-computation maps.
     #[test]
     fn nominal_cache_matches_fresh_across_modules() -> Result<(), String> {
+        assert_source_signature_edits()?;
         let left = program("pub model Left:\n    pub value: int\n\npub type Alias = Left\n")?;
         let right = program("from left import Alias\n\npub model Right:\n    pub value: Alias\n")?;
         let main =
@@ -170,6 +171,48 @@ mod tests {
         assert_generation(&checker);
         checker.public_library_type_identities.clear();
         assert_generation(&checker);
+        Ok(())
+    }
+    /// Header publication alone must separate nominal owners and overloads while ignoring comments and movement.
+    fn assert_source_signature_edits() -> Result<(), String> {
+        let source = "model Item:\n    value: int\n    def read(self) -> int:\n        return self.value\nmodel Other:\n    value: int\n    def read(self) -> int:\n        return self.value\ndef read(item: Item) -> int:\n    return item.value\ndef identity[T](value: T) -> T:\n    return value\ndef choose(value: int) -> int:\n    return value\ndef choose(value: str) -> str:\n    return value\n";
+        let identities = |source: &str| -> Result<_, String> {
+            let program = program(source)?;
+            let mut checker = TypeChecker::new();
+            checker.reset_program_check(&program, false);
+            checker.collect_program_check_declarations(&program);
+            checker.record_program_header_facts();
+            checker.record_source_declaration_identities(&program);
+            assert_eq!(checker.check_work().function_bodies, 0);
+            assert_eq!(checker.check_work().method_bodies, 0);
+            Ok(checker
+                .type_info
+                .declarations
+                .source_identities
+                .values()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>())
+        };
+        let original = identities(source)?;
+        assert_eq!(
+            original.len(),
+            6,
+            "two owner-qualified methods, two functions and two overloads"
+        );
+        assert_eq!(original, identities(&format!("# position-only edit\n\n{source}"))?);
+        let split = source.find("def read(item:").ok_or("missing function boundary")?;
+        assert_eq!(
+            original,
+            identities(&format!("{}{}", &source[split..], &source[..split]))?
+        );
+        assert_eq!(
+            original,
+            identities(&source.replace("identity[T](value: T) -> T", "identity[U](value: U) -> U"))?
+        );
+        assert_ne!(
+            original,
+            identities(&source.replace("read(item: Item)", "read(item: Other)"))?
+        );
         Ok(())
     }
 }

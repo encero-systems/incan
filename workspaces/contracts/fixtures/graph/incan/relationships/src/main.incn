@@ -32,3 +32,25 @@ def main() -> None:
 def native_value(value: Value) -> bool:
     """Expose a checked Rust type supplied by the project's declared registry dependency."""
     return value.is_null()
+
+
+model Item:
+    value: int
+
+    def read(self) -> int:
+        return self.value
+
+
+model Other:
+    value: int
+
+    def read(self) -> int:
+        return self.value
+
+
+def read_item(item: Item) -> int:
+    return item.read()
+
+
+def identity_item[T](item: T) -> T:
+    return item

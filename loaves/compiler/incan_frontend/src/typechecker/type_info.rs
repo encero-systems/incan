@@ -1110,6 +1110,8 @@ pub struct RustIterationHooks {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Checked source-signature identities published before body checks or native representation selection.
+    pub source_identities: BTreeMap<CanonicalSymbolId, incan_semantics_core::stable_identity::StableDeclarationId>,
     /// Body IR-only canonical trait adoptions, retaining marker protocols and ordered checked arguments.
     /// Legacy conformance, derive selection, and method tables never consume this snapshot.
     pub body_ir_trait_adoptions: HashMap<String, Vec<BodyIrCheckedTraitAdoption>>,
@@ -3491,7 +3493,7 @@ pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
 }
 
 /// Convert typechecker callable parameter metadata into semantic callable parameter metadata.
-fn semantic_callable_param_from_resolved(param: &CallableParam) -> IncanCallableParam {
+pub(super) fn semantic_callable_param_from_resolved(param: &CallableParam) -> IncanCallableParam {
     IncanCallableParam {
         name: param.name.clone(),
         ty: semantic_type_from_resolved(&param.ty),
