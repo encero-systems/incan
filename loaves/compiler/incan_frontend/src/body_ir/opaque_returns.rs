@@ -10,6 +10,27 @@ pub(super) struct Carrier {
     self_results: Vec<CanonicalSymbolId>,
 }
 
+/// Original own-body evidence captured before any trait/opaque representation pass. Declaration selection is a
+/// later input; capturing this seed never reads another body or the joined checker facts.
+pub(super) struct BodyCarrierSeed {
+    function: CanonicalSymbolId,
+    declared: IncanType,
+    concrete: IncanType,
+}
+
+/// Selected declaration facts for one original opaque-return snapshot. These native borrows are activation-local;
+/// a record adapter must own selection and witnesses, and must not pass an unselected nominal or trait candidate.
+pub(super) struct BodyCarrierInputs<'a> {
+    /// The source trait selected by the checked return annotation.
+    pub trait_owner: &'a CanonicalSymbolId,
+    /// The checker's selected identity of the returned nominal type.
+    pub checked_nominal: &'a CanonicalSymbolId,
+    /// The authenticated local layout whose existence authorizes this carrier.
+    pub nominal_owner: &'a CanonicalSymbolId,
+    /// Exact checked physical method slots whose source result is `Self`.
+    pub self_results: &'a [CanonicalSymbolId],
+}
+
 /// Snapshot checked local opaque return contracts before representation refinement replaces their declared traits with
 /// concrete carriers.
 ///
@@ -28,22 +49,24 @@ pub(super) fn collect(module: &bir::BodyIrModule, type_info: &TypeCheckInfo) -> 
 /// snapshot preserves exact Self-returning slots without resolving names or adding dispatch authority.
 pub(super) fn retain(module: &mut bir::BodyIrModule, carriers: &[Carrier]) {
     for body in &mut module.bodies {
-        if let Some(selected) = carriers
-            .iter()
-            .find(|item| body.canonical.as_ref() == Some(&item.function))
-        {
-            body.return_type = selected.concrete.clone();
-        }
-        retain_call_results(&mut body.block, &mut body.locals, carriers);
+        retain_body(body, carriers);
     }
+}
+
+/// Apply the original checked opaque snapshot to one body after trait-return refinement. The caller supplies the
+/// selected carrier summaries; this operation neither discovers nor mutates sibling bodies.
+pub(super) fn retain_body(body: &mut bir::Body, carriers: &[Carrier]) {
+    if let Some(selected) = carriers
+        .iter()
+        .find(|item| body.canonical.as_ref() == Some(&item.function))
+    {
+        body.return_type = selected.concrete.clone();
+    }
+    retain_call_results(&mut body.block, &mut body.locals, carriers);
 }
 
 /// Prove one local trait-returning function's carrier from its checked return places, not from its interface name.
 fn carrier(module: &bir::BodyIrModule, body: &bir::Body, type_info: &TypeCheckInfo) -> Option<Carrier> {
-    let function = body.canonical.as_ref()?;
-    if function.kind != SemanticSourceTargetKind::Function || !body.type_parameters.is_empty() {
-        return None;
-    }
     let name = match &body.return_type {
         IncanType::Named(name) => name,
         IncanType::Generic { base, .. } => base,
@@ -53,23 +76,67 @@ fn carrier(module: &bir::BodyIrModule, body: &bir::Body, type_info: &TypeCheckIn
         .trait_declarations
         .iter()
         .find(|declaration| declaration.declaration_name == *name)?;
-    let concrete = return_carrier(body)?;
-    let IncanType::Named(owner) = &concrete else {
+    let seed = snapshot_body(body)?;
+    let IncanType::Named(owner) = &seed.concrete else {
         return None;
     };
     let selected = super::parameter_types::retained_nominal_identity(owner, type_info)?;
-    if !module
+    let nominal_owner = &module
         .nominal_declarations
         .iter()
-        .any(|declaration| &declaration.canonical == selected && declaration.canonical.origin == function.origin)
+        .find(|declaration| &declaration.canonical == selected)?
+        .canonical;
+    let self_results = self_returning_methods(module, trait_owner, type_info);
+    select_snapshot(
+        seed,
+        &BodyCarrierInputs {
+            trait_owner,
+            checked_nominal: selected,
+            nominal_owner,
+            self_results: &self_results,
+        },
+    )
+}
+
+/// Capture one body's original source contract and flat return-place proof. Only nongeneric physical functions
+/// qualify. Declaration and layout authority is deliberately absent until `select_snapshot` validates its inputs.
+pub(super) fn snapshot_body(body: &bir::Body) -> Option<BodyCarrierSeed> {
+    let function = body.canonical.as_ref()?;
+    if function.kind != SemanticSourceTargetKind::Function || !body.type_parameters.is_empty() {
+        return None;
+    }
+    if !matches!(body.return_type, IncanType::Named(_) | IncanType::Generic { .. }) {
+        return None;
+    }
+    Some(BodyCarrierSeed {
+        function: function.clone(),
+        declared: body.return_type.clone(),
+        concrete: return_carrier(body)?,
+    })
+}
+
+/// Authenticate an original own-body snapshot against selected trait, nominal and Self-slot facts. The snapshot
+/// survives later refinement without rereading the original body; a foreign or conflicting layout stays unretained.
+pub(super) fn select_snapshot(seed: BodyCarrierSeed, inputs: &BodyCarrierInputs<'_>) -> Option<Carrier> {
+    let name = match &seed.declared {
+        IncanType::Named(name) => name,
+        IncanType::Generic { base, .. } => base,
+        _ => return None,
+    };
+    if inputs.trait_owner.declaration_name != *name
+        || inputs.nominal_owner != inputs.checked_nominal
+        || inputs.nominal_owner.origin != seed.function.origin
     {
         return None;
     }
+    if !matches!(seed.concrete, IncanType::Named(_)) {
+        return None;
+    }
     Some(Carrier {
-        function: function.clone(),
-        declared: body.return_type.clone(),
-        concrete,
-        self_results: self_returning_methods(module, trait_owner, type_info),
+        function: seed.function,
+        declared: seed.declared,
+        concrete: seed.concrete,
+        self_results: inputs.self_results.to_vec(),
     })
 }
 

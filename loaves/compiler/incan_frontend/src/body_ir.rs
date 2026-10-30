@@ -149,6 +149,19 @@ pub fn build_body_ir_module(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
+    let mut module = build_module_seed(program, module_path, type_info, context);
+    retain_module_representations(&mut module, program, type_info, context.modules);
+    module
+}
+
+/// Construct the compatibility module before representation refinement. This remains the whole-module route;
+/// separating its seed lets the cold oracle compare individual representation operations from identical inputs.
+fn build_module_seed(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+) -> bir::BodyIrModule {
     let provider_operations = context.provider_operations;
     let registry_package = context.registry_package;
     let module_identity = match context.library_package {
@@ -233,7 +246,7 @@ pub fn build_body_ir_module(
     retain_source_body_contracts(program, type_info, &mut bodies);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
-    let mut module = bir::BodyIrModule {
+    bir::BodyIrModule {
         runtime_callable_bindings: Vec::new(),
         string_conversion_contract: bir::StringConversionContract::Unselected,
         decorated_bindings,
@@ -257,9 +270,7 @@ pub fn build_body_ir_module(
         fieldless_enum_declarations,
         value_enum_declarations,
         bodies,
-    };
-    retain_module_representations(&mut module, program, type_info, context);
-    module
+    }
 }
 
 /// Collect explicit storage before computed constants; decoration and registry effects append their declarations
@@ -2292,6 +2303,33 @@ use collect::*;
 pub use provider_ops::ProviderOperationCatalog;
 use provider_ops::ProviderOperationRecord;
 use reads::*;
+
+#[cfg(test)]
+mod representation_tests;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/union_layouts.rs"]
+mod legacy_union_layouts;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/opaque_returns.rs"]
+mod legacy_opaque_returns;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/shared_reads.rs"]
+mod legacy_shared_reads;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/source_comparison.rs"]
+mod legacy_source_comparison;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/trait_returns.rs"]
+mod legacy_trait_returns;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/trait_values.rs"]
+mod legacy_trait_values;
 
 #[cfg(test)]
 mod tuple_destructure_interop_tests {
