@@ -10,14 +10,14 @@ tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }
 incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 
-incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver", default-features = false, features = ["std_async", "std_testing", "std_decorators"] }
+incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver" }
 thiserror = { loaf = "crates-io/thiserror", version = "2" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
-incan_frontend = { loaf = "incan_frontend", path = "../../compiler/incan_frontend", default-features = false }
+incan_frontend = { loaf = "incan_frontend", path = "../../compiler/incan_frontend" }
 
 [[rust.bin]]
 name = "incan-rustc-driver"
