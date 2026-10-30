@@ -898,7 +898,9 @@ impl TypeChecker {
         None
     }
 
-    /// Bind explicit arguments on decorated generic functions before ordinary callable-value inference.
+    /// Check decorated generic calls through the declaration's binders for explicit and inferred type arguments.
+    /// Ordinary callable-value inference cannot retain the closed declaration instance required by Body IR. The
+    /// resolved symbol's declaration span excludes local values shadowing a decorated declaration's name.
     fn check_decorated_generic_direct_call(&mut self, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
         let (callee, type_args, args, span, expected_return_ty) = (
             call.callee,
@@ -908,12 +910,12 @@ impl TypeChecker {
             call.expected_return_ty,
         );
         if let Expr::Ident(name) = &callee.node
-            && !type_args.is_empty()
+            && let Some(symbol) = self.lookup_symbol(name)
             && let Some(binding) = self
                 .type_info
                 .declarations
-                .decorated_function_bindings
-                .get(name)
+                .decorated_function_bindings_by_span
+                .get(&symbol.span)
                 .cloned()
             && !binding.type_params.is_empty()
             && let ResolvedType::Function(params, ret) = binding.ty

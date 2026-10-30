@@ -47,18 +47,11 @@ pub(super) fn project_callable(
     eligible: &BTreeSet<CanonicalSymbolId>,
     native_callables: &[&crate::body_ir::LoafCallable],
 ) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
-    if module.decorated_bindings.iter().any(|binding| {
+    if let Some(binding) = module.decorated_bindings.iter().find(|binding| {
         binding.original_body.canonical == source.canonical
             && binding.initialization == crate::body_ir::DecoratedInitialization::PerInstantiation
     }) {
-        // No portable cached-template fragment is admitted; publishing only its wrapper would erase initialization.
-        return Err(CoverageReason::UnsupportedConstruct);
-    }
-    if let Some(binding) = module.decorated_bindings.iter().find(|binding| {
-        binding.original_body.canonical == source.canonical
-            && binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation
-    }) {
-        return project_invocation_body(source, binding, module, library, eligible);
+        return project_generic_decorated_body(source, binding, module, library, eligible, native_callables);
     }
     let decorated = module
         .static_declarations
@@ -86,6 +79,55 @@ pub(super) fn project_callable(
         }
     };
     Ok((declaration, value.requirements))
+}
+
+/// Publish a generic replacement atomically with its original, initializer and exact native call dependencies.
+/// The initializer remains a template under the source binders; consumers close all frames through the ordinary
+/// per-instantiation binding policy rather than publishing a polymorphic module cell.
+fn project_generic_decorated_body(
+    source: &Body,
+    binding: &crate::body_ir::DecoratedBinding,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+    native_callables: &[&crate::body_ir::LoafCallable],
+) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    if module
+        .decorated_bindings
+        .iter()
+        .filter(|candidate| candidate.original_body.canonical == source.canonical)
+        .count()
+        != 1
+        || !is_well_formed_source_binding(module, binding, library)
+    {
+        return Err(CoverageReason::UnresolvedReference);
+    }
+    let initializer = binding
+        .initializer
+        .as_ref()
+        .ok_or(CoverageReason::UnresolvedReference)?;
+    let wrapper = project_body(source, module, library, eligible)?;
+    let original = project_body(&binding.original_body, module, library, eligible)?;
+    let initializer = project_body(initializer, module, library, eligible)?;
+    let mut requirements = wrapper.requirements;
+    requirements.extend(original.requirements);
+    requirements.extend(initializer.requirements);
+    let mut native_calls = wrapper.native_calls;
+    native_calls.extend(original.native_calls);
+    native_calls.extend(initializer.native_calls);
+    let callables = selected_native_calls(&native_calls, native_callables)?;
+    Ok((
+        ExecutableDeclaration::GenericDecoratedBody {
+            body: Box::new(wrapper.body),
+            binding: Box::new(crate::body_ir::DecoratedBinding {
+                original_body: original.body,
+                initializer: Some(Box::new(initializer.body)),
+                initialization: crate::body_ir::DecoratedInitialization::PerInstantiation,
+            }),
+            callables,
+        },
+        requirements,
+    ))
 }
 
 /// Publish only a compiled export's governed signature, independently of whether its implementation is portable.
@@ -181,41 +223,6 @@ fn selected_native_calls(
         }
     }
     Ok(callables)
-}
-
-/// Publish a generic wrapper and original atomically without inventing a polymorphic replacement cell.
-fn project_invocation_body(
-    source: &Body,
-    binding: &crate::body_ir::DecoratedBinding,
-    module: &BodyIrModule,
-    library: &str,
-    eligible: &BTreeSet<CanonicalSymbolId>,
-) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
-    if module
-        .decorated_bindings
-        .iter()
-        .filter(|candidate| candidate.original_body.canonical == source.canonical)
-        .count()
-        != 1
-        || !is_well_formed_source_binding(module, binding, library)
-    {
-        return Err(CoverageReason::UnresolvedReference);
-    }
-    let wrapper = project_body(source, module, library, eligible)?;
-    let original = project_body(&binding.original_body, module, library, eligible)?;
-    let mut requirements = wrapper.requirements;
-    requirements.extend(original.requirements);
-    Ok((
-        ExecutableDeclaration::InvocationDecoratedBody {
-            body: Box::new(wrapper.body),
-            binding: Box::new(crate::body_ir::DecoratedBinding {
-                original_body: original.body,
-                initializer: None,
-                initialization: crate::body_ir::DecoratedInitialization::PerInvocation,
-            }),
-        },
-        requirements,
-    ))
 }
 
 /// Bind a declaration's physical fragment address to the already-published canonical owner and span.
@@ -482,8 +489,8 @@ struct PublicationAudit<'a> {
     original_callables: BTreeSet<CanonicalSymbolId>,
     /// The audited source declaration before package projection; original reads must belong to this exact frame.
     current_callable: Option<CanonicalSymbolId>,
-    /// Only module-initialized replacements authorize reading storage under a callable's canonical identity.
-    replacement_storage: BTreeSet<CanonicalSymbolId>,
+    /// Validated bindings authorize replacement reads; the binding retains its module or per-instance lifetime.
+    replacement_bindings: BTreeSet<CanonicalSymbolId>,
     /// Trait-default receiver placeholders remain abstract until concrete checked dispatch specialization.
     trait_self: bool,
     /// Only binders retained by the declaration or its canonical nominal owner may remain open in publication.
@@ -534,7 +541,7 @@ impl<'a> PublicationAudit<'a> {
 
         // ---- Decorators: distinct original-callable and replacement-storage permissions ----
         let mut original_callables = BTreeSet::new();
-        let mut replacement_storage = BTreeSet::new();
+        let mut replacement_bindings = BTreeSet::new();
         for binding in &module.decorated_bindings {
             if !is_well_formed_source_binding(module, binding, library) {
                 continue;
@@ -543,15 +550,13 @@ impl<'a> PublicationAudit<'a> {
                 continue;
             };
             original_callables.insert(identity.clone());
-            if binding.initialization == crate::body_ir::DecoratedInitialization::ModuleStorage {
-                replacement_storage.insert(identity.clone());
-            }
+            replacement_bindings.insert(identity.clone());
         }
 
         // ---- Context: package and type auditing ----
         Self {
             current_callable: None,
-            replacement_storage,
+            replacement_bindings,
             original_callables,
             trait_self: false,
             type_parameters: BTreeSet::new(),
@@ -783,7 +788,7 @@ impl<'a> PublicationAudit<'a> {
             if value.identity.kind != crate::SemanticSourceTargetKind::Static
                 && !(value.identity.kind == crate::SemanticSourceTargetKind::Const
                     && value.write_policy == crate::body_ir::GlobalWritePolicy::ReadOnly)
-                && !self.replacement_storage.contains(&value.identity)
+                && !self.replacement_bindings.contains(&value.identity)
             {
                 return Err(CoverageReason::UnsupportedConstruct);
             }
@@ -1285,6 +1290,9 @@ fn is_well_formed_source_binding(
     };
     let source_address = CompilerNodeId::declaration_at(module.module_id.path(), identity.declaration_span);
     let mut roles = vec![&binding.original_body, wrapper];
+    if let Some(initializer) = &binding.initializer {
+        roles.push(initializer);
+    }
     if binding.initialization == crate::body_ir::DecoratedInitialization::ModuleStorage {
         let Some(storage) = module
             .static_declarations
@@ -1321,6 +1329,10 @@ fn is_well_formed_source_binding(
         if retained.original_body.canonical.as_ref() == Some(identity) {
             retained.original_body.decl_id = projected_address.clone();
             retained.original_body.direct_call_id = projected_address.clone();
+            if let Some(initializer) = &mut retained.initializer {
+                initializer.decl_id = projected_address.clone();
+                initializer.direct_call_id = projected_address.clone();
+            }
         }
     }
     for retained in &mut view.static_declarations {

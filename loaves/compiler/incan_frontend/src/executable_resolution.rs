@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable};
 use incan_semantics_core::executable_representation::{
     DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, SurfaceIndex, require_supported_version,
 };
@@ -309,19 +309,20 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
             if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
                 module.loaf_callables.push(callable);
             }
-            for callable in callables {
-                if !module.loaf_callables.contains(&callable) {
-                    module.loaf_callables.push(callable);
-                }
-            }
+            retain_native_callables(module, callables);
         }
         ExecutableDeclaration::NativeBody { body, callables } => {
             module.bodies.push(*body);
-            for callable in callables {
-                if !module.loaf_callables.contains(&callable) {
-                    module.loaf_callables.push(callable);
-                }
-            }
+            retain_native_callables(module, callables);
+        }
+        ExecutableDeclaration::GenericDecoratedBody {
+            body,
+            binding,
+            callables,
+        } => {
+            module.bodies.push(*body);
+            module.decorated_bindings.push(*binding);
+            retain_native_callables(module, callables);
         }
         ExecutableDeclaration::DecoratedBody { body, binding, storage } => {
             module.bodies.push(*body);
@@ -350,6 +351,15 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         }
     }
 }
+/// Merge authenticated native call selections without duplicating an already-retained ABI declaration.
+fn retain_native_callables(module: &mut BodyIrModule, callables: Vec<LoafCallable>) {
+    for callable in callables {
+        if !module.loaf_callables.contains(&callable) {
+            module.loaf_callables.push(callable);
+        }
+    }
+}
+
 /// File handle and already-decoded metadata; executable payloads remain on disk until their identity is selected.
 struct OpenSurface {
     file: File,
