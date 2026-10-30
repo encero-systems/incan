@@ -25,6 +25,7 @@ from segment_store import (
     get,
     keys,
     lookup,
+    owned,
     payload_intact,
     payload_path,
     put,
@@ -44,7 +45,7 @@ def text(found: Result[Lookup, StoreError]) -> str:
         Ok(outcome) =>
             match outcome:
                 Lookup.Found(value) =>
-                    match RustString.from_utf8(value):
+                    match RustString.from_utf8(owned(value)):
                         Ok(decoded) => return str(decoded)
                         Err(_) => return "<bytes>"
                 Lookup.Deleted => return "<deleted>"
@@ -268,6 +269,51 @@ pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys
             f"S2 selected read: scale={scale} segments={len(latest.segments)} pages={after.pages - before.pages} records={after.records - before.records} frame_bytes={after.bytes - before.bytes}",
         )
     return Ok(None)
+
+
+pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, str]:
+    """
+    A lookup answers with a view of the value inside its segment: it copies out the same key and location bytes
+    whatever the value's size, and none of the value. Only `owned` copies a value, and it counts every byte it copies.
+    """
+    scratch = scratch_directory()?
+    mut lookup_copies: list[int] = []
+    for size in [1, 65536, 4194304]:
+        value = repeated(size)?
+        root = scratch.path().joinpath(f"value-{size}")
+        commit(put(begin(snapshot(root).map_err((error) => error.message())?), "value", value))
+            .map_err((error) => error.message())?
+        latest = snapshot(root).map_err((error) => error.message())?
+        before = read_counts()
+        found = lookup(latest, "value").map_err((error) => error.message())?
+        after = read_counts()
+        assert after.decoded == before.decoded, "a lookup decoded its value"
+        assert after.bytes - before.bytes == 8 + 5 + size
+        lookup_copies.append(after.copied - before.copied)
+        match found:
+            Lookup.Found(view) =>
+                assert view.len() == size
+                decoded = owned(view)
+                assert read_counts().decoded - after.decoded == size
+                assert decoded == value
+            Lookup.Deleted => assert false, "the stored value reads as deleted"
+            Lookup.Absent => assert false, "the stored value reads as absent"
+        println(
+            f"S2 mapped view: value_bytes={size} frame_bytes_checked={after.bytes - before.bytes} lookup_copied_bytes={after.copied - before.copied} lookup_decoded_bytes={after.decoded - before.decoded} owned_decoded_bytes={size}",
+        )
+    assert lookup_copies[0] == lookup_copies[1] and lookup_copies[1] == lookup_copies[2]
+    return Ok(None)
+
+
+def repeated(size: int) -> Result[bytes, str]:
+    """`size` bytes, built by doubling."""
+    mut data = BytesIO(b"v").getvalue()
+    while len(data) < size:
+        buffer = BytesIO(data)
+        buffer.seek(0, 2).map_err((error) => error.message())?
+        buffer.write_bytes(data).map_err((error) => error.message())?
+        data = buffer.getvalue()
+    return Ok(data[:size])
 
 
 pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_writes() -> Result[None, str]:

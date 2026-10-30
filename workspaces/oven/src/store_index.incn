@@ -2,8 +2,9 @@
 The store's copy-on-write B+tree directory: immutable, content-named index pages from full keys to frame locations.
 
 Part of the storage substrate with `segment_store`; it names no Oven type. A view's index is one root page. A lookup
-reads only the pages on its path from that root to one leaf, and each page is checked against its content name. A
-write copies the pages on the paths it changes and leaves every other page shared with older roots and other views.
+reads only the pages on its path from that root to one leaf, and each page is checked against its content name. Pages
+are mapped and read in place: a lookup copies out only the keys it compares and the location it finds. A write copies
+the pages on the paths it changes and leaves every other page shared with older roots and other views.
 
 Page layout (little-endian): magic, level (0 for a leaf), entry count, then per entry the full key's length and bytes,
 then for a leaf the frame's segment name, offset, length, SHA-256 and kind byte, or for an inner page the child page
@@ -13,7 +14,7 @@ name. Entries are sorted by key, and an inner entry's key is the smallest key be
 from rust::std::process import id
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
-from std.fs import Path
+from std.fs import MappedView, Path
 from std.hash import sha256
 from std.io import BytesIO, Endian, IoError, _BytesIO
 
@@ -54,13 +55,34 @@ pub model IndexError:
     pub detail: str
 
 
-# Index pages this process has read, for measuring what a lookup touches.
+model Span:
+    """Where one entry of a mapped page lies: its key's offset and length, and the offset of the field after it."""
+
+    key: int
+    size: int
+    field: int
+
+
+model Layout:
+    """A mapped page checked against its name: its level and where each entry lies, with nothing copied out."""
+
+    view: MappedView
+    level: int
+    spans: list[Span]
+
+
+# Index pages this process has read, and the bytes it copied out of them, for measuring what a lookup touches.
 static pages_read: dict[str, int] = {}
 
 
 pub def page_reads() -> int:
     """How many index pages this process has read."""
     return pages_read.get("pages", 0)
+
+
+pub def copied_index_bytes() -> int:
+    """How many bytes this process copied out of mapped index pages: compared keys and decoded entries."""
+    return pages_read.get("copied", 0)
 
 
 pub def page_path(root: Path, name: str) -> Path:
@@ -72,33 +94,46 @@ pub def page_path(root: Path, name: str) -> Path:
 
 
 pub def find(root: Path, top: str, key: str) -> Result[Option[Location], IndexError]:
-    """The location `key` has under the index rooted at `top`; an empty root is an empty index."""
+    """
+    The location `key` has under the index rooted at `top`; an empty root is an empty index.
+
+    Each page on the path is read in place; only the keys compared and the one location found are copied out.
+    """
     if top == "":
         return Ok(None)
     mut name = top
     loop:
-        page = read_page(root, name)?
+        path = page_path(root, name)
+        page = mapped_page(path, name)?
         if page.level == 0:
-            for entry in page.entries:
-                if entry.key == key:
-                    return Ok(entry.location)
-            return Ok(None)
-        match covering_child(page, key):
+            match leaf_span(page, key).map_err((detail) => malformed(path, detail))?:
+                None => return Ok(None)
+                Some(span) =>
+                    found = location_at(page.view, span).map_err((detail) => malformed(path, detail))?
+                    return Ok(Some(found))
+        match covering_span(page, key).map_err((detail) => malformed(path, detail))?:
             None => return Ok(None)
-            Some(child) => name = child
+            Some(span) => name = child_at(page.view, span).map_err((detail) => malformed(path, detail))?
 
 
-def covering_child(page: Page, key: str) -> Option[str]:
-    """The child of an inner page whose key range holds `key`."""
-    mut chosen = ""
-    for entry in page.entries:
-        if entry.key <= key:
-            chosen = entry.child
+def leaf_span(page: Layout, key: str) -> Result[Option[Span], str]:
+    """The leaf entry under `key`; only keys of its length are copied out to compare."""
+    wanted = key.encode("utf-8")
+    for span in page.spans:
+        if span.size == len(wanted) and copied(page.view, span.key, span.size)? == wanted:
+            return Ok(Some(span))
+    return Ok(None)
+
+
+def covering_span(page: Layout, key: str) -> Result[Option[Span], str]:
+    """The inner entry whose child's key range holds `key`."""
+    mut chosen: Option[Span] = None
+    for span in page.spans:
+        if key_at(page.view, span)? <= key:
+            chosen = Some(span)
         else:
             break
-    if chosen == "":
-        return None
-    return Some(chosen)
+    return Ok(chosen)
 
 
 pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
@@ -115,15 +150,117 @@ pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
 
 
 pub def read_page(root: Path, name: str) -> Result[Page, IndexError]:
-    """One page, checked against its content name."""
-    path = page_path(root, name)
-    data = path.read_bytes().map_err((error) => IndexError(object=path.0, detail=error.message()))?
-    pages_read["pages"] = pages_read.get("pages", 0) + 1
-    if hexlify(sha256.digest(data)) != name:
-        return Err(IndexError(object=path.0, detail="index page does not match its name"))
-    match decode_page(data):
-        None => return Err(IndexError(object=path.0, detail="malformed index page"))
-        Some(page) => return Ok(page)
+    """One page, checked against its content name and decoded into owned entries."""
+    return decoded_page(page_path(root, name), name)
+
+
+def decoded_page(path: Path, name: str) -> Result[Page, IndexError]:
+    """The page mapped at `path`, checked against `name`, with every entry copied out."""
+    page = mapped_page(path, name)?
+    mut result: list[Entry] = []
+    for span in page.spans:
+        result.append(entry_at(page.view, span, page.level).map_err((detail) => malformed(path, detail))?)
+    return Ok(Page(level=page.level, entries=result))
+
+
+def mapped_page(path: Path, name: str) -> Result[Layout, IndexError]:
+    """
+    The page at `path` mapped and hashed in place, checked against its content name, and laid out.
+
+    Index pages are content-named and never rewritten in place, so their inodes stay unchanged while mapped.
+    """
+    mapped = path.map_read().map_err((error) => IndexError(object=path.0, detail=error.message()))?
+    match mapped.view(0, mapped.len()):
+        None => return Err(malformed(path, "the mapping has no whole view"))
+        Some(view) =>
+            pages_read["pages"] = pages_read.get("pages", 0) + 1
+            if hexlify(view_digest(view)) != name:
+                return Err(IndexError(object=path.0, detail="index page does not match its name"))
+            return layout(view).map_err((detail) => malformed(path, detail))
+
+
+pub def view_digest(view: MappedView) -> bytes:
+    """The SHA-256 of a mapped view, hashed where it lies; the store checks every object it reads with it."""
+    mut hasher = sha256.new()
+    hasher.update_view(view)
+    return hasher.finalize_bytes()
+
+
+def layout(view: MappedView) -> Result[Layout, str]:
+    """Where each entry of a page lies, refusing any length or field that does not fit; nothing is copied."""
+    if view.len() < 24 or scalar(view, 0)? != u64_at(page_magic(), 0)?:
+        return Err("not an index page")
+    level = scalar(view, 8)?
+    count = scalar(view, 16)?
+    mut width = NAME_BYTES
+    if level == 0:
+        width = NAME_BYTES + 17 + DIGEST_BYTES
+    mut offset = 24
+    mut spans: list[Span] = []
+    for _position in range(count):
+        size = scalar(view, offset)?
+        field = offset + 8 + size
+        if field > view.len():
+            return Err("key runs past the page")
+        if field + width > view.len():
+            return Err("entry runs past the page")
+        spans.append(Span(key=offset + 8, size=size, field=field))
+        offset = field + width
+    if offset != view.len():
+        return Err("trailing bytes")
+    return Ok(Layout(view=view, level=level, spans=spans))
+
+
+def entry_at(view: MappedView, span: Span, level: int) -> Result[Entry, str]:
+    """One entry copied out of its page: the key, then the location of a leaf or the child of an inner page."""
+    key = key_at(view, span)?
+    if level == 0:
+        return Ok(Entry(key=key, location=Some(location_at(view, span)?), child=""))
+    return Ok(Entry(key=key, location=None, child=child_at(view, span)?))
+
+
+def key_at(view: MappedView, span: Span) -> Result[str, str]:
+    """One entry's full key, copied out."""
+    return text_of(copied(view, span.key, span.size)?)
+
+
+def child_at(view: MappedView, span: Span) -> Result[str, str]:
+    """An inner entry's child page name, copied out."""
+    return text_of(copied(view, span.field, NAME_BYTES)?)
+
+
+def location_at(view: MappedView, span: Span) -> Result[Location, str]:
+    """A leaf entry's frame location, copied out: segment, offset, length, digest and kind."""
+    segment = text_of(copied(view, span.field, NAME_BYTES)?)?
+    start = scalar(view, span.field + NAME_BYTES)?
+    length = scalar(view, span.field + NAME_BYTES + 8)?
+    digest = copied(view, span.field + NAME_BYTES + 16, DIGEST_BYTES)?
+    match view.read_u8(span.field + NAME_BYTES + 16 + DIGEST_BYTES):
+        None => return Err("location runs past the page")
+        Some(kind) =>
+            tombstone = int(kind) != 0
+            return Ok(Location(segment=segment, offset=start, length=length, digest=digest, tombstone=tombstone))
+
+
+def copied(view: MappedView, offset: int, size: int) -> Result[bytes, str]:
+    """`size` bytes at `offset` of a mapped page, copied out and counted."""
+    match view.slice(offset, size):
+        None => return Err("field runs past the page")
+        Some(part) =>
+            pages_read["copied"] = pages_read.get("copied", 0) + size
+            return Ok(part.to_bytes())
+
+
+def scalar(view: MappedView, offset: int) -> Result[int, str]:
+    """One little-endian u64 of a mapped page, read in place."""
+    match view.read_u64_le(offset):
+        None => return Err("field runs past the page")
+        Some(value) => return Ok(int(value))
+
+
+def malformed(path: Path, detail: str) -> IndexError:
+    """A page whose contents do not decode, named."""
+    return IndexError(object=path.0, detail=f"malformed index page: {detail}")
 
 
 # ---- Writes ----
@@ -241,23 +378,13 @@ def sorted_entries(additions: list[Entry]) -> list[Entry]:
 def read_any(root: Path, staged: Path, name: str) -> Result[Page, IndexError]:
     """A page installed in the store, or written earlier in this transaction's staging."""
     if staged.joinpath(f"{name}.page").is_file():
-        return read_page_at(staged.joinpath(f"{name}.page"), name)
+        return decoded_page(staged.joinpath(f"{name}.page"), name)
     return read_page(root, name)
 
 
 def staged_level(root: Path, staged: Path, name: str) -> Result[int, IndexError]:
     """The level of a page installed or staged."""
     return Ok(read_any(root, staged, name)?.level)
-
-
-def read_page_at(path: Path, name: str) -> Result[Page, IndexError]:
-    """A staged page, checked against its name."""
-    data = path.read_bytes().map_err((error) => IndexError(object=path.0, detail=error.message()))?
-    if hexlify(sha256.digest(data)) != name:
-        return Err(IndexError(object=path.0, detail="index page does not match its name"))
-    match decode_page(data):
-        None => return Err(IndexError(object=path.0, detail="malformed index page"))
-        Some(page) => return Ok(page)
 
 
 def write_page(staged: Path, page: Page) -> Result[str, IndexError]:
@@ -301,62 +428,9 @@ def encode_page(page: Page) -> Result[bytes, str]:
     return Ok(buffer.getvalue())
 
 
-def decode_page(data: bytes) -> Option[Page]:
-    """A page, when `data` is a well-formed one."""
-    match decoded_page(data):
-        Ok(page) => return Some(page)
-        Err(_) => return None
-
-
-def decoded_page(data: bytes) -> Result[Page, str]:
-    """Decode a page, refusing any length or field that does not fit."""
-    if len(data) < 24 or data[:8] != page_magic():
-        return Err("not an index page")
-    level = u64_at(data, 8)?
-    count = u64_at(data, 16)?
-    mut offset = 24
-    mut result: list[Entry] = []
-    for _position in range(count):
-        size = u64_at(data, offset)?
-        if offset + 8 + size > len(data):
-            return Err("key runs past the page")
-        key = text_of(data[offset + 8:offset + 8 + size])?
-        offset += 8 + size
-        if level == 0:
-            result.append(leaf_entry(data, offset, key)?)
-            offset += NAME_BYTES + 17 + DIGEST_BYTES
-        else:
-            if offset + NAME_BYTES > len(data):
-                return Err("child runs past the page")
-            child = text_of(data[offset:offset + NAME_BYTES])?
-            result.append(Entry(key=key, location=None, child=child))
-            offset += NAME_BYTES
-    if offset != len(data):
-        return Err("trailing bytes")
-    return Ok(Page(level=level, entries=result))
-
-
-def leaf_entry(data: bytes, offset: int, key: str) -> Result[Entry, str]:
-    """One leaf entry's location, starting at `offset`."""
-    if offset + NAME_BYTES + 17 + DIGEST_BYTES > len(data):
-        return Err("location runs past the page")
-    segment = text_of(data[offset:offset + NAME_BYTES])?
-    start = u64_at(data, offset + NAME_BYTES)?
-    length = u64_at(data, offset + NAME_BYTES + 8)?
-    digest = data[offset + NAME_BYTES + 16:offset + NAME_BYTES + 16 + DIGEST_BYTES]
-    tombstone = data[offset + NAME_BYTES + 16 + DIGEST_BYTES:offset + NAME_BYTES + 17 + DIGEST_BYTES] != zero()
-    location = Location(segment=segment, offset=start, length=length, digest=digest, tombstone=tombstone)
-    return Ok(Entry(key=key, location=Some(location), child=""))
-
-
 def page_magic() -> bytes:
     """The header every index page starts with."""
     return BytesIO(b"INCIDX\x00\x01").getvalue()
-
-
-def zero() -> bytes:
-    """A zero byte."""
-    return BytesIO(b"\x00").getvalue()
 
 
 def text_of(data: bytes) -> Result[str, str]:
