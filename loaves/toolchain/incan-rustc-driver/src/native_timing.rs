@@ -106,7 +106,12 @@ impl Capture {
 /// Redirect stderr into a new anonymous file, keeping the original descriptor.
 fn hold() -> std::io::Result<Held> {
     let path = std::env::temp_dir().join(format!("incan-timing-{}-{:?}", std::process::id(), Instant::now()));
-    let file = OpenOptions::new().create_new(true).read(true).write(true).mode(0o600).open(&path)?;
+    let file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)?;
     std::fs::remove_file(&path)?;
     std::io::stderr().flush()?;
     // SAFETY: dup borrows the live stderr descriptor and returns a new descriptor that OwnedFd closes once.

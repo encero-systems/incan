@@ -179,7 +179,12 @@ impl TypeChecker {
 
             let is_model = matches!(self.lookup_type_info(type_name), Some(TypeInfo::Model(_)));
             if is_model && self.private_field_is_inaccessible(type_name, field_info) {
-                self.errors.push(Self::private_field_error(type_name, field_info, &field_name.node, field_name.span));
+                self.errors.push(Self::private_field_error(
+                    type_name,
+                    field_info,
+                    &field_name.node,
+                    field_name.span,
+                ));
                 continue;
             }
 

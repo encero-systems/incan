@@ -1,34 +1,78 @@
-# behavior: a decorated function whose type parameter is absent from its signature, with parameters and a non-text result, is decorated once per closed instance on its first call
+# behavior: generic decorators initialize once per instance even when the signature uses type parameters
 # expect-stdout:
 #   decorating columns
 #   2
 #   Row0
 #   decorating columns
 #   Point:0
+#   0
+#   4
+#   5
+#   1
+#   hello
+#   again
+#   2
+
+"""Count decoration of generic signatures alongside schema-keyed generic declarations."""
+
+static decorations: int = 0
 
 
 def traced[F](label: str) -> (F) -> F:
+    """Print each factory evaluation before returning the identity decorator."""
     println(f"decorating {label}")
     return (func) => func
 
 
 model Row:
+    """Supply the first schema instance."""
+
     name: str
 
 
 model Point:
+    """Supply a distinct schema instance."""
+
     x: int
 
 
 @traced("columns")
 def columns[T](separator: str, width: int) -> list[str]:
+    """Build names from the closed schema without mentioning it in the signature."""
     mut names: list[str] = []
     for index in range(width):
         names.append(f"{T.__class_name__()}{separator}{index}")
     return names
 
 
+def counted[F]() -> (F) -> F:
+    """Count each decoration independently of calls to its returned callable."""
+    decorations += 1
+    return (func) => func
+
+
+@counted()
+def echo[T](value: T) -> T:
+    """Return the value with the instance's checked parameter and result types."""
+    return value
+
+
 def main() -> None:
+    """
+    Observe once-only initialization for both generic signature shapes.
+
+    1. Call repeated and distinct schema instances.
+    2. Count repeated and distinct instances whose signatures mention their type parameter.
+    """
+    # 1. Schema-only type parameters retain their existing initialization behavior.
     println(len(columns[Row]("", 2)))
     println(columns[Row]("", 1)[0])
     println(columns[Point](":", 1)[0])
+    # 2. Ordinary generic signatures initialize lazily once per instance too.
+    println(decorations)
+    println(echo[int](4))
+    println(echo[int](5))
+    println(decorations)
+    println(echo[str]("hello"))
+    println(echo[str]("again"))
+    println(decorations)

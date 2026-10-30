@@ -16,6 +16,7 @@ from rust::incan_semantics_core::body_ir import (
     NamedCallableTarget,
     LocalId as RustLocalId,
     LocalDecl,
+    CallableParam as RustParameter,
     nominal_carrier_key,
     TraitDefaultInstantiation,
 )
@@ -262,10 +263,10 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
         )?
         result.locals[index].ty = source_nominal_storage(source_owners, concrete)?
     for index in range(len(result.params)):
-        concrete: RustType = substitute(result.params[index].ty, names, storage)?
-        result.params[index].ty = source_nominal_storage(source_owners, concrete)?
-        if owns_instantiated_collection(body.params[index].ty, body.params[index].mutable, concrete):
-            result.params[index].native_owned = true
+        parameter = instantiate_parameter(result.params[index], names, storage)?
+        concrete: RustType = source_nominal_storage(source_owners, parameter.ty)?
+        result.params[index] = parameter
+        result.params[index].ty = concrete
     concrete: RustType = substitute(result.return_type, names, storage)?
     result.return_type = source_nominal_storage(source_owners, concrete)?
     mut name = body_name
@@ -274,6 +275,27 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
     for slot in owned_callable_slots:
         name += f"__owned_callable_{slot}"
     result.name = name
+    return Ok(result)
+
+
+pub def instantiate_parameter(
+    parameter: &RustParameter,
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[RustParameter, str]:
+    """
+    Close a callable parameter with its frame's checked arguments and preserve its generic value ABI.
+
+    1. Substitute the declared type parameters without inferring new bindings.
+    2. Retain owned collection passing when a generic value becomes a collection.
+    """
+    # 1. Function frames and function-item signatures use the same closed parameter records.
+    concrete: RustType = substitute(parameter.ty, names, arguments)?
+    mut result = parameter.clone()
+    result.ty = concrete.clone()
+    # 2. A generic value keeps its ownership even when its closed type is a collection.
+    if owns_instantiated_collection(parameter.ty, parameter.mutable, concrete):
+        result.native_owned = true
     return Ok(result)
 
 

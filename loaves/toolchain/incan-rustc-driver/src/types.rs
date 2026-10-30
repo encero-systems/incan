@@ -89,10 +89,12 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::RawPointer(mutable, elements) => raw_pointer_type(tcx, *mutable, elements)?,
         PlanType::Boxed(elements) => match elements.as_slice() {
             [referent] => Ty::new_box(tcx, native_type(tcx, referent)?),
-            _ => return Err(PlanError::Unsupported {
-                function: "boxed field".into(),
-                reason: "a box holds exactly one referent".into(),
-            }),
+            _ => {
+                return Err(PlanError::Unsupported {
+                    function: "boxed field".into(),
+                    reason: "a box holds exactly one referent".into(),
+                });
+            }
         },
         PlanType::NativeTraitObject(path, send, sync) => marked_trait_object_type(tcx, path, *send, *sync)?,
         PlanType::TypeToken(elements) => type_token_type(tcx, elements)?,

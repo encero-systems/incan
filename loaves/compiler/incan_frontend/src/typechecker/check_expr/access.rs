@@ -3018,7 +3018,8 @@ impl TypeChecker {
                     self.type_info.record_resolved_identity(span, identity);
                 }
                 if self.private_field_is_inaccessible(type_name, &info) {
-                    self.errors.push(Self::private_field_error(type_name, &info, field, span));
+                    self.errors
+                        .push(Self::private_field_error(type_name, &info, field, span));
                     return Some(ResolvedType::Unknown);
                 }
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
@@ -3033,7 +3034,8 @@ impl TypeChecker {
                     self.type_info.record_resolved_identity(span, identity);
                 }
                 if self.private_field_is_inaccessible(type_name, &info) {
-                    self.errors.push(Self::private_field_error(type_name, &info, field, span));
+                    self.errors
+                        .push(Self::private_field_error(type_name, &info, field, span));
                     return Some(ResolvedType::Unknown);
                 }
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());

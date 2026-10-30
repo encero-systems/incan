@@ -46,7 +46,7 @@ from lists import is_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
 from frame import Builder
-from type_parameters import Instance, instantiate, substitute, request_instance
+from type_parameters import Instance, instantiate, instantiate_parameter
 from lowering import call_parameter_type
 
 
@@ -516,21 +516,24 @@ pub def source_function_item(
     """Retain a function item's exact signature and declaration name from its checked named-read or original identity."""
     match value:
         RustRvalue.Closure(params=parameters, captured_operands=captures, body=closure) =>
+            if not closure.function_item and closure.original_callable == None:
+                return Ok(None)
+            mut inputs: list[RustParameter] = []
+            for parameter in parameters:
+                inputs.append(instantiate_parameter(parameter, builder.type_parameters, builder.type_arguments)?)
             match closure.original_callable.as_ref():
                 Some(identity) =>
                     if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 0:
                         return Err("invalid Body IR original callable computation")
                     for binding in module.decorated_bindings:
                         if binding.original_body.canonical == closure.original_callable:
-                            item = original_function_item(module, builder, parameters, binding)?
+                            item = original_function_item(module, builder, inputs, binding)?
                             return Ok(Some((item[0], item[1], str(identity.declaration_name))))
                     return Err("unsupported Body IR unretained original callable")
                 None => pass
-            if not closure.function_item:
-                return Ok(None)
             if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 1:
                 return Err("invalid Body IR function-item forwarding computation")
-            return Ok(Some(checked_function_item(module, builder, parameters, closure.stmts[0].kind, span)?))
+            return Ok(Some(checked_function_item(module, builder, inputs, closure.stmts[0].kind, span)?))
         _ => return Ok(None)
 
 
@@ -766,43 +769,14 @@ def original_function_item(
     parameters: &list[RustParameter],
     binding: &DecoratedBinding,
 ) -> Result[tuple[str, PlanType], str]:
-    """Close an explicit original read with the enclosing wrapper's exact declared binding, never operand inference."""
+    """Select the original through its checked initializer policy, never through operand inference."""
     if binding.initialization == DecoratedInitialization.PerInstantiation:
         return initialized_original_function_item(module, builder, parameters, binding)
-    if binding.initializer != None:
-        return Err("unsupported Body IR invocation or module decorator with cached initializer")
+    if binding.initialization != DecoratedInitialization.ModuleStorage or binding.initializer != None:
+        return Err("unsupported Body IR module decorator initialization policy")
     body = binding.original_body
     if len(body.type_parameters) != 0:
-        if body.is_generator():
-            return Err("unsupported Body IR generator original callable with type parameters")
-        if (
-            binding.initialization != DecoratedInitialization.PerInvocation
-            or body.canonical != builder.callable_identity
-            or body.type_parameters != builder.type_parameters
-        ):
-            return Err("unsupported Body IR original callable type-parameter binding")
-        mut arguments: list[RustType] = []
-        for argument in builder.type_arguments:
-            arguments.append(argument.clone())
-        mut concrete = instantiate(body, arguments, [])?
-        mut inputs: list[RustParameter] = []
-        for parameter in parameters:
-            mut input = parameter.clone()
-            closed: RustType = substitute(parameter.ty, body.type_parameters, arguments)?
-            input.ty = closed.clone()
-            inputs.append(input)
-        # Preserve the checked parameter records in Body IR storage for the borrowed signature boundary.
-        mut signature_body = body.clone()
-        signature_body.params = inputs
-        name, ty = item_signature(module, builder, signature_body.params, concrete)?
-        request_instance(builder.instances, body, arguments, [], true)
-        match ty:
-            PlanType.FunctionItem(_item, signature) =>
-                original_name = f"{name}__incan_original"
-                return Ok((original_name, PlanType.FunctionItem(original_name, signature)))
-            _ => return Err("invalid Body IR original callable signature")
-    if binding.initialization != DecoratedInitialization.ModuleStorage:
-        return Err("unsupported Body IR invocation replacement without type parameters")
+        return Err("unsupported Body IR module decorator with type parameters")
     name, ty = item_signature(module, builder, parameters, body)?
     match ty:
         PlanType.FunctionItem(_item, signature) =>
