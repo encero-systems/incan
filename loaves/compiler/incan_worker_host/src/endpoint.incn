@@ -1,0 +1,123 @@
+"""
+A worker's socket file, the idle watchdog and what happens when a caller leaves.
+
+The worker removes only the socket file it created, so a replacement worker's socket at the same path survives. The
+idle watchdog dials the socket now and then and sends an empty frame: the worker wakes, finds no request and decides
+whether it has been idle long enough. The watchdog keeps one wake-up outstanding at a time, so a long activation never
+fills the socket's queue, and it stops only once the worker's socket file is gone. A caller that leaves while its
+activation compiles can no longer receive the result, so the worker withdraws its socket and exits, as the short-lived
+command would have been ended with it.
+"""
+
+from rust::std::fs import remove_file, symlink_metadata
+from rust::std::os::unix::fs import MetadataExt
+from rust::std::process import exit
+from rust::std::thread import sleep, spawn
+from rust::std::time import Duration
+from pub::incan_platform.ipc import Connection, dial
+from protocol import PANIC_STATUS
+
+
+pub model SocketFile:
+    """The socket file one worker bound: its path and the file identity it had then."""
+
+    pub path: str
+    pub device: u64
+    pub inode: u64
+
+
+pub model CallerWatch:
+    """
+    What the compiler entry watches while an activation compiles: the caller's socket descriptor, lent for the
+    activation, and the worker's socket file, which a caller that left makes the worker withdraw.
+    """
+
+    pub descriptor: int
+    pub socket: SocketFile
+
+
+pub def socket_file(path: str) -> Result[SocketFile, str]:
+    """The identity of the socket file just bound at `path`."""
+    match symlink_metadata(path):
+        Ok(found) => return Ok(SocketFile(path=path, device=found.dev(), inode=found.ino()))
+        Err(error) => return Err(f"cannot read the compiler worker socket {path}: {error}")
+
+
+pub def owner_uid(path: str) -> Result[u32, str]:
+    """The user that owns the socket file at `path`, which is the worker's own effective user."""
+    match symlink_metadata(path):
+        Ok(found) => return Ok(found.uid())
+        Err(error) => return Err(f"cannot read the compiler worker socket {path}: {error}")
+
+
+pub def withdraw(socket: SocketFile) -> None:
+    """Remove the socket file only while it is still the one this worker bound."""
+    if bound(socket.path, socket.device, socket.inode):
+        _ = remove_file(socket.path)
+
+
+def bound(path: str, device: u64, inode: u64) -> bool:
+    """Whether the file at `path` is still the socket file this worker bound."""
+    match symlink_metadata(path):
+        Ok(found) => return found.dev() == device and found.ino() == inode
+        Err(_) => return false
+
+
+pub def abandon(watch: CallerWatch) -> None:
+    """
+    End the worker whose caller left during an activation: withdraw its socket, so no later request dials it, and
+    exit with the status a panicked command reports, as the short-lived command would have ended with its caller.
+    """
+    withdraw(watch.socket)
+    status: i32 = PANIC_STATUS.wrapping_resize()
+    exit(status)
+
+
+pub def start_watchdog(socket: SocketFile, every_millis: int) -> None:
+    """Wake the worker every `every_millis` until its socket file is gone; the thread ends with the process."""
+    path = socket.path
+    device = socket.device
+    inode = socket.inode
+    _ = spawn(() => watchdog(path, device, inode, every_millis))
+
+
+def watchdog(path: str, device: u64, inode: u64, every_millis: int) -> None:
+    """
+    Wake the worker once per period while its socket file is the one it bound.
+
+    1. A withdrawn or replaced socket file means the worker is retiring: the watchdog stops.
+    2. A dial that fails changes nothing; the next period tries again.
+    """
+    every: u64 = every_millis.wrapping_resize()
+    while true:
+        sleep(Duration.from_millis(every))
+        # 1. Only the worker withdraws its socket, and only when it retires.
+        if not bound(path, device, inode):
+            return
+        # 2. A worker that cannot take the wake-up now takes it after its activation.
+        match dial(path):
+            Ok(connected) => wake(connected)
+            Err(_) => pass
+
+
+def wake(connected: Connection) -> None:
+    """
+    Send the worker an empty frame, which is no request, and wait for its refusal, so at most one wake-up is ever
+    queued; a worker busy with an activation takes it when the activation ends.
+    """
+    mut waking = connected
+    waking.wait_at_most(0)
+    match waking.send("".encode("utf-8")):
+        Ok(_) => discard_answer(waking)
+        Err(_) => pass
+
+
+def discard_answer(connected: Connection) -> None:
+    """Wait for the worker's answer to a wake-up, which matters only as proof that it was taken, then hang up."""
+    mut waiting = connected
+    match waiting.receive():
+        Ok(_) => pass
+        Err(_) => pass
+    match waiting.close():
+        Ok(_) => pass
+        Err(_) => pass
