@@ -1,0 +1,732 @@
+"""
+Portable, canonical record sets over the generic segment-store transaction boundary.
+
+`set.bin` carries a length-framed binary manifest followed by record values in canonical key order. Native file
+payloads travel separately under `payloads/<sha256>`, or are referenced from an exact previously admitted set.
+The root hashes the canonical manifest, which binds every value, reference, profile and namespace root. It contains
+no local generation, physical record offset or home path. Admission does not select namespaces or execute code.
+
+This first profile carries opaque bytes with explicit record/index kinds and exact references. The producer adapter
+owns family-specific validation, trust and native-unit compatibility; a verified digest is not a signature or a claim
+that a native unit is usable. Export only explicit members, not a home-wide scan or vendored dependency closure.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import File, Path
+from std.hash import file_digest, sha256
+from std.io import BytesIO, Endian, IoError, _BytesIO
+from segment_store import (
+    EXPECT_ABSENT,
+    Snapshot,
+    StoreError,
+    Transaction,
+    begin,
+    claim,
+    commit,
+    delete,
+    get,
+    payload_path,
+    put,
+    put_payload,
+    snapshot,
+)
+
+const MAGIC: bytes = b"INCSET\x00\x01"
+const IDENTITY: str = "full-record-key/1"
+const CODEC: str = "incql.sealed-binary/1"
+const SCHEMA: str = "opaque-bytes/1"
+const PREFIX: str = "incql.sealed/1/"
+
+
+pub model Reference:
+    """An exact value under a full immutable record key, local or from a declared external set."""
+
+    pub key: str
+    pub digest: str
+    pub set_root: str = ""
+
+
+pub model Record:
+    """A record or index descriptor; export fills `digest` and `length` from the selected snapshot's value."""
+
+    pub key: str
+    pub kind: str = "record"
+    pub schema: str = "opaque-bytes/1"
+    pub digest: str = ""
+    pub length: int = 0
+    pub references: list[Reference] = []
+    pub payloads: list[str] = []
+
+
+pub model Payload:
+    """A full content digest and length; a nonempty `set_root` references an exact external set instead of shipping it."""
+
+    pub digest: str
+    pub length: int
+    pub set_root: str = ""
+
+
+pub model Namespace:
+    """A named exported root, not a home-global or project import binding."""
+
+    pub name: str
+    pub target: Reference
+
+
+pub model Manifest:
+    """The portable declaration of one set, including its producer and exact source/bake receipt record."""
+
+    pub producer: str
+    pub receipt: Reference
+    pub records: list[Record]
+    pub identity_profile: str = "full-record-key/1"
+    pub codec_profile: str = "incql.sealed-binary/1"
+    pub dependencies: list[str] = []
+    pub payloads: list[Payload] = []
+    pub namespaces: list[Namespace] = []
+
+
+pub model SealedSet:
+    """A verified transport descriptor; admission verifies again rather than trusting this constructible handle."""
+
+    pub directory: Path
+    pub root: str
+    pub manifest: Manifest
+
+
+pub model Admission:
+    """Committed identity, snapshot and new-object counts; `changed` means a new snapshot, not a payload-only repair."""
+
+    pub root: str
+    pub snapshot: Snapshot
+    pub records_added: int
+    pub payloads_added: int
+    pub changed: bool
+
+
+model Reader:
+    """A file cursor bounded by one manifest or pack, preventing hostile lengths from crossing its boundary."""
+
+    file: File
+    end: int
+
+
+def failure(kind: str, object: str, detail: str) -> StoreError:
+    """Use the substrate's error categories without erasing integrity failures into absence."""
+    return StoreError(kind=kind, object=object, detail=detail)
+
+
+def io_failure(error: IoError) -> StoreError:
+    """Preserve an I/O failure at the transport boundary."""
+    return failure("io", "sealed set", error.message())
+
+
+def digest(data: bytes) -> str:
+    """Full SHA-256, never a truncated record locator."""
+    return hexlify(sha256.digest(data))
+
+
+def valid_digest(value: str) -> bool:
+    """A canonical digest is exactly 64 lowercase hexadecimal characters, not a relative path."""
+    if len(value) != 64:
+        return false
+    for character in value:
+        if character not in "0123456789abcdef":
+            return false
+    return true
+
+
+def set_key(root: str) -> str:
+    """Immutable set declaration, separate from retention and caller-owned selection bindings."""
+    return f"{PREFIX}set/{root}"
+
+
+def record_key(key: str) -> str:
+    """Record metadata retains the full logical key; hashing is not an identity shortcut."""
+    return f"{PREFIX}record/{key}"
+
+
+def member_key(root: str, key: str) -> str:
+    """Membership of a full logical key in one exact set."""
+    return f"{PREFIX}member/{root}/{key}"
+
+
+def payload_key(root: str, value: str) -> str:
+    """Membership of a content-named payload in one exact set."""
+    return f"{PREFIX}payload/{root}/{value}"
+
+
+def retention_key(root: str) -> str:
+    """Explicit installed-set root; removing it never removes the immutable set declaration."""
+    return f"{PREFIX}retained/{root}"
+
+
+pub def export_set(view: Snapshot, requested: Manifest, directory: Path) -> Result[SealedSet, StoreError]:
+    """
+    Export only the requested records/indexes and payloads into a new directory.
+
+    Values are read one record at a time from `view`; exact external dependencies are retained, not copied. The
+    transport is complete only after `set.bin` is published last. An existing destination is never overwritten.
+    """
+    mut manifest = requested
+    mut records: list[Record] = []
+    for item in requested.records:
+        mut record = item
+        value = required_value(view, item.key)?
+        record.digest = digest(value)
+        record.length = len(value)
+        records.append(record)
+    manifest.records = records
+    canonical = canonical_manifest(manifest)?
+    validate_closure(view, manifest)?
+    for payload in manifest.payloads:
+        verify_payload(payload_path(view.root, payload.digest), payload)?
+    directory.mkdir(false, false).map_err(io_failure)?
+    directory.joinpath("payloads").mkdir(false, false).map_err(io_failure)?
+    # Payloads are complete before the final transport entry becomes visible.
+    for payload in manifest.payloads:
+        if payload.set_root == "":
+            destination = directory.joinpath("payloads").joinpath(payload.digest)
+            payload_path(view.root, payload.digest).copy(destination, false, false).map_err(io_failure)?
+            verify_payload(destination, payload)?
+            destination.open("rb").map_err(io_failure)?.sync().map_err(io_failure)?
+    pending = directory.joinpath("set.pending")
+    output = pending.open("xb").map_err(io_failure)?
+    output.write_bytes(MAGIC).map_err(io_failure)?
+    output.write_bytes(counter(len(canonical))?).map_err(io_failure)?
+    output.write_bytes(canonical).map_err(io_failure)?
+    for record in ordered_records(manifest.records)?:
+        value = required_value(view, record.key)?
+        if digest(value) != record.digest or len(value) != record.length:
+            return Err(failure("integrity", record.key, "snapshot value changed during export"))
+        output.write_bytes(value).map_err(io_failure)?
+    output.sync().map_err(io_failure)?
+    directory.joinpath("payloads").sync_directory().map_err(io_failure)?
+    pending.replace(directory.joinpath("set.bin")).map_err(io_failure)?
+    directory.sync_directory().map_err(io_failure)?
+    return Ok(SealedSet(directory=directory, root=digest(canonical), manifest=manifest))
+
+
+pub def verify_set(directory: Path, expected_root: str) -> Result[SealedSet, StoreError]:
+    """
+    Check canonical framing, exact root, records, local references and shipped payloads without touching a store.
+
+    The adapter must obtain `expected_root` from its verified publication authority. Exact external references are
+    checked structurally here and resolved against the destination snapshot during admission.
+    """
+    manifest, reader = open_set(directory, expected_root)?
+    for record in manifest.records:
+        read_value(reader, record)?
+    finish(reader)?
+    for payload in manifest.payloads:
+        if payload.set_root == "":
+            path = transport_file(directory, f"payloads/{payload.digest}")?
+            verify_payload(path, payload)?
+    return Ok(SealedSet(directory=directory, root=expected_root, manifest=manifest))
+
+
+pub def admit(root: Path, directory: Path, expected_root: str) -> Result[Admission, StoreError]:
+    """
+    Admit a set atomically through S1; only missing facts enter retained segments, without selecting a namespace.
+
+    Verification and closure checks precede publication. S1's absent-or-equal preconditions reject competing unequal
+    facts at commit. Payloads installed before a failed commit are unreachable objects, not admitted capabilities.
+    Reimporting equal contents does not call `commit` or create a new snapshot. S1 still rehashes payloads and stages
+    equal write guards before dropping them from its retained delta; read-only preconditions, accelerated revalidation
+    and streaming transaction staging are S2 work, not simulated by trusting a marker.
+    """
+    sealed = verify_set(directory, expected_root)?
+    # S1 payload installation uses a process-local temporary name. Serialize this module's admissions, while leaving
+    # ordinary bakers on S1's publication/precondition boundary rather than taking its publication lock recursively.
+    held = claim(root, "sealed-set admission")?
+    base = snapshot(root)?
+    validate_closure(base, sealed.manifest)?
+    manifest, reader = open_set(directory, expected_root)?
+    mut transaction = guard_closure(begin(base), base, manifest)?
+    mut added = 0
+    mut changed = false
+    for record in manifest.records:
+        value = read_value(reader, record)?
+        if missing(base, record.key, value)?:
+            added += 1
+            changed = true
+        transaction = put(transaction, record.key, value, EXPECT_ABSENT)
+        descriptor = immutable_descriptor(record)?
+        metadata_key = record_key(record.key)
+        if missing(base, metadata_key, descriptor)?:
+            changed = true
+        transaction = put(transaction, metadata_key, descriptor, EXPECT_ABSENT)
+        membership = member_key(expected_root, record.key)
+        value_digest = record.digest.encode("utf-8")
+        if missing(base, membership, value_digest)?:
+            changed = true
+        transaction = put(transaction, membership, value_digest, EXPECT_ABSENT)
+    finish(reader)?
+    mut payloads_added = 0
+    for payload in manifest.payloads:
+        destination = payload_path(root, payload.digest)
+        if destination.exists():
+            verify_payload(destination, payload)?
+        elif payload.set_root != "":
+            return Err(failure("integrity", payload.digest, "an external payload is missing"))
+        else:
+            source = transport_file(directory, f"payloads/{payload.digest}")?
+            installed = put_payload(root, source)?
+            if installed != payload.digest:
+                return Err(failure("integrity", payload.digest, "payload changed after verification"))
+            verify_payload(destination, payload)?
+            payloads_added += 1
+        membership = payload_key(expected_root, payload.digest)
+        length = counter(payload.length)?
+        if missing(base, membership, length)?:
+            changed = true
+        transaction = put(transaction, membership, length, EXPECT_ABSENT)
+    canonical = canonical_manifest(manifest)?
+    declaration = set_key(expected_root)
+    if missing(base, declaration, canonical)?:
+        changed = true
+    transaction = put(transaction, declaration, canonical, EXPECT_ABSENT)
+    retained = retention_key(expected_root)
+    if missing(base, retained, expected_root.encode("utf-8"))?:
+        changed = true
+    transaction = put(transaction, retained, expected_root.encode("utf-8"), EXPECT_ABSENT)
+    mut published = base
+    if changed:
+        published = commit(transaction)?
+    return Ok(
+        Admission(
+            root=expected_root,
+            snapshot=published,
+            records_added=added,
+            payloads_added=payloads_added,
+            changed=changed,
+        ),
+    )
+
+
+pub def release(root: Path, set_root: str) -> Result[Snapshot, StoreError]:
+    """Remove only this set's explicit retention root; other sets, memberships, records and payloads remain intact."""
+    if not valid_digest(set_root):
+        return Err(failure("format", set_root, "set root must be a full canonical digest"))
+    held = claim(root, "sealed-set admission")?
+    base = snapshot(root)?
+    match get(base, retention_key(set_root))?:
+        None => return Ok(base)
+        Some(value) =>
+            if value != set_root.encode("utf-8"):
+                return Err(failure("integrity", set_root, "retention record has different contents"))
+    return commit(delete(begin(base), retention_key(set_root)))
+
+
+def required_value(view: Snapshot, key: str) -> Result[bytes, StoreError]:
+    """An explicit export root must exist; a tombstone is not an empty record."""
+    match get(view, key)?:
+        Some(value) => return Ok(value)
+        None => return Err(failure("integrity", key, "required record is absent or deleted"))
+
+
+def missing(view: Snapshot, key: str, value: bytes) -> Result[bool, StoreError]:
+    """Distinguish absence from damage and reject immutable-key disagreement, even before commit."""
+    match get(view, key)?:
+        None => return Ok(true)
+        Some(found) =>
+            if found != value:
+                return Err(failure("conflict", key, "immutable identity has different contents"))
+            return Ok(false)
+
+
+def validate_closure(view: Snapshot, manifest: Manifest) -> Result[None, StoreError]:
+    """Resolve only declared external sets and exact membership; do not search arbitrary home contents."""
+    for root in manifest.dependencies:
+        if digest(required_value(view, set_key(root))?) != root:
+            return Err(failure("integrity", root, "dependency set does not match its root"))
+    for reference in all_references(manifest):
+        if reference.set_root != "":
+            membership = required_value(view, member_key(reference.set_root, reference.key))?
+            if membership != reference.digest.encode("utf-8"):
+                return Err(failure("integrity", reference.key, "external set does not supply the exact reference"))
+            if digest(required_value(view, reference.key)?) != reference.digest:
+                return Err(failure("integrity", reference.key, "external record does not match its digest"))
+    for payload in manifest.payloads:
+        if payload.set_root != "":
+            membership = required_value(view, payload_key(payload.set_root, payload.digest))?
+            if membership != counter(payload.length)?:
+                return Err(failure("integrity", payload.digest, "external set does not supply the exact payload"))
+            verify_payload(payload_path(view.root, payload.digest), payload)?
+    return Ok(None)
+
+
+def guard_closure(transaction: Transaction, view: Snapshot, manifest: Manifest) -> Result[Transaction, StoreError]:
+    """
+    Retain exact external reads as S1 absent-or-equal write guards until publication.
+
+    A concurrent writer cannot change a referenced value between validation and commit. S1 has no read-only guard
+    API yet, so equal guards occupy transient staging but are removed before the retained delta is installed.
+    """
+    mut guarded = transaction
+    mut keys = [set_key(root) for root in manifest.dependencies]
+    for reference in all_references(manifest):
+        if reference.set_root != "":
+            keys.extend([member_key(reference.set_root, reference.key), reference.key])
+    for payload in manifest.payloads:
+        if payload.set_root != "":
+            keys.append(payload_key(payload.set_root, payload.digest))
+    mut seen: set[str] = set()
+    for key in keys:
+        if key not in seen:
+            guarded = put(guarded, key, required_value(view, key)?, EXPECT_ABSENT)
+            seen.add(key)
+    return Ok(guarded)
+
+
+def all_references(manifest: Manifest) -> list[Reference]:
+    """Every edge that must resolve, including the receipt and exported namespace roots."""
+    mut references = [manifest.receipt] + [namespace.target for namespace in manifest.namespaces]
+    for record in manifest.records:
+        references.extend(record.references)
+    return references
+
+
+def validate(manifest: Manifest) -> Result[None, StoreError]:
+    """Check the supported profile, unique full identities and the complete local/declared reference closure."""
+    if manifest.identity_profile != IDENTITY or manifest.codec_profile != CODEC:
+        return Err(failure("format", "sealed set", "unsupported required identity or codec profile"))
+    if manifest.producer == "":
+        return Err(failure("format", "sealed set", "producer identity is empty"))
+    records = ordered_records(manifest.records)?
+    mut by_key: dict[str, Record] = {}
+    for record in records:
+        if record.key == "" or record.key.startswith(PREFIX):
+            return Err(failure("format", record.key, "empty or reserved record key"))
+        if record.schema != SCHEMA or record.kind not in ["record", "index"]:
+            return Err(failure("format", record.key, "unsupported required schema or record kind"))
+        if not valid_digest(record.digest) or record.length < 0:
+            return Err(failure("format", record.key, "invalid value digest or length"))
+        by_key[record.key] = record
+    unique_strings(manifest.dependencies, "dependency")?
+    for root in manifest.dependencies:
+        if not valid_digest(root):
+            return Err(failure("format", root, "invalid external set root"))
+    mut payloads: set[str] = set()
+    for payload in manifest.payloads:
+        if not valid_digest(payload.digest) or payload.length < 0 or payload.digest in payloads:
+            return Err(failure("format", payload.digest, "invalid or duplicate payload descriptor"))
+        payloads.add(payload.digest)
+        if payload.set_root != "" and payload.set_root not in manifest.dependencies:
+            return Err(failure("format", payload.digest, "payload refers to an undeclared dependency"))
+    for record in records:
+        unique_strings(record.payloads, record.key)?
+        for payload in record.payloads:
+            if payload not in payloads:
+                return Err(failure("format", record.key, "record refers to an undeclared payload"))
+        reference_keys(record.references)?
+    unique_strings([namespace.name for namespace in manifest.namespaces], "namespace")?
+    for reference in all_references(manifest):
+        if not valid_digest(reference.digest) or reference.key == "" or reference.key.startswith(PREFIX):
+            return Err(failure("format", reference.key, "invalid exact record reference"))
+        if reference.set_root == "":
+            if reference.key not in by_key or by_key[reference.key].digest != reference.digest:
+                return Err(failure("format", reference.key, "local reference is not supplied by this set"))
+        elif reference.set_root not in manifest.dependencies:
+            return Err(failure("format", reference.key, "record refers to an undeclared dependency"))
+    return Ok(None)
+
+
+def unique_strings(values: list[str], object: str) -> Result[list[str], StoreError]:
+    """Reject empty or duplicate members instead of making the wire depend on insertion order."""
+    mut found: set[str] = set()
+    for value in values:
+        if value == "" or value in found:
+            return Err(failure("format", object, "empty or duplicate member"))
+        found.add(value)
+    return Ok(sorted(values))
+
+
+def ordered_records(records: list[Record]) -> Result[list[Record], StoreError]:
+    """Canonical record order without allowing even an equal duplicate to hide another declaration."""
+    names = unique_strings([record.key for record in records], "records")?
+    by_key = {record.key: record for record in records}
+    return Ok([by_key[key] for key in names])
+
+
+def reference_keys(references: list[Reference]) -> Result[list[str], StoreError]:
+    """Canonical exact-reference order; length framing makes compound sorting keys unambiguous."""
+    return unique_strings(
+        [f"{len(reference.set_root)}:{reference.set_root}{reference.key}" for reference in references],
+        "references",
+    )
+
+
+def canonical_manifest(manifest: Manifest) -> Result[bytes, StoreError]:
+    """Encode metadata only: value digests bind record bytes without duplicating them in every imported set record."""
+    validate(manifest)?
+    output = BytesIO()
+    for field in [manifest.identity_profile, manifest.codec_profile, manifest.producer]:
+        text(output, field)?
+    encode_reference(output, manifest.receipt)?
+    strings(output, unique_strings(manifest.dependencies, "dependencies")?)?
+    namespaces = {namespace.name: namespace for namespace in manifest.namespaces}
+    number(output, len(namespaces))?
+    for name in sorted([name for name in namespaces.keys()]):
+        text(output, name)?
+        encode_reference(output, namespaces[name].target)?
+    payloads = {payload.digest: payload for payload in manifest.payloads}
+    number(output, len(payloads))?
+    for name in sorted([name for name in payloads.keys()]):
+        payload = payloads[name]
+        text(output, payload.digest)?
+        number(output, payload.length)?
+        text(output, payload.set_root)?
+    records = ordered_records(manifest.records)?
+    number(output, len(records))?
+    for record in records:
+        append(output, encode_record(record)?)?
+    return Ok(output.getvalue())
+
+
+def encode_record(record: Record) -> Result[bytes, StoreError]:
+    """Canonical transport descriptor, retaining the exact sets that supply this publication's references."""
+    output = BytesIO()
+    for field in [record.key, record.kind, record.schema, record.digest]:
+        text(output, field)?
+    number(output, record.length)?
+    keys = reference_keys(record.references)?
+    references = {f"{len(reference.set_root)}:{reference.set_root}{reference.key}": reference for reference in record.references}
+    number(output, len(keys))?
+    for key in keys:
+        encode_reference(output, references[key])?
+    strings(output, unique_strings(record.payloads, record.key)?)?
+    return Ok(output.getvalue())
+
+
+def immutable_descriptor(record: Record) -> Result[bytes, StoreError]:
+    """Bind logical edges without making the set that ships a target part of the record's immutable identity."""
+    mut references: dict[str, Reference] = {}
+    for reference in record.references:
+        if reference.key in references and references[reference.key].digest != reference.digest:
+            return Err(failure("format", reference.key, "one immutable target cannot have different value digests"))
+        references[reference.key] = Reference(key=reference.key, digest=reference.digest)
+    mut normalized = record
+    normalized.references = [references[key] for key in sorted([key for key in references.keys()])]
+    return encode_record(normalized)
+
+
+def encode_reference(output: _BytesIO, reference: Reference) -> Result[None, StoreError]:
+    """Frame each identity independently; delimiters inside names cannot alias another reference."""
+    for field in [reference.key, reference.digest, reference.set_root]:
+        text(output, field)?
+    return Ok(None)
+
+
+def counter(value: int) -> Result[bytes, StoreError]:
+    """One nonnegative little-endian u64, within the host's signed length API."""
+    if value < 0:
+        return Err(failure("format", "sealed set", "negative counter"))
+    output = BytesIO()
+    encoded: u64 = value.saturating_resize()
+    output.write(encoded, Endian.Little).map_err(io_failure)?
+    return Ok(output.getvalue())
+
+
+def number(output: _BytesIO, value: int) -> Result[None, StoreError]:
+    """Append a canonical unsigned counter."""
+    return append(output, counter(value)?)
+
+
+def append(output: _BytesIO, value: bytes) -> Result[None, StoreError]:
+    """Write a framed-manifest field through standard binary I/O."""
+    output.write_bytes(value).map_err(io_failure)?
+    return Ok(None)
+
+
+def text(output: _BytesIO, value: str) -> Result[None, StoreError]:
+    """Length-frame UTF-8, including empty optional fields."""
+    data = value.encode("utf-8")
+    number(output, len(data))?
+    return append(output, data)
+
+
+def strings(output: _BytesIO, values: list[str]) -> Result[None, StoreError]:
+    """Encode a counted collection of independently framed strings."""
+    number(output, len(values))?
+    for value in values:
+        text(output, value)?
+    return Ok(None)
+
+
+def open_set(directory: Path, expected_root: str) -> Result[tuple[Manifest, Reader], StoreError]:
+    """Validate the header and canonical manifest, leaving the same open file positioned at its values."""
+    if not valid_digest(expected_root):
+        return Err(failure("format", expected_root, "expected set root must be a full canonical digest"))
+    path = transport_file(directory, "set.bin")?
+    file = path.open("rb").map_err(io_failure)?
+    length = file.seek(0, 2).map_err(io_failure)?
+    file.seek(0, 0).map_err(io_failure)?
+    reader = Reader(file=file, end=length)
+    if take(reader, 8)? != BytesIO(MAGIC).getvalue():
+        return Err(failure("format", path.0, "unknown sealed-set format"))
+    size = count(reader)?
+    start = file.tell().map_err(io_failure)?
+    original = take(reader, size)?
+    file.seek(start, 0).map_err(io_failure)?
+    bounded = Reader(file=file, end=start + size)
+    manifest = decode_manifest(bounded)?
+    finish(bounded)?
+    canonical = canonical_manifest(manifest)?
+    if canonical != original or digest(canonical) != expected_root:
+        return Err(failure("integrity", path.0, "noncanonical manifest or set-root mismatch"))
+    return Ok((manifest, reader))
+
+
+def decode_manifest(reader: Reader) -> Result[Manifest, StoreError]:
+    """Parse metadata with bounded counts; semantic/profile validation remains in the canonical encoder."""
+    identity = read_text(reader)?
+    codec = read_text(reader)?
+    producer = read_text(reader)?
+    receipt = read_reference(reader)?
+    dependencies = read_strings(reader)?
+    mut namespaces: list[Namespace] = []
+    for _ in range(collection_count(reader)?):
+        name = read_text(reader)?
+        namespaces.append(Namespace(name=name, target=read_reference(reader)?))
+    mut payloads: list[Payload] = []
+    for _ in range(collection_count(reader)?):
+        value_digest = read_text(reader)?
+        length = count(reader)?
+        payloads.append(Payload(digest=value_digest, length=length, set_root=read_text(reader)?))
+    mut records: list[Record] = []
+    for _ in range(collection_count(reader)?):
+        key = read_text(reader)?
+        kind = read_text(reader)?
+        schema = read_text(reader)?
+        value_digest = read_text(reader)?
+        length = count(reader)?
+        mut references: list[Reference] = []
+        for _ in range(collection_count(reader)?):
+            references.append(read_reference(reader)?)
+        records.append(
+            Record(
+                key=key,
+                kind=kind,
+                schema=schema,
+                digest=value_digest,
+                length=length,
+                references=references,
+                payloads=read_strings(reader)?,
+            ),
+        )
+    return Ok(
+        Manifest(
+            producer=producer,
+            receipt=receipt,
+            records=records,
+            identity_profile=identity,
+            codec_profile=codec,
+            dependencies=dependencies,
+            payloads=payloads,
+            namespaces=namespaces,
+        ),
+    )
+
+
+def read_reference(reader: Reader) -> Result[Reference, StoreError]:
+    """Decode an exact local or external reference without inferring its producer."""
+    key = read_text(reader)?
+    value_digest = read_text(reader)?
+    return Ok(Reference(key=key, digest=value_digest, set_root=read_text(reader)?))
+
+
+def read_strings(reader: Reader) -> Result[list[str], StoreError]:
+    """Decode a bounded counted string collection."""
+    mut values: list[str] = []
+    for _ in range(collection_count(reader)?):
+        values.append(read_text(reader)?)
+    return Ok(values)
+
+
+def remaining(reader: Reader) -> Result[int, StoreError]:
+    """Bytes left in this reader's boundary, never the size of an untrusted claimed allocation."""
+    position = reader.file.tell().map_err(io_failure)?
+    if position > reader.end:
+        return Err(failure("format", "sealed set", "cursor exceeded its section"))
+    return Ok(reader.end - position)
+
+
+def take(reader: Reader, length: int) -> Result[bytes, StoreError]:
+    """Reject lengths before allocating or reading beyond the section."""
+    if length < 0 or length > remaining(reader)?:
+        return Err(failure("format", "sealed set", "field exceeds section bounds"))
+    return reader.file.read_exact(length).map_err(io_failure)
+
+
+def count(reader: Reader) -> Result[int, StoreError]:
+    """Decode a u64 only when it fits the signed host file API."""
+    buffer = BytesIO(take(reader, 8)?)
+    decoded: Result[u64, IoError] = buffer.read(Endian.Little)
+    value = decoded.map_err(io_failure)?
+    resized: Option[int] = value.try_resize()
+    match resized:
+        Some(found) => return Ok(found)
+        None => return Err(failure("format", "sealed set", "counter exceeds supported signed length"))
+
+
+def collection_count(reader: Reader) -> Result[int, StoreError]:
+    """Every member needs at least a length word, so hostile counts cannot cause unbounded empty iterations."""
+    value = count(reader)?
+    if value > remaining(reader)? // 8:
+        return Err(failure("format", "sealed set", "collection count exceeds section bounds"))
+    return Ok(value)
+
+
+def read_text(reader: Reader) -> Result[str, StoreError]:
+    """Use standard file UTF-8 decoding with an exact byte bound, rather than a second custom text codec."""
+    length = count(reader)?
+    if length > remaining(reader)?:
+        return Err(failure("format", "sealed set", "string exceeds section bounds"))
+    start = reader.file.tell().map_err(io_failure)?
+    value = reader.file.read(length).map_err(io_failure)?
+    if reader.file.tell().map_err(io_failure)? - start != length:
+        return Err(failure("integrity", "sealed set", "truncated UTF-8 field"))
+    return Ok(value)
+
+
+def read_value(reader: Reader, record: Record) -> Result[bytes, StoreError]:
+    """Validate each record again at the point it is consumed, including on the admission pass."""
+    value = take(reader, record.length)?
+    if digest(value) != record.digest:
+        return Err(failure("integrity", record.key, "record value does not match its digest"))
+    return Ok(value)
+
+
+def finish(reader: Reader) -> Result[None, StoreError]:
+    """No trailing or silently ignored bytes are allowed in a canonical section."""
+    if remaining(reader)? != 0:
+        return Err(failure("format", "sealed set", "unexpected trailing bytes"))
+    return Ok(None)
+
+
+def transport_file(directory: Path, relative: str) -> Result[Path, StoreError]:
+    """Only fixed transport names enter this function; reject symbolic links at every transport component."""
+    if directory.is_symlink() or not directory.is_dir():
+        return Err(failure("format", directory.0, "transport root must be a real directory"))
+    mut path = directory
+    for part in relative.split("/"):
+        if part == "" or part in [".", ".."]:
+            return Err(failure("format", relative, "invalid transport path"))
+        path = path.joinpath(part)
+        if path.is_symlink():
+            return Err(failure("format", path.0, "transport symlinks are not admitted"))
+    if not path.is_file():
+        return Err(failure("integrity", path.0, "transport object is missing or not a regular file"))
+    return Ok(path)
+
+
+def verify_payload(path: Path, payload: Payload) -> Result[None, StoreError]:
+    """Verify the full content name and exact length; a changed file never becomes a near-match asset."""
+    if path.is_symlink() or not path.is_file():
+        return Err(failure("integrity", path.0, "payload is missing, a symlink, or not a regular file"))
+    size = path.stat().map_err(io_failure)?.size().map_err(io_failure)?
+    found = hexlify(file_digest(path, "sha256").map_err((error) => failure("io", path.0, error.message()))?)
+    if size != payload.length or found != payload.digest:
+        return Err(failure("integrity", path.0, "payload length or digest mismatch"))
+    return Ok(None)

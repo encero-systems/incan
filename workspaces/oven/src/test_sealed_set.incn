@@ -1,0 +1,382 @@
+"""Portable record sets: canonical identity, shared contents, explicit closure and fail-closed admission."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest, sha256
+from std.io import BytesIO
+from scratch import scratch_directory
+from segment_store import Snapshot, StoreError, begin, commit, delete, get, payload_path, put, put_payload, snapshot
+from sealed_set import (
+    Admission,
+    Manifest,
+    Namespace,
+    Payload,
+    Record,
+    Reference,
+    SealedSet,
+    admit,
+    export_set,
+    release,
+    verify_set,
+)
+
+
+def value_digest(value: bytes) -> str:
+    """Exact expected value identity for a reference in the fixture."""
+    return hexlify(sha256.digest(value))
+
+
+def seeded(root: Path, reverse: bool = false) -> Result[Snapshot, str]:
+    """The same facts can be produced in different orders and generations."""
+    values = {"receipt": b"source publication receipt", "shared": b"shared checked signature", "left": b"left body", "right": b"right body"}
+    mut keys = ["receipt", "shared", "left", "right"]
+    if reverse:
+        keys = ["right", "left", "shared", "receipt"]
+    mut view = snapshot(root).map_err((error) => error.message())?
+    for key in keys:
+        view = commit(put(begin(view), key, values[key])).map_err((error) => error.message())?
+    return Ok(view)
+
+
+def reference(key: str, value: bytes, root: str = "") -> Reference:
+    """A fixture reference never means latest or an approximately matching value."""
+    return Reference(key=key, digest=value_digest(value), set_root=root)
+
+
+def requested(extra: str, producer: str = "publisher/example") -> Manifest:
+    """One shared receipt and signature, plus one package-owned record."""
+    return Manifest(
+        producer=producer,
+        receipt=reference("receipt", b"source publication receipt"),
+        records=[
+            Record(key="receipt"),
+            Record(key="shared"),
+            Record(key=extra, references=[reference("shared", b"shared checked signature")]),
+        ],
+        namespaces=[Namespace(name="example", target=reference("shared", b"shared checked signature"))],
+    )
+
+
+def inventory(root: Path) -> Result[list[str], str]:
+    """Relative file names, lengths and full digests, including manifests and lock entries."""
+    if not root.exists():
+        return Ok([])
+    mut entries: list[str] = []
+    for path in root.iterdir().map_err((error) => error.message())?:
+        if path.is_dir():
+            for entry in inventory(path)?:
+                entries.append(f"{path.name()}/{entry}")
+        else:
+            size = path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+            checksum = hexlify(file_digest(path, "sha256").map_err((error) => error.message())?)
+            entries.append(f"{path.name()} {size} {checksum}")
+    return Ok(sorted(entries))
+
+
+def admission_error(result: Result[Admission, StoreError]) -> str:
+    """Expose refusal category without converting an unexpected success into a passing test."""
+    match result:
+        Ok(_) => return "ok"
+        Err(error) => return error.kind
+
+
+def verification_error(result: Result[SealedSet, StoreError]) -> str:
+    """The same verifier is used for exports and downloaded sets."""
+    match result:
+        Ok(_) => return "ok"
+        Err(error) => return error.kind
+
+
+def absent(value: Option[bytes]) -> bool:
+    """An absent result, without treating stored empty bytes as absence."""
+    match value:
+        None => return true
+        Some(_) => return false
+
+
+pub def test_canonical_export_is_independent_of_home_order_and_generation() -> Result[None, str]:
+    """A portable set has byte-identical transport and root in independent stores and member orders."""
+    scratch = scratch_directory()?
+    left = seeded(scratch.path().joinpath("left"))?
+    right = seeded(scratch.path().joinpath("right"), true)?
+    extra = commit(put(begin(right), "unrelated", b"not exported")).map_err((error) => error.message())?
+    original = requested("left")
+    mut reordered = original
+    reordered.records = [original.records[2], original.records[0], original.records[1]]
+    a = export_set(left, original, scratch.path().joinpath("a")).map_err((error) => error.message())?
+    b = export_set(extra, reordered, scratch.path().joinpath("b")).map_err((error) => error.message())?
+    assert a.root == b.root
+    assert a.directory.joinpath("set.bin").read_bytes().map_err((error) => error.message())? == b.directory
+        .joinpath("set.bin")
+        .read_bytes()
+        .map_err((error) => error.message())?
+    checked = verify_set(a.directory, a.root).map_err((error) => error.message())?
+    assert len(checked.manifest.records) == 3
+    assert checked.manifest.records[0].key == "left"
+    assert verification_error(export_set(left, original, a.directory)) == "io"
+    return Ok(None)
+
+
+pub def test_two_sets_share_records_and_payloads_and_repeat_import_adds_nothing() -> Result[None, str]:
+    """Partial overlap writes only new records; an exact repeat leaves every retained file byte-identical."""
+    scratch = scratch_directory()?
+    source = seeded(scratch.path().joinpath("source"))?
+    native = scratch.path().joinpath("native")
+    native.write_bytes(b"native bytes shared by both sets").map_err((error) => error.message())?
+    payload = put_payload(source.root, native).map_err((error) => error.message())?
+    size = native.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    mut left = requested("left", "publisher/left")
+    mut right = requested("right", "publisher/right")
+    left.payloads = [Payload(digest=payload, length=size)]
+    right.payloads = left.payloads
+    a = export_set(source, left, scratch.path().joinpath("a")).map_err((error) => error.message())?
+    b = export_set(source, right, scratch.path().joinpath("b")).map_err((error) => error.message())?
+    target = scratch.path().joinpath("target")
+    first = admit(target, a.directory, a.root).map_err((error) => error.message())?
+    assert first.records_added == 3 and first.payloads_added == 1 and first.changed
+    second = admit(target, b.directory, b.root).map_err((error) => error.message())?
+    assert second.records_added == 1 and second.payloads_added == 0 and second.changed
+    # One new value, its descriptor, three memberships, one payload membership, the set declaration and its root.
+    assert second.snapshot.segments[-1].count == 8
+    assert absent(get(first.snapshot, "right").map_err((error) => error.message())?)
+    assert get(second.snapshot, "right").map_err((error) => error.message())? == Some(b"right body")
+    before = inventory(target)?
+    repeated = admit(target, b.directory, b.root).map_err((error) => error.message())?
+    assert not repeated.changed and repeated.records_added == 0 and repeated.payloads_added == 0
+    assert repeated.snapshot.generation == second.snapshot.generation
+    assert before == inventory(target)?
+    assert payload_path(target, payload).read_bytes().map_err((error) => error.message())? == b"native bytes shared by both sets"
+    return Ok(None)
+
+
+pub def test_conflicting_record_identity_refuses_the_entire_import() -> Result[None, str]:
+    """A conflicting revision cannot overwrite a fact or publish the other new members of its set."""
+    scratch = scratch_directory()?
+    source = seeded(scratch.path().joinpath("source"))?
+    bundle = export_set(source, requested("left"), scratch.path().joinpath("bundle")).map_err((error) => error.message())?
+    target = scratch.path().joinpath("target")
+    initial = snapshot(target).map_err((error) => error.message())?
+    before = commit(put(begin(initial), "shared", b"different fact")).map_err((error) => error.message())?
+    assert admission_error(admit(target, bundle.directory, bundle.root)) == "conflict"
+    after = snapshot(target).map_err((error) => error.message())?
+    assert before.generation == after.generation
+    assert absent(get(after, "left").map_err((error) => error.message())?)
+    assert get(after, "shared").map_err((error) => error.message())? == Some(b"different fact")
+    return Ok(None)
+
+
+pub def test_external_dependencies_are_exact_memberships_not_whole_home_availability() -> Result[None, str]:
+    """The dependency must be admitted first; unexported home records do not satisfy its namespace or edges."""
+    scratch = scratch_directory()?
+    source = seeded(scratch.path().joinpath("source"))?
+    base = export_set(source, requested("left"), scratch.path().joinpath("base")).map_err((error) => error.message())?
+    admitted_source = admit(source.root, base.directory, base.root).map_err((error) => error.message())?
+    external = reference("shared", b"shared checked signature", base.root)
+    child = Manifest(
+        producer="publisher/child",
+        receipt=reference("receipt", b"source publication receipt", base.root),
+        records=[Record(key="right", references=[external])],
+        dependencies=[base.root],
+        namespaces=[Namespace(name="child", target=external)],
+    )
+    bundle = export_set(admitted_source.snapshot, child, scratch.path().joinpath("child")).map_err(
+        (error) => error.message(),
+    )?
+    target = scratch.path().joinpath("target")
+    assert admission_error(admit(target, bundle.directory, bundle.root)) == "integrity"
+    assert not target.joinpath("CURRENT").exists()
+    first = admit(target, base.directory, base.root).map_err((error) => error.message())?
+    second = admit(target, bundle.directory, bundle.root).map_err((error) => error.message())?
+    assert second.records_added == 1 and second.snapshot.generation == first.snapshot.generation + 1
+    mut wrong = child
+    wrong.namespaces = [Namespace(name="not-in-base", target=reference("right", b"right body", base.root))]
+    assert verification_error(export_set(admitted_source.snapshot, wrong, scratch.path().joinpath("wrong"))) == "integrity"
+    return Ok(None)
+
+
+pub def test_malformed_profiles_duplicates_and_incomplete_references_are_refused() -> Result[None, str]:
+    """Unknown required capabilities and ambiguous or dangling declarations never create a transport."""
+    scratch = scratch_directory()?
+    view = seeded(scratch.path().joinpath("source"))?
+    mut duplicate = requested("left")
+    duplicate.records.append(Record(key="shared"))
+    assert verification_error(export_set(view, duplicate, scratch.path().joinpath("duplicate"))) == "format"
+    mut unknown = requested("left")
+    unknown.codec_profile = "unsupported/99"
+    assert verification_error(export_set(view, unknown, scratch.path().joinpath("unknown"))) == "format"
+    mut dangling = requested("left")
+    dangling.namespaces = [Namespace(name="missing", target=reference("absent", b"absent"))]
+    assert verification_error(export_set(view, dangling, scratch.path().joinpath("dangling"))) == "format"
+    mut traversal = requested("left")
+    traversal.payloads = [Payload(digest="../../outside", length=1)]
+    assert verification_error(export_set(view, traversal, scratch.path().joinpath("traversal"))) == "format"
+    assert not scratch.path().joinpath("duplicate").exists()
+    assert not scratch.path().joinpath("unknown").exists()
+    return Ok(None)
+
+
+pub def test_transport_damage_truncation_and_overflow_are_not_admitted() -> Result[None, str]:
+    """Malformed framing is bounded before allocation, and altered value bytes cannot become committed facts."""
+    scratch = scratch_directory()?
+    view = seeded(scratch.path().joinpath("source"))?
+    bundle = export_set(view, requested("left"), scratch.path().joinpath("bundle")).map_err((error) => error.message())?
+    path = bundle.directory.joinpath("set.bin")
+    original = path.read_bytes().map_err((error) => error.message())?
+    damaged = BytesIO(original)
+    damaged.seek(-1, 2).map_err((error) => error.message())?
+    damaged.write_bytes(b"!").map_err((error) => error.message())?
+    path.write_bytes(damaged.getvalue()).map_err((error) => error.message())?
+    assert verification_error(verify_set(bundle.directory, bundle.root)) == "integrity"
+    target = scratch.path().joinpath("target")
+    assert admission_error(admit(target, bundle.directory, bundle.root)) == "integrity"
+    assert not target.exists()
+    trailing = BytesIO(original)
+    trailing.seek(0, 2).map_err((error) => error.message())?
+    trailing.write_bytes(b"trailing").map_err((error) => error.message())?
+    path.write_bytes(trailing.getvalue()).map_err((error) => error.message())?
+    assert verification_error(verify_set(bundle.directory, bundle.root)) == "format"
+    path.write_bytes(b"INCSET\x00\x01\xff\xff\xff\xff\xff\xff\xff\xff").map_err((error) => error.message())?
+    assert verification_error(verify_set(bundle.directory, bundle.root)) == "format"
+    path.write_bytes(b"INCSET\x00\x01").map_err((error) => error.message())?
+    assert verification_error(verify_set(bundle.directory, bundle.root)) == "format"
+    path.write_bytes(original).map_err((error) => error.message())?
+    assert verification_error(verify_set(bundle.directory, "not-a-digest")) == "format"
+    assert verification_error(verify_set(bundle.directory, value_digest(b"wrong root"))) == "integrity"
+    return Ok(None)
+
+
+pub def test_existing_local_bake_is_reused_and_tombstoned_exports_are_rejected() -> Result[None, str]:
+    """Local computation and bundle admission converge on the same values; deletion never means an empty export."""
+    scratch = scratch_directory()?
+    source = seeded(scratch.path().joinpath("source"))?
+    bundle = export_set(source, requested("left"), scratch.path().joinpath("bundle")).map_err((error) => error.message())?
+    target = seeded(scratch.path().joinpath("target"))?
+    result = admit(target.root, bundle.directory, bundle.root).map_err((error) => error.message())?
+    assert result.records_added == 0 and result.changed
+    removed = commit(delete(begin(source), "shared")).map_err((error) => error.message())?
+    assert verification_error(export_set(removed, requested("left"), scratch.path().joinpath("deleted"))) == "integrity"
+    return Ok(None)
+
+
+pub def test_indexes_and_utf8_keys_keep_explicit_record_and_payload_edges() -> Result[None, str]:
+    """An index is an immutable typed member, and binary framing preserves non-ASCII keys and embedded separators."""
+    scratch = scratch_directory()?
+    original = seeded(scratch.path().joinpath("source"))?
+    name = "family/café:revision/1\nindex"
+    view = commit(put(begin(original), name, b"bounded adjacency")).map_err((error) => error.message())?
+    mut specification = requested("left")
+    specification.records.append(
+        Record(key=name, kind="index", references=[reference("shared", b"shared checked signature")]),
+    )
+    specification.namespaces.append(Namespace(name="index", target=reference(name, b"bounded adjacency")))
+    bundle = export_set(view, specification, scratch.path().joinpath("bundle")).map_err((error) => error.message())?
+    checked = verify_set(bundle.directory, bundle.root).map_err((error) => error.message())?
+    assert checked.manifest.records[0].key == name and checked.manifest.records[0].kind == "index"
+    landed = admit(scratch.path().joinpath("target"), bundle.directory, bundle.root).map_err((error) => error.message())?
+    assert get(landed.snapshot, name).map_err((error) => error.message())? == Some(b"bounded adjacency")
+    return Ok(None)
+
+
+pub def test_external_payloads_are_referenced_not_shipped_and_damage_is_refused() -> Result[None, str]:
+    """An exact dependency can supply a native file; neither a missing membership nor changed bytes are accepted."""
+    scratch = scratch_directory()?
+    view = seeded(scratch.path().joinpath("source"))?
+    file = scratch.path().joinpath("native")
+    file.write_bytes(b"native payload").map_err((error) => error.message())?
+    checksum = put_payload(view.root, file).map_err((error) => error.message())?
+    mut base_spec = requested("left")
+    base_spec.payloads = [Payload(digest=checksum, length=14)]
+    base = export_set(view, base_spec, scratch.path().joinpath("base")).map_err((error) => error.message())?
+    admitted = admit(view.root, base.directory, base.root).map_err((error) => error.message())?
+    child = Manifest(
+        producer="publisher/native-child",
+        receipt=reference("receipt", b"source publication receipt", base.root),
+        records=[Record(key="right", payloads=[checksum])],
+        dependencies=[base.root],
+        payloads=[Payload(digest=checksum, length=14, set_root=base.root)],
+    )
+    bundle = export_set(admitted.snapshot, child, scratch.path().joinpath("child")).map_err((error) => error.message())?
+    assert len(bundle.directory.joinpath("payloads").iterdir().map_err((error) => error.message())?) == 0
+    target = scratch.path().joinpath("target")
+    assert admit(target, base.directory, base.root).map_err((error) => error.message())?.payloads_added == 1
+    assert admit(target, bundle.directory, bundle.root).map_err((error) => error.message())?.payloads_added == 0
+    before = snapshot(target).map_err((error) => error.message())?
+    stored = payload_path(target, checksum)
+    stored.chmod(false).map_err((error) => error.message())?
+    stored.write_bytes(b"broken payload").map_err((error) => error.message())?
+    assert admission_error(admit(target, bundle.directory, bundle.root)) == "integrity"
+    assert snapshot(target).map_err((error) => error.message())?.generation == before.generation
+    return Ok(None)
+
+
+pub def test_transport_symlinks_are_rejected_even_when_their_targets_have_valid_bytes() -> Result[None, str]:
+    """A transport cannot reach through a symlink at its root, manifest or payload component."""
+    scratch = scratch_directory()?
+    view = seeded(scratch.path().joinpath("source"))?
+    file = scratch.path().joinpath("native")
+    file.write_bytes(b"native payload").map_err((error) => error.message())?
+    checksum = put_payload(view.root, file).map_err((error) => error.message())?
+    mut specification = requested("left")
+    specification.payloads = [Payload(digest=checksum, length=14)]
+    bundle = export_set(view, specification, scratch.path().joinpath("bundle")).map_err((error) => error.message())?
+    link = scratch.path().joinpath("linked-bundle")
+    link.symlink_to(bundle.directory).map_err((error) => error.message())?
+    assert verification_error(verify_set(link, bundle.root)) == "format"
+    payload = bundle.directory.joinpath("payloads").joinpath(checksum)
+    payload.unlink().map_err((error) => error.message())?
+    payload.symlink_to(file).map_err((error) => error.message())?
+    assert verification_error(verify_set(bundle.directory, bundle.root)) == "format"
+    payload.unlink().map_err((error) => error.message())?
+    file.copy(payload, false, false).map_err((error) => error.message())?
+    manifest = bundle.directory.joinpath("set.bin")
+    outside = scratch.path().joinpath("outside.bin")
+    manifest.replace(outside).map_err((error) => error.message())?
+    manifest.symlink_to(outside).map_err((error) => error.message())?
+    assert verification_error(verify_set(bundle.directory, bundle.root)) == "format"
+    return Ok(None)
+
+
+pub def test_releasing_a_root_keeps_shared_facts_and_reimport_restores_only_the_root() -> Result[None, str]:
+    """Removal changes reachability, never deletes a shared payload or another set's immutable declaration."""
+    scratch = scratch_directory()?
+    view = seeded(scratch.path().joinpath("source"))?
+    bundle = export_set(view, requested("left"), scratch.path().joinpath("bundle")).map_err((error) => error.message())?
+    target = scratch.path().joinpath("target")
+    before = admit(target, bundle.directory, bundle.root).map_err((error) => error.message())?
+    released = release(target, bundle.root).map_err((error) => error.message())?
+    assert released.generation == before.snapshot.generation + 1
+    assert get(released, "shared").map_err((error) => error.message())? == Some(b"shared checked signature")
+    assert release(target, bundle.root).map_err((error) => error.message())?.generation == released.generation
+    restored = admit(target, bundle.directory, bundle.root).map_err((error) => error.message())?
+    assert restored.changed and restored.records_added == 0 and restored.payloads_added == 0
+    assert restored.snapshot.segments[-1].count == 1
+    return Ok(None)
+
+
+pub def test_record_identity_does_not_depend_on_which_set_ships_its_reference() -> Result[None, str]:
+    """Local and external packaging of the same exact edge retain one immutable record descriptor."""
+    scratch = scratch_directory()?
+    view = seeded(scratch.path().joinpath("source"))?
+    mut specification = requested("left")
+    specification.records = [
+        Record(key="receipt"),
+        Record(key="shared"),
+        Record(key="left", references=[reference("shared", b"shared checked signature")]),
+    ]
+    base = export_set(view, specification, scratch.path().joinpath("base")).map_err((error) => error.message())?
+    source = admit(view.root, base.directory, base.root).map_err((error) => error.message())?
+    child = Manifest(
+        producer="publisher/repackaged",
+        receipt=reference("receipt", b"source publication receipt", base.root),
+        records=[Record(key="left", references=[reference("shared", b"shared checked signature", base.root)])],
+        dependencies=[base.root],
+    )
+    repackaged = export_set(source.snapshot, child, scratch.path().joinpath("repackaged")).map_err(
+        (error) => error.message(),
+    )?
+    target = scratch.path().joinpath("target")
+    admit(target, base.directory, base.root).map_err((error) => error.message())?
+    imported = admit(target, repackaged.directory, repackaged.root).map_err((error) => error.message())?
+    assert imported.changed and imported.records_added == 0 and imported.payloads_added == 0
+    assert imported.snapshot.segments[-1].count == 3
+    return Ok(None)
