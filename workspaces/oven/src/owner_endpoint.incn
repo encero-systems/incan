@@ -27,19 +27,8 @@ from std.json import JsonValue
 from files import discard_file
 from home import home, owners_dir
 from observation import observe, relay
-from owner_protocol import (
-    Connection,
-    Listener,
-    PROTOCOL,
-    Reply,
-    Request,
-    connection,
-    dial,
-    digits_only,
-    listen,
-    prepares_executable,
-    reply_of,
-)
+from core_ipc import Connection, Listener, connection, dial, digits_only, listen
+from owner_protocol import PROTOCOL, Reply, Request, prepares_executable, reply_of
 from toolchain import toolchain_file
 from unit_freshness import artifact_identity, fingerprint
 

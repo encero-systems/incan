@@ -13,7 +13,8 @@ from owner_endpoint import (
     socket_prefix,
     timeout_for,
 )
-from owner_protocol import Connection, Reply, Request, listen
+from core_ipc import Connection, listen
+from owner_protocol import Reply, Request
 from owner_state import Owner, unchanged, watch
 from scratch import scratch_directory
 from intake import ManifestReader
