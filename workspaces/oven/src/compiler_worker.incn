@@ -8,17 +8,20 @@ from rust::std::ffi import OsString
 from rust::std::io import Error as IoError, Write, stderr, stdout
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio, id
-from rust::std::thread import sleep
+from rust::std::string import String as RustString
+from rust::std::thread import available_parallelism, sleep
+from std.environ import get_or
 from rust::std::time import Duration
 from std.fs import Path
+from std.fs.locking import FileLock
 from std.json import JsonValue
 from files import discard_file
 from home import owners_dir
 from json_fields import required_text
 from observation import trace, trace_boundary
 from owner_client import status_code
-from owner_endpoint import Endpoint, attach, prepare_directory
-from owner_protocol import Connection, Listener, listen
+from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
+from owner_protocol import Connection, Listener, digits_only, listen
 from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command
@@ -27,7 +30,12 @@ from jec import begin, record, invocation_key
 const SCHEMA: str = "incan.compiler-worker/1"
 const READINESS_POLLS: int = 7500
 const IDLE_SECONDS: int = 600
-const MAX_SOCKET_PATH: int = 100
+# The idle seconds of a worker beyond the first slot, which only a burst of concurrent requests started.
+const SPARE_IDLE_SECONDS: int = 10
+# The resident memory one worker may reach while it compiles, which bounds how many physical memory holds.
+const WORKER_CEILING_BYTES: int = 4294967296
+# The pool size when physical memory cannot be read.
+const UNBOUNDED_WORKERS: int = 1024
 const MAX_STATUS: int = 255
 
 
@@ -167,7 +175,8 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             trace(f"compiler worker: cold path ({reason})")
             return Ok(None)
         Ok(found) =>
-            connected_socket, generation = found
+            # The slot stays held until this request completes, so no other caller queues behind it.
+            connected_socket, generation, slot = found
             mut connected = connected_socket
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
@@ -181,59 +190,132 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             return completion(reply)
 
 
-def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str], str]:
-    """Select the compiler generation once and connect before any source request is submitted."""
-    endpoint = endpoint_for(toolchain)?
+def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLock], str]:
+    """
+    Take an idle slot of the worker pool and connect to its worker before any source request is submitted.
+
+    1. Take the first slot nobody holds; a slot is held for exactly one request.
+    2. With every slot of the pool held, wait for this caller's own slot.
+    3. Connect to the slot's worker, starting it when there is none.
+    """
+    generation = generation_of(toolchain)?
+    directory = Path(toolchain.console).parent()
+    prepare_directory(directory.0)?
+    # 1. and 2. A slot nobody holds, or this caller's own slot once the pool is full.
+    slot, held = take_slot(directory, generation)?
+    endpoint = slot_endpoint(directory, generation, slot)?
     trace_boundary("worker_selected")
-    connected = selected_connection(toolchain, endpoint)?
+    # 3. The slot's lock also arbitrates startup: only its holder can start the slot's worker.
+    connected = slot_connection(toolchain, endpoint, slot)?
     trace_boundary("worker_connected")
-    return Ok((connected, endpoint.generation))
+    return Ok((connected, generation, held))
 
 
-def selected_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Connection, str]:
+def take_slot(directory: Path, generation: str) -> Result[tuple[int, FileLock], str]:
     """
-    Connect to the selected worker, starting one under an exclusive lock when none exists.
-
-    1. Select the private endpoint and try its existing worker.
-    2. Lock startup and try again, so simultaneous owners start one worker.
-    3. Start the selected driver and connect after its readiness acknowledgment.
+    Hold the first slot nobody holds, trying from the first so the pool grows only while every lower slot is busy;
+    with the whole pool busy, wait for this caller's own slot, which spreads waiting callers over the pool.
     """
-    # 1. Every project owner of the same compiler and environment shares this endpoint.
+    match try_slot(directory, generation, 0)?:
+        Some(lock) => return Ok((0, lock))
+        None => pass
+    size = pool_size()
+    for slot in range(1, size):
+        match try_slot(directory, generation, slot)?:
+            Some(lock) => return Ok((slot, lock))
+            None => pass
+    own = int(id()) % size
+    lock = Path(slot_endpoint(directory, generation, own)?.lock).lock_exclusive().map_err((error) => error.message())?
+    return Ok((own, lock))
+
+
+def try_slot(directory: Path, generation: str, slot: int) -> Result[Option[FileLock], str]:
+    """The lock of one slot when nobody holds it."""
+    path = Path(slot_endpoint(directory, generation, slot)?.lock)
+    return path.try_lock_exclusive().map_err((error) => error.message())
+
+
+def slot_connection(toolchain: Toolchain, endpoint: Endpoint, slot: int) -> Result[Connection, str]:
+    """Connect to the held slot's worker, or start it and connect after its readiness acknowledgment."""
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => pass
-    # 2. The lock remains held through startup, and a worker started meanwhile is reused.
-    arbitration = Path(endpoint.lock).lock_exclusive().map_err((error) => error.message())?
-    match attach(endpoint)?:
-        Some(found) => return Ok(found)
-        None => pass
-    # 3. The child must acknowledge this generation before it can receive a request.
-    launch(toolchain, endpoint)?
+    launch(toolchain, endpoint, idle_for(slot))?
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => return Err("the compiler worker disappeared after readiness")
 
 
-def endpoint_for(toolchain: Toolchain) -> Result[Endpoint, str]:
-    """A private endpoint bound to the complete compiler fingerprint and inherited nonincidental environment."""
-    mut generation = toolchain.worker_generation
-    if generation == "":
-        generation = generation_for(compiler_fingerprint(toolchain)?)?
-    directory = Path(toolchain.console).parent()
-    prefix = directory.joinpath(f"c-{generation}").0
-    ready = f"{prefix}.{id()}.ready"
-    if len(f"{prefix}.sock") > MAX_SOCKET_PATH or len(ready) > MAX_SOCKET_PATH:
-        return Err("the compiler worker socket path is too long")
+def idle_for(slot: int) -> int:
+    """The first slot's worker stays for later commands; the others retire soon after the burst that needed them."""
+    if slot == 0:
+        return IDLE_SECONDS
+    return SPARE_IDLE_SECONDS
+
+
+def generation_of(toolchain: Toolchain) -> Result[str, str]:
+    """The generation a resident owner retained, or the one this invocation's compiler and environment select."""
+    if toolchain.worker_generation != "":
+        return Ok(toolchain.worker_generation)
+    return generation_for(compiler_fingerprint(toolchain)?)
+
+
+def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[Endpoint, str]:
+    """
+    The private endpoint of one slot of the pool bound to the complete compiler fingerprint and inherited
+    nonincidental environment. Its lock stays beside the console sinks; its sockets go to the user's endpoint
+    directory, so their path does not grow with the home's depth.
+    """
+    sockets = f"{socket_prefix(directory.0)?}c-{generation}-{slot}"
+    ready = f"{sockets}.{id()}.ready"
+    bindable(f"{sockets}.sock")?
+    bindable(ready)?
     return Ok(
         Endpoint(
             generation=generation,
             directory=directory.0,
-            socket=f"{prefix}.sock",
-            lock=f"{prefix}.lock",
+            socket=f"{sockets}.sock",
+            lock=directory.joinpath(f"c-{generation}-{slot}.lock").0,
             ready=ready,
             mailbox="",
         ),
     )
+
+
+def pool_size() -> int:
+    """
+    How many workers one compiler generation may run at once: `INCAN_JOBS` when the run sets its concurrency, else the
+    CPU count; never more than physical memory holds at the workers' footprint ceiling, and never fewer than one.
+    """
+    mut size = 1
+    match available_parallelism():
+        Ok(count) => size = int(count.get())
+        Err(_) => pass
+    configured = get_or("INCAN_JOBS", "")
+    if configured != "" and digits_only(configured):
+        size = int(configured)
+    memory = memory_workers()
+    if memory < size:
+        size = memory
+    if size < 1:
+        return 1
+    return size
+
+
+def memory_workers() -> int:
+    """How many workers at their footprint ceiling physical memory holds; unknown memory does not limit the pool."""
+    match Command.new("/usr/sbin/sysctl").arg("-n").arg("hw.memsize").stderr(Stdio.null()).output():
+        Err(_) => return UNBOUNDED_WORKERS
+        Ok(found) =>
+            if not found.status.success():
+                return UNBOUNDED_WORKERS
+            match RustString.from_utf8(found.stdout):
+                Err(_) => return UNBOUNDED_WORKERS
+                Ok(decoded) =>
+                    text = str(decoded).strip()
+                    if not digits_only(text):
+                        return UNBOUNDED_WORKERS
+                    return int(text) // WORKER_CEILING_BYTES
 
 
 pub def generation_for(compiler: str) -> Result[str, str]:
@@ -274,12 +356,13 @@ def unicode_environment(value: OsString) -> Result[str, str]:
     return value.into_string().map_err((_) => "a compiler environment entry is not Unicode")
 
 
-def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
-    """Start the exact driver detached from the owner, with protocol and console on separate streams."""
+def launch(toolchain: Toolchain, endpoint: Endpoint, idle: int) -> Result[None, str]:
+    """Start the exact driver detached from the owner, with protocol and console on separate streams; it retires after
+    `idle` seconds without a request."""
     mut listener = listen(f"{endpoint.ready}", false)?
     mut command = driver_command(toolchain)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
-    command.arg(f"{endpoint.ready}").arg(str(IDLE_SECONDS))
+    command.arg(f"{endpoint.ready}").arg(str(idle))
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
     command.process_group(0)
     clock = begin()
