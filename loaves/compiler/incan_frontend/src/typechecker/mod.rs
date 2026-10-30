@@ -56,6 +56,7 @@ mod derive_requirements;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
+mod iteration_borrows;
 mod json_member_requirements;
 mod lifetime_contracts;
 mod mut_arguments;
@@ -607,6 +608,8 @@ pub struct TypeChecker {
     pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
     /// Stack of active loop contexts, innermost last.
     pub loop_stack: Vec<LoopContext>,
+    /// Direct list places whose storage active statement loops still borrow.
+    iteration_borrows: Vec<iteration_borrows::IterationBorrow>,
     /// Active trait @requires context for default method bodies.
     pub current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait computed-property contract for default member bodies.
@@ -988,6 +991,7 @@ impl TypeChecker {
             generic_partial_target_span: None,
             generic_partial_target: None,
             loop_stack: Vec::new(),
+            iteration_borrows: Vec::new(),
             current_trait_requires: None,
             current_trait_properties: None,
             current_trait_name: None,
