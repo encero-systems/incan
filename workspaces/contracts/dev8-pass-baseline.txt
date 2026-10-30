@@ -1131,6 +1131,7 @@ project/refusals/feature_request_of_an_unselected_dependency
 project/refusals/missing_path_dependency
 project/refusals/unknown_default_feature
 project/units/minimal_program
+project/units/worker_retires_over_footprint_bound
 testing/outcomes/test_assertions
 testing/outcomes/test_async_future
 testing/outcomes/test_discovery
