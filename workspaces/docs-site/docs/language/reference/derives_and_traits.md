@@ -469,6 +469,9 @@ A `class` adopts a trait imported with `from rust::...` the same way: `class Hoo
 - A trait method the class does not declare keeps the trait's default.
 - Rust checks the implementation when the program is built. A missing required method (`E0046`) or a method whose receiver or signature differs from the trait's (`E0053`) refuses the build.
 - A class value passes to a Rust parameter that takes a reference to a trait object (`&dyn Trait`, `&mut (dyn Trait + Send)`) by a borrow of the value. A mutable borrow needs a `mut` binding; another binding is refused (`INCAN-T0001`). A Rust value passes the same way when its type implements the trait.
+- Every bound of the trait object holds: implementing the principal trait does not make a class `Send` or `Sync`. A build where the value cannot convert to the object, for example a class holding an `Rc`, is refused.
+
+A native struct field whose type a program cannot hold stays opaque: reading or writing it, or constructing the struct, is refused when the program is built. The struct's other fields stay usable.
 
 ```incan
 # The host crate declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`,

@@ -455,7 +455,9 @@ pub fn rvalue<'tcx>(
     })
 }
 
-/// Convert a reference to a concrete value into a reference to the Rust trait object its destination holds.
+/// Convert a reference to a concrete value into a reference to the Rust trait object its destination holds. rustc's
+/// trait solver first proves the whole conversion, the principal trait and every auto trait such as `Send` included;
+/// the plan's request is never evidence that the value implements the object.
 fn trait_object_rvalue<'tcx>(
     tcx: TyCtxt<'tcx>,
     sources: &Sources<'_>,
@@ -464,13 +466,30 @@ fn trait_object_rvalue<'tcx>(
     target: &PlanType,
     destination: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    use rustc_infer::infer::TyCtxtInferExt;
+    use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt;
+
     let source = native_type(tcx, source)?;
     let target = native_type(tcx, target)?;
+    let refused = || PlanError::Invalid {
+        function: "trait object conversion".into(),
+        reason: format!("rustc cannot prove `{source}` converts to `{target}`"),
+    };
     if target != native_type(tcx, destination)? {
-        return Err(PlanError::Invalid {
-            function: "trait object conversion".into(),
-            reason: format!("`{source}` does not convert to `{target}`"),
-        });
+        return Err(refused());
+    }
+    let coerce = tcx.lang_items().coerce_unsized_trait().ok_or_else(refused)?;
+    let (infcx, environment) = tcx
+        .infer_ctxt()
+        .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
+    let obligation = rustc_infer::traits::Obligation::new(
+        tcx,
+        rustc_middle::traits::ObligationCause::dummy(),
+        environment,
+        ty::TraitRef::new(tcx, coerce, [source, target]),
+    );
+    if !infcx.predicate_must_hold_modulo_regions(&obligation) {
+        return Err(refused());
     }
     Ok(mir::Rvalue::Cast(
         mir::CastKind::PointerCoercion(
