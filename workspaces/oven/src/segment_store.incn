@@ -22,7 +22,9 @@ a chain of parents, and a parent's later writes never reach its forks.
 Reading: a snapshot is one validated generation and one view's root; it holds no decoded records. A lookup reads the
 index pages on one root-to-leaf path and the one frame it finds, checks the page names, the frame digest and the full
 key, and answers `Found`, `Deleted` or `Absent`. Damage is a `StoreError`, never absence, and a read never falls
-through a damaged entry to an older value.
+through a damaged entry to an older value. Pages, frames and payloads are mapped and checked in place: `Found` holds a
+view of the value inside its segment, and `owned` is the one place a found value is copied into owned bytes. Every
+object read this way is content-named and never rewritten in place, as a mapping requires of its inode.
 
 Writing: a transaction begun on one view collects writes with their preconditions. Under the publication lock it
 validates every precondition against the latest generation, stages only changed records, then installs the segment,
@@ -34,12 +36,12 @@ from rust::std::process import id, exit as process_exit
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.environ import get_or
-from std.fs import Path
+from std.fs import MappedView, Path
 from std.fs.locking import FileLock
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError, _BytesIO
 from store_index import Entry, IndexError, Location, build, entries as index_entries, find as index_find, insert
-from store_index import page_path, page_reads
+from store_index import copied_index_bytes, page_path, page_reads, view_digest
 
 const FORMAT: str = "incan.segment-store/3"
 const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
@@ -57,9 +59,9 @@ pub const EXPECT_REPAIR: int = 3
 
 
 pub enum Lookup:
-    """What a snapshot holds under one full key."""
+    """What a snapshot holds under one full key; a found value is a view inside its segment, not a copy."""
 
-    Found(bytes)
+    Found(MappedView)
     Deleted
     Absent
 
@@ -121,11 +123,19 @@ pub model Transaction:
 
 
 pub model ReadCounts:
-    """What this process read so far: records found, frame bytes read and index pages read."""
+    """
+    What this process read so far.
+
+    `records` frames found, `bytes` frame bytes checked in place and `pages` index pages read; `copied` bytes copied
+    out of mapped pages and frames by lookups (keys compared and locations decoded, never a value); `decoded` bytes of
+    found values copied into owned bytes by `owned`.
+    """
 
     pub records: int
     pub bytes: int
     pub pages: int
+    pub copied: int
+    pub decoded: int
 
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
@@ -138,8 +148,14 @@ pub def fingerprint(data: bytes) -> str:
 
 
 pub def read_counts() -> ReadCounts:
-    """The records, frame bytes and index pages this process has read."""
-    return ReadCounts(records=counted.get("records", 0), bytes=counted.get("bytes", 0), pages=page_reads())
+    """What this process has read, copied out of the store's mappings, and decoded into owned values."""
+    return ReadCounts(
+        records=counted.get("records", 0),
+        bytes=counted.get("bytes", 0),
+        pages=page_reads(),
+        copied=counted.get("copied", 0) + copied_index_bytes(),
+        decoded=counted.get("decoded", 0),
+    )
 
 
 def failure(kind: str, object: str, detail: str) -> StoreError:
@@ -284,35 +300,53 @@ pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
 
 
 pub def get(view: Snapshot, key: str) -> Result[Option[bytes], StoreError]:
-    """The value under `key`; a tombstone and absence are both `None`, and damage is an error."""
+    """The value under `key`, decoded into owned bytes; a tombstone and absence are both `None`, damage an error."""
     match lookup(view, key)?:
-        Lookup.Found(value) => return Ok(Some(value))
+        Lookup.Found(value) => return Ok(Some(owned(value)))
         Lookup.Deleted => return Ok(None)
         Lookup.Absent => return Ok(None)
 
 
+pub def owned(value: MappedView) -> bytes:
+    """A found value copied into owned bytes: the one decode of a record out of its segment, counted."""
+    counted["decoded"] = counted.get("decoded", 0) + value.len()
+    return value.to_bytes()
+
+
 def read_frame(root: Path, key: str, location: Location) -> Result[Lookup, StoreError]:
-    """The frame an index entry names, checked against the entry's digest and full key."""
+    """
+    The frame an index entry names, mapped and checked in place against the entry's digest and full key.
+
+    Only the frame's key is copied out to compare; a found value stays a view inside the segment.
+    """
     path = root.joinpath("segments").joinpath(f"{location.segment}.seg")
-    handle = path.open("rb").map_err((error) => failure("integrity", path.0, error.message()))?
-    handle.seek(location.offset, 0).map_err((error) => failure("integrity", path.0, error.message()))?
-    frame = handle.read_exact(location.length).map_err((error) => failure("integrity", path.0, error.message()))?
+    mapped = path.map_read().map_err((error) => failure("integrity", path.0, error.message()))?
+    frame = part(path, mapped.view(location.offset, location.length), "frame runs past its segment")?
     counted["bytes"] = counted.get("bytes", 0) + location.length
-    if sha256.digest(frame) != location.digest:
+    if view_digest(frame) != location.digest:
         return Err(failure("integrity", path.0, "frame does not match its digest"))
-    match u64_in(frame, 0):
+    size = match frame.read_u64_le(0):
+        Some(width) => int(width)
         None => return Err(failure("integrity", path.0, "malformed frame"))
-        Some(size) =>
-            if 8 + size > len(frame):
-                return Err(failure("integrity", path.0, "frame key runs past the frame"))
-            match decode_text(frame[8:8 + size]):
-                None => return Err(failure("integrity", path.0, "frame key is not text"))
-                Some(found) =>
-                    if found != key:
-                        return Err(failure("integrity", path.0, "frame holds another key"))
-                    if location.tombstone:
-                        return Ok(Lookup.Deleted)
-                    return Ok(Lookup.Found(frame[8 + size:]))
+
+    stored = part(path, frame.slice(8, size), "frame key runs past the frame")?
+    counted["copied"] = counted.get("copied", 0) + size
+    match decode_text(stored.to_bytes()):
+        None => return Err(failure("integrity", path.0, "frame key is not text"))
+        Some(found) =>
+            if found != key:
+                return Err(failure("integrity", path.0, "frame holds another key"))
+    if location.tombstone:
+        return Ok(Lookup.Deleted)
+    value = part(path, frame.slice(8 + size, frame.len() - 8 - size), "frame key runs past the frame")?
+    return Ok(Lookup.Found(value))
+
+
+def part(path: Path, found: Option[MappedView], detail: str) -> Result[MappedView, StoreError]:
+    """A bounded view inside a segment, or an integrity error naming the segment when the range does not fit."""
+    match found:
+        Some(view) => return Ok(view)
+        None => return Err(failure("integrity", path.0, detail))
 
 
 pub def keys(view: Snapshot) -> Result[list[str], StoreError]:
@@ -570,7 +604,7 @@ def needed(write: Write, found: Lookup) -> Result[bool, StoreError]:
     """Whether `write` changes what is committed, refusing it when its precondition no longer holds."""
     match found:
         Lookup.Found(value) =>
-            if write.kind == KIND_VALUE and value == write.value:
+            if write.kind == KIND_VALUE and value.len() == len(write.value) and owned(value) == write.value:
                 return Ok(false)
             if write.expect not in [EXPECT_ANY, EXPECT_REPAIR]:
                 return Err(failure("conflict", write.key, "another value was committed under this key"))
@@ -726,7 +760,8 @@ def leaf_write(root: Path, leaf: Entry) -> Result[Write, StoreError]:
         None => return Err(failure("integrity", "index", "inner entry in a leaf"))
         Some(location) =>
             match read_frame(root, leaf.key, location)?:
-                Lookup.Found(value) => return Ok(Write(key=leaf.key, kind=KIND_VALUE, value=value, expect=EXPECT_ANY))
+                Lookup.Found(value) =>
+                    return Ok(Write(key=leaf.key, kind=KIND_VALUE, value=owned(value), expect=EXPECT_ANY))
                 Lookup.Deleted => return Ok(Write(key=leaf.key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY))
                 Lookup.Absent => return Err(failure("integrity", "index", "leaf without a frame"))
 
@@ -811,13 +846,16 @@ def install_payload(source: Path, target: Path) -> Result[None, StoreError]:
 
 
 pub def payload_intact(root: Path, digest: str) -> bool:
-    """Whether the stored payload of `digest` still has exactly that content."""
+    """Whether the stored payload of `digest` still has exactly that content, hashed in place."""
     target = payload_path(root, digest)
     if not target.is_file():
         return false
-    match file_digest(target, "sha256"):
-        Ok(found) => return hexlify(found) == digest
+    match target.map_read():
         Err(_) => return false
+        Ok(mapped) =>
+            match mapped.view(0, mapped.len()):
+                None => return false
+                Some(content) => return hexlify(view_digest(content)) == digest
 
 
 # ---- Files ----
@@ -833,22 +871,6 @@ def decode_text(data: bytes) -> Option[str]:
     match RustString.from_utf8(data):
         Ok(text) => return Some(str(text))
         Err(_) => return None
-
-
-def u64_in(data: bytes, offset: int) -> Option[int]:
-    """One little-endian u64 at `offset` of `data`, when eight bytes are there."""
-    if offset < 0 or offset + 8 > len(data):
-        return None
-    reader = BytesIO(data[offset:offset + 8])
-    match read_u64(reader):
-        Ok(value) => return Some(int(value))
-        Err(_) => return None
-
-
-def read_u64(reader: _BytesIO) -> Result[u64, IoError]:
-    """Read one little-endian u64 with an explicit result type for `BytesIO` overload resolution."""
-    value: u64 = reader.read(Endian.Little)?
-    return Ok(value)
 
 
 def natural(text: str) -> Option[int]:

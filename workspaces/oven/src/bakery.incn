@@ -46,6 +46,7 @@ from segment_store import (
     get,
     keys,
     lookup as store_lookup,
+    owned,
     payload_intact,
     payload_path,
     put,
@@ -142,7 +143,7 @@ def find_unit(store: Path, identity: str) -> Result[Option[Fact], str]:
     """Find an intact unit; damage names its object and requires an explicit owner repair."""
     view = snapshot(store).map_err(store_failure)?
     match store_lookup(view, record_key(identity)).map_err(store_failure)?:
-        Lookup.Found(value) => return checked_fact(store, identity, value)
+        Lookup.Found(value) => return checked_fact(store, identity, owned(value))
         Lookup.Deleted => return Ok(None)
         Lookup.Absent => return Ok(None)
 
@@ -783,7 +784,7 @@ def preserve_unit_damage(store: Path, identity: str, view: Snapshot) -> Result[b
         Ok(found) =>
             match found:
                 Lookup.Found(value) =>
-                    match decode_fact(value):
+                    match decode_fact(owned(value)):
                         None =>
                             quarantine_record(view, key, true).map_err(store_failure)?
                             return Ok(true)

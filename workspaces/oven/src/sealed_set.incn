@@ -20,6 +20,7 @@ from segment_store import (
     get,
     lease,
     lookup,
+    owned,
     quarantine_record,
     payload_path,
     put,
@@ -683,7 +684,7 @@ def restored_frame(transaction: Transaction, view: Snapshot, key: str, value: by
         Ok(found) =>
             match found:
                 Lookup.Found(previous) =>
-                    if previous != value:
+                    if owned(previous) != value:
                         return Err(problem("conflict", key, "intact frozen revision differs from verified transport"))
                 Lookup.Deleted => pass
                 Lookup.Absent => pass
