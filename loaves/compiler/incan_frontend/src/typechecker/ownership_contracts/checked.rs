@@ -7,7 +7,7 @@ use crate::ownership_metadata::{
     AccessMode, CheckedOwnershipContract, OwnershipContract, ResultDependency, SourceSlot, TypeComponent,
 };
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
-use crate::symbols::{ResolvedType, TypeInfo};
+use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
 use incan_lang::lang::types::ownership;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 use std::collections::BTreeMap;
@@ -22,6 +22,76 @@ struct Signature<'a> {
 }
 
 impl TypeChecker {
+    /// Retain an explicit call's selected declaration and closed parameter view with the statement producer.
+    /// Ordinary callers need this fact too; absence of an ownership annotation on their own signature is not an
+    /// exemption from their callee's contract. Candidate speculation is discarded with its normal call artifacts.
+    pub(in crate::typechecker) fn record_explicit_input_call(
+        &mut self,
+        identity: Option<&CanonicalSymbolId>,
+        parameters: &[CallableParam],
+        span: Span,
+    ) {
+        let Some(callee) = identity else { return };
+        let Some(contract) = self.type_info.declarations.ownership_contracts.get(callee) else {
+            return;
+        };
+        if !contract.modes.iter().any(|mode| mode.component.parameter.is_some()) {
+            return;
+        }
+        self.type_info.protocols.explicit_input_calls.insert(
+            span,
+            super::InputCall {
+                owner: self.current_body_identity().cloned(),
+                callee: callee.clone(),
+                parameters: parameters.to_vec(),
+            },
+        );
+    }
+
+    /// Project only the direct input modes owned by the selected declaration into call-local value types.
+    /// Published parameter metadata remains unchanged, and the canonical contract stays available for access
+    /// checking. Wrapper shape disagreement is refused instead of guessing from a type's display spelling.
+    pub(in crate::typechecker) fn ownership_call_value_parameters(
+        &self,
+        identity: Option<&CanonicalSymbolId>,
+        parameters: &[CallableParam],
+        span: Span,
+    ) -> Result<Option<Vec<CallableParam>>, CompileError> {
+        let Some(contract) =
+            identity.and_then(|identity| self.type_info.declarations.ownership_contracts.get(identity))
+        else {
+            return Ok(None);
+        };
+        let mut output = None;
+        for mode in &contract.modes {
+            let Some(slot) = mode.component.parameter else { continue };
+            if !mode.component.children.is_empty() || mode.mode == ownership::OwnershipMode::Reference {
+                continue;
+            }
+            let Some(CallableParam {
+                ty: ResolvedType::Generic(_, arguments),
+                ..
+            }) = parameters.get(slot)
+            else {
+                return Err(CompileError::type_error(
+                    "Selected ownership contract does not match its parameter metadata".into(),
+                    span,
+                )
+                .with_stable_code("INCAN-T0123"));
+            };
+            let [underlying] = arguments.as_slice() else {
+                return Err(CompileError::type_error(
+                    "Selected ownership input requires exactly one value type".into(),
+                    span,
+                )
+                .with_stable_code("INCAN-T0123"));
+            };
+            let projected = output.get_or_insert_with(|| parameters.to_vec());
+            projected[slot].ty = underlying.clone();
+        }
+        Ok(output)
+    }
+
     /// Separate a direct input obligation from the value seen by its body. Canonical alias provenance is retained;
     /// a user type with the same spelling is not stripped. Nested and returned access contracts stay staged.
     pub(in crate::typechecker) fn explicit_input_contract(

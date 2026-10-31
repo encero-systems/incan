@@ -467,6 +467,7 @@ fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
 /// Consume all protocols fields into the compatibility view; field additions require an explicit ownership choice.
 fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
     let ProtocolArtifacts {
+        explicit_input_calls,
         explicit_local_modes,
         explicit_input_flow,
         body_ir_truthiness_receivers,
@@ -477,6 +478,7 @@ fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
         in_place_match_scrutinees,
         loan_free_scrutinees,
     } = local;
+    target.explicit_input_calls.extend(explicit_input_calls);
     target.explicit_local_modes.extend(explicit_local_modes);
     target.explicit_input_flow.extend(explicit_input_flow);
     target.body_ir_truthiness_receivers.extend(body_ir_truthiness_receivers);

@@ -43,6 +43,15 @@ pub(super) struct LocalMode {
     pub annotation: Span,
 }
 
+/// One successfully checked call retains the exact contract owner and instantiated parameter values. A call in
+/// declaration/default evaluation has no callable body owner, but still cannot cross a record profile unaware of it.
+#[derive(Debug, Clone)]
+pub(super) struct InputCall {
+    pub owner: Option<incan_semantics_core::CanonicalSymbolId>,
+    pub callee: incan_semantics_core::CanonicalSymbolId,
+    pub parameters: Vec<crate::symbols::CallableParam>,
+}
+
 impl TypeChecker {
     /// Capture explicit input flow while the checked lexical frame and body-owned expression facts are active.
     /// Statement output owns the result; it is never rediscovered by lowering or published as a valid empty graph.
@@ -57,6 +66,12 @@ impl TypeChecker {
                 .explicit_local_modes
                 .values()
                 .any(|mode| mode.owner == identity)
+            && !self
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .values()
+                .any(|call| call.owner.as_ref() == Some(&identity))
         {
             return;
         }
@@ -605,6 +620,91 @@ mod tests {
             "shared input mutation was not refused: {:?}",
             checker.errors
         );
+        Ok(())
+    }
+
+    /// Argument type compatibility sees the contracted value type while retaining the selected declaration's
+    /// ownership request. Different overload slots cannot borrow another candidate's mode or generic binders.
+    #[test]
+    fn explicit_call_arguments_use_selected_value_types() -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "def use(value: int) -> int:\n    return read(value)\ndef read(value: Borrowed[int]) -> int:\n    return value\n",
+            "def use(value: int) -> int:\n    return read(value=value)\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef read(prefix: str, value: Borrowed[int]) -> int:\n    return value\n",
+            "def use(value: str) -> str:\n    return take(value)\ndef take[T](value: Owned[T]) -> T:\n    return value\n",
+            "type View = Borrowed[int]\ndef use(value: int) -> int:\n    return read(value)\ndef read(value: View) -> int:\n    return value\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(!checker.errors.is_empty(), "execution gate unexpectedly open");
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .all(|error| error.stable_code() == Some("INCAN-T0123")),
+                "{source}\n{:?}",
+                checker.errors
+            );
+        }
+        let checker = checked(
+            "def use(value: int) -> int:\n    return read(value)\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef read(value: Owned[int]) -> int:\n    return value\n",
+        )?;
+        assert!(checker.errors.iter().any(|error| error.message.contains("ambiguous")));
+        assert!(
+            checker.type_info.protocols.explicit_input_calls.is_empty(),
+            "failed overload selection must discard candidate ownership facts"
+        );
+        Ok(())
+    }
+
+    /// A selected overload retains its own instantiated parameter slots without rewriting either declaration.
+    /// The ordinary caller still owns an unavailable flow profile until call access projection is implemented.
+    #[test]
+    fn explicit_call_facts_preserve_canonical_slots() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked(
+            "def use(value: str) -> str:\n    return read(1, value)\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef read(prefix: int, value: Owned[str]) -> str:\n    return value\n",
+        )?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{:?}",
+            checker.errors
+        );
+        assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
+        let call = checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .values()
+            .next()
+            .ok_or("missing explicit call")?;
+        assert_eq!(call.parameters.len(), 2);
+        assert_eq!(call.parameters[1].ty, ResolvedType::Str);
+        let contract = checker
+            .type_info
+            .declarations
+            .ownership_contracts
+            .get(&call.callee)
+            .ok_or("selected contract missing")?;
+        assert_eq!(contract.modes.len(), 1);
+        assert_eq!(contract.modes[0].component.parameter, Some(1));
+        assert_eq!(contract.modes[0].mode, OwnershipMode::Owned);
+        let declaration = checker
+            .type_info
+            .declarations
+            .function_bindings_by_span
+            .get(&call.callee.declaration_span)
+            .ok_or("selected header missing")?;
+        assert!(
+            matches!(declaration.params[1].ty, ResolvedType::Generic(_, _)),
+            "publication must retain the mode"
+        );
+        let owner = call.owner.as_ref().ok_or("callable owner missing")?;
+        assert_eq!(owner.declaration_name, "use");
+        assert!(matches!(
+            checker.type_info.protocols.explicit_input_flow.get(owner),
+            Some(InputFlow::Unavailable(_))
+        ));
         Ok(())
     }
 

@@ -1885,6 +1885,8 @@ pub struct IsInstanceTargetInfo {
 /// Custom protocol decisions that lower into explicit runtime calls.
 #[derive(Debug, Default, Clone)]
 pub struct ProtocolArtifacts {
+    /// Exact selected input contracts of successful calls, including calls from otherwise ordinary bodies.
+    pub(in crate::typechecker) explicit_input_calls: BTreeMap<Span, super::ownership_contracts::InputCall>,
     /// Canonically bound local mode requests, captured before lexical shadowing. Native lowering may consume them
     /// only together with the owning body's complete flow proof.
     pub(in crate::typechecker) explicit_local_modes: BTreeMap<CanonicalSymbolId, super::ownership_contracts::LocalMode>,
