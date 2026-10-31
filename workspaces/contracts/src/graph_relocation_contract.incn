@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from rust::std::os::unix::fs import symlink
-from files import make_directory, remove, write
+from files import make_directory, read, remove, write
 from run import invoke
 
 
@@ -27,6 +27,7 @@ pub def check_relocation(incan: str, project: Path) -> Result[None, str]:
         return Err("relocation changed an identical Incan graph answer")
     if len(second.rglob("*.incngraph").map_err((error) => error.message())?) != 0:
         return Err("relocated inspection wrote a second private graph instead of reusing its home fact")
+    check_query_reuse(incan, directory, first, second)?
     # 2. Both entries are present in the same tree, so tree content alone cannot discriminate them.
     other = inspect(incan, first, "src/other.incn", "second_helper")?
     if "second_helper" not in other or "first_helper" in other:
@@ -47,6 +48,25 @@ pub def check_relocation(incan: str, project: Path) -> Result[None, str]:
             other_root = second
         if other_root.0 in refused.stderr:
             return Err("an unchecked diagnostic retained another project's location")
+    return Ok(None)
+
+
+def check_query_reuse(incan: str, directory: Path, first: Path, second: Path) -> Result[None, str]:
+    """Identical projects reuse a relative plain-query answer without decoding the same graphs again."""
+    for root in [first, second]:
+        make_directory(root.joinpath(".git"))?
+    arguments = ["inspect", "codegraph", "src/main.incn", "--query", "refs", "first_helper"]
+    original = invoke(incan, arguments, first)?
+    trace = directory.joinpath("query-reuse.trace")
+    if trace.is_file():
+        remove(trace)?
+    relocated = invoke(incan, arguments, second, [f"OVEN_TRACE={trace.0}"])?
+    work = read(trace)?
+    remove(trace)?
+    if original.code != Some(0) or relocated.code != Some(0) or original.stdout != relocated.stdout:
+        return Err("a relocated relative query changed its answer")
+    if "graph answer lookup:" not in work or "graph answer evaluation:" in work:
+        return Err("a relocated relative query decoded graphs instead of finding its prepared answer")
     return Ok(None)
 
 
