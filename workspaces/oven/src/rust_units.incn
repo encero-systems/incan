@@ -24,6 +24,7 @@ from intake import library_source, read_project, ManifestReader
 from native_closure_input import NativeClosureInput
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from observation import observe, trace
+from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from rust_activation import DependencyDomain
@@ -136,7 +137,7 @@ pub def read_registry_units(
         units.append(unit)
         if unit.directory not in search:
             search.append(unit.directory)
-    record_work("registry_index", path.0, clock)
+    record_work(Operation.RegistryIndex, path.0, clock)
     completed = complete_legacy(units, path)?
     registry = RegistryUnits(
         units=completed,
