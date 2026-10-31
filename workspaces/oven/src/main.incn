@@ -111,9 +111,6 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command == "run":
         run(rest)
         return
-    if command == "_run-built":
-        run_built(rest)
-        return
     if command == "check":
         check(rest)
         return
@@ -303,21 +300,6 @@ def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
         else:
             own.append(argument)
     return (own, passed)
-
-
-def run_built(arguments: list[str]) -> None:
-    """
-    Execute a program the calling build just verified, through run's canonical process policy.
-
-    This internal caller owns input freshness.
-    """
-    own, passed = program_arguments(arguments)
-    match parse_options(own):
-        Err(reason) => fail(f"incan run: {reason}", 2)
-        Ok(options) =>
-            if len(options.program_entries) > 0:
-                fail("a built program already has its selected entries", 2)
-            finish("run", run_program(Path(options.path), passed, options.argv0))
 
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
