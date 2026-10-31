@@ -1,4 +1,4 @@
-# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, numeric arguments that violate a parameterized Rust bound, a later use that conflicts with the owner arguments a local's first use fixed, and an exclusive borrow of an immutable binding that holds a shared socket reference are refused (#2256, #2481)
+# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, numeric arguments that violate a parameterized Rust bound, method results with unfixed parameters, borrowed scalar callback returns, a later use that conflicts with the owner arguments a local's first use fixed, and an exclusive borrow of an immutable binding that holds a shared socket reference are refused (#2256, #2481)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
@@ -30,6 +30,7 @@
 #   Type mismatch: expected 'i64', found 'Str'
 #   Rust parameter requires a mutable borrow of 'shared_socket'
 #   does not satisfy bound `std::convert::AsRef<std::ffi::OsStr>`
+#   sum`: its type parameter `S` is not fixed by the call
 #   Rust callback cannot return a borrowed scalar without a retained lifetime contract
 # expect-exit: 1
 
@@ -41,6 +42,7 @@ from rust::std::collections import HashMap
 from rust::std::convert import AsRef, identity
 from rust::std::env import VarError, set_var
 from rust::std::io import Read, Write
+from rust::std::iter import Iterator as NativeIterator
 from rust::std::mem import MaybeUninit, size_of_val
 from rust::std::os::unix::net import UnixStream
 from rust::std::os::unix::process import CommandExt
@@ -191,6 +193,19 @@ def conflicting_first_use() -> None:
     table.insert(2, "b")
 
 
+def unfixed_method_result() -> None:
+    """Refuse a method's own open result parameter with its open-parameter reason."""
+    values: Vec[int] = Vec.new()
+    total = values.into_iter().sum()
+
+
+def borrowed_scalar_key() -> None:
+    """Refuse a native callback that would return its borrowed scalar input without a lifetime contract."""
+    mut values: Vec[int] = Vec.new()
+    values.push(1)
+    values.sort_by_key((value) => value)
+
+
 def read_through_a_shared_binding() -> None:
     """Refuse `Read for &UnixStream`, which lends the shared reference itself exclusively, on an immutable binding."""
     match UnixStream.pair():
@@ -203,13 +218,6 @@ def read_through_a_shared_binding() -> None:
                     _ = shared_socket.read_exact(got)
                 None => pass
         Err(_) => pass
-
-
-def borrowed_scalar_key() -> None:
-    """Refuse a native callback that would return its borrowed scalar input without a lifetime contract."""
-    mut values: Vec[int] = Vec.new()
-    values.push(1)
-    values.sort_by_key((value) => value)
 
 
 def main() -> None:
@@ -243,5 +251,6 @@ def main() -> None:
     # `mut` binding lends its shared reference exclusively.
     unselected_callees()
     conflicting_first_use()
+    unfixed_method_result()
     borrowed_scalar_key()
     read_through_a_shared_binding()
