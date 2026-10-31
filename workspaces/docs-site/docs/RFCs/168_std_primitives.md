@@ -1,6 +1,6 @@
 # RFC 168: `std.primitives`
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-31
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -16,7 +16,7 @@
     - RFC 160 (Incan-authored vocabulary)
     - RFC 164 (explicit ownership and borrowing contracts)
     - RFC 165 (typed embedded storage)
-- **Issue:** —
+- **Issue:** [#2501](https://github.com/encero-systems/incan/issues/2501)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
