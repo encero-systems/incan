@@ -1,0 +1,9 @@
+"""Whole numbers written as text, as settings, arguments and system answers give them."""
+
+
+pub def digits_only(text: str) -> bool:
+    """Whether every character of `text` is an ASCII decimal digit."""
+    for index in range(len(text)):
+        if text[index] not in "0123456789":
+            return false
+    return true

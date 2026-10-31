@@ -1,0 +1,6 @@
+from pub::shared import greeting
+
+
+def main() -> None:
+    """Print the shared library's greeting."""
+    println(greeting())

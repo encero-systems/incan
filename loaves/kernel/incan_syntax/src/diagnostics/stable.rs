@@ -315,6 +315,19 @@ const COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS: DiagnosticCatalogEntry = Di
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
 };
 
+const ITERATED_PLACE_REPLACEMENT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0121",
+    title: "Replacement of an iterated collection",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A statement loop still borrows a list whose storage an assignment would replace.",
+    explanation: "Direct list iteration borrows the existing collection. Replacing that collection or its parent invalidates the iterator and its item views. Duckborrowing cannot repair the conflict with an implicit clone because that would change which storage the loop observes.",
+    examples: &["for item in client.pending:\n    client.pending = []"],
+    common_causes: &["Replacing a list field inside a loop over the same field."],
+    fixes: &["Finish the borrowed iteration before replacing the collection, or iterate an explicit clone."],
+    docs_url: None,
+};
+
 const RUST_BORROW_WITHOUT_LIFETIME_CONTRACT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0120",
     title: "Returned or stored Rust borrow requires a lifetime contract",
@@ -745,6 +758,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS,
     RUST_OWNER_TYPE_ARGS_NOT_INFERRED,
     RUST_BORROW_WITHOUT_LIFETIME_CONTRACT,
+    ITERATED_PLACE_REPLACEMENT,
     CALLABLE_MARKER_NOT_SUPPORTED,
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,

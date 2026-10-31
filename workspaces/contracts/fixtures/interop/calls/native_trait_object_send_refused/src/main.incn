@@ -1,0 +1,22 @@
+# behavior: a class implementing the principal Rust trait is still refused as a `Send` trait object when it holds a value that is not `Send` (#2481)
+# expect-exit: 1
+# expect-stderr-contains:
+#   rustc cannot prove
+#   Callbacks
+
+"""Refuse a callback whose shared allocation cannot cross to another thread."""
+
+from rust::std::rc import Rc
+from rust::tiny_driver import Callbacks, run_compiler
+
+
+class Shared with Callbacks:
+    """Implement the callback while holding a value that is not `Send`."""
+
+    retained: Rc[int]
+
+
+def main() -> None:
+    """Never runs: the program is refused."""
+    mut hooks = Shared(retained=Rc.new(1))
+    run_compiler(["shared"], hooks)

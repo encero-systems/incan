@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 use crate::ast::*;
-use crate::ast_walk::{any_expr_in_body, any_expr_in_expr, any_expr_in_program};
+use crate::ast_walk::{any_expr_in_body, any_expr_in_declaration, any_expr_in_expr};
 use crate::body_ir::free_vars::free_vars_in_closure_body;
 use crate::diagnostics::errors;
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, SymbolKind, TypeInfo};
@@ -68,7 +68,7 @@ struct CallableCandidate<'a> {
 
 /// Names this module reads as values rather than calling them: identifiers read other than as a callee, and member
 /// names read other than as a method call's method.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct ValueReads {
     names: HashSet<String>,
     members: HashSet<String>,
@@ -82,7 +82,12 @@ impl TypeChecker {
         if self.checks_standard_library_source() {
             return;
         }
-        let reads = value_reads(program);
+        self.plan_closure_holding_callables_from_uses(program, value_reads(program));
+    }
+
+    /// Apply the existing eligibility rules to final source-use membership. Keeping scans outside this operation
+    /// lets a record producer replace one contribution without rescanning the other bodies.
+    fn plan_closure_holding_callables_from_uses(&mut self, program: &Program, reads: ValueReads) {
         let extended_classes = program
             .declarations
             .iter()
@@ -593,10 +598,22 @@ impl TypeChecker {
 /// decorator, which is applied to the function it decorates as a value, and a member that is not the method of a method
 /// call.
 fn value_reads(program: &Program) -> ValueReads {
+    let mut result = ValueReads::default();
+    for declaration in &program.declarations {
+        let contribution = declaration_value_reads(declaration);
+        result.names.extend(contribution.names);
+        result.members.extend(contribution.members);
+    }
+    result
+}
+
+/// Scan one source declaration's name/member-as-value uses, including defaults and decorator applications. Set union
+/// exactly matches the original program scan because every counted callee is also one of the counted identifiers.
+fn declaration_value_reads(declaration: &Spanned<Declaration>) -> ValueReads {
     let mut callees = HashMap::<String, usize>::new();
     let mut idents = HashMap::<String, usize>::new();
     let mut members = HashSet::new();
-    any_expr_in_program(program, |expr| {
+    any_expr_in_declaration(declaration, |expr| {
         match expr {
             Expr::Call(callee, _, _) => {
                 if let Expr::Ident(name) = &callee.node {
@@ -616,24 +633,22 @@ fn value_reads(program: &Program) -> ValueReads {
         .filter(|(name, count)| callees.get(name).copied().unwrap_or(0) < *count)
         .map(|(name, _)| name)
         .collect::<HashSet<_>>();
-    for decl in &program.declarations {
-        let (decorators, methods): (&[Spanned<Decorator>], &[Spanned<MethodDecl>]) = match &decl.node {
-            Declaration::Function(function) => (&function.decorators, &[]),
-            Declaration::Model(model) => (&model.decorators, &model.methods),
-            Declaration::Class(class) => (&class.decorators, &class.methods),
-            Declaration::Newtype(newtype) => (&newtype.decorators, &newtype.methods),
-            Declaration::Enum(enum_decl) => (&enum_decl.decorators, &enum_decl.methods),
-            Declaration::Trait(trait_decl) => (&trait_decl.decorators, &trait_decl.methods),
-            _ => continue,
-        };
-        let method_decorators = methods.iter().flat_map(|method| method.node.decorators.iter());
-        names.extend(
-            decorators
-                .iter()
-                .chain(method_decorators)
-                .map(|decorator| decorator.node.name.clone()),
-        );
-    }
+    let (decorators, methods): (&[Spanned<Decorator>], &[Spanned<MethodDecl>]) = match &declaration.node {
+        Declaration::Function(function) => (&function.decorators, &[]),
+        Declaration::Model(model) => (&model.decorators, &model.methods),
+        Declaration::Class(class) => (&class.decorators, &class.methods),
+        Declaration::Newtype(newtype) => (&newtype.decorators, &newtype.methods),
+        Declaration::Enum(enum_decl) => (&enum_decl.decorators, &enum_decl.methods),
+        Declaration::Trait(trait_decl) => (&trait_decl.decorators, &trait_decl.methods),
+        _ => (&[], &[]),
+    };
+    let method_decorators = methods.iter().flat_map(|method| method.node.decorators.iter());
+    names.extend(
+        decorators
+            .iter()
+            .chain(method_decorators)
+            .map(|decorator| decorator.node.name.clone()),
+    );
     ValueReads { names, members }
 }
 
@@ -797,3 +812,80 @@ fn call_callee_span(call: &Spanned<Expr>) -> Span {
         _ => call.span,
     }
 }
+
+#[cfg(test)]
+mod contribution_tests {
+    use super::{ValueReads, declaration_value_reads, value_reads};
+    use crate::ast::{Declaration, Expr};
+    use crate::ast_walk::any_expr_in_program;
+    use std::collections::{HashMap, HashSet};
+
+    /// Compare per-source contributions against the original whole-program expression scan. Removing a value use in
+    /// one declaration must not remove another contributor's membership, and a direct call alone is not a value use.
+    #[test]
+    fn source_contributions_preserve_value_use_membership() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def apply(callback: (int) -> int, value: int) -> int:\n    return callback(value)\ndef direct(value: int) -> int:\n    return value\ndef caller() -> int:\n    return apply(direct, 1)\ndef another() -> (int) -> int:\n    return direct\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut callees = HashMap::<String, usize>::new();
+        let mut identifiers = HashMap::<String, usize>::new();
+        let mut members = HashSet::new();
+        any_expr_in_program(&program, |expr| {
+            match expr {
+                Expr::Call(callee, _, _) => {
+                    if let Expr::Ident(name) = &callee.node {
+                        *callees.entry(name.clone()).or_default() += 1;
+                    }
+                }
+                Expr::Ident(name) => *identifiers.entry(name.clone()).or_default() += 1,
+                Expr::Field(_, member) => {
+                    members.insert(member.clone());
+                }
+                _ => {}
+            }
+            false
+        });
+        let names = identifiers
+            .into_iter()
+            .filter(|(name, count)| callees.get(name).copied().unwrap_or(0) < *count)
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(value_reads(&program), ValueReads { names, members });
+        let contributions = program
+            .declarations
+            .iter()
+            .filter_map(|declaration| {
+                let Declaration::Function(function) = &declaration.node else {
+                    return None;
+                };
+                Some((function.name.as_str(), declaration_value_reads(declaration)))
+            })
+            .collect::<HashMap<_, _>>();
+        assert!(
+            contributions
+                .get("caller")
+                .ok_or("missing caller")?
+                .names
+                .contains("direct")
+        );
+        assert!(
+            contributions
+                .get("another")
+                .ok_or("missing another")?
+                .names
+                .contains("direct")
+        );
+        assert!(
+            !contributions
+                .get("caller")
+                .ok_or("missing caller")?
+                .names
+                .contains("apply")
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "capturing_callables_legacy_uses.rs"]
+mod legacy_uses;

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Bind a compiler build to the selected runtime/std generation without overriding its source-built incan_lang.
+# Bind a compiler build to one source-validated native support generation.
 # Usage: prepare-compiler-home.sh INSTALLED_HOME COMPILER_HOME
 set -eu
 
@@ -19,13 +19,14 @@ else
     ln -s "$selected/loaves" "$destination/loaves"
 fi
 
-# The source compiler graph owns incan_lang. Every other installed root stays exact, including the runtime.
+# Installed producers are validated against current source by Oven. Removing a shared root would rebake a second
+# code generation variant while the runtime and standard Loaves still require the installed producer's exact bytes.
 temporary=$(mktemp "$destination/toolchain.json.XXXXXX")
 trap '[[ -z ${temporary:-} ]] || rm -- "$temporary"' EXIT
 jq --arg base "$selected/" '
     def absolute: if startswith("/") then . else $base + . end;
     .driver |= absolute | .sysroot |= absolute | .rust_abi |= map(absolute)
-    | .externs |= map(select(.name != "incan_lang") | .path |= absolute)
+    | .externs |= map(.path |= absolute)
     | .search |= map(absolute)
     | if (.registry_units // "") != "" then .registry_units |= absolute else . end
     | if (.registry_lock // "") != "" then .registry_lock |= absolute else . end

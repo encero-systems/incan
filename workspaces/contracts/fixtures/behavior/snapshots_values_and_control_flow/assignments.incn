@@ -1,11 +1,12 @@
-# behavior: simple, swapped, augmented, collection-element and chained assignments leave each variable with its final value
+# behavior: assignments retain their final values; repeated discards evaluate each value without binding or sharing a type (#2481)
 # expect-stdout:
 #   42 hello true 2 1
 #   0 6.0 hello world
 #   10 40 10 2
 #   5 5 5
+#   discarded 4
 
-"""Test variable assignments and augmented assignments"""
+"""Observe binding updates and independently evaluated discarded values."""
 
 
 def test_basic_assignments() -> None:
@@ -28,14 +29,14 @@ def test_basic_assignments() -> None:
 def test_augmented_assignments() -> None:
     # Arithmetic augmented assignments
     mut x: int = 10
-    x += 5   # x = 15
-    x -= 3   # x = 12
-    x *= 2   # x = 24
-    x %= 4   # x = 0
+    x += 5  # x = 15
+    x -= 3  # x = 12
+    x *= 2  # x = 24
+    x %= 4  # x = 0
 
     # Division always yields float in Incan, so keep a float-typed variable here
     mut xf: float = 24.0
-    xf /= 4   # xf = 6.0
+    xf /= 4  # xf = 6.0
 
     # String concatenation
     mut s: str = "hello"
@@ -65,8 +66,35 @@ def test_multiple_targets() -> None:
     println(f"{x} {y} {z}")
 
 
+def record_discard(mut effects: list[int], text: str) -> str:
+    """Record one evaluation and return an owned value for its caller to discard."""
+    effects.append(len(effects))
+    return text
+
+
+def test_discards() -> None:
+    """Evaluate repeated discards of unrelated types in one scope and across branches and loops."""
+    mut effects: list[int] = []
+    _ = record_discard(effects, "first")
+    _ = len(effects)
+    _ = ["owned", "list"]
+    _: u8 = 7
+    if len(effects) == 1:
+        _ = record_discard(effects, "branch")
+        _ = true
+    for index in range(2):
+        _ = record_discard(effects, str(index))
+        _ = index
+    _ = record_discard
+    _ = () => len(effects)
+    assert effects == [0, 1, 2, 3]
+    println(f"discarded {len(effects)}")
+
+
 def main() -> None:
+    """Observe assignments and repeated discards without introducing discarded names."""
     test_basic_assignments()
     test_augmented_assignments()
     test_collection_assignments()
     test_multiple_targets()
+    test_discards()

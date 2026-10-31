@@ -1,0 +1,136 @@
+"""Bounded engine frames, correlated sessions and data-credit back-pressure over the core Unix transport."""
+
+from pub::incan_platform.ipc import Connection, Credits
+from engine_codec import decode, encode
+from engine_messages import Ack, Message
+from engine_wire import CONTROL, DATA_CREDITS, HEADER_SIZE, MAX_PAYLOAD, Header, Refusal, RefusalKind
+from engine_wire import decode_header, encode_header, zero_id
+
+
+pub enum SendOutcome:
+    """A blocked caller retains its own message; the transport never queues an uncredited body."""
+
+    Sent(u64)
+    Blocked
+
+
+pub model Envelope:
+    """One validated, correlated frame; the receiver acknowledges it after consuming its body."""
+
+    pub header: Header
+    pub message: Message
+
+
+pub class Channel:
+    """One duplex connection with eight data credits and an unqueued control lane."""
+
+    pub transport: Connection
+    pub session: bytes = zero_id()
+    pub sent: u64 = 0
+    pub received: u64 = 0
+    # Credits this end spent on data frames the peer has not acknowledged yet.
+    pub pending: Credits = Credits(limit=DATA_CREDITS)
+    # Credits the peer spent on data frames this end has not consumed yet.
+    pub incoming: Credits = Credits(limit=DATA_CREDITS)
+    pub retired: bool = false
+
+    def send(mut self, request: bytes, message: Message) -> Result[SendOutcome, Refusal]:
+        """Apply back-pressure before encoding: cancellation and acknowledgments bypass data credits."""
+        if self.retired:
+            return Err(Refusal(kind=RefusalKind.Transport, detail="engine connection is retired"))
+        control = is_control(message)
+        if not control and self.pending.exhausted():
+            return Ok(SendOutcome.Blocked)
+        tag, raw = encode(message)?
+        mut flags = 0
+        if control:
+            flags = CONTROL
+        header = Header(tag=tag, flags=flags, session=self.session, request=request, sequence=self.sent, length=len(raw))
+        encoded = encode_header(header)?
+        self.transport.write_part(encoded, "engine header").map_err(transport_refusal)?
+        self.transport.write_part(raw, "engine body").map_err(transport_refusal)?
+        sequence = self.sent
+        self.sent += 1
+        if not control:
+            self.pending.spend(sequence).map_err(credit_refusal)?
+        return Ok(SendOutcome.Sent(sequence))
+
+    def receive(mut self) -> Result[Envelope, Refusal]:
+        """Retire on malformed, duplicate or stale frames; payload allocation follows validated headers."""
+        if self.retired:
+            return Err(Refusal(kind=RefusalKind.Transport, detail="engine connection is retired"))
+        match self.read_frame():
+            Ok(frame) => return Ok(frame)
+            Err(reason) =>
+                self.retired = true
+                return Err(reason)
+
+    def read_frame(mut self) -> Result[Envelope, Refusal]:
+        """Check header, session and sequence before decoding the bounded binary body."""
+        raw = self.transport.read_part(HEADER_SIZE, HEADER_SIZE).map_err(short_read)?
+        header = decode_header(raw)?
+        if header.sequence != self.received:
+            return Err(Refusal(kind=RefusalKind.Sequence, detail="stale or unsolicited engine sequence"))
+        if header.session != self.session:
+            if self.session != zero_id() or header.tag != 2 or header.session == zero_id():
+                return Err(Refusal(kind=RefusalKind.Identity, detail="engine session mismatch"))
+            self.session = header.session
+        body = self.transport.read_part(header.length, MAX_PAYLOAD).map_err(short_read)?
+        message = decode(header.tag, body)?
+        mut expected_flags = 0
+        if is_control(message):
+            expected_flags = CONTROL
+        if header.flags != expected_flags:
+            return Err(Refusal(kind=RefusalKind.Flags, detail="message used the wrong credit lane"))
+        self.received += 1
+        match message:
+            Message.Ack(ack) => self.credit(ack.sequence)?
+            _ =>
+                if header.flags == 0:
+                    if self.incoming.exhausted():
+                        return Err(Refusal(kind=RefusalKind.Credit, detail="peer exceeded data credits"))
+                    self.incoming.spend(header.sequence).map_err(credit_refusal)?
+        return Ok(Envelope(header=header, message=message))
+
+    def credit(mut self, sequence: u64) -> Result[None, Refusal]:
+        """Return one exact outstanding credit; forged or repeated acknowledgments retire the connection."""
+        return self.pending.regain(sequence).map_err(
+            (_) => Refusal(kind=RefusalKind.Credit, detail="acknowledgment names no outstanding frame"),
+        )
+
+    def acknowledge(mut self, frame: Envelope) -> Result[None, Refusal]:
+        """Return credit only after the caller consumes one data frame; control needs no acknowledgment."""
+        if frame.header.flags == CONTROL:
+            return Ok(None)
+        sequence = frame.header.sequence
+        if not self.incoming.holds(sequence):
+            return Err(Refusal(kind=RefusalKind.Credit, detail="frame was already acknowledged"))
+        _ = self.send(frame.header.request, Message.Ack(Ack(sequence=sequence)))?
+        return self.incoming.regain(sequence).map_err(credit_refusal)
+
+
+pub def is_control(message: Message) -> bool:
+    """Lifecycle cancellation and acknowledgment have an independent, synchronous, unqueued lane."""
+    match message:
+        Message.Refused(_) => return true
+        Message.Ack(_) => return true
+        Message.Cancel(_) => return true
+        Message.Cancelled(_) => return true
+        Message.Drain(_) => return true
+        Message.Stop(_) => return true
+        _ => return false
+
+
+pub def transport_refusal(detail: str) -> Refusal:
+    """Map the core's legacy transport boundary into the engine's typed failure contract."""
+    return Refusal(kind=RefusalKind.Transport, detail=detail)
+
+
+pub def short_read(detail: str) -> Refusal:
+    """A timed-out or truncated frame is never a valid shorter payload."""
+    return Refusal(kind=RefusalKind.ShortRead, detail=detail)
+
+
+pub def credit_refusal(detail: str) -> Refusal:
+    """A data frame the credit window refuses."""
+    return Refusal(kind=RefusalKind.Credit, detail=detail)

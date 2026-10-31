@@ -34,6 +34,7 @@ mod nominal_inventory;
 pub mod numeric_adapters;
 pub mod parsed_module;
 pub mod partial_projection;
+pub mod record_read;
 pub mod registry_metadata;
 pub mod resolved_type_subst;
 pub mod rust_type_display;

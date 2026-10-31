@@ -51,6 +51,20 @@ pub enum DriverError {
     Invocation(String),
 }
 
+/// Make the process-global compilation slots usable again after a contained panic: clear the poison the panic left
+/// on them and drop the plan and failure of the compilation it ended.
+pub(crate) fn recover() {
+    COMPILATION.clear_poison();
+    PLAN.clear_poison();
+    FAILURE.clear_poison();
+    if let Ok(mut plan) = PLAN.lock() {
+        *plan = None;
+    }
+    if let Ok(mut failure) = FAILURE.lock() {
+        *failure = None;
+    }
+}
+
 /// Read the active plan without retaining the slot lock while rustc resolves callees.
 fn active_plan() -> Result<Arc<Plan>, DriverError> {
     PLAN.lock()
@@ -280,6 +294,15 @@ struct Callbacks<'manifest> {
 }
 
 impl Callbacks<'_> {
+    /// Replace the session's plan with one refined against native metadata; MIR building reads the replacement.
+    fn replace_plan(&mut self, tcx: TyCtxt<'_>, plan: Plan) {
+        self.plan = Arc::new(plan);
+        match PLAN.lock() {
+            Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
+            Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
+        }
+    }
+
     /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
     /// errors.
     fn declare_callables(&self, compiler: &interface::Compiler, krate: &mut ast::Crate, sources: &Sources<'_>) {
@@ -424,20 +447,14 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             refuse(tcx, error);
         }
         match instantiate_generic_externals(tcx, &self.plan) {
-            Ok(Some(plan)) => {
-                self.plan = Arc::new(plan);
-                match PLAN.lock() {
-                    Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
-                    Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
-                }
-            }
+            Ok(Some(plan)) => self.replace_plan(tcx, plan),
             Ok(None) => {}
             Err(error) => refuse(tcx, error),
         }
-        for model in self.plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-            if let Err(error) = verify_library_layout(tcx, model) {
-                refuse(tcx, error);
-            }
+        match verify_library_layouts(tcx, &self.plan) {
+            Ok(Some(plan)) => self.replace_plan(tcx, plan),
+            Ok(None) => {}
+            Err(error) => refuse(tcx, error),
         }
         for value in self.plan.enums.iter().filter(|value| !value.library_item.is_empty()) {
             if let Err(error) = verify_library_enum(tcx, value) {
@@ -577,6 +594,7 @@ fn native_bridge_items(plan: &Plan, span: rustc_span::Span) -> Result<Vec<Box<as
     items.extend(crate::fallible_bridges::items(plan, span)?);
     items.extend(crate::fallible_bridges::ordinary_items(plan, span)?);
     items.extend(crate::callable_bridges::items(plan, span)?);
+    items.extend(crate::native_trait_bridges::items(plan, span)?);
     Ok(items)
 }
 
@@ -619,10 +637,39 @@ fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> b
     }
 }
 
+/// Check every retained native layout against metadata. A field whose planned type is not its native type becomes
+/// opaque in a refined plan, which is validated again: any read, write or construction relying on that field is then
+/// refused, while the layout's other fields stay usable. No refinement is needed when every planned type matches.
+fn verify_library_layouts(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
+    let mut opaque = Vec::new();
+    for (owner, model) in plan.models.iter().enumerate() {
+        if !model.library_item.is_empty() {
+            opaque.extend(verify_library_layout(tcx, model)?.into_iter().map(|slot| (owner, slot)));
+        }
+    }
+    if opaque.is_empty() {
+        return Ok(None);
+    }
+    let mut refined = plan.clone();
+    for (owner, slot) in opaque {
+        let model = &mut refined.models[owner];
+        let index = i64::try_from(slot).map_err(|_| PlanError::Unsupported {
+            function: model.library_item.clone(),
+            reason: "native field slot overflow".into(),
+        })?;
+        model.fields[slot].ty = PlanType::Unit;
+        model.unavailable_native_fields.push(index);
+    }
+    // The unit's entry was checked before the session began; every declaration and body contract is checked again.
+    validation::validate(&refined, true)?;
+    Ok(Some(refined))
+}
+
 /// Check a retained native layout against its crate's metadata at the plan's explicit type arguments, including their
-/// bounds. Fields keep their names and instantiated types in order; a field marked public must be public in metadata.
-/// An opaque carrier grants no projection; a field-bearing layout requires a native struct after alias instantiation.
-fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
+/// bounds. Fields keep their names in order, and a field marked public must be public in metadata. Return the slots
+/// whose planned type is not the field's instantiated native type, for the caller to make opaque. An opaque carrier
+/// grants no projection; a field-bearing layout requires a native struct after alias instantiation.
+fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<Vec<usize>, PlanError> {
     let invalid = |reason: &str| PlanError::Unsupported {
         function: model.library_item.clone(),
         reason: reason.into(),
@@ -631,7 +678,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
         types::native_trait_object(tcx, def, &model.library_type_arguments)?;
         return if model.fields.is_empty() {
-            Ok(())
+            Ok(Vec::new())
         } else {
             Err(invalid("native trait object grants no field layout"))
         };
@@ -650,7 +697,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         }
     }
     if model.fields.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let native = tcx.type_of(def).instantiate(tcx, arguments).skip_normalization();
     let rustc_middle::ty::Adt(adt, arguments) = native.kind() else {
@@ -665,22 +712,23 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
+    let mut mismatched = Vec::new();
     for (slot, (field, planned)) in declared.iter().zip(&model.fields).enumerate() {
         if model.field_public.get(slot) == Some(&true) && !field.vis.is_public() {
             return Err(invalid("public native field is private in metadata"));
         }
-        if field.name.as_str() != planned.name
-            || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
-        {
+        if field.name.as_str() != planned.name {
             return Err(invalid(&format!(
-                "stdlib layout field `{}` at slot {slot} differs from metadata: native {}, planned {:?}",
-                planned.name,
-                field.ty(tcx, arguments).skip_normalization(),
-                planned.ty,
+                "stdlib layout field `{}` at slot {slot} differs from metadata: native {}",
+                planned.name, field.name,
             )));
         }
+        let opaque = i64::try_from(slot).is_ok_and(|slot| model.unavailable_native_fields.contains(&slot));
+        if !opaque && field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)? {
+            mismatched.push(slot);
+        }
     }
-    Ok(())
+    Ok(mismatched)
 }
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
@@ -889,9 +937,13 @@ pub fn compile(
     if shared_store.is_some() {
         args.extend(["-Cprefer-dynamic".into(), "-Crpath".into()]);
         // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
-        if identity.target.ends_with("-apple-darwin") {
+        let darwin = identity.target.ends_with("-apple-darwin");
+        if darwin {
             args.push("-Clinker=/usr/bin/ld".into());
         }
+        // The executable is linked in the store and run from a copy elsewhere, so its libraries are also found
+        // through absolute search paths, which do not depend on where the copy lives.
+        args.extend(absolute_rpaths(&all, identity, darwin));
     }
     args.extend_from_slice(rustc_args);
     timing.mark("native_arguments");
@@ -1003,4 +1055,28 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         callees::verify_bounds(tcx, def, arguments)?;
     }
     Ok(())
+}
+
+/// Absolute run-time search paths for a shared-linkage executable: each shared library's directory and the
+/// toolchain's own library directory, so a copy of the executable loads them wherever it is placed.
+fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darwin: bool) -> Vec<String> {
+    let mut directories: Vec<PathBuf> = vec![identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib")];
+    for (_, path) in linked {
+        let shared = matches!(path.extension().and_then(|e| e.to_str()), Some("dylib" | "so"));
+        if let (true, Some(parent)) = (shared, path.parent()) {
+            if !directories.iter().any(|known| known == parent) {
+                directories.push(parent.to_path_buf());
+            }
+        }
+    }
+    let mut args = Vec::new();
+    for directory in directories {
+        if darwin {
+            args.push("-Clink-arg=-rpath".into());
+            args.push(format!("-Clink-arg={}", directory.display()));
+        } else {
+            args.push(format!("-Clink-arg=-Wl,-rpath,{}", directory.display()));
+        }
+    }
+    args
 }

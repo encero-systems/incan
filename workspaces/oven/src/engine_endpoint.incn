@@ -1,0 +1,132 @@
+"""Discover one locked engine per physical store and authenticate startup through incan.engine/1."""
+
+from rust::std::env import current_exe
+from rust::std::fs import metadata
+from rust::std::os::unix::fs import MetadataExt
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Command, Stdio
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from pub::incan_platform.ipc import dial
+from core_process import executable as current_executable, spawn_detached, running, terminate
+from engine_channel import Channel, SendOutcome
+from engine_messages import Message
+from engine_state import Identity
+from engine_wire import Refusal, RefusalKind, zero_id
+from owner_endpoint import bindable, prepare_directory, socket_prefix
+from unit_freshness import fingerprint
+
+const STARTUP_POLLS: int = 2500
+
+
+pub model ServiceEndpoint:
+    """Disposable endpoint plus store-level scheduling and startup locks."""
+
+    pub socket: str
+    pub lock: str
+    pub startup_lock: str
+
+
+pub def endpoint(root: Path, identity: Identity) -> Result[ServiceEndpoint, Refusal]:
+    """Keep discovery short and private; the full identity is checked by the handshake."""
+    directory = root.joinpath("engine")
+    prepare_directory(directory.0).map_err(transport)?
+    name = fingerprint([identity.store_id, identity.profile, identity.service_generation]).map_err(transport)?
+    path = f"{socket_prefix(directory.0).map_err(transport)?}e-{name[:20]}.sock"
+    bindable(path).map_err(transport)?
+    return Ok(
+        ServiceEndpoint(
+            socket=path,
+            lock=directory.joinpath("service.lock").0,
+            startup_lock=directory.joinpath("startup.lock").0,
+        ),
+    )
+
+
+pub def owner_uid(root: Path) -> Result[u32, Refusal]:
+    """Read the store owner's effective user identity through the OS metadata wrapper."""
+    return metadata(root.0).map((found) => found.uid()).map_err((error) => transport(str(error)))
+
+
+pub def connect(root: Path, identity: Identity, idle: int = 600) -> Result[Channel, Refusal]:
+    """Serialize startup, launch the same Oven executable and require Welcome before returning."""
+    executable = current_executable().map_err(transport)?
+    return connect_with(root, identity, executable, idle)
+
+
+pub def connect_with(root: Path, identity: Identity, executable: str, idle: int = 600) -> Result[Channel, Refusal]:
+    """Connect using an explicit Oven executable, allowing process-level tests of the installed service entry."""
+    selected = endpoint(root, identity)?
+    held = Path(selected.startup_lock).lock_exclusive().map_err((error) => transport(error.message()))?
+    match dial(selected.socket):
+        Ok(transport) => return handshake(Channel(transport=transport), identity)
+        Err(_) => pass
+    # The service holds this lock for its entire lifetime, including its final drain.
+    if not service_available(selected.lock)?:
+        return Err(
+            Refusal(kind=RefusalKind.Identity, detail="another engine generation owns this store; drain it first"),
+        )
+    arguments = [
+        "--internal-engine",
+        root.0,
+        identity.store_id,
+        identity.profile,
+        identity.service_generation,
+        identity.compiler_generation,
+        str(idle),
+    ]
+    mut child = spawn_detached(executable, arguments).map_err(transport)?
+    for _poll in range(STARTUP_POLLS):
+        match dial(selected.socket):
+            Ok(transport) => return handshake(Channel(transport=transport), identity)
+            Err(_) => pass
+        if not running(child).map_err(transport)?:
+            return Err(transport("engine exited before Welcome"))
+        sleep(Duration.from_millis(2))
+    terminate(child).map_err(transport)?
+    return Err(transport("engine did not acknowledge startup"))
+
+
+pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refusal]:
+    """Require OS user, exact negotiated identities and limits; startup errors never select legacy compilation."""
+    mut channel = initial
+    if channel.transport.peer().map_err(transport)?.uid != identity.uid:
+        return Err(Refusal(kind=RefusalKind.Identity, detail="engine service peer user mismatch"))
+    channel.transport.wait_at_most(5)
+    channel.transport.write_at_most(5)
+    sent = channel.send(zero_id(), Message.Hello(identity.hello()))?
+    match sent:
+        SendOutcome.Blocked => return Err(transport("initial Hello has no data credit"))
+        SendOutcome.Sent(_) => pass
+    reply = channel.receive()?
+    match reply.message:
+        Message.Welcome(welcome) =>
+            if welcome.store_id != identity.store_id or welcome.profile != identity.profile:
+                return Err(Refusal(kind=RefusalKind.Identity, detail="engine Welcome store or profile mismatch"))
+            if welcome.service_generation != identity.service_generation:
+                return Err(Refusal(kind=RefusalKind.Identity, detail="engine Welcome service generation mismatch"))
+            if welcome.compiler_generation != identity.compiler_generation or welcome.peer_uid != identity.uid:
+                return Err(Refusal(kind=RefusalKind.Identity, detail="engine Welcome compiler or peer mismatch"))
+            if welcome.credits != 8 or welcome.payload_limit != 65536:
+                return Err(Refusal(kind=RefusalKind.Version, detail="engine Welcome transport limits mismatch"))
+        Message.Refused(reason) => return Err(Refusal(kind=RefusalKind.Identity, detail=reason.detail))
+        _ => return Err(transport("engine did not answer Hello with Welcome"))
+    channel.acknowledge(reply)?
+    # The Hello acknowledgment is consumed here so the first application reply is never stale control state.
+    ack = channel.receive()?
+    match ack.message:
+        Message.Ack(_) => pass
+        _ => return Err(transport("engine did not acknowledge Hello"))
+    return Ok(channel)
+
+
+pub def transport(detail: str) -> Refusal:
+    """Keep discovery and process failures typed at the engine boundary."""
+    return Refusal(kind=RefusalKind.Transport, detail=detail)
+
+
+def service_available(path: str) -> Result[bool, Refusal]:
+    """Probe and release the lifetime lock before spawning a child that must acquire it itself."""
+    available = Path(path).try_lock_exclusive().map_err((error) => transport(error.message()))?
+    return Ok(available is not None)

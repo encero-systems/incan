@@ -1,4 +1,4 @@
-# behavior: exact f32 values and f64 values are observed through println, str() and f-strings (integral floats keep their decimal point without changing their carrier width), an extern finite check passes a finite f32 through, scalars extracted from a model field, an Option field and a list are finite, and a NaN parsed into an f64 return flows on as the float it is
+# behavior: exact f32 values and f64 values are observed through println, str() and f-strings (integral floats keep their decimal point without changing their carrier width), an extern finite check passes a finite f32 through, scalars extracted from a model field, an Option field and a list are finite, exact-width scalar lists keep their native storage (#2438), and a NaN parsed into an f64 return flows on as the float it is
 # expect-stdout:
 #   2.5
 #   3.0
@@ -16,6 +16,8 @@
 #   2.5
 #   false
 #   finished
+#   1 1 1 1 1 1 1 1 1 1 1 1
+#   0.3
 
 rust.module("incan_std_core::num")
 
@@ -67,3 +69,26 @@ def main() -> None:
     println(observe_aggregate(samples, [0.5]))
     println(observe_exact(narrow, parsed_exact("nan")))
     println("finished")
+    observe_lists()
+
+
+model ScalarLists:
+    a: list[u8]
+    b: list[u16]
+    c: list[u32]
+    d: list[u64]
+    e: list[i8]
+    f: list[i16]
+    g: list[i32]
+    h: list[i64]
+    i: list[f32]
+    j: list[f64]
+    k: list[u128]
+    l: list[i128]
+
+
+def observe_lists() -> None:
+    narrow: f32 = 0.1
+    values = ScalarLists(a=[1u8], b=[1u16], c=[1u32], d=[1u64], e=[1i8], f=[1i16], g=[1i32], h=[1i64], i=[narrow], j=[1.0], k=[1u128], l=[1i128])
+    println(f"{len(values.a)} {len(values.b)} {len(values.c)} {len(values.d)} {len(values.e)} {len(values.f)} {len(values.g)} {len(values.h)} {len(values.i)} {len(values.j)} {len(values.k)} {len(values.l)}")
+    println(values.i[0] + values.i[0] + values.i[0])

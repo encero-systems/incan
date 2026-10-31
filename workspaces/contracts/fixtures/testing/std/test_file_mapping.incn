@@ -1,0 +1,108 @@
+# behavior: a test maps a file read-only, reads and hashes bytes at an offset in place; reads outside it are absent
+# expect-stdout-contains:
+#   test_file_mapping.incn::test_mapped_file_reads_ranges PASSED
+#   test_file_mapping.incn::test_views_retain_their_mapping PASSED
+#   test_file_mapping.incn::test_view_bounds_and_scalars PASSED
+
+"""A std.fs read-only mapping under `incan test`."""
+
+from std.fs import MappedView, Path
+from std.hash import sha256
+from std.testing import assert_true
+
+
+def test_mapped_file_reads_ranges() -> Result[None, str]:
+    """
+    Map a written file, read and hash a range inside it through a view, and see a range past its end come back absent.
+    """
+    path = Path("contracts-file-mapping")
+    path.write_bytes(b"incan bakery").map_err((error) => error.message())?
+    mapped = path.map_read().map_err((error) => error.message())?
+    assert_true(mapped.len() == 12)
+    match mapped.view(6, 6):
+        Some(found) =>
+            assert_true(found.to_bytes() == b"bakery")
+            mut hasher = sha256.new()
+            hasher.update_view(found)
+            assert_true(hasher.finalize_bytes() == sha256.digest(b"bakery"))
+        None => assert_true(false, "a range inside the mapping must be read")
+    match mapped.view(10, 4):
+        Some(_) => assert_true(false, "a range past the end must be absent")
+        None => assert_true(true)
+    match Path("contracts-file-mapping-absent").map_read():
+        Ok(_) => assert_true(false, "an absent file must not map")
+        Err(_) => assert_true(true)
+    return Ok(None)
+
+
+def returned_view(path: Path) -> Result[MappedView, str]:
+    """Return a subview after the local handle and parent view leave scope."""
+    mapped = path.map_read().map_err((error) => error.message())?
+    if let Some(parent) = mapped.view(1, 6):
+        if let Some(child) = parent.slice(1, 3):
+            return Ok(child)
+    return Err("a valid subview was absent")
+
+
+def required_view(found: Option[MappedView]) -> Result[MappedView, str]:
+    """Make a missing expected view a test failure."""
+    match found:
+        Some(view) => return Ok(view)
+        None => return Err("a valid mapped view was absent")
+
+
+def absent[T](value: Option[T]) -> bool:
+    """Test absence without requiring equality or ownership conversion of a mapped view."""
+    match value:
+        None => return true
+        Some(_) => return false
+
+
+def test_views_retain_their_mapping() -> Result[None, str]:
+    """A returned subview keeps its old inode alive even when the pathname is atomically replaced."""
+    path = Path("contracts-mapped-view-lifetime")
+    path.write_bytes(b"0123456789").map_err((error) => error.message())?
+    view = returned_view(path)?
+    replacement = Path("contracts-mapped-view-replacement")
+    replacement.write_bytes(b"new generation").map_err((error) => error.message())?
+    replacement.replace(path).map_err((error) => error.message())?
+    assert_true(view.len() == 3)
+    assert_true(view.to_bytes() == b"234")
+    assert_true(path.read_bytes().map_err((error) => error.message())? == b"new generation")
+    return Ok(None)
+
+
+def test_view_bounds_and_scalars() -> Result[None, str]:
+    """Offsets are view-relative, scalars can be unaligned, and overflow never widens a view."""
+    path = Path("contracts-mapped-view-scalars")
+    path.write_bytes(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\xff").map_err((error) => error.message())?
+    mapped = path.map_read().map_err((error) => error.message())?
+    view = required_view(mapped.view(1, 8))?
+    assert_true(view.read_u8(0) == Some(1u8))
+    assert_true(view.read_u16_le(0) == Some(513u16))
+    assert_true(view.read_u32_le(0) == Some(67305985u32))
+    assert_true(view.read_u64_le(0) == Some(578437695752307201u64))
+    assert_true(view.read_i16_le(0) == Some(513i16))
+    assert_true(view.read_i32_le(0) == Some(67305985i32))
+    assert_true(view.read_i64_le(0) == Some(578437695752307201i64))
+    assert_true(absent(view.read_u64_le(1)))
+    assert_true(absent(view.read_u8(8)))
+    assert_true(absent(view.read_u8(-1)))
+    assert_true(absent(view.slice(-1, 1)))
+    assert_true(absent(view.slice(0, -1)))
+    assert_true(absent(view.slice(9, 0)))
+    assert_true(absent(view.slice(1, 9223372036854775807)))
+    empty = required_view(view.slice(8, 0))?
+    assert_true(empty.len() == 0 and absent(empty.read_u8(0)))
+    assert_true(absent(mapped.view(9223372036854775807, 1)))
+    assert_true(absent(mapped.view(1, 9223372036854775807)))
+    signed = required_view(mapped.view(9, 1))?
+    assert_true(signed.read_i8(0) == Some(-1i8))
+    floats = Path("contracts-mapped-view-floats")
+    floats.write_bytes(b"\x00\x00\xc0?\x00\x00\x00\x00\x00\x00\xf8?").map_err((error) => error.message())?
+    float_mapping = floats.map_read().map_err((error) => error.message())?
+    float_view = required_view(float_mapping.view(0, 12))?
+    one_and_a_half: f32 = 1.5
+    assert_true(float_view.read_f32_le(0) == Some(one_and_a_half))
+    assert_true(float_view.read_f64_le(4) == Some(1.5))
+    return Ok(None)

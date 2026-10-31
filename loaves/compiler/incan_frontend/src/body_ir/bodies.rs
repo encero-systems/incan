@@ -267,7 +267,7 @@ pub(super) fn finish_static_initializer_body(
             closure_holding_parameters: Vec::new(),
             closure_holding_return: false,
         }),
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         locals: builder.locals,
         params: Vec::new(),
         param_locals: Vec::new(),
@@ -374,7 +374,7 @@ pub(super) fn lower_function_body(
                 .type_info
                 .is_closure_returning_type(function.return_type.span),
         }),
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         locals: builder.locals,
         params,
         param_locals,
@@ -521,7 +521,7 @@ pub(super) fn lower_method_body(
                 .type_info
                 .is_closure_returning_type(method.return_type.span),
         }),
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         locals: builder.locals,
         params,
         param_locals,

@@ -1,0 +1,15 @@
+# behavior: two projects that depend on the same library compile it once and reuse the one fact
+# environment:
+#   INCAN_BAKERY=target/case-bakery
+# cli-commands:
+#   build src/main.incn
+#   build other/src/main.incn
+# expect-exit: 0
+# expect-trace-at-most-once:
+#   unit shared library: compiled
+from pub::shared import greeting
+
+
+def main() -> None:
+    """Print the shared library's greeting."""
+    println(greeting())

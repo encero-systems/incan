@@ -377,7 +377,7 @@ pub(super) fn lower_source_partial(
         type_parameters: Vec::new(),
         span,
         return_type,
-        named_type_identities,
+        named_type_identities: std::sync::Arc::new(named_type_identities),
         param_locals: params.iter().map(|parameter| parameter.local).collect(),
         params,
         locals: builder.locals,

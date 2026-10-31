@@ -12,6 +12,7 @@
 #   incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 #   incan fmt [--check] PATH...
 #   incan owner stop
+#   incan bakery gc [--keep-days N] | verify | repair-payload SHA256 FILE
 #   incan inspect codegraph PATH [GRAPH OPTIONS]
 #   incan mcp PATH
 #   incan toolchain pack OUT

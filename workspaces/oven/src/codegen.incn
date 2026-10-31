@@ -1,6 +1,8 @@
 """Select optimization flags for native units and frame the flags the Incan compiler receives."""
 
 from rust::std::process import id
+from std.environ import get_or
+from std.fs import Path
 
 pub const SOURCE_PREFIX: str = "source"
 
@@ -34,6 +36,36 @@ pub def rust_arguments(profile: str) -> list[str]:
     for option in selected_profile(profile).rust_flags:
         arguments = arguments + ["-C", option]
     return arguments
+
+
+pub def rust_iteration_enabled(profile: str, setting: str) -> bool:
+    """Enable debug iteration by default; `1` opts release in and `0` disables iteration for any profile."""
+    return (profile in ["debug", "release"] and setting == "1") or (profile == "debug" and setting == "")
+
+
+pub def rust_metadata(profile: str, context: str) -> str:
+    """
+    Keep a Rust iteration unit's symbol namespace stable across edits and distinct from qualified artifacts.
+
+    The stable context identifies the crate, domain, features and artifact role. Freshness still covers every source
+    and linked input. Qualification keeps the conservative identity-derived namespace unchanged.
+    """
+    if rust_iteration_enabled(profile, get_or("INCAN_RUST_INCREMENTAL", "")):
+        return f"metadata=incan-iteration-{context}"
+    return "metadata=incan-unit"
+
+
+pub def rust_incremental_arguments(directory: Path, arguments: list[str]) -> list[str]:
+    """
+    Attach local scratch only at the hand-written Rust codegen boundary, after identity is complete.
+
+    Neither the directory nor the flag enters freshness, store records or bundles. Generated native invocations use
+    identity-derived metadata and cannot opt in through this boundary, even when the environment requests iteration.
+    """
+    for argument in arguments:
+        if argument.startswith("metadata=incan-iteration-"):
+            return ["-C", f"incremental={directory.0}"]
+    return []
 
 
 pub def driver_arguments(profile: str) -> list[str]:

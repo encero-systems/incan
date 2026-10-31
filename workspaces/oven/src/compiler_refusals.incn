@@ -5,6 +5,9 @@ Two outcomes are retained with their exact stdout and stderr bytes and their sta
 refuses with source diagnostics, and a check whose report unchanged inputs reproduce. A normal repeat of the same
 identity replays them without starting a compiler. Crashes, signals, uncertified failures, missing linked artifacts and
 inputs that changed while the compiler ran are never retained.
+
+Both are facts of the home bakery (see `bakery`): a refusal or check report is baked once under its identity, and a
+crash or an I/O failure publishes nothing.
 """
 
 from rust::std::io import Write, stderr, stdout
@@ -13,6 +16,7 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from std.io import BytesIO
+from bakery import claim, fact_file, find, lookup, seal, staging, unit_name
 from driver_command import driver_command
 from compiler_worker import Completion, captured_resident
 from files import open_stream
@@ -28,6 +32,8 @@ const RECORD_SCHEMA: str = "incan.oven.outcome/1"
 const REFUSAL_RECEIPT: str = "incan.compiler-refusal/1\n"
 const CHECK_RECEIPT: str = "incan.compiler-check/1\n"
 const CHECK_DOMAIN: str = "incan.oven.check/1"
+const REFUSAL_DOMAIN: str = "incan.oven.refusal/1"
+const OUTCOME: str = "outcome"
 const MAX_STATUS: int = 255
 
 
@@ -36,7 +42,7 @@ pub def compile_or_replay(
     toolchain: Toolchain,
     invocation: list[str],
     options: list[str],
-    path: Path,
+    store: Path,
     key: Key,
     reason: str,
 ) -> Result[i32, str]:
@@ -51,19 +57,20 @@ pub def compile_or_replay(
     3. Publish a certified refusal only if the complete input identity is still unchanged.
     """
     # 1. Replay a complete matching refusal unless a caller requested compiler side effects.
+    refused = refusal_identity(key)?
     cacheable = key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
-        if let Some(refusal) = load_outcome(path, key.digest):
+        if let Some(refusal) = load_outcome(store, refused)?:
             trace(f"unit {unit.package} {unit.kind}: replayed refusal")
             return show(refusal, toolchain.console)
     # 2. The worker and a single process capture the same streams; only the compiler's receipt certifies a refusal.
     trace(f"unit {unit.package} {unit.kind}: compiled ({reason})")
-    certificate = fresh_certificate(path)?
+    certificate = fresh_certificate(store, refused)?
     refusal = completed(toolchain, invocation + ["--certify", certificate.0] + options)?
     # 3. Publish a certified refusal only if the complete input identity is still unchanged.
     if cacheable and refusal.exited and refusal.code == 1 and certified(certificate, REFUSAL_RECEIPT):
         if still_keyed(unit, toolchain, key):
-            _ = save_outcome(path, key.digest, refusal)
+            _ = retain_outcome(store, refused, "refusal", outcome_name(unit, []), refusal)
     withdraw(certificate)
     return show(refusal, toolchain.console)
 
@@ -72,7 +79,7 @@ pub def check_or_replay(
     unit: UnitDescription,
     toolchain: Toolchain,
     arguments: list[str],
-    path: Path,
+    store: Path,
     key: Key,
 ) -> Result[i32, str]:
     """
@@ -89,17 +96,17 @@ pub def check_or_replay(
     # 1. A stored report of this identity is shown exactly as the compiler printed it.
     cacheable = key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
-        if let Some(report) = load_outcome(path, identity):
+        if let Some(report) = load_outcome(store, identity)?:
             trace(f"{label}: replayed")
             return show(report, toolchain.console)
     # 2. The compiler certifies only a pass or a refusal by source diagnostics.
-    trace(f"{label}: checked ({check_reason(path)})")
-    certificate = fresh_certificate(path)?
+    trace(f"{label}: checked ({check_reason(store, outcome_name(unit, arguments))})")
+    certificate = fresh_certificate(store, identity)?
     report = completed(toolchain, arguments + ["--certify", certificate.0])?
     # 3. A crash, a signal, an uncertified failure or an edit made meanwhile is checked again next time.
     if cacheable and reported(report) and certified(certificate, CHECK_RECEIPT):
         if still_keyed(unit, toolchain, key):
-            _ = save_outcome(path, identity, report)
+            _ = retain_outcome(store, identity, "check", outcome_name(unit, arguments), report)
     withdraw(certificate)
     return show(report, toolchain.console)
 
@@ -119,11 +126,22 @@ def reported(report: Completion) -> bool:
     return report.exited and (report.code == 0 or report.code == 1)
 
 
-def check_reason(path: Path) -> str:
+def check_reason(store: Path, name: str) -> str:
     """Why a check runs: no report was stored for the unit yet, or the stored one is for other inputs."""
-    if path.is_file():
-        return "inputs changed"
+    match lookup(store, name):
+        Ok(found) =>
+            if found is not None:
+                return "inputs changed"
+        Err(_) => pass
     return "no stored report"
+
+
+def outcome_name(unit: UnitDescription, arguments: list[str]) -> str:
+    """The name a retained outcome is indexed under: the unit, and for a check its report format."""
+    mut name = unit_name(unit)
+    if len(arguments) > 0:
+        name += f"\tcheck {arguments[len(arguments) - 1]}"
+    return name
 
 
 def ordinary_compilation() -> bool:
@@ -160,10 +178,11 @@ def cold_completion(toolchain: Toolchain, arguments: list[str]) -> Result[Comple
     return Ok(Completion(code=code, exited=exited, output=result.stdout, error=result.stderr))
 
 
-def fresh_certificate(path: Path) -> Result[Path, str]:
-    """A private receipt path beside the record, in an existing directory and empty before the compiler runs."""
-    path.parent().mkdir(true, true).map_err((error) => f"{path.parent().0}: {error.message()}")?
-    certificate = Path(f"{path.0}.{id()}.certificate")
+def fresh_certificate(store: Path, identity: str) -> Result[Path, str]:
+    """A private receipt path in the bakery, in an existing directory and empty before the compiler runs."""
+    receipts = store.joinpath("receipts")
+    receipts.mkdir(true, true).map_err((error) => f"{receipts.0}: {error.message()}")?
+    certificate = receipts.joinpath(f"{identity}.{id()}.certificate")
     if certificate.is_file():
         certificate.unlink().map_err((error) => error.message())?
     return Ok(certificate)
@@ -214,6 +233,28 @@ def show(outcome: Completion, console: str) -> Result[i32, str]:
     return Ok(outcome.code)
 
 
+def retain_outcome(store: Path, identity: str, kind: str, name: str, outcome: Completion) -> Result[None, str]:
+    """Bake a certified outcome as the fact of `identity`, once: a concurrent retention of the same outcome waits."""
+    held = claim(store, identity)?
+    if find(store, identity)? is None:
+        staged = staging(store, identity)?
+        save_outcome(staged.joinpath(OUTCOME), identity, outcome)?
+        _ = seal(store, identity, staged, kind, name, [], "certified compiler outcome")?
+    return Ok(None)
+
+
+pub def outcome_record(store: Path, identity: str) -> Result[Option[Path], str]:
+    """The retained outcome file of `identity`, when it is baked."""
+    match find(store, identity)?:
+        Some(fact) => return Ok(fact_file(store, fact, OUTCOME))
+        None => return Ok(None)
+
+
+pub def refusal_identity(key: Key) -> Result[str, str]:
+    """The identity a compilation's certified refusal is retained under."""
+    return fingerprint([REFUSAL_DOMAIN, key.digest])
+
+
 def save_outcome(path: Path, identity: str, outcome: Completion) -> Result[None, str]:
     """Publish the status and framed raw streams in one atomic file; replay never decodes or re-encodes their bytes."""
     header = f"{RECORD_SCHEMA}\n{identity}\n{outcome.code}:{len(outcome.output)}:{len(outcome.error)}\n"
@@ -224,13 +265,14 @@ def save_outcome(path: Path, identity: str, outcome: Completion) -> Result[None,
     return publish_binary(path, content.getvalue())
 
 
-def load_outcome(path: Path, identity: str) -> Option[Completion]:
-    """Missing, obsolete and malformed records are cache misses, never compiler outcomes."""
-    if not path.is_file():
-        return None
-    match read_outcome(path, identity):
-        Err(_) => return None
-        Ok(outcome) => return outcome
+def load_outcome(store: Path, identity: str) -> Result[Option[Completion], str]:
+    """A retained outcome; a missing, malformed or damaged record is a miss (see `find`)."""
+    match outcome_record(store, identity)?:
+        None => return Ok(None)
+        Some(record) =>
+            match read_outcome(record, identity):
+                Err(_) => return Ok(None)
+                Ok(outcome) => return Ok(outcome)
 
 
 def read_outcome(path: Path, identity: str) -> Result[Option[Completion], str]:

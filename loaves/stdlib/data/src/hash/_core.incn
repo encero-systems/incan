@@ -16,6 +16,7 @@ from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
 from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64 as rust_xxh3_64, xxh3_128 as rust_xxh3_128
 from rust::xxhash_rust::xxh32 import Xxh32
 from rust::xxhash_rust::xxh64 import Xxh64
+from std.fs.mapping import MappedView
 from std.traits.error import Error
 
 
@@ -192,12 +193,17 @@ pub class Sha256Hasher with ByteDigestHasher:
     Create a handle with `sha256.new()`, retain it in a model or class field, then call `update` from each method that
     contributes canonical bytes. `finalize_bytes()` returns the digest for bytes already supplied and resets the handle
     for a subsequent byte stream; this type does not define which bytes are canonical for an application identity.
+    `update_view` hashes a mapped view where it lies, so verifying mapped content copies none of it.
     """
 
     handle: Sha256
 
     def update(mut self, chunk: bytes) -> None:
         Digest.update(self.handle, chunk.as_slice())
+
+    def update_view(mut self, view: MappedView) -> None:
+        """Add the bytes of `view` without copying them out of the mapping."""
+        Digest.update(self.handle, view.0)
 
     def finalize_bytes(mut self) -> bytes:
         return self.handle.finalize_reset().to_vec()
