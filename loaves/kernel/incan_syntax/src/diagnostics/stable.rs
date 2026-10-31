@@ -798,9 +798,25 @@ const RESULT_SOURCE_INVALID: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: None,
 };
 
+const PLACE_BINDING_MIGRATION: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0125",
+    title: "Local place binding will borrow its source",
+    severity: "warning",
+    phase: "typecheck",
+    summary: "This local binding is affected by the upcoming read-only or writable borrowing contract.",
+    explanation: "Runtime behavior has not changed. Bare and let declarations from places will borrow read-only; mut declarations will borrow with write-through replacement. Type annotations do not request copies. Explicit clone calls create independent values.",
+    examples: &["mut title: str = page.title", "let saved = page.title"],
+    common_causes: &["Creating a local from an existing local, parameter, stored field or collection element."],
+    fixes: &[
+        "Use an explicit clone for an independent snapshot, or preserve the source through the borrow's last use.",
+    ],
+    docs_url: None,
+};
+
 const CATALOG: &[DiagnosticCatalogEntry] = &[
     OWNERSHIP_CONTRACT_UNAVAILABLE,
     RESULT_SOURCE_INVALID,
+    PLACE_BINDING_MIGRATION,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

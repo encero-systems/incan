@@ -81,8 +81,13 @@ impl SemanticNodeBindings {
         let Declaration::Function(function) = &declaration.node else {
             return Err(NodeBindingError::Unsupported("free-function owner"));
         };
-        if function.result_source.is_some() {
-            return Err(NodeBindingError::Unsupported("borrowed result-source contract"));
+        // The type grammar uses canonical prelude mode tags. Shadowed spellings require a nominal-type profile.
+        for name in ["Borrowed", "BorrowedMut", "Owned", "Reference"] {
+            if checker.explicit_ownership_mode(name).is_none() {
+                return Err(NodeBindingError::Unsupported(
+                    "shadowed ownership type in record profile",
+                ));
+            }
         }
         if !function.decorators.is_empty()
             || !function.surface_modifiers.is_empty()

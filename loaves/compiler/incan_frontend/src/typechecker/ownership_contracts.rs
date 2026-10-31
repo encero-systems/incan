@@ -6,42 +6,66 @@
 use incan_lang::lang::types::ownership::{self, OwnershipMode};
 use incan_semantics_core::SymbolOrigin;
 
+mod checked;
+
 use super::TypeChecker;
-use crate::ast::{AssignmentStmt, BindingKind, Expr, Param, ResultSource, Span, Spanned, Type};
+use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Type};
 use crate::diagnostics::CompileError;
 use crate::symbols::{ResolvedType, TypeInfo};
 
 impl TypeChecker {
-    /// Warn about the measured mutable string-field copy before adopting RFC 129 write-through locals.
+    /// Announce the place-binding migration without changing legacy runtime behavior or inferring a repair clone.
     ///
-    /// This deliberately covers only proven stored fields. Calls, computed properties, explicit annotations and
-    /// clones do not enter this migration cohort, and this warning does not change their runtime semantics.
-    pub(super) fn warn_field_copy_migration(&mut self, assignment: &AssignmentStmt, ty: &ResolvedType) {
-        if assignment.binding != BindingKind::Mutable || assignment.ty.is_some() || ty != &ResolvedType::Str {
+    /// An annotation does not opt out. Calls, constructed values, computed properties and explicit clone results are
+    /// not storage places; reassignment is handled before this new-binding hook.
+    pub(super) fn warn_place_binding_migration(&mut self, assignment: &AssignmentStmt) {
+        if assignment.binding == BindingKind::Reassign || !self.migration_place(&assignment.value) {
             return;
         }
-        let Expr::Field(base, field) = &assignment.value.node else {
-            return;
+        let behavior = if assignment.binding == BindingKind::Mutable {
+            "a writable borrow; assignment through the local will write through to the source"
+        } else {
+            "a read-only borrow that retains its source while the local is used"
         };
-        let Some(ResolvedType::Named(owner)) = self.type_info.expr_type(base.span) else {
-            return;
-        };
-        let stored = match self.lookup_type_info(owner) {
-            Some(TypeInfo::Model(model)) => model.fields.contains_key(field),
-            Some(TypeInfo::Class(class)) => class.fields.contains_key(field),
-            _ => false,
-        };
-        if stored {
-            self.warnings.push(CompileError::warning(
-            format!("Mutable local '{}' currently copies this field; a future ownership release will make this a write-through binding", assignment.name),
+        self.warnings.push(CompileError::warning(
+            format!("Local '{}' binds an existing place; a future ownership release will make this {behavior}", assignment.name),
             assignment.value.span,
-        ).with_note("Runtime behavior is unchanged in this release")
-            .with_hint("Use an explicit clone when an independent mutable snapshot is intended"));
+        ).with_stable_code("INCAN-T0125")
+            .with_note("Runtime behavior is unchanged in this release; a type annotation does not request an independent copy")
+            .with_hint("Use an explicit clone if an independent snapshot is intended; otherwise keep the source valid through the local's last use"));
+    }
+
+    /// Admit only existing storage roots and known projections, excluding property calls and temporary owners.
+    fn migration_place(&self, value: &Spanned<Expr>) -> bool {
+        match &value.node {
+            Expr::Ident(name) => self.lookup_variable_info_in_scope_chain(name).is_some(),
+            Expr::Paren(inner) => self.migration_place(inner),
+            Expr::Field(base, field) if self.migration_place(base) => {
+                if self
+                    .type_info
+                    .resolved_identity(value.span)
+                    .is_some_and(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Field)
+                {
+                    return true;
+                }
+                let name = match self.type_info.expr_type(base.span) {
+                    Some(ResolvedType::Named(name) | ResolvedType::Generic(name, _)) => name,
+                    _ => return false,
+                };
+                match self.lookup_type_info(name) {
+                    Some(TypeInfo::Model(model)) => model.fields.contains_key(field),
+                    Some(TypeInfo::Class(class)) => class.fields.contains_key(field),
+                    _ => false,
+                }
+            }
+            Expr::Index(base, _) if self.migration_place(base) => matches!(self.type_info.expr_type(base.span),
+                Some(ResolvedType::Generic(name, _)) if name == "List" || name == "Dict"),
+            _ => false,
         }
     }
 
     /// Resolve a mode only when ordinary lookup selects its canonical builtin declaration.
-    fn explicit_ownership_mode(&self, name: &str) -> Option<OwnershipMode> {
+    pub(super) fn explicit_ownership_mode(&self, name: &str) -> Option<OwnershipMode> {
         let symbol = self
             .symbols
             .lookup(name)
@@ -119,73 +143,6 @@ impl TypeChecker {
             _ => {}
         }
     }
-
-    /// Find explicit borrowed components in a written result, including outcome and tuple payloads.
-    fn annotation_contains_borrowed_contract(&self, annotation: &Type) -> bool {
-        match annotation {
-            Type::Generic(name, arguments) => {
-                matches!(
-                    self.explicit_ownership_mode(name),
-                    Some(OwnershipMode::Borrowed | OwnershipMode::BorrowedMut | OwnershipMode::Reference)
-                ) || arguments
-                    .iter()
-                    .any(|argument| self.annotation_contains_borrowed_contract(&argument.node))
-            }
-            Type::DottedGeneric(_, arguments) | Type::Tuple(arguments) => arguments
-                .iter()
-                .any(|argument| self.annotation_contains_borrowed_contract(&argument.node)),
-            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
-                self.annotation_contains_borrowed_contract(&inner.node)
-            }
-            _ => false,
-        }
-    }
-
-    /// Validate a written source root against the declaration's own parameters or receiver, then refuse execution.
-    ///
-    /// A global or local with the same name never satisfies this declaration contract. Static field resolution and
-    /// proof that returned values originate there remain an enabling-stage requirement, not a spelling inference.
-    pub(super) fn check_result_source_contract(
-        &mut self,
-        source: Option<&Spanned<ResultSource>>,
-        return_type: &Spanned<Type>,
-        parameters: &[Spanned<Param>],
-        receiver: Option<&str>,
-    ) {
-        let borrowed = self.annotation_contains_borrowed_contract(&return_type.node);
-        let Some(source) = source else {
-            if borrowed {
-                self.errors.push(
-                    CompileError::type_error(
-                        "An explicit borrowed result requires 'from source', even with only one parameter".to_string(),
-                        return_type.span,
-                    )
-                    .with_stable_code("INCAN-T0124")
-                    .with_hint("Name the parameter or receiver and any static field path after the return type"),
-                );
-            }
-            return;
-        };
-        let name = source.node.binding.node.as_str();
-        if !parameters.iter().any(|parameter| parameter.node.name == name) && receiver != Some(name) {
-            self.errors.push(
-                CompileError::type_error(
-                    format!("Result source '{name}' must name this declaration's parameter or receiver"),
-                    source.node.binding.span,
-                )
-                .with_stable_code("INCAN-T0124"),
-            );
-            return;
-        }
-        self.errors.push(
-            CompileError::type_error(
-                "Borrowed result-source contracts are recognized but not executable yet".to_string(),
-                source.span,
-            )
-            .with_stable_code("INCAN-T0123")
-            .with_note("The compiler must prove the source relationship before accepting this declaration"),
-        );
-    }
 }
 
 #[cfg(test)]
@@ -236,6 +193,7 @@ mod tests {
         for source in [
             "def view(value: Borrowed[str]) -> Borrowed[str]:\n    return value\n",
             "def view(value: Borrowed[str]) -> Result[Borrowed[str], str]:\n    return Ok(value)\n",
+            "def view(value: Borrowed[str]) -> FrozenList[Borrowed[str]]:\n    return []\n",
             "const other: str = \"outside\"\ndef view(value: str) -> str from other:\n    return value\n",
         ] {
             let checker = checked(source)?;
@@ -283,6 +241,62 @@ mod tests {
         );
         Ok(())
     }
+    /// Compatible annotations, scalar fields and read-only locals do not accidentally request independent copies.
+    #[test]
+    fn place_migration_includes_annotations_scalars_and_readonly() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked(
+            "model Page:\n    count: int\ndef main() -> None:\n    page = Page(count=1)\n    mut count: int = page.count\n    let saved = page.count\n    copy = int(2)\n    fresh = Page(count=2)\n",
+        )?;
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        let warnings: Vec<_> = checker
+            .warnings
+            .iter()
+            .filter(|warning| warning.stable_code() == Some("INCAN-T0125"))
+            .collect();
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        Ok(())
+    }
+
+    /// Abstract and concrete receiver sources share checked slots; concrete field paths retain their declaration.
+    #[test]
+    fn receiver_contracts_cover_abstract_and_concrete_methods() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, fields) in [
+            ("pub trait Reader:\n    def view(self) -> Borrowed[str] from self\n", 0),
+            (
+                "pub class Page:\n    title: str\n    def view(self) -> Borrowed[str] from self.title:\n        return self.title\n",
+                1,
+            ),
+        ] {
+            let checker = checked(source)?;
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let exports = crate::library_exports::collect_checked_public_exports(&program, &checker);
+            let methods = match &exports.first().ok_or("missing public owner")?.kind {
+                crate::library_exports::CheckedExportKind::Class(owner) => &owner.methods,
+                crate::library_exports::CheckedExportKind::Trait(owner) => &owner.methods,
+                _ => return Err("wrong owner kind".into()),
+            };
+            assert!(methods.first().ok_or("missing public method")?.ownership.is_some());
+            let contract = checker
+                .type_info
+                .declarations
+                .ownership_contracts
+                .values()
+                .next()
+                .ok_or("missing method contract")?;
+            let dependency = contract.result_source.as_ref().ok_or("missing receiver source")?;
+            assert_eq!(dependency.slot, crate::ownership_metadata::SourceSlot::Receiver);
+            assert_eq!(dependency.fields.len(), fields);
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0123"))
+            );
+        }
+        Ok(())
+    }
+
     /// Annotation constructors and aliases cannot silently opt into ordinary generic value behavior.
     #[test]
     fn modes_are_not_wrappers_or_alias_escape_hatches() -> Result<(), Box<dyn std::error::Error>> {
@@ -301,6 +315,62 @@ mod tests {
                 checker.errors
             );
         }
+        Ok(())
+    }
+    /// Source relationships use slots and canonical fields, including substituted nested generic owners.
+    #[test]
+    fn checked_source_retains_nested_field_identities() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked(
+            "model Address:\n    street: str\nmodel Customer[T]:\n    address: T\ndef view(customer: Borrowed[Customer[Address]]) -> Borrowed[str] from customer.address.street:\n    return customer.address.street\n",
+        )?;
+        let contract = checker
+            .type_info
+            .declarations
+            .ownership_contracts
+            .values()
+            .next()
+            .ok_or("missing ownership contract")?;
+        let source = contract.result_source.as_ref().ok_or("missing checked source")?;
+        assert_eq!(source.slot, crate::ownership_metadata::SourceSlot::Parameter(0));
+        assert_eq!(
+            source
+                .fields
+                .iter()
+                .map(|field| field.declaration_name.as_str())
+                .collect::<Vec<_>>(),
+            ["address", "street"]
+        );
+        assert!(
+            source
+                .fields
+                .iter()
+                .all(|field| field.kind == incan_semantics_core::SemanticSourceTargetKind::Field)
+        );
+        assert_eq!(contract.modes.len(), 2);
+        Ok(())
+    }
+
+    /// An alias-expanded borrowed result still requires a source, and impossible fields have source diagnostics.
+    #[test]
+    fn checked_alias_and_invalid_field_contracts() -> Result<(), Box<dyn std::error::Error>> {
+        let missing =
+            checked("type View[T] = Borrowed[T]\ndef view(value: View[str]) -> View[str]:\n    return value\n")?;
+        assert!(
+            missing
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0124"))
+        );
+        let invalid = checked(
+            "model Page:\n    title: str\ndef view(page: Borrowed[Page]) -> Borrowed[str] from page.absent:\n    return \"\"\n",
+        )?;
+        assert!(
+            invalid
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0124"))
+        );
+        assert!(invalid.type_info.declarations.ownership_contracts.is_empty());
         Ok(())
     }
 }

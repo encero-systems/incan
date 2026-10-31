@@ -1,7 +1,7 @@
 //! Explicit ownership-mode vocabulary. Semantic legality belongs to the checker; these names are not runtime wrappers.
 
 /// Stable identity of one prelude access contract from RFC 164.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OwnershipMode {
     /// Shared access to existing storage without transferring its owner.
     Borrowed,
