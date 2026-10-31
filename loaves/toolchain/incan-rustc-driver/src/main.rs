@@ -104,15 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("--source-interface") => frontend::source_interface(&args[1..]),
         Some("--check") => exit_with(check(&args[1..])?),
         Some("--fmt") => exit_with(format(&args[1..])?),
-        Some("--source-files") => {
-            let [path] = &args[1..] else {
-                return Err(USAGE.into());
-            };
-            let path = std::path::absolute(path)?;
-            let files = command_format::source_files(&path).map_err(|error| error.message)?;
-            println!("{}", serde_json::to_string(&files)?);
-            Ok(())
-        }
+        Some("--source-files") => exit_with(source_files(&args[1..])?),
         Some("--codegraph") => codegraph::incan(&args[1..]),
         Some("--read-codegraph") => codegraph::read(&args[1..]),
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
@@ -154,6 +146,18 @@ fn status_of<T>(result: incan_driver::error::CliResult<T>) -> i32 {
             error.exit_code.0
         }
     }
+}
+
+/// Print the authored Incan sources under one path as a JSON list, the files a formatting run selects, and return
+/// status zero. A short-lived process and the resident worker share this exact path.
+pub(crate) fn source_files(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    let [path] = arguments else {
+        return Err(USAGE.into());
+    };
+    let path = std::path::absolute(path)?;
+    let files = command_format::source_files(&path).map_err(|error| error.message)?;
+    println!("{}", serde_json::to_string(&files)?);
+    Ok(0)
 }
 
 /// Format a source through the compiler's command function using the unit vocabulary supplied by Oven, and return
