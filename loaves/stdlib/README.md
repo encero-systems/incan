@@ -7,7 +7,9 @@ The Incan standard library as SDK components, one directory per component, each 
 | Component | Namespace roots | Rust facet | Runtime crates |
 | --- | --- | --- | --- |
 | `core/` | `std.features`, `std.prelude`, `std.registry`, `std.result`, `std.reflection`, `std.this`, `std.derives`, `std.traits`, `std.runtime` | `incan_std_core` (mandatory: reflection, frozen constants, numerics, strings, collections, storage, validation, the version check) | — |
+| `vocab/` | `std.vocab` | — | — |
 | `interop/` | `std.interop` | — | — |
+| `primitives/` | `std.primitives` | — | — |
 | `system/` | `std.environ`, `std.io`, `std.tempfile`, `std.fs` | — | byteorder, encoding_rs, rustix, tempfile |
 | `codecs/` | `std.checksum`, `std.encoding` | — | crc32fast |
 | `compression/` | `std.compression` | — | flate2, zstd, bzip2, xz2, snap |
@@ -18,7 +20,7 @@ The Incan standard library as SDK components, one directory per component, each 
 | `testing/` | `std.testing` | `incan_std_testing` (marker and assertion host functions) | — |
 | `derive/` | — | host proc-macro crates `incan_derive` and `incan_web_macros` | — |
 
-Each component directory holds its Incan sources under `src/` — the `.incn` modules for the namespace roots `sdk-components.toml` assigns it, resolved by the compiler through that catalog — and, where the component has one, its Rust facet under `rust/`: a crate named `incan_std_<component>` that the `.incn` sources reach with `from rust::incan_std_<component>::…` and that generated code links by path. A `loaf.toml` declares the facet with `[rust.source] root = "rust"`, as RFC 119 spells a mixed root. The facet sits next to the source it serves, so runtime-dependency attribution follows the component instead of the whole `std.<module>`: a program that never imports `std.collections` links no hasher.
+Each component directory holds its Incan sources under `src/` — the `.incn` modules for the namespace roots the compiler's `STDLIB_NAMESPACES` catalog assigns it — and, where the component has one, its Rust facet under `rust/`: a crate named `incan_std_<component>` that the `.incn` sources reach with `from rust::incan_std_<component>::…` and that generated code links by path. A `loaf.toml` declares the facet with `[rust.source] root = "rust"`, as RFC 119 spells a mixed root. The facet sits next to the source it serves, so runtime-dependency attribution follows the component instead of the whole `std.<module>`: a program that never imports `std.collections` links no hasher.
 
 ## Why the derive macros are separate crates
 
