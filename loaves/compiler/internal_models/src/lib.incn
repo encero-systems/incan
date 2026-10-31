@@ -1,0 +1,51 @@
+"""
+The compiler's shared record contracts, one module per contract; none names Oven, a worker or a native compiler object.
+
+`records` reads keyed compiler facts through one revision-bound scope, `record_service` is the producer interface and
+`checker_records` the canonical checker record codec. A consumer imports a module, for example
+`from pub::internal_models.checker_records import encode_record`, or the read and producer contracts from this facade.
+"""
+
+pub from records import (
+    RecordKey,
+    ReadScope,
+    PayloadSelection,
+    MemberSelection,
+    RecordSelection,
+    RecordRequest,
+    RevisionEvidence,
+    SelectedFact,
+    AbsentFact,
+    ReadFault,
+    RecordRead,
+    ReadWitness,
+    RecordSource,
+    RecordReads,
+    ReadReceipt,
+    ReadCounters,
+    PreparationEvidence,
+    READ_SCHEMA,
+)
+pub from record_service import (
+    RECORD_SERVICE_SCHEMA,
+    prepared_reader,
+    CompilerRecordService,
+    CompilerFault,
+    CompilerFaultKind,
+    DemandPage,
+    Evaluation,
+    InputSnapshot,
+    NeedPrerequisite,
+    Preparation,
+    PreparedInputs,
+    Produced,
+    ProducerCounters,
+    ProducerProfile,
+    ProducerRank,
+    ProducerStage,
+    RankCertificate,
+    ReadyWork,
+    RecordRoot,
+    SemanticRefusal,
+    ValueReference,
+)

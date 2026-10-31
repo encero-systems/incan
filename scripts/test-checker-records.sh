@@ -11,10 +11,10 @@ mkdir "$project"
 mkdir "$project/src"
 # These are generated build inputs copied from their sole authored home, not a second contract implementation.
 for name in checker_records record_scope records record_service; do
-    cp "$root/loaves/compiler/incan_mir_lowering/src/$name.incn" "$project/src/$name.incn"
+    cp "$root/loaves/compiler/internal_models/src/$name.incn" "$project/src/$name.incn"
 done
 for name in canonical_record_controls test_record_scope; do
-    cp "$root/loaves/compiler/incan_mir_lowering/tests/$name.incn" "$project/src/$name.incn"
+    cp "$root/loaves/compiler/internal_models/tests/$name.incn" "$project/src/$name.incn"
 done
 cat > "$project/loaf.toml" <<EOF
 [project]
