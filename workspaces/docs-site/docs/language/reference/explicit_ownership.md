@@ -46,7 +46,7 @@ def main() -> None:
     title = "new"
 ```
 
-`INCAN-T0125` is emitted for a new local initialized from an existing local, parameter, stored field or known list/dictionary element. Bare, `let` and `mut` declarations are included. Compatible type annotations do not suppress the warning. Calls, constructor results, computed properties and explicit clone results do not receive this warning. The warning does not alter runtime behavior.
+`INCAN-T0125` is emitted for a new local initialized from an existing local, parameter, stored field or known list/dictionary element. Bare, `let` and `mut` declarations are included. Ordinary value-type annotations such as `int` do not suppress the warning. An explicit ownership annotation states its own access request and does not receive this migration warning; its execution is still refused. Calls, constructor results, computed properties and explicit clone results do not receive this warning. The warning does not alter runtime behavior.
 
 ## Related explanation
 

@@ -4,9 +4,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::TypeChecker;
-use super::flow::{Access, Event, Graph, Node, Permission, Place, Projection};
-use crate::ast::{BinaryOp, BindingKind, Condition, Expr, FunctionDecl, Span, Spanned, Statement};
-use crate::symbols::SymbolKind;
+use super::flow::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection};
+use crate::ast::{
+    AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, FunctionDecl,
+    Span, Spanned, Statement,
+};
+use crate::symbols::{ResolvedType, SymbolKind};
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
@@ -23,17 +26,25 @@ struct LoopEdges {
     breaks: Vec<usize>,
 }
 
+/// A local reference names its source place and access route; it never becomes a second owned storage root.
+#[derive(Debug, Clone)]
+struct Path {
+    place: Place,
+    through: Option<LoanId>,
+}
+
 /// Invocation-local projection state, borrowing immutable checked identities and types rather than resolving names.
 struct Builder<'a> {
     checker: &'a TypeChecker,
     graph: Graph,
     locals: BTreeMap<CanonicalSymbolId, Permission>,
+    aliases: BTreeMap<CanonicalSymbolId, Path>,
     constrained: BTreeSet<CanonicalSymbolId>,
     loops: Vec<LoopEdges>,
 }
 
-/// Project a checked free-function body against its exact declaration contract. This initial source profile has no
-/// calls or local loans yet; those shapes return an explicit unavailable result and cannot authorize execution.
+/// Project a checked free-function body against its declaration and local contracts. Calls, escaping dependencies
+/// and other incomplete shapes remain explicit unavailable results rather than successful partial graphs.
 pub(super) fn build(checker: &TypeChecker, function: &FunctionDecl, span: Span) -> Result<Graph, Unavailable> {
     let binding = checker
         .type_info
@@ -48,21 +59,15 @@ pub(super) fn build(checker: &TypeChecker, function: &FunctionDecl, span: Span) 
         span,
         reason: "missing selected declaration identity",
     })?;
-    let contract = checker
-        .type_info
-        .declarations
-        .ownership_contracts
-        .get(identity)
-        .ok_or(Unavailable {
-            span,
-            reason: "no explicit input contract",
-        })?;
+    let contract = checker.type_info.declarations.ownership_contracts.get(identity);
     if function.is_async()
-        || contract.result_source.is_some()
-        || contract.modes.iter().any(|mode| {
-            mode.component.parameter.is_none()
-                || !mode.component.children.is_empty()
-                || mode.mode == OwnershipMode::Reference
+        || contract.is_some_and(|contract| {
+            contract.result_source.is_some()
+                || contract.modes.iter().any(|mode| {
+                    mode.component.parameter.is_none()
+                        || !mode.component.children.is_empty()
+                        || mode.mode == OwnershipMode::Reference
+                })
         })
     {
         return Err(Unavailable {
@@ -105,6 +110,7 @@ pub(super) fn build(checker: &TypeChecker, function: &FunctionDecl, span: Span) 
             entry: 0,
         },
         constrained: BTreeSet::new(),
+        aliases: BTreeMap::new(),
         loops: Vec::new(),
     };
     for (slot, parameter) in function.params.iter().enumerate() {
@@ -185,7 +191,7 @@ impl Builder<'_> {
     }
 
     /// Read only checked storage projections. Properties and native accessors are calls, even when spelled as fields.
-    fn place(&mut self, expression: &Spanned<Expr>) -> Result<Place, Unavailable> {
+    fn place(&mut self, expression: &Spanned<Expr>) -> Result<Path, Unavailable> {
         match &expression.node {
             Expr::Ident(_) => {
                 let identity = self
@@ -197,7 +203,13 @@ impl Builder<'_> {
                         reason: "missing checked place identity",
                     })?
                     .clone();
-                self.root(&identity, expression.span)
+                match self.aliases.get(&identity) {
+                    Some(path) => Ok(path.clone()),
+                    None => Ok(Path {
+                        place: self.root(&identity, expression.span)?,
+                        through: None,
+                    }),
+                }
             }
             Expr::Paren(inner) => self.place(inner),
             Expr::Field(base, _) => {
@@ -223,12 +235,12 @@ impl Builder<'_> {
                     })?
                     .clone();
                 let mut place = self.place(base)?;
-                place.projection.push(Projection::Field(identity));
+                place.place.projection.push(Projection::Field(identity));
                 Ok(place)
             }
             Expr::Index(base, index) => {
                 let mut place = self.place(base)?;
-                place.projection.push(Projection::Element(index.span));
+                place.place.projection.push(Projection::Element(index.span));
                 Ok(place)
             }
             _ => Err(Unavailable {
@@ -282,7 +294,10 @@ impl Builder<'_> {
                     span: expression.span,
                     reason: "missing checked access type",
                 })?;
-                let access = if consume && self.constrained.contains(&place.root) && !self.checker.is_copy_type(ty) {
+                let access = if consume
+                    && (place.through.is_some() || self.constrained.contains(&place.place.root))
+                    && !self.checker.is_copy_type(ty)
+                {
                     Access::Move
                 } else {
                     Access::Read
@@ -290,9 +305,9 @@ impl Builder<'_> {
                 Ok(self.event(
                     incoming,
                     Event::Access {
-                        place,
+                        place: place.place,
                         access,
-                        through: None,
+                        through: place.through,
                     },
                     expression.span,
                 ))
@@ -340,6 +355,210 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
+    /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
+    fn optional_place(&mut self, expression: &Spanned<Expr>) -> Result<Option<Path>, Unavailable> {
+        match &expression.node {
+            Expr::Ident(_) | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
+            Expr::Paren(inner) => self.optional_place(inner),
+            _ => Ok(None),
+        }
+    }
+
+    /// Bind an explicit local loan to its exact source, or transfer an owned value. Unannotated declarations keep
+    /// their existing behavior; reassignment through an already borrowed local writes through without retargeting.
+    fn assignment(
+        &mut self,
+        assignment: &AssignmentStmt,
+        span: Span,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let root = self
+            .checker
+            .type_info
+            .resolved_write_identity(assignment.name_span, &assignment.name)
+            .ok_or(Unavailable {
+                span: assignment.name_span,
+                reason: "missing checked assignment target",
+            })?
+            .clone();
+        let mode = (root.declaration_span == assignment.name_span)
+            .then(|| self.checker.type_info.protocols.explicit_local_modes.get(&root))
+            .flatten();
+        let source = self.optional_place(&assignment.value)?;
+        if let Some(mode) = mode {
+            if mode.mode == OwnershipMode::Reference {
+                return Err(Unavailable {
+                    span: mode.annotation,
+                    reason: "returned-reference local dependency",
+                });
+            }
+            if self.checker.type_info.assignment_binding_type(span) != Some(&mode.value_type) {
+                return Err(Unavailable {
+                    span: mode.annotation,
+                    reason: "local mode and checked value type disagree",
+                });
+            }
+            if mode.mode != OwnershipMode::Owned {
+                let source = source.ok_or(Unavailable {
+                    span: assignment.value.span,
+                    reason: "local borrow requires a checked owner place",
+                })?;
+                let incoming = self.evaluate_place(&assignment.value, incoming)?;
+                let loan = LoanId(self.graph.loans.len());
+                self.graph.loans.push(Loan {
+                    source: source.place.clone(),
+                    kind: if mode.mode == OwnershipMode::Borrowed {
+                        LoanKind::Shared
+                    } else {
+                        LoanKind::Exclusive
+                    },
+                    writable: mode.writable,
+                    parent: source.through,
+                    span: assignment.value.span,
+                });
+                self.aliases.insert(
+                    root,
+                    Path {
+                        place: source.place,
+                        through: Some(loan),
+                    },
+                );
+                return Ok(self.event(incoming, Event::Borrow(loan), assignment.value.span));
+            }
+            if let Some(source) = &source {
+                self.constrained.insert(source.place.root.clone());
+            }
+        }
+        let incoming = self.expression(&assignment.value, incoming, true)?;
+        if let Some(path) = self.aliases.get(&root).cloned() {
+            return Ok(self.event(
+                incoming,
+                Event::Access {
+                    place: path.place,
+                    access: Access::Write,
+                    through: path.through,
+                },
+                assignment.name_span,
+            ));
+        }
+        let previously_known = self.graph.permissions.contains_key(&root);
+        let place = self.root(&root, assignment.name_span)?;
+        if mode.is_some()
+            || source.is_some_and(|source| source.through.is_some() || self.constrained.contains(&source.place.root))
+        {
+            self.constrained.insert(root);
+        }
+        if !previously_known && !matches!(assignment.binding, BindingKind::Reassign) {
+            return Ok(incoming);
+        }
+        Ok(self.event(
+            incoming,
+            Event::Access {
+                place,
+                access: Access::Replace,
+                through: None,
+            },
+            assignment.name_span,
+        ))
+    }
+
+    /// Evaluate a stored field destination before its replacement value. Only canonical stored fields participate;
+    /// computed setters and compound destinations need their own checked evaluation/dependency contract.
+    fn field_assignment(
+        &mut self,
+        assignment: &FieldAssignmentStmt,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if assignment.compound_op.is_some() {
+            return Err(Unavailable {
+                span: assignment.target_span,
+                reason: "compound field destination needs single-evaluation facts",
+            });
+        }
+        let identity = self
+            .checker
+            .type_info
+            .resolved_identity(assignment.target_span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+            .ok_or(Unavailable {
+                span: assignment.target_span,
+                reason: "field write lacks a checked stored identity",
+            })?
+            .clone();
+        let mut path = self.place(&assignment.object)?;
+        path.place.projection.push(Projection::Field(identity));
+        let incoming = self.evaluate_place(&assignment.object, incoming)?;
+        let incoming = self.expression(&assignment.value, incoming, true)?;
+        Ok(self.event(
+            incoming,
+            Event::Access {
+                place: path.place,
+                access: if path.through.is_some() {
+                    Access::Write
+                } else {
+                    Access::Replace
+                },
+                through: path.through,
+            },
+            assignment.target_span,
+        ))
+    }
+
+    /// Primitive scalar compound assignment reads its selected target before the right operand, then writes the
+    /// same place. Overloaded operators remain calls whose access contract cannot be inferred from their spelling.
+    fn compound_assignment(
+        &mut self,
+        assignment: &CompoundAssignmentStmt,
+        span: Span,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let info = &self.checker.type_info;
+        if info.resolved_operator_call(span).is_some()
+            || !matches!(
+                info.resolved_write_type(assignment.name_span, &assignment.name),
+                Some(ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool)
+            )
+        {
+            return Err(Unavailable {
+                span,
+                reason: "compound operator needs selected callable access facts",
+            });
+        }
+        let identity = info
+            .resolved_write_identity(assignment.name_span, &assignment.name)
+            .ok_or(Unavailable {
+                span: assignment.name_span,
+                reason: "compound target lacks a checked identity",
+            })?
+            .clone();
+        let path = match self.aliases.get(&identity) {
+            Some(path) => path.clone(),
+            None => Path {
+                place: self.root(&identity, assignment.name_span)?,
+                through: None,
+            },
+        };
+        let incoming = self.event(
+            incoming,
+            Event::Access {
+                place: path.place.clone(),
+                access: Access::Read,
+                through: path.through,
+            },
+            assignment.name_span,
+        );
+        let incoming = self.expression(&assignment.value, incoming, false)?;
+        Ok(self.event(
+            incoming,
+            Event::Access {
+                place: path.place,
+                access: Access::Write,
+                through: path.through,
+            },
+            assignment.name_span,
+        ))
+    }
+
     /// Project explicit branches, loop back-edges and exits. Unsupported statement effects refuse the whole profile.
     fn statement(&mut self, statement: &Spanned<Statement>, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
         match &statement.node {
@@ -351,42 +570,9 @@ impl Builder<'_> {
                 }
                 Ok(Vec::new())
             }
-            Statement::Assignment(assignment) => {
-                if assignment.ty.is_some() {
-                    return Err(Unavailable {
-                        span: statement.span,
-                        reason: "local annotation access obligations",
-                    });
-                }
-                let root = self
-                    .checker
-                    .type_info
-                    .resolved_write_identity(assignment.name_span, &assignment.name)
-                    .ok_or(Unavailable {
-                        span: assignment.name_span,
-                        reason: "missing checked assignment target",
-                    })?
-                    .clone();
-                let previously_known = self.graph.permissions.contains_key(&root);
-                let source = self.place(&assignment.value).ok();
-                let incoming = self.expression(&assignment.value, incoming, true)?;
-                let place = self.root(&root, assignment.name_span)?;
-                if !previously_known && !matches!(assignment.binding, BindingKind::Reassign) {
-                    if source.is_some_and(|source| self.constrained.contains(&source.root)) {
-                        self.constrained.insert(root);
-                    }
-                    return Ok(incoming);
-                }
-                Ok(self.event(
-                    incoming,
-                    Event::Access {
-                        place,
-                        access: Access::Replace,
-                        through: None,
-                    },
-                    assignment.name_span,
-                ))
-            }
+            Statement::Assignment(assignment) => self.assignment(assignment, statement.span, incoming),
+            Statement::FieldAssignment(assignment) => self.field_assignment(assignment, incoming),
+            Statement::CompoundAssignment(assignment) => self.compound_assignment(assignment, statement.span, incoming),
             Statement::If(branch) => {
                 let mut remaining = self.condition(&branch.condition, incoming)?;
                 let mut outgoing = self.block(&branch.then_body, remaining.clone())?;

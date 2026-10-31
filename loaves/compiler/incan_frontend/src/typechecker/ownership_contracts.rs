@@ -30,6 +30,16 @@ pub(super) enum InputFlow {
     },
 }
 
+/// Canonical local annotation facts captured before a later binding can shadow a prelude or alias name.
+#[derive(Debug, Clone)]
+pub(super) struct LocalMode {
+    pub owner: incan_semantics_core::CanonicalSymbolId,
+    pub mode: OwnershipMode,
+    pub value_type: ResolvedType,
+    pub writable: bool,
+    pub annotation: Span,
+}
+
 impl TypeChecker {
     /// Capture explicit input flow while the checked lexical frame and body-owned expression facts are active.
     /// Statement output owns the result; it is never rediscovered by lowering or published as a valid empty graph.
@@ -37,7 +47,14 @@ impl TypeChecker {
         let Some(identity) = self.current_body_identity().cloned() else {
             return;
         };
-        if !self.type_info.declarations.ownership_contracts.contains_key(&identity) {
+        if !self.type_info.declarations.ownership_contracts.contains_key(&identity)
+            && !self
+                .type_info
+                .protocols
+                .explicit_local_modes
+                .values()
+                .any(|mode| mode.owner == identity)
+        {
             return;
         }
         let output = match source::build(self, function, span) {
@@ -197,12 +214,18 @@ mod tests {
             return Err("expected function".into());
         };
         let projected = super::source::build(&checker, function, declaration.span);
+        let identity = checker
+            .type_info
+            .declarations
+            .function_bindings_by_span
+            .get(&declaration.span)
+            .and_then(|binding| binding.identity.as_ref())
+            .ok_or("missing selected source declaration")?;
         let recorded = checker
             .type_info
             .protocols
             .explicit_input_flow
-            .values()
-            .next()
+            .get(identity)
             .ok_or("source analysis was not retained with its checked body")?;
         match (recorded, &projected) {
             (InputFlow::Checked { graph, analysis }, Ok(rebuilt)) => {
@@ -216,6 +239,31 @@ mod tests {
             _ => return Err(format!("scoped and rebuilt source flow differ: {recorded:?}\n{projected:?}").into()),
         }
         Ok(projected)
+    }
+
+    /// Local modes keep their callable owner through settlement, and an ordinary following function does not
+    /// inherit a previous body's ownership profile, including in the legacy cold-oracle comparison route.
+    #[test]
+    fn local_mode_facts_stay_with_their_callable() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def borrowed() -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\ndef ordinary() -> int:\n    return 3\n";
+        for legacy in [false, true] {
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let mut checker = TypeChecker::new();
+            checker.legacy_body_checking = legacy;
+            let _ = checker.check_program(&program);
+            assert_eq!(checker.type_info.protocols.explicit_local_modes.len(), 1);
+            assert_eq!(checker.type_info.protocols.explicit_input_flow.len(), 1);
+            assert!(
+                checker
+                    .type_info
+                    .protocols
+                    .explicit_input_flow
+                    .keys()
+                    .all(|owner| owner.declaration_name == "borrowed")
+            );
+        }
+        Ok(())
     }
 
     /// Source branch and back-edge projections preserve consuming uses and distinguish Copy reads from transfers.
@@ -237,6 +285,54 @@ mod tests {
                 "def restore(mut value: Owned[str]) -> str:\n    taken = value\n    value = \"new\"\n    return value\n",
                 false,
             ),
+            (
+                "def local(mut value: Owned[int]) -> int:\n    mut view: BorrowedMut[int] = value\n    view = view + 1\n    return value\n",
+                false,
+            ),
+            (
+                "def local_only() -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\n",
+                false,
+            ),
+            (
+                "def conflict(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    value = 2\n    return view\n",
+                true,
+            ),
+            (
+                "def readonly(mut value: Owned[int]) -> int:\n    mut view: Borrowed[int] = value\n    view = 2\n    return value\n",
+                true,
+            ),
+            (
+                "def reborrow(mut value: Owned[int]) -> int:\n    mut parent: BorrowedMut[int] = value\n    mut child: BorrowedMut[int] = parent\n    parent = 2\n    return child\n",
+                true,
+            ),
+            (
+                "def branch_release(mut value: Owned[int], flag: bool) -> int:\n    let view: Borrowed[int] = value\n    if flag:\n        return view\n    value = 2\n    return value\n",
+                false,
+            ),
+            (
+                "def shadow(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    Borrowed = 2\n    value = 3\n    return view\n",
+                true,
+            ),
+            (
+                "def nested(mut value: BorrowedMut[Customer]) -> int:\n    mut view: BorrowedMut[int] = value.address.count\n    view = 2\n    return value.address.count\nmodel Address:\n    count: int\nmodel Customer:\n    address: Address\n",
+                false,
+            ),
+            (
+                "def parent(value: Owned[Customer]) -> int:\n    let view: Borrowed[int] = value.address.count\n    let taken: Owned[Address] = value.address\n    return view\nmodel Address:\n    count: int\nmodel Customer:\n    address: Address\n",
+                true,
+            ),
+            (
+                "def sibling(mut value: BorrowedMut[Pair]) -> int:\n    let view: Borrowed[int] = value.left\n    value.right = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
+                false,
+            ),
+            (
+                "def overlapping(mut value: BorrowedMut[Pair]) -> int:\n    let view: Borrowed[int] = value.left\n    value.left = 2\n    return view\nmodel Pair:\n    left: int\n    right: int\n",
+                true,
+            ),
+            (
+                "def compound(mut value: BorrowedMut[int]) -> int:\n    value += 1\n    return value\n",
+                false,
+            ),
         ] {
             let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
             let analysis = flow::analyze(&graph).map_err(|error| format!("{source}\n{error:?}"))?;
@@ -250,14 +346,15 @@ mod tests {
         Ok(())
     }
 
-    /// Calls, escaping results and annotation-owned local loans remain unavailable until their exact checked access
+    /// Calls, escaping results and temporary owners remain unavailable until their exact checked access
     /// and dependency facts exist; a partial graph cannot count as validation of the whole callable.
     #[test]
     fn source_flow_refuses_unprojected_dependencies() -> Result<(), Box<dyn std::error::Error>> {
         for source in [
             "def show(value: Borrowed[int]) -> None:\n    print(value)\n",
             "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n",
-            "def local(value: Borrowed[str]) -> None:\n    let view: Borrowed[str] = value\n",
+            "def local(value: Borrowed[str]) -> None:\n    let view: Reference[str] = value\n",
+            "def temporary() -> None:\n    let view: Borrowed[str] = \"temporary\"\n",
         ] {
             assert!(
                 source_graph(source)?.is_err(),

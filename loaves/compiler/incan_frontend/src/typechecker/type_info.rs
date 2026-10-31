@@ -1885,6 +1885,9 @@ pub struct IsInstanceTargetInfo {
 /// Custom protocol decisions that lower into explicit runtime calls.
 #[derive(Debug, Default, Clone)]
 pub struct ProtocolArtifacts {
+    /// Canonically bound local mode requests, captured before lexical shadowing. Native lowering may consume them
+    /// only together with the owning body's complete flow proof.
+    pub(in crate::typechecker) explicit_local_modes: BTreeMap<CanonicalSymbolId, super::ownership_contracts::LocalMode>,
     /// Explicit input flow is body-owned. The native executable gate remains closed until the complete projection
     /// and storage contract agree; record profiles without this payload must refuse rather than discard it.
     pub(in crate::typechecker) explicit_input_flow: BTreeMap<CanonicalSymbolId, super::ownership_contracts::InputFlow>,

@@ -29,6 +29,17 @@ impl TypeChecker {
         annotation: &Type,
         ty: &ResolvedType,
     ) -> Option<AccessMode<ResolvedType>> {
+        self.explicit_root_contract(annotation, ty)
+            .filter(|mode| mode.mode != ownership::OwnershipMode::Reference)
+    }
+
+    /// Capture a canonical outer access request before a binding changes lookup. Callers decide which authoring
+    /// roles their current stage supports; an unsupported mode is still a fact and cannot be silently erased.
+    pub(in crate::typechecker) fn explicit_root_contract(
+        &self,
+        annotation: &Type,
+        ty: &ResolvedType,
+    ) -> Option<AccessMode<ResolvedType>> {
         let ResolvedType::Generic(name, arguments) = ty else {
             return None;
         };
@@ -44,7 +55,7 @@ impl TypeChecker {
             Some(_) => None,
             None => self.explicit_ownership_mode(name),
         };
-        let mode = mode.filter(|mode| *mode != ownership::OwnershipMode::Reference)?;
+        let mode = mode?;
         Some(AccessMode {
             mode,
             component: TypeComponent {
