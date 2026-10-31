@@ -28,6 +28,7 @@ from observation import file_digest
 from unit_publication import publication, published_identity, record_path, record_payload
 from cli_help import render, unknown_option
 from jec import begin, record
+from installation_check import verify_installed_runtime
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -732,6 +733,7 @@ def prepare_published(target: Path, admission: InstallationAdmission) -> Result[
     # Legacy bundles need native metadata once on this machine; current bundles already carry it.
     installed = load_toolchain()?
     read_registry_units(Path(installed.registry_units))?
+    verify_installed_runtime(target)?
     return Ok(None)
 
 
