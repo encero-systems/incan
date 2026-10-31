@@ -8,6 +8,7 @@ use incan_semantics_core::SymbolOrigin;
 
 mod checked;
 mod flow;
+mod report;
 mod source;
 
 use super::TypeChecker;
@@ -59,7 +60,10 @@ impl TypeChecker {
         }
         let output = match source::build(self, function, span) {
             Ok(graph) => match flow::analyze(&graph) {
-                Ok(analysis) => InputFlow::Checked { graph, analysis },
+                Ok(analysis) => {
+                    self.errors.extend(report::conflicts(&graph, &analysis));
+                    InputFlow::Checked { graph, analysis }
+                }
                 Err(fault) => InputFlow::Invalid { graph, fault },
             },
             Err(reason) => InputFlow::Unavailable(reason),
@@ -361,6 +365,69 @@ mod tests {
                 "unsupported dependency admitted: {source}"
             );
         }
+        Ok(())
+    }
+
+    /// Conflicts are source diagnostics with the actual operation and the dependency explaining its lifetime;
+    /// stable secondary anchors must survive independently of message wording or native compilation.
+    #[test]
+    fn explicit_conflicts_report_origin_and_dependent_use() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def conflicting(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    value = 2\n    return view\n";
+        let checker = checked(source)?;
+        let conflict = checker
+            .errors
+            .iter()
+            .find(|error| error.stable_code() == Some("INCAN-T0126"))
+            .ok_or("missing source ownership conflict")?;
+        assert_eq!(source.get(conflict.span.start..conflict.span.end), Some("value"));
+        let related = conflict.related_spans();
+        assert_eq!(related.len(), 2, "{conflict:?}");
+        assert_eq!(source.get(related[0].span.start..related[0].span.end), Some("value"));
+        assert_eq!(source.get(related[1].span.start..related[1].span.end), Some("view"));
+        assert!(related[0].span.start < conflict.span.start);
+        assert!(related[1].span.start > conflict.span.start);
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0123"))
+        );
+
+        let source = "def transfer(value: Owned[str]) -> str:\n    first = value\n    return value\n";
+        let checker = checked(source)?;
+        let conflict = checker
+            .errors
+            .iter()
+            .find(|error| error.stable_code() == Some("INCAN-T0126"))
+            .ok_or("missing moved source conflict")?;
+        assert_eq!(source.get(conflict.span.start..conflict.span.end), Some("value"));
+        assert_eq!(conflict.related_spans().len(), 1);
+        assert!(conflict.related_spans()[0].span.start < conflict.span.start);
+
+        let source = "def readonly(value: Borrowed[int]) -> None:\n    value = 2\n";
+        let checker = checked(source)?;
+        let conflict = checker
+            .errors
+            .iter()
+            .find(|error| error.stable_code() == Some("INCAN-T0126"))
+            .ok_or("missing permission conflict")?;
+        assert!(conflict.related_spans().is_empty());
+        assert_eq!(conflict.related_declarations().len(), 1);
+        assert_eq!(conflict.related_declarations()[0].identity.declaration_name, "value");
+
+        let source = "def branching(mut value: Owned[int], flag: bool) -> int:\n    let view: Borrowed[int] = value\n    if flag:\n        value = 2\n        return view\n    return view\n";
+        let checker = checked(source)?;
+        let conflict = checker
+            .errors
+            .iter()
+            .find(|error| error.stable_code() == Some("INCAN-T0126"))
+            .ok_or("missing branch conflict")?;
+        assert_eq!(conflict.related_spans().len(), 2);
+        let witness = conflict.related_spans()[1].span;
+        assert_eq!(
+            witness.start,
+            source.find("return view").ok_or("missing branch use")? + 7
+        );
         Ok(())
     }
 

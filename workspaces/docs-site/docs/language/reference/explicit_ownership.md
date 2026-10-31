@@ -31,6 +31,20 @@ An explicit borrowed result requires a source even if there is only one paramete
 
 An `Owned` result can declare a source relationship. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage.
 
+## Source conflict diagnostics
+
+For checked free-function bodies with direct input contracts or explicit local loans, `INCAN-T0126` reports permission conflicts, overlapping live borrows and use after ownership transfer. It identifies the conflicting operation and its source declaration, borrow origin or earlier move. When a reachable dependent use keeps a borrow live, that use is included as a related location.
+
+```incan
+# refused: INCAN-T0123; the replacement also produces INCAN-T0126
+def update(mut value: Owned[int]) -> int:
+    let view: Borrowed[int] = value  # borrow origin
+    value = 2                      # conflicts with the live borrow
+    return view                    # dependent use keeps it live
+```
+
+This analysis does not enable execution. Calls, returned dependencies, temporary owners and other source shapes whose complete dependency facts are unavailable still receive the execution refusal. The absence of `INCAN-T0126` is not proof that such a body has a complete ownership analysis.
+
 ## Place-binding migration warning
 
 A mutable local initialized directly from a stored string field receives an independent value. Assigning to `title` in this example leaves `page.title` unchanged:
