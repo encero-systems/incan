@@ -14842,7 +14842,7 @@ def lower_try_propagation(
     track_rvalue_moves(builder, RvalueKind.Use(value))
     builder.emit(plan_assign(source, RvalueKind.Use(value), span))
     builder.owned.append(source.local)
-    target = scalar_place(builder, destination, span)?
+    target = assignment_place(builder, destination, span)?
     return propagate_result(builder, source, target, span)
 
 
