@@ -465,6 +465,7 @@ from type_parameters import (
 )
 from runtime_calls import retain_runtime_instances, runtime_redirects, redirect_runtime_calls
 from runtime_layouts import runtime_zip_carriers
+from runtime_requirements import RuntimeRetention, FramesPlanning, BodyPlanning, UnitPlanning, RefusalPlanning
 from primitive_traits import normalized_primitive_call, has_adapter_slot
 from generic_callables import owned_callable_slots
 from sdk_generic_callables import sdk_owned_callable_bindings, sdk_callable_type, sdk_callable_type_arguments
@@ -7790,7 +7791,7 @@ pub def unit_plan(
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool = true,
-) -> Result[Option[Plan], str]:
+) -> Result[UnitPlanning, str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
@@ -7834,7 +7835,7 @@ def lowered_plan(
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool,
-) -> Result[Option[Plan], str]:
+) -> Result[UnitPlanning, str]:
     """Lower a checked unit: 1. Prepare layouts. 2. Lower bodies and instances. 3. Publish the completed plan."""
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = native_environment(trace_key).is_some()
@@ -7875,7 +7876,9 @@ def lowered_plan(
     mut emitted_frames = no_emitted_frames()
     # 2. Lower ordinary frames, static initializers and their requested instances.
     mut retained_nominals = nominal_instances
-    statics, original_nominal_count = lower_plan_frames(
+    mut statics: list[StaticCell] = []
+    mut original_nominal_count: int = 0
+    match lower_plan_frames(
         template_constructors,
         context,
         source_context,
@@ -7894,7 +7897,11 @@ def lowered_plan(
         unions,
         retained_nominals,
         trace,
-    )?
+    )?:
+        BodyPlanning.NeedsRuntime(requests) => return Ok(UnitPlanning.NeedsRuntime(requests))
+        BodyPlanning.Complete((retained, original)) =>
+            statics = retained
+            original_nominal_count = original
     retained_constructors = program.constructors.as_ref()
     original_constructors = constructors.as_ref()
     if len(context.nominal_declarations) != original_nominal_count:
@@ -7925,7 +7932,7 @@ def lowered_plan(
         templates = generic_models(template_constructors, source_context, retained_nominals, files[entry])?
         exports = loaf_exports(context, emitted_frames.body_positions, source_context, templates)
         publish_unions(original_constructors, context, intrinsics, published)?
-    return completed_plan(
+    planned = completed_plan(
         context,
         checked[entry],
         kind,
@@ -7939,7 +7946,8 @@ def lowered_plan(
         exports,
         templates,
         zip_carriers,
-    )
+    )?
+    return Ok(UnitPlanning.Complete(planned))
 
 
 def initial_plan_roots(
@@ -8071,7 +8079,7 @@ def lower_plan_frames(
     unions: list[RustType],
     mut retained_nominals: list[NominalInstance],
     trace: bool,
-) -> Result[tuple[list[StaticCell], int], str]:
+) -> Result[BodyPlanning, str]:
     """Lower ordinary frames, then retain request layouts and the nominal length for source restoration."""
     lower_ordinary_bodies(
         context,
@@ -8091,7 +8099,7 @@ def lower_plan_frames(
         trace,
     )?
     original_nominal_count = len(context.nominal_declarations)
-    statics = lower_requested_frames(
+    match lower_requested_frames(
         template_constructors,
         context,
         templates,
@@ -8106,8 +8114,9 @@ def lower_plan_frames(
         intrinsics,
         retained_nominals,
         trace,
-    )?
-    return Ok((statics, original_nominal_count))
+    )?:
+        FramesPlanning.NeedsRuntime(requests) => return Ok(BodyPlanning.NeedsRuntime(requests))
+        FramesPlanning.Complete(statics) => return Ok(BodyPlanning.Complete((statics, original_nominal_count)))
 
 
 def initial_plan_layouts(
@@ -8177,7 +8186,7 @@ def lower_requested_frames(
     mut intrinsics: list[EnumDeclaration],
     mut retained_nominals: list[NominalInstance],
     trace: bool,
-) -> Result[list[StaticCell], str]:
+) -> Result[FramesPlanning, str]:
     """Lower static initializers before draining the checked callable requests they and ordinary bodies contribute."""
     mut owners: list[str] = []
     for module_position in range(len(checked)):
@@ -8197,7 +8206,7 @@ def lower_requested_frames(
     )?
     trace_lowering(trace, "generic instances")
     mut instance_cells: list[StaticCell] = []
-    lower_instances(
+    match lower_instances(
         template_constructors,
         context,
         templates,
@@ -8212,11 +8221,13 @@ def lower_requested_frames(
         intrinsics,
         retained_nominals,
         instance_cells,
-    )?
+    )?:
+        RuntimeRetention.NeedsRuntime(requests) => return Ok(FramesPlanning.NeedsRuntime(requests))
+        RuntimeRetention.Complete => pass
     mut cells = statics
     for cell in instance_cells:
         cells.append(cell)
-    return Ok(cells)
+    return Ok(FramesPlanning.Complete(cells))
 
 
 def finalize_plan_layouts(
@@ -8852,7 +8863,7 @@ pub def program_refusals(
     selection: str,
     kind: str,
     overflow_checks: bool,
-) -> list[str]:
+) -> RefusalPlanning:
     """
     Collect every body's first refusal rather than only the program's first, for the direct-route census.
 
@@ -8864,12 +8875,12 @@ pub def program_refusals(
     A nonempty `selection` checks only ordinary bodies with that exact name; it does not compile their dependencies.
     """
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
-        return ["invalid Body IR project entry"]
+        return RefusalPlanning.Complete(["invalid Body IR project entry"])
     if len(sources) != len(modules) or len(files) != len(modules):
-        return ["invalid Body IR project source provenance"]
+        return RefusalPlanning.Complete(["invalid Body IR project source provenance"])
     match body_refusals(modules, sources, files, entry, progress, selection, kind, overflow_checks):
         Ok(refusals) => return refusals
-        Err(error) => return [error]
+        Err(error) => return RefusalPlanning.Complete([error])
 
 
 def body_refusals(
@@ -8881,7 +8892,7 @@ def body_refusals(
     selection: str,
     kind: str,
     overflow_checks: bool,
-) -> Result[list[str], str]:
+) -> Result[RefusalPlanning, str]:
     """
     Prepare the declaration context exactly as `unit_plan` does, refusing as it refuses, then lower each ordinary
     body on its own and record the first refusal of every body that refuses.
@@ -8970,12 +8981,12 @@ def body_refusals(
         index += 1
     if selection != "":
         finish_selected_census(selection, selected_count, progress, refusals)
-        return Ok(refusals)
+        return Ok(RefusalPlanning.Complete(refusals))
     mut owners: list[str] = []
     for module_position in range(len(checked)):
         module = borrowed_at(checked, module_position)
         owners.append(str(module.module_id.path()))
-    append_context_refusals(
+    match append_context_refusals(
         template_constructors,
         context,
         source_context,
@@ -8990,8 +9001,10 @@ def body_refusals(
         instances,
         nominal_instances,
         refusals,
-    )
-    return Ok(refusals)
+    ):
+        RuntimeRetention.NeedsRuntime(requests) => return Ok(RefusalPlanning.NeedsRuntime(requests))
+        RuntimeRetention.Complete => pass
+    return Ok(RefusalPlanning.Complete(refusals))
 
 
 def finish_selected_census(selection: str, selected_count: int, progress: bool, mut refusals: list[str]) -> None:
@@ -9017,7 +9030,7 @@ def append_context_refusals(
     mut instances: list[Instance],
     nominal_instances: list[NominalInstance],
     mut refusals: list[str],
-) -> None:
+) -> RuntimeRetention:
     """Collect static-initialization and instance refusals after ordinary bodies have contributed their requests."""
     match lower_computed_statics(
         context,
@@ -9051,8 +9064,10 @@ def append_context_refusals(
         retained_nominals,
         instance_cells,
     ):
-        Ok(_lowered) => pass
+        Ok(RuntimeRetention.NeedsRuntime(requests)) => return RuntimeRetention.NeedsRuntime(requests)
+        Ok(RuntimeRetention.Complete) => pass
         Err(error) => refusals.append(f"type-parameter instance: {error}")
+    return RuntimeRetention.Complete
 
 
 def append_generator_constructor(
@@ -9194,7 +9209,7 @@ def lower_instances(
     mut intrinsics: list[EnumDeclaration],
     mut nominal_instances: list[NominalInstance],
     mut cells: list[StaticCell],
-) -> Result[None, str]:
+) -> Result[RuntimeRetention, str]:
     """
     Drain checked instances through an explicit foreign mutable loan and append native layouts in place.
 
@@ -9208,9 +9223,9 @@ def lower_instances(
     mut queue = instance_queue()
     mut runtime_unions = list(unions)
     mut redirects = runtime_redirects()
-    governed_runtime = governed_runtime_module(owners)
+    governed_runtime = len(context.runtime_callable_bindings) != 0 or governed_runtime_module(owners)
     if governed_runtime:
-        retain_runtime_instances(
+        match retain_runtime_instances(
             template_constructors,
             program,
             context,
@@ -9222,7 +9237,9 @@ def lower_instances(
             nominal_instances,
             runtime_unions,
             redirects,
-        )?
+        )?:
+            RuntimeRetention.NeedsRuntime(requests) => return Ok(RuntimeRetention.NeedsRuntime(requests))
+            RuntimeRetention.Complete => pass
     enqueue_instances(queue, instances)
     while let Some(request) = queue.pending.pop_front():
         arguments = request.arguments
@@ -9286,7 +9303,7 @@ def lower_instances(
         mut scheduled = pending
         enqueue_instances(queue, scheduled)
         if governed_runtime:
-            retain_runtime_instances(
+            match retain_runtime_instances(
                 template_constructors,
                 program,
                 context,
@@ -9298,10 +9315,12 @@ def lower_instances(
                 nominal_instances,
                 runtime_unions,
                 redirects,
-            )?
+            )?:
+                RuntimeRetention.NeedsRuntime(requests) => return Ok(RuntimeRetention.NeedsRuntime(requests))
+                RuntimeRetention.Complete => pass
             enqueue_instances(queue, instances)
     redirect_runtime_calls(functions, redirects)?
-    return Ok(None)
+    return Ok(RuntimeRetention.Complete)
 
 
 def instance_loans(

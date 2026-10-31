@@ -69,6 +69,12 @@ Every package identity takes this one route. No Body IR record, lowering branch 
 
 The standard packages are Loaves like any other. A project depends on the standard packages whose namespaces it imports, at the versions the compiler pins. Their artifacts come from the toolchain: built from `loaves/stdlib/*` in a checkout, and shipped in the local incan.pub cache by an installation. No source module of the standard library is collected into a consumer.
 
+### Runtime dependency selection
+
+The runtime's public callable map identifies which declarations implement lowered operations. Its presence is not a request to load every runtime body. Planning selects the operations it actually needs, including deferred coroutine calls, and resolves their canonical declarations through the same Loaf index. If a required body is missing from the current context, planning returns those prerequisites separately from a completed plan or a semantic refusal. A retry must add a previously unrequested canonical declaration; an unchanged requirement is a compiler contract failure. Incomplete attempts publish neither native artifacts nor a final refusal report.
+
+An empty library or a scalar identity function does not acquire the ordinary core Loaf merely because the runtime also exports fallible iterator helpers. Bytes iteration and hex encoding retain their selected runtime helpers. A selected helper whose checked declaration requires a core trait or iterator type still requires that provider. Native support artifacts remain a separate, explicit part of the compilation unit; this rule does not make those native foundations disappear. A missing executable provider diagnostic retains the requested canonical declaration and its requester chain, without attributing imported declaration offsets to the consumer's source file.
+
 ## Consequences
 
 - The provider plan, the library-manifest index, the SDK inventory with its components, profiles and bootstrap grants, the standard source publication, and the generated-crate artifact record are replaced by the artifact and the index.

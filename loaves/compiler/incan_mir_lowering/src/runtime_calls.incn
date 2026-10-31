@@ -2,6 +2,7 @@
 
 from pub::incan_mir_plan import (
     semantic_type_matches,
+    SourceSpan,
     PlanType,
     Function,
     ExternalFunction,
@@ -30,6 +31,7 @@ from classes import function_name
 from type_parameters import Instance, instantiate, request_instance
 from lowering import frame_parameter_type, merge_externals
 from runtime_frames import runtime_frame_adapter
+from runtime_requirements import RuntimeRequirement, RuntimeRetention
 from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from program_context import ProgramContext, retain_nominal_tables
@@ -76,7 +78,7 @@ pub def retain_runtime_instances(
     mut nominal_instances: list[NominalInstance],
     mut unions: list[RustType],
     mut redirects: RuntimeRedirects,
-) -> Result[None, str]:
+) -> Result[RuntimeRetention, str]:
     """
     Retain runtime selections: 1. Retain coroutines. 2. Close frames and register implementations. 3. Retain native calls.
 
@@ -85,6 +87,9 @@ pub def retain_runtime_instances(
     The queue owns its shared union inventory; only newly retained nominal declarations invalidate that inventory.
     The explicit foreign mutable loan keeps frame retention from snapshotting every checked body per request.
     """
+    requirements = missing_runtime_requirements(module, externals, functions)?
+    if len(requirements) != 0:
+        return Ok(RuntimeRetention.NeedsRuntime(requirements))
     # 1. Retain coroutine instances before ordinary call frames.
     retain_runtime_future_instances(program.constructors.as_ref(), module, functions, instances, intrinsics, unions)?
     mut retained: list[ExternalFunction] = []
@@ -158,6 +163,53 @@ pub def retain_runtime_instances(
     while len(externals) != 0:
         _ = externals.pop()
     externals.extend(retained)
+    return Ok(RuntimeRetention.Complete)
+
+
+def missing_runtime_requirements(
+    module: &BodyIrModule,
+    externals: &list[ExternalFunction],
+    functions: &list[Function],
+) -> Result[list[RuntimeRequirement], str]:
+    """Demand only selected external calls and deferred coroutine callees, before mutating their frame inventories."""
+    mut requests: list[RuntimeRequirement] = []
+    for position in range(len(externals)):
+        external = borrowed_at(externals, position)
+        retain_runtime_requirement(module, external.path, external.span, requests)?
+    for position in range(len(functions)):
+        function = borrowed_at(functions, position)
+        match function.future_callee:
+            Some(callee) =>
+                match callee.kind:
+                    CalleeKind.Instantiated(path, _arguments) =>
+                        retain_runtime_requirement(module, path, callee.span, requests)?
+                    _ => pass
+            None => pass
+    return Ok(requests)
+
+
+def retain_runtime_requirement(
+    module: &BodyIrModule,
+    path: str,
+    span: SourceSpan,
+    mut requests: list[RuntimeRequirement],
+) -> Result[None, str]:
+    """Bind a demand through the checked public facade; a missing facade never acquires an invented identity."""
+    match runtime_canonical(module, path)?:
+        None => return Ok(None)
+        Some(identity) =>
+            for position in range(len(module.bodies)):
+                body = borrowed_at(module.bodies, position)
+                if body.canonical == Some(identity.clone()):
+                    return Ok(None)
+            for position in range(len(module.loaf_callables)):
+                declaration = borrowed_at(module.loaf_callables, position)
+                if declaration.canonical == identity:
+                    return Ok(None)
+            for request in requests:
+                if request.canonical == identity:
+                    return Ok(None)
+            requests.append(RuntimeRequirement(canonical=identity.clone(), path=path, span=span))
     return Ok(None)
 
 
