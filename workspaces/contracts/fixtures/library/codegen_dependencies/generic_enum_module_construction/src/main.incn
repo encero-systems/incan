@@ -33,9 +33,12 @@ def main() -> None:
     match empty_texts():
         Ok(value) =>
             match value:
-                ImportedPacket.Many(values) => assert len(values) == 0
-                _ => assert false
-        Err(_) => assert false
+                ImportedPacket.Many(values) =>
+                    assert len(values) == 0
+                _ =>
+                    assert false
+        Err(_) =>
+            assert false
     holder: Holder[int] = shapes.Holder[int](value=6)
     assert holder.get() == 6
     native: HashMap[NativeString, int] = HashMap.new()

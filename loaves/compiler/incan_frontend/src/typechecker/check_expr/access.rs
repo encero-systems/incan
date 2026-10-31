@@ -76,7 +76,7 @@ const SLICE_HOOK: &str = "__getslice__";
 /// checked, while the enum's own arguments are what the construction's result type reports afterwards.
 #[derive(Debug, Clone)]
 struct EnumVariantInstantiation {
-    /// The enum's type arguments, taken from the destination type.
+    /// The enum's type arguments, supplied explicitly or taken from a same-declaration destination.
     arguments: Vec<ResolvedType>,
     /// The variant's declared payload types, substituted through those arguments.
     payloads: Vec<ResolvedType>,
@@ -7496,10 +7496,10 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Check generated enum members or retain the already checked payload signature of a variant construction.
+    /// Check generated enum members, validate constructor arguments and retain the selected payload signature.
     ///
-    /// A constructor reports the destination's concrete type arguments rather than erasing them to the enum name;
-    /// payload expectations were applied before this result-selection stage (#1516).
+    /// A constructor preserves explicit or expected type arguments instead of erasing them to the enum name. Payload
+    /// expressions are checked once with their context, then ordinary call binding validates their types and arity.
     fn check_enum_method_call(
         &mut self,
         call: &MethodCallSite<'_>,
