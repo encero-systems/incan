@@ -229,8 +229,21 @@ def registry_unit(item: JsonValue, entries: str) -> Result[RegistryUnit, str]:
             recorded=item.get("dependencies") != None,
             name=registry_text(item, "name")?,
             kind=registry_text(item, "kind")?,
+            crate_hash=registry_text(item, "crate_hash")?,
+            artifact=registry_artifact_path(item, entries)?,
+            refusal=registry_text(item, "refusal")?,
         ),
     )
+
+
+def registry_artifact_path(item: JsonValue, entries: str) -> Result[str, str]:
+    """Locate optional baked native metadata relative to its closure, preserving legacy null artifacts."""
+    match item.get("artifact"):
+        None => return Ok("")
+        Some(value) =>
+            if value.is_null():
+                return Ok("")
+            return Ok(located(Path(entries).parent(), value.expect_str().map_err((error) => error.message())?))
 
 
 def registry_text(item: JsonValue, key: str) -> Result[str, str]:
@@ -1182,7 +1195,18 @@ def compile_local_rust_library(
         outputs = [artifact, graph, dependencies]
         record_portable(directory, key, outputs)?
         portable = directory.joinpath("library.portable-inputs")
-        seal_rust(store, identity, name, key.digest, key.provenance, directory, outputs, [portable], facet.project, linked)?
+        seal_rust(
+            store,
+            identity,
+            name,
+            key.digest,
+            key.provenance,
+            directory,
+            outputs,
+            [portable],
+            facet.project,
+            linked,
+        )?
     match library_artifact(directory, declared.crate_name, context, declared.kind)?:
         None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
         Some(viewed) =>
@@ -1454,7 +1478,15 @@ pub def compile_binary(
         return Ok(binary.0)
     # Baked evidence is interpreted in each consumer's checkout, just as a library's dependency evidence is.
     relocate_dependencies(staged_dependencies, Path(facet.project))?
-    fact = seal(store, current.digest, staged, "rust binary", rust_unit_name("binary", output_name, ""), [], "rust binary")?
+    fact = seal(
+        store,
+        current.digest,
+        staged,
+        "rust binary",
+        rust_unit_name("binary", output_name, ""),
+        [],
+        "rust binary",
+    )?
     register_root(store, facet.project, current.digest)?
     view(store, fact, output_name, binary)?
     view(store, fact, f"{output_name}.d", dependencies)?

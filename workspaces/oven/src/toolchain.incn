@@ -264,7 +264,10 @@ def admit_registry(document: JsonValue, directory: Path) -> Result[list[Path], s
     for identity in externs.keys():
         native = externs.require(identity).map_err((error) => error.message())?
         artifact = Path(located(source.parent(), required_text(native, "path")?))
-        import_payload(artifact, identity)?
+        mut expected = ""
+        if native.get("payload_digest") != None:
+            expected = required_text(native, "payload_digest")?
+        import_payload(artifact, identity, expected)?
         paths.append(artifact)
     return Ok(paths)
 

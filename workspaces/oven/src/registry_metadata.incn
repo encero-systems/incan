@@ -30,6 +30,8 @@ pub def complete_legacy(units: list[RegistryUnit], closure: Path) -> Result[list
     3. Otherwise complete the units from the compiler's metadata, and retain that when no entry changed meanwhile.
     """
     # 1. New producers already publish all required entry identities.
+    if len([unit for unit in units if not has_native_metadata(unit)]) == 0:
+        return Ok(units)
     toolchain = load_toolchain()?
     if len([unit for unit in units if not unit.recorded]) == 0 and len(toolchain.externs) == 0:
         return Ok(units)
@@ -48,6 +50,11 @@ pub def complete_legacy(units: list[RegistryUnit], closure: Path) -> Result[list
     if entry_listings(units) == listings:
         retain(closure, selection, observed, completion_record(completed, listings))
     return Ok(completed)
+
+
+def has_native_metadata(unit: RegistryUnit) -> bool:
+    """A baked closure records the exact native identity or its producer's refusal; neither needs rediscovery."""
+    return unit.refusal != "" or (unit.recorded and unit.name != "" and unit.crate_hash != "" and unit.artifact != "")
 
 
 pub def completion_selection(rustc: str) -> Result[str, str]:
