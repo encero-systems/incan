@@ -12,14 +12,14 @@ use super::{Ident, Param, Span, Spanned, Statement, Type, VocabBlockStmt};
 
 /// Slice expression: represents `start:end` or `start:end:step` All components are optional, e.g., `[:5]`, `[2:]`,
 /// `[::2]`
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SliceExpr {
     pub start: Option<Box<Spanned<Expr>>>,
     pub end: Option<Box<Spanned<Expr>>>,
     pub step: Option<Box<Spanned<Expr>>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Expr {
     /// Identifier
     Ident(Ident),
@@ -121,7 +121,7 @@ impl Spanned<Expr> {
 }
 
 /// One entry in a list literal.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ListEntry {
     /// Direct element expression.
     Element(Spanned<Expr>),
@@ -130,7 +130,7 @@ pub enum ListEntry {
 }
 
 /// One entry in a dict literal.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum DictEntry {
     /// Direct key/value pair.
     Pair(Spanned<Expr>, Spanned<Expr>),
@@ -139,14 +139,14 @@ pub enum DictEntry {
 }
 
 /// A keyword preset supplied to a partial callable template.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct PartialArg {
     pub name: Ident,
     pub value: Spanned<Expr>,
 }
 
 /// Local partial callable preset expression payload.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct PartialExpr {
     pub target: Box<Spanned<Expr>>,
     pub type_args: Vec<Spanned<Type>>,
@@ -154,14 +154,15 @@ pub struct PartialExpr {
 }
 
 /// Generic surface expression node emitted by parser handoff.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SurfaceExpr {
+    #[serde(serialize_with = "super::serialize_debug")]
     pub key: SurfaceFeatureKey,
     pub payload: SurfaceExprPayload,
 }
 
 /// Surface expression payload variants.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum SurfaceExprPayload {
     /// Prefix unary keyword expression: `kw expr`.
     PrefixUnary(Box<Spanned<Expr>>),
@@ -170,6 +171,7 @@ pub enum SurfaceExprPayload {
     /// DSL-owned leading-dot path with an implicit receiver: `.field` or `.relation.field`.
     LeadingDotPath {
         segments: Vec<Ident>,
+        #[serde(serialize_with = "super::serialize_debug")]
         receiver: incan_vocab::ScopedSurfaceReceiver,
         owner: ScopedSurfaceOwner,
     },
@@ -189,7 +191,7 @@ pub enum SurfaceExprPayload {
 }
 
 /// Expression-position `race for value:` surface syntax.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RaceForExpr {
     /// The one source-authored winner binding shared by every arm, including its exact header token span.
     pub binding: Spanned<Ident>,
@@ -197,21 +199,21 @@ pub struct RaceForExpr {
 }
 
 /// One `await expr => body` arm in a race expression.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RaceForArm {
     pub awaitable: Spanned<Expr>,
     pub body: RaceForBody,
 }
 
 /// Body form for a race arm.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum RaceForBody {
     Expr(Spanned<Expr>),
     Block(Vec<Spanned<Statement>>),
 }
 
 /// Source DSL context that accepted a scoped surface expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ScopedSurfaceOwner {
     pub declaration: String,
     pub clause: Option<String>,
@@ -230,11 +232,13 @@ pub struct ScopedSurfaceOwner {
 /// that does not understand this descriptor's grammar (or one it declares layout-sensitive) can still render it
 /// faithfully. `key` mirrors `SurfaceExpr::key`'s identity shape so tooling can correlate an embedded fragment back
 /// to the descriptor and dependency that produced it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EmbeddedFragmentExpr {
     /// Descriptor identity that claimed this fragment, for diagnostics and tooling correlation.
+    #[serde(serialize_with = "super::serialize_debug")]
     pub key: SurfaceFeatureKey,
     /// Fixed lexical submode kind this fragment was parsed under.
+    #[serde(serialize_with = "super::serialize_debug")]
     pub submode: incan_vocab::EmbeddedFragmentSubmode,
     /// Structural node tree produced by the submode's grammar, in source order.
     pub nodes: Vec<Spanned<EmbeddedNode>>,
@@ -319,7 +323,7 @@ impl EmbeddedFragmentExpr {
 }
 
 /// Which side of an embedded fragment's ownership boundary a source offset falls on (RFC 081, #1022).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub enum EmbeddedOwnership<'a> {
     /// Ordinary Incan: the offset is inside an expression hole, which is typechecked and lowered exactly as the
     /// same expression written in ordinary position. Tooling should treat it as ordinary Incan, not as DSL syntax.
@@ -398,7 +402,7 @@ fn collect_embedded_holes_mut<'a>(nodes: &'a mut [Spanned<EmbeddedNode>], holes:
 /// literals, type shapes) are only ever produced by their owning submode's grammar. Every variant carries enough
 /// structure to typecheck the expression holes inside it and to report a diagnostic anchored at the exact
 /// sub-region rather than the whole fragment.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum EmbeddedNode {
     /// Raw literal text run, preserved verbatim within this submode's own grammar (whitespace, text-node content,
     /// comment bodies, raw-text/comment submode content).
@@ -427,7 +431,7 @@ pub enum EmbeddedNode {
 }
 
 /// Markup element node: a tag, its attributes, and its children.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EmbeddedElement {
     /// Tag name, for example `section`.
     pub name: String,
@@ -440,7 +444,7 @@ pub struct EmbeddedElement {
 }
 
 /// One markup attribute: a name and an optional value (`Text` for a quoted literal, `Hole` for `{expr}`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EmbeddedAttr {
     /// Attribute name, exactly as written (for example `class`, `src`).
     pub name: String,
@@ -449,7 +453,7 @@ pub struct EmbeddedAttr {
 }
 
 /// Style rule: a selector list and its declaration block.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EmbeddedStyleRule {
     /// Selector list entries, in source order.
     pub selectors: Vec<Spanned<EmbeddedNode>>,
@@ -458,7 +462,7 @@ pub struct EmbeddedStyleRule {
 }
 
 /// One declaration-value production: `property: value1 value2 ...;`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EmbeddedDeclaration {
     /// Declared property name, including a leading `--` for custom properties.
     pub property: String,
@@ -467,7 +471,7 @@ pub struct EmbeddedDeclaration {
 }
 
 /// A single declaration-value or selector-position literal shape.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum EmbeddedValue {
     /// A numeric dimension, for example `16px` or `2rem` (unit may be empty for a bare number).
     Dimension { number: String, unit: String },
@@ -489,7 +493,7 @@ pub enum EmbeddedValue {
 ///
 /// This intentionally covers only the constructs #1023's acceptance criteria names — namespace-qualified names,
 /// generics, nullable, array, and union — not a full external type-system grammar.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum EmbeddedTypeShape {
     /// Namespace-qualified name, for example `a.b.C` (segments in source order).
     Name(Vec<String>),
@@ -503,14 +507,14 @@ pub enum EmbeddedTypeShape {
     Union(Vec<EmbeddedTypeShape>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum FStringFormat {
     Display,
     Debug,
     Unsupported(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum FStringPart {
     Literal(String),
     Expr { expr: Spanned<Expr>, format: FStringFormat },
@@ -521,7 +525,7 @@ pub enum FStringPart {
 /// [`IntLiteral::repr`] is the exact `source[start..end]` span from the lexer (including `_` numeric separators).
 ///
 /// [`PartialEq`] ignores only [`IntLiteral::repr`] so AST equality tests do not depend on source spelling.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IntLiteral {
     pub value: i64,
     pub magnitude: u128,
@@ -574,7 +578,7 @@ impl IntLiteral {
 /// keeps formatter output aligned with comment reattachment anchors.
 ///
 /// [`PartialEq`] compares only [`FloatLiteral::value`] (IEEE bits) so AST equality tests do not depend on `repr`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct FloatLiteral {
     pub value: f64,
     pub repr: String,
@@ -604,7 +608,7 @@ impl FloatLiteral {
 ///
 /// The `body` field is the numeric spelling without `_` separators and without the trailing `d` suffix. Semantic
 /// validation of precision and scale belongs to the typechecker.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DecimalLiteral {
     pub body: String,
     pub repr: String,
@@ -617,7 +621,7 @@ impl PartialEq for DecimalLiteral {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Literal {
     Int(IntLiteral),
     Float(FloatLiteral),
@@ -628,7 +632,7 @@ pub enum Literal {
     None,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -694,14 +698,14 @@ impl fmt::Display for BinaryOp {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum UnaryOp {
     Neg,
     Not,
     Invert,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum CallArg {
     /// Positional argument
     Positional(Spanned<Expr>),
@@ -713,7 +717,7 @@ pub enum CallArg {
     KeywordUnpack(Spanned<Expr>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum PatternArg {
     /// Positional pattern: `Type(x)`
     Positional(Spanned<Pattern>),
@@ -721,14 +725,14 @@ pub enum PatternArg {
     Named(Spanned<Ident>, Spanned<Pattern>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MatchArm {
     pub pattern: Spanned<Pattern>,
     pub guard: Option<Spanned<Expr>>, // `if condition` guard
     pub body: MatchBody,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum MatchBody {
     /// `=> expr` (single expression)
     Expr(Spanned<Expr>),
@@ -736,7 +740,7 @@ pub enum MatchBody {
     Block(Vec<Spanned<Statement>>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Pattern {
     /// Wildcard: `_`
     Wildcard,
@@ -754,7 +758,7 @@ pub enum Pattern {
     Or(Vec<Spanned<Pattern>>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct IfExpr {
     /// Condition that decides whether the `then` body executes.
     pub condition: Spanned<Expr>,
@@ -767,13 +771,13 @@ pub struct IfExpr {
 /// Explicit infinite-loop expression (`loop:`).
 ///
 /// Unlike `while`, this form is allowed in expression position and may yield a value via `break <expr>`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct LoopExpr {
     /// Statements that execute for each loop iteration until a `break` exits the loop.
     pub body: Vec<Spanned<Statement>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ListComp {
     /// Element expression produced for each accepted binding.
     pub expr: Spanned<Expr>,
@@ -787,7 +791,7 @@ pub struct ListComp {
     pub clauses: Vec<ComprehensionClause>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DictComp {
     /// Key expression produced for each accepted binding.
     pub key: Spanned<Expr>,
@@ -804,7 +808,7 @@ pub struct DictComp {
 }
 
 /// Generator-expression payload.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct GeneratorExpr {
     /// Expression yielded by the generator for each accepted binding.
     pub expr: Spanned<Expr>,
@@ -813,7 +817,7 @@ pub struct GeneratorExpr {
 }
 
 /// One clause in a comprehension-like expression.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ComprehensionClause {
     /// `for pattern in iter`
     For {

@@ -46,6 +46,12 @@ pub struct CheckWork {
     pub dictionary_lookups: usize,
     /// Deferred dictionary refusal passes.
     pub dictionary_settlements: usize,
+    /// Settled diagnostics stored as anchored semantic values.
+    pub stored_diagnostics: usize,
+    /// Stored source ranges anchored inside a node at node-relative offsets rather than at node boundaries.
+    pub node_relative_anchors: usize,
+    /// Stored source ranges outside every declaration, which keep their coordinates.
+    pub detached_anchors: usize,
     /// Deferred lexical open-value destination passes.
     pub open_value_settlements: usize,
 }

@@ -1,6 +1,6 @@
 //! Complete per-body cold comparisons with the original shared-output checker.
 
-use super::{BodyLocal, TypeChecker};
+use super::{AnchorFault, BodyLocal, CheckedBodyView, DiagnosticPositions, TypeChecker};
 use crate::ast::Span;
 
 impl TypeChecker {
@@ -120,10 +120,7 @@ impl TypeChecker {
                 local.append(self);
             }
             for input in self.body_checks.clone() {
-                let mut local = input.local().clone();
-                local.diagnostics.clear();
-                local.warnings.clear();
-                local.append(self);
+                input.local().clone().append(self);
             }
             self.capture_body_observation(span);
             enclosing.install(self);
@@ -245,6 +242,7 @@ impl TypeChecker {
             let edited = parse(&program_text(body))?;
             let mut candidate = TypeChecker::new();
             candidate.prepare_body_edit_program(&edited);
+            let mut positions = DiagnosticPositions::new(&edited, candidate.symbols.declaration_origin());
             // This fixture has no imports, decorators or signature influences. The default-bearing sibling's
             // exact syntax and the complete G1 projection must be equal before its declaration output is reused.
             assert_eq!(
@@ -272,13 +270,17 @@ impl TypeChecker {
                         .iter()
                         .find(|checked| checked.local.owner == declaration.span)
                         .ok_or("missing sibling declaration value")?;
-                    candidate.reuse_checked_declaration(std::sync::Arc::clone(declaration_value));
+                    candidate
+                        .reuse_checked_declaration(std::sync::Arc::clone(declaration_value), &mut positions)
+                        .map_err(|fault| format!("{fault:?}"))?;
                     let checked = base
                         .checked_bodies
                         .iter()
                         .find(|checked| checked.local.owner == declaration.span)
                         .ok_or("missing sibling value")?;
-                    candidate.reuse_checked_body(std::sync::Arc::clone(checked));
+                    candidate
+                        .reuse_checked_body(std::sync::Arc::clone(checked), &mut positions)
+                        .map_err(|fault| format!("{fault:?}"))?;
                 }
             }
             let errors = candidate.assert_body_edit_result(
@@ -312,7 +314,7 @@ impl TypeChecker {
         expected_finalizations: usize,
         expected_reuses: usize,
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        self.settle_body_checks();
+        self.settle_body_checks(edited);
         self.record_program_lowering_facts(edited);
         let result = self.finish_program_check(edited);
         let mut legacy = TypeChecker::new();
@@ -378,5 +380,169 @@ impl TypeChecker {
         self.record_source_declaration_identities(program);
         self.visibility_point = super::super::VisibilityPoint::Collected;
         self.prepare_program_body_facts();
+    }
+}
+
+/// Stored diagnostic families of one settled owner, compared as values.
+fn stored_values(view: &CheckedBodyView) -> impl PartialEq + std::fmt::Debug + '_ {
+    (
+        &view.diagnostics,
+        &view.warnings,
+        &view.mutation,
+        &view.dictionary,
+        &view.open,
+    )
+}
+
+/// A checked revision: its syntax, the settled checker and its fresh published diagnostics.
+struct CheckedRevision {
+    source: String,
+    program: crate::ast::Program,
+    checker: TypeChecker,
+    errors: Vec<crate::diagnostics::CompileError>,
+}
+
+impl CheckedRevision {
+    /// Parse and check one revision through the production entry point.
+    fn check(source: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        let errors = checker.check_program(&program).err().ok_or("expected refusals")?;
+        let work = checker.check_work();
+        assert!(
+            work.stored_diagnostics >= errors.len(),
+            "every refusal is a stored value"
+        );
+        assert_eq!(work.detached_anchors, 0, "every stored range is anchored to syntax");
+        Ok(Self {
+            source: source.to_owned(),
+            program,
+            checker,
+            errors,
+        })
+    }
+
+    /// Bind stored values of any revision to this revision's syntax.
+    fn positions(&self) -> DiagnosticPositions<'_> {
+        DiagnosticPositions::new(&self.program, self.checker.symbols.declaration_origin())
+    }
+
+    /// The settled view of the named callable's statements.
+    fn body(&self, name: &str) -> Result<&CheckedBodyView, Box<dyn std::error::Error>> {
+        let declaration = self
+            .program
+            .declarations
+            .iter()
+            .find(|declaration| {
+                matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == name)
+            })
+            .ok_or("missing declaration")?;
+        Ok(self
+            .checker
+            .checked_body(declaration.span)
+            .ok_or("missing settled body")?)
+    }
+
+    /// The `file:line:` prefix of a rendered diagnostic in this revision.
+    fn line_of(&self, error: &crate::diagnostics::CompileError) -> Option<usize> {
+        let rendered = crate::diagnostics::format_error("case.incn", &self.source, error);
+        let (_, after) = rendered.split_once("case.incn:")?;
+        after.split(':').next()?.parse().ok()
+    }
+}
+
+impl TypeChecker {
+    /// BE-34 on settled production storage. A comment above a refused body, or above its refused statement, leaves
+    /// every stored diagnostic value equal: local refusals, an advisory with a related range, a deferred mutation
+    /// decision and a dictionary decision. The earlier revision's stored values render the edited revision's fresh
+    /// diagnostics, so the reported line moves. A changed or removed owner refuses the binding instead.
+    pub(in crate::typechecker) fn assert_stored_diagnostics_follow_comment_edits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let program = |above: &str, inside: &str, value: &str| {
+            format!(
+                "{above}def refused() -> int:\n{inside}    return {value}\ndef touch(mut items: list[int]) -> None:\n    items.append(2)\ndef caller() -> None:\n    items = [1]\n    touch(items)\ndef dead() -> int:\n    return 1\n    println(\"never\")\n    println(\"again\")\ndef numbers() -> Generator[int]:\n    yield 1\ndef pick(streams: dict[str, Generator[int]], key: str) -> Option[Generator[int]]:\n    return streams.get(key)\n"
+            )
+        };
+        let base = CheckedRevision::check(&program("", "", "\"wrong\""))?;
+        let refused = base.body("refused")?;
+        let stored = refused.diagnostics.first().ok_or("missing stored refusal")?;
+        assert_eq!(base.line_of(&base.errors[0]), Some(2));
+        assert!(
+            !base.body("caller")?.mutation.is_empty(),
+            "the caller stores its mutation decision"
+        );
+        assert!(
+            !base.body("pick")?.dictionary.is_empty(),
+            "the lookup stores its dictionary decision"
+        );
+        assert!(
+            !base.body("dead")?.warnings.is_empty(),
+            "the dead tail stores its advisory"
+        );
+
+        // ---- Comment-only edits keep every stored value ----
+        let edits = [
+            ("# A comment above the refused body.\n", ""),
+            ("", "    # A comment above the refused statement.\n"),
+        ];
+        for (above, inside) in edits {
+            let edited = CheckedRevision::check(&program(above, inside, "\"wrong\""))?;
+            for name in ["refused", "touch", "caller", "dead", "numbers", "pick"] {
+                assert_eq!(
+                    stored_values(base.body(name)?),
+                    stored_values(edited.body(name)?),
+                    "{name}: stored diagnostic values are equal across a comment-only edit"
+                );
+            }
+            let mut positions = edited.positions();
+            let rendered = positions.render(stored).map_err(|fault| format!("{fault:?}"))?;
+            assert_eq!(
+                rendered, edited.errors[0],
+                "the stored value renders the fresh diagnostic"
+            );
+            assert_eq!(
+                edited.line_of(&rendered),
+                Some(3),
+                "the rendered line moves with the edit"
+            );
+            for view in edited.checker.checked_bodies.iter() {
+                for (_, value) in view.mutation.iter().chain(&view.dictionary) {
+                    let decision = positions.render(value).map_err(|fault| format!("{fault:?}"))?;
+                    assert!(
+                        edited.errors.contains(&decision),
+                        "a stored decision renders a fresh refusal"
+                    );
+                }
+                for value in &view.warnings {
+                    let advisory = positions.render(value).map_err(|fault| format!("{fault:?}"))?;
+                    assert!(
+                        edited.checker.warnings.contains(&advisory),
+                        "a stored advisory renders fresh"
+                    );
+                }
+            }
+            eprintln!(
+                "be34-stored\tedit={}\tstored={}\tnode_relative={}\tdetached={}\toriginal_line=2\trendered_line=3\tstored_values_equal=true",
+                if above.is_empty() { "statement" } else { "body" },
+                edited.checker.check_work().stored_diagnostics,
+                edited.checker.check_work().node_relative_anchors,
+                edited.checker.check_work().detached_anchors
+            );
+        }
+
+        // ---- Semantic edits refuse the binding ----
+        let changed = CheckedRevision::check(&program("", "", "\"different\""))?;
+        assert_ne!(stored_values(refused), stored_values(changed.body("refused")?));
+        assert_eq!(
+            changed.positions().render(stored).err(),
+            Some(AnchorFault::ChangedOwner)
+        );
+        let renamed = CheckedRevision::check(&program("", "", "\"wrong\"").replacen("def refused", "def moved", 1))?;
+        assert_eq!(
+            renamed.positions().render(stored).err(),
+            Some(AnchorFault::MissingOwner)
+        );
+        Ok(())
     }
 }

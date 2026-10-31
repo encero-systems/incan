@@ -415,7 +415,7 @@ impl SymbolTable {
     }
 
     /// Return the origin that owns declarations in the currently checked module.
-    fn declaration_origin(&self) -> SymbolOrigin {
+    pub(crate) fn declaration_origin(&self) -> SymbolOrigin {
         self.package_identity
             .as_ref()
             .map(|library| SymbolOrigin::Package {

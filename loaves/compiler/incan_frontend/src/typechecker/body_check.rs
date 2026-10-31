@@ -2,15 +2,17 @@
 //!
 //! Collected declaration inputs remain with G1. Declaration validation, defaults and initializers own outputs
 //! independently from statement bodies. Each operation uses the same local writer and existing semantic rules;
-//! settlement consumes those outputs without rechecking an expression or statement.
+//! settlement consumes those outputs without rechecking an expression or statement. Settled outputs store their
+//! diagnostics as anchored semantic values, and the published diagnostics are rendered from those values.
 
+use super::diagnostic_values::{AnchorFault, AnchoredDiagnostic, DiagnosticPositions};
 use super::mut_arguments::MutBodyLocal;
 use super::type_info::{
     CAbiInteropArtifacts, CallArtifacts, ExpressionArtifacts, ProtocolArtifacts, ReferenceArtifacts,
     RustInteropArtifacts, TraitArtifacts, TypeCheckInfo,
 };
 use super::{TypeChecker, VisibilityPoint, YieldContext};
-use crate::ast::{FunctionDecl, Span, Spanned, Statement};
+use crate::ast::{FunctionDecl, Program, Span, Spanned, Statement};
 use crate::diagnostics::CompileError;
 use crate::symbols::ResolvedType;
 use std::collections::BTreeMap;
@@ -45,8 +47,10 @@ pub(super) struct BodyLocal {
     mutation: MutBodyLocal,
     dictionary: Vec<(usize, Span, String)>,
     iterator_sum_items: BTreeMap<Span, ResolvedType>,
-    diagnostics: Vec<CompileError>,
-    warnings: Vec<CompileError>,
+    /// This owner's own entries in the active diagnostic writer, excluding nested owners. Settlement captures them
+    /// as anchored values once; these invocation-local indices never enter a settled view.
+    diagnostic_slots: Vec<usize>,
+    warning_slots: Vec<usize>,
 }
 
 /// One source-order body activation against the current declaration/environment views and local scratch. Earlier
@@ -103,25 +107,12 @@ impl BodyCheckScope {
             .map(|(span, identity)| (span, identity.clone()))
             .collect();
         local.order = self.order;
-        local.diagnostics = checker.errors[self.diagnostic_start..]
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                !checker.diagnostic_owner_ranges[self.child_start..]
-                    .iter()
-                    .any(|(errors, _)| errors.contains(&(index + self.diagnostic_start)))
-            })
-            .map(|(_, error)| error.clone())
+        let children = &checker.diagnostic_owner_ranges[self.child_start..];
+        local.diagnostic_slots = (self.diagnostic_start..checker.errors.len())
+            .filter(|index| !children.iter().any(|(errors, _)| errors.contains(index)))
             .collect();
-        local.warnings = checker.warnings[self.warning_start..]
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                !checker.diagnostic_owner_ranges[self.child_start..]
-                    .iter()
-                    .any(|(_, warnings)| warnings.contains(&(index + self.warning_start)))
-            })
-            .map(|(_, error)| error.clone())
+        local.warning_slots = (self.warning_start..checker.warnings.len())
+            .filter(|index| !children.iter().any(|(_, warnings)| warnings.contains(index)))
             .collect();
         checker.diagnostic_owner_ranges.push((
             self.diagnostic_start..checker.errors.len(),
@@ -173,8 +164,8 @@ impl BodyLocal {
             mutation: checker.mut_params.take_body_local(),
             dictionary: std::mem::take(&mut checker.pending_uncopyable_dict_lookups),
             iterator_sum_items: std::mem::take(body_ir_iterator_sum_items),
-            diagnostics: Vec::new(),
-            warnings: Vec::new(),
+            diagnostic_slots: Vec::new(),
+            warning_slots: Vec::new(),
         }
     }
 
@@ -262,8 +253,9 @@ impl BodyLocal {
         enclosing.traits.body_ir_adoption_type_args = std::mem::take(&mut self.traits.body_ir_adoption_type_args);
     }
 
-    /// Append one checked body exactly once. Relocate only the local open-value indices; every map value, ordered
-    /// diagnostic and deferred decision otherwise reaches the original settlement owners unchanged.
+    /// Append one checked body's facts exactly once. Relocate only the local open-value indices; every map value and
+    /// deferred decision otherwise reaches the original settlement owners unchanged. Diagnostics are not facts here:
+    /// they already occupy their traversal positions in the writer and are published by settlement.
     fn append(mut self, checker: &mut TypeChecker) {
         checker
             .type_info
@@ -292,8 +284,6 @@ impl BodyLocal {
             .body_ir_iterator_sum_items
             .extend(self.iterator_sum_items);
         append_c_abi(&mut checker.type_info.c_abi, self.c_abi);
-        checker.errors.extend(self.diagnostics);
-        checker.warnings.extend(self.warnings);
     }
 }
 
@@ -668,8 +658,8 @@ impl TypeChecker {
         let owner = previous.owner;
         let order = previous.order;
         let nested = std::mem::take(&mut previous.nested);
-        let mut diagnostics = std::mem::take(&mut previous.diagnostics);
-        let mut warnings = std::mem::take(&mut previous.warnings);
+        let mut diagnostics = std::mem::take(&mut previous.diagnostic_slots);
+        let mut warnings = std::mem::take(&mut previous.warning_slots);
 
         // ---- Resume post-body declaration work ----
         let scope = BodyCheckScope::enter(self);
@@ -686,10 +676,10 @@ impl TypeChecker {
         completed.kind = LocalOwnerKind::Declaration;
         completed.order = order;
         completed.nested.extend(nested);
-        diagnostics.append(&mut completed.diagnostics);
-        warnings.append(&mut completed.warnings);
-        completed.diagnostics = diagnostics;
-        completed.warnings = warnings;
+        diagnostics.append(&mut completed.diagnostic_slots);
+        warnings.append(&mut completed.warning_slots);
+        completed.diagnostic_slots = diagnostics;
+        completed.warning_slots = warnings;
         self.body_checks[index] = BodyCheckInput::Local(completed);
     }
 
@@ -760,30 +750,38 @@ mod tests;
 /// after the local checker and the effect producer have finished; it never enters `check_callable_body` again.
 /// Body IR combines these local facts with separate declaration and BodyFacts inputs. Later module publication
 /// projections, including native-newtype and empty-list facts, are not recreated by this view.
+///
+/// Every diagnostic the owner produced is stored as an [`AnchoredDiagnostic`]: local refusals and advisories, the
+/// final mutation and dictionary decisions, and open-value refusals. Their ranges are structural anchors into the
+/// checked syntax, and the current revision's [`DiagnosticPositions`] binds them when they are published.
 #[derive(Debug, Clone)]
 pub(crate) struct CheckedBodyView {
     local: Arc<BodyLocal>,
     effect_reads: super::mut_arguments::MutEffectReads,
-    mutation: Vec<(usize, CompileError)>,
-    dictionary: Vec<(usize, CompileError)>,
-    open: Vec<CompileError>,
+    diagnostics: Vec<AnchoredDiagnostic>,
+    warnings: Vec<AnchoredDiagnostic>,
+    mutation: Vec<(usize, AnchoredDiagnostic)>,
+    dictionary: Vec<(usize, AnchoredDiagnostic)>,
+    open: Vec<AnchoredDiagnostic>,
 }
 
 impl BodyLocal {
     /// Finalize one complete lexical owner using only its recorded uses, destinations and final callee effects.
     /// The temporary writer exposes the existing unifier, not a second inference implementation or a local check.
+    /// The owner's diagnostics are captured as anchored values, and the writer publishes their renderings.
     pub(super) fn finalize(
         mut self,
         checker: &mut TypeChecker,
         effects: &super::mut_arguments::MutEffects,
+        positions: &mut DiagnosticPositions<'_>,
     ) -> CheckedBodyView {
         // ---- Complete lexical destinations ----
         let owner = self.owner;
         let kind = self.kind;
         let order = self.order;
         let nested = std::mem::take(&mut self.nested);
-        let diagnostics = std::mem::take(&mut self.diagnostics);
-        let warnings = std::mem::take(&mut self.warnings);
+        let diagnostic_slots = std::mem::take(&mut self.diagnostic_slots);
+        let warning_slots = std::mem::take(&mut self.warning_slots);
         let mut enclosing = Self::take(checker);
         self.install(checker);
         enclosing.install_shared_inputs(checker);
@@ -797,12 +795,22 @@ impl BodyLocal {
         local.kind = kind;
         local.order = order;
         local.nested = nested;
-        local.diagnostics = diagnostics;
-        local.warnings = warnings;
+
+        // ---- Stored local diagnostics, published from their values ----
+        let diagnostics = diagnostic_slots
+            .into_iter()
+            .map(|slot| publish_stored(&mut checker.errors[slot], positions))
+            .collect();
+        let warnings = warning_slots
+            .into_iter()
+            .map(|slot| publish_stored(&mut checker.warnings[slot], positions))
+            .collect();
+        let open = open.into_iter().map(|error| positions.store(error)).collect();
 
         // ---- Recorded caller and dictionary decisions ----
         let mut mutation = Vec::new();
         local.mutation.finalize_arguments(effects, &mut mutation);
+        let mutation = store_decisions(mutation, positions);
         let dictionary = local
             .dictionary
             .iter()
@@ -810,7 +818,9 @@ impl BodyLocal {
                 (!local.expressions.read_only_dict_lookups.contains(span)).then(|| {
                     (
                         *order,
-                        crate::diagnostics::errors::kept_dict_lookup_value_cannot_be_copied(value, *span),
+                        positions.store(crate::diagnostics::errors::kept_dict_lookup_value_cannot_be_copied(
+                            value, *span,
+                        )),
                     )
                 })
             })
@@ -823,6 +833,8 @@ impl BodyLocal {
         CheckedBodyView {
             effect_reads: local.mutation.effect_reads(effects),
             local: Arc::new(local),
+            diagnostics,
+            warnings,
             mutation,
             dictionary,
             open,
@@ -830,10 +842,31 @@ impl BodyLocal {
     }
 }
 
+/// Capture one writer entry as its stored value and replace the entry with that value's rendering, so the published
+/// diagnostic is the stored one bound to the current revision.
+fn publish_stored(slot: &mut CompileError, positions: &mut DiagnosticPositions<'_>) -> AnchoredDiagnostic {
+    let value = positions.store(slot.clone());
+    *slot = positions.publish(&value);
+    value
+}
+
+/// Store ordered deferred decisions as anchored values, keeping their traversal ordinals.
+fn store_decisions(
+    decisions: Vec<(usize, CompileError)>,
+    positions: &mut DiagnosticPositions<'_>,
+) -> Vec<(usize, AnchoredDiagnostic)> {
+    decisions
+        .into_iter()
+        .map(|(order, error)| (order, positions.store(error)))
+        .collect()
+}
+
 impl TypeChecker {
     /// Close effects from local projections once, finalize each lexical owner, and join its final facts. Recorded
     /// traversal ordinals restore legacy mutation and dictionary diagnostic order independently of completion order.
-    pub(super) fn settle_body_checks(&mut self) {
+    /// `program` is the checked syntax; it binds stored diagnostics to this revision and is never checked again.
+    pub(super) fn settle_body_checks(&mut self, program: &Program) {
+        let mut positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
         // ---- Final callee effects ----
         let locals = std::mem::take(&mut self.body_checks);
         let mut inputs = self.mut_params.clone();
@@ -873,24 +906,24 @@ impl TypeChecker {
         // ---- Completed body publication ----
         for local in locals {
             let order = local.order();
-            let checked = local.finalize(self, &effects);
+            let checked = local.finalize(self, &effects, &mut positions);
             append_ordered_decisions(
                 &mut mutation,
                 &checked.mutation,
-                checked.local.order.mutation,
-                order.mutation,
+                (checked.local.order.mutation, order.mutation),
+                &mut positions,
             );
             append_ordered_decisions(
                 &mut dictionary,
                 &checked.dictionary,
-                checked.local.order.dictionary,
-                order.dictionary,
+                (checked.local.order.dictionary, order.dictionary),
+                &mut positions,
             );
-            self.body_open_diagnostics.extend(checked.open.iter().cloned());
+            for value in &checked.open {
+                self.body_open_diagnostics.push(positions.publish(value));
+            }
             // Local diagnostics already occupy their original traversal positions.
             let mut published = checked.local.as_ref().clone();
-            published.diagnostics.clear();
-            published.warnings.clear();
             published.mutation.clear_pending_arguments();
             published.dictionary.clear();
             published.append(self);
@@ -902,6 +935,10 @@ impl TypeChecker {
         }
         render_decisions(mutation, &mut self.errors, true);
         render_decisions(dictionary, &mut self.errors, false);
+        let counts = positions.capture_counts();
+        self.check_work.stored_diagnostics += counts.stored;
+        self.check_work.node_relative_anchors += counts.within;
+        self.check_work.detached_anchors += counts.detached;
     }
 }
 
@@ -941,9 +978,14 @@ impl BodyCheckInput {
     }
 
     /// Reuse an equal completed value or re-finalize only the callee projections this caller subscribed to.
-    fn finalize(self, checker: &mut TypeChecker, effects: &super::mut_arguments::MutEffects) -> Arc<CheckedBodyView> {
+    fn finalize(
+        self,
+        checker: &mut TypeChecker,
+        effects: &super::mut_arguments::MutEffects,
+        positions: &mut DiagnosticPositions<'_>,
+    ) -> Arc<CheckedBodyView> {
         match self {
-            Self::Local(local) => Arc::new(local.finalize(checker, effects)),
+            Self::Local(local) => Arc::new(local.finalize(checker, effects, positions)),
             Self::Reuse { checked, .. } => {
                 let reads = checked.local.mutation.effect_reads(effects);
                 if reads == checked.effect_reads {
@@ -964,7 +1006,9 @@ impl BodyCheckInput {
                 Arc::new(CheckedBodyView {
                     local: Arc::clone(&checked.local),
                     effect_reads: reads,
-                    mutation,
+                    diagnostics: checked.diagnostics.clone(),
+                    warnings: checked.warnings.clone(),
+                    mutation: store_decisions(mutation, positions),
                     dictionary: checked.dictionary.clone(),
                     open: checked.open.clone(),
                 })
@@ -974,24 +1018,48 @@ impl BodyCheckInput {
 }
 
 impl TypeChecker {
-    /// Accept an unchanged declaration/default result whose declaration inputs and source binding the caller has
-    /// already validated. Reusing a statement body alone never supplies its declaration's checked expressions.
-    pub(super) fn reuse_checked_declaration(&mut self, checked: Arc<CheckedBodyView>) {
+    /// Accept an unchanged declaration/default result whose declaration inputs the caller has already validated.
+    /// Its stored diagnostics are bound to the current revision by `positions`. Reusing a statement body alone never
+    /// supplies its declaration's checked expressions.
+    pub(super) fn reuse_checked_declaration(
+        &mut self,
+        checked: Arc<CheckedBodyView>,
+        positions: &mut DiagnosticPositions<'_>,
+    ) -> Result<(), AnchorFault> {
         debug_assert_eq!(checked.local.kind, LocalOwnerKind::Declaration);
-        self.reuse_checked_local(checked);
+        self.reuse_checked_local(checked, positions)
     }
 
-    /// Accept a previous body only after its source, declaration/default/name inputs and position binding have been
-    /// proved applicable by the caller. This is a bootstrap adapter, never an implicit cache lookup by body name.
-    pub(super) fn reuse_checked_body(&mut self, checked: Arc<CheckedBodyView>) {
+    /// Accept a previous body only after its source, declaration/default/name inputs have been proved applicable by
+    /// the caller. A stored diagnostic that does not bind to the current revision refuses the reuse before anything
+    /// is published. This is a bootstrap adapter, never an implicit cache lookup by body name.
+    pub(super) fn reuse_checked_body(
+        &mut self,
+        checked: Arc<CheckedBodyView>,
+        positions: &mut DiagnosticPositions<'_>,
+    ) -> Result<(), AnchorFault> {
         debug_assert_eq!(checked.local.kind, LocalOwnerKind::Body);
-        self.reuse_checked_local(checked);
+        self.reuse_checked_local(checked, positions)
     }
 
     /// Bind one validated prior output to this activation's traversal order without replaying semantic checks.
-    fn reuse_checked_local(&mut self, checked: Arc<CheckedBodyView>) {
-        self.errors.extend(checked.local.diagnostics.iter().cloned());
-        self.warnings.extend(checked.local.warnings.iter().cloned());
+    fn reuse_checked_local(
+        &mut self,
+        checked: Arc<CheckedBodyView>,
+        positions: &mut DiagnosticPositions<'_>,
+    ) -> Result<(), AnchorFault> {
+        let errors = checked
+            .diagnostics
+            .iter()
+            .map(|value| positions.render(value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let warnings = checked
+            .warnings
+            .iter()
+            .map(|value| positions.render(value))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.errors.extend(errors);
+        self.warnings.extend(warnings);
         let order = BodyDiagnosticOrder {
             mutation: self.check_work.mutation_arguments,
             dictionary: self.check_work.dictionary_lookups,
@@ -999,6 +1067,7 @@ impl TypeChecker {
         self.check_work.mutation_arguments += checked.local.mutation.argument_count();
         self.check_work.dictionary_lookups += checked.local.dictionary.len();
         self.body_checks.push(BodyCheckInput::Reuse { checked, order });
+        Ok(())
     }
 }
 
@@ -1019,18 +1088,19 @@ impl BodyCheckInput {
     }
 }
 
-/// Rebind a body's local diagnostic ordinals into this invocation's traversal. Construction guarantees that each
-/// stored ordinal is at least its recorded start; source coordinates and producer completion order are irrelevant.
+/// Rebind a body's stored decision ordinals from their recorded start to this invocation's start, and bind each
+/// stored value to the current revision. Construction guarantees that each stored ordinal is at least its recorded
+/// start; source coordinates and producer completion order are irrelevant.
 fn append_ordered_decisions(
     target: &mut Vec<(usize, CompileError)>,
-    source: &[(usize, CompileError)],
-    old: usize,
-    current: usize,
+    source: &[(usize, AnchoredDiagnostic)],
+    (old, current): (usize, usize),
+    positions: &mut DiagnosticPositions<'_>,
 ) {
     target.extend(
         source
             .iter()
-            .map(|(order, error)| (current + (order - old), error.clone())),
+            .map(|(order, value)| (current + (order - old), positions.publish(value))),
     );
 }
 
@@ -1113,7 +1183,7 @@ impl CheckedBodyView {
     /// not turn a refused result into usable Body IR input. A false result does not establish whole-module admission;
     /// declaration and module refusals remain independent inputs.
     pub(crate) fn is_refused(&self) -> bool {
-        !self.local.diagnostics.is_empty()
+        !self.diagnostics.is_empty()
             || !self.mutation.is_empty()
             || !self.dictionary.is_empty()
             || !self.open.is_empty()
