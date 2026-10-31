@@ -9,20 +9,21 @@
     - RFC 027 (incan-vocab and library metadata)
     - RFC 031 (Incan library system phase 1)
     - RFC 033 (`ctx` typed configuration context)
-    - RFC 034 (`incan.pub` package registry)
+    - RFC 118 (Oven command families and dependency addition)
+    - RFC 125 (`incan.pub` Loaf registry; supersedes RFC 034)
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 076 (project mutation policy and recovery)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
-- **Issue:** https://github.com/encero-systems/incan/issues/403
+- **Issue:** <https://github.com/encero-systems/incan/issues/403>
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
 ## Summary
 
-This RFC extends the Loaf/Oven project model with starter profiles and mixes. A starter profile is a declarative recipe for creating or initializing a project with a coherent set of files, manifest entries, and mixes. A mix is a reusable, explicit project mutation that can add package dependencies, scripts, environment configuration, starter files, tooling metadata, and follow-up diagnostics to an existing project. Starter and mix descriptors may depend on other descriptors, but they must resolve into one reviewable mutation plan. The goal is not hidden framework magic; the goal is to keep the Cargo-shaped package workflow from RFC 034 (`oven add <pkg>`) while adding an explicit project-mix workflow (`oven mix add <mix>`) for setup that changes source files, scripts, envs, and tooling metadata.
+This RFC extends the Loaf/Oven project model with starter profiles and mixes. A starter profile is a declarative recipe for creating or initializing a project with a coherent set of files, manifest entries, and mixes. A mix is a reusable, explicit project mutation that can add package dependencies, scripts, environment configuration, starter files, tooling metadata, and follow-up diagnostics to an existing project. Starter and mix descriptors may depend on other descriptors, but they must resolve into one reviewable mutation plan. The goal is not hidden framework magic; the goal is to keep the package workflow from RFC 118 (`oven add <pkg>`), with registry authority under RFC 125, while adding an explicit project-mix workflow (`oven mix add <mix>`) for setup that changes source files, scripts, envs, and tooling metadata.
 
 ## Core model
 
@@ -45,7 +46,7 @@ Read this RFC as nine foundations plus five mechanisms:
 
 ## Motivation
 
-RFC 015 deliberately defines a small, explicit project lifecycle CLI: create a project, initialize metadata, define scripts and envs, bump versions, and run named env commands. That is the right base layer, but a minimal `hello world` scaffold is not enough once the ecosystem has reusable libraries for common domains such as CLIs, HTTP clients, web entrypoints, serialization, testing, data access, and documentation. Rust users can often add a crate and immediately use its API; Incan should preserve that simple dependency story through RFC 034's `oven add <pkg>` while also recognizing that application mixes often need a small amount of project setup. Without a first-class starter model, users will copy examples by hand, drift from recommended dependency combinations, and re-learn the same manifest wiring in every repository.
+RFC 015 deliberately defines a small, explicit project lifecycle CLI: create a project, initialize metadata, define scripts and envs, bump versions, and run named env commands. That is the right base layer, but a minimal `hello world` scaffold is not enough once the ecosystem has reusable libraries for common domains such as CLIs, HTTP clients, web entrypoints, serialization, testing, data access, and documentation. Rust users can often add a crate and immediately use its API; Incan should preserve that simple dependency story through RFC 118's `oven add <pkg>` while also recognizing that application mixes often need a small amount of project setup. Without a first-class starter model, users will copy examples by hand, drift from recommended dependency combinations, and re-learn the same manifest wiring in every repository.
 
 Library metadata and manifests already point toward a more declarative ecosystem. RFC 027 says feature and dependency metadata should travel through library manifests rather than ad-hoc compiler scans, and RFC 031 establishes `.incnlib` as a semantic library artifact. Those pieces help libraries describe themselves, but they do not answer the project-author question: "start this repo with the standard shape for X" or "add the standard support for Y to this repo."
 
@@ -73,7 +74,7 @@ The missing layer is an explicit project mutation contract. Users need a command
 ## Non-Goals
 
 - Defining product-specific application templates or app framework semantics.
-- Defining a public registry protocol for distributing starters. RFC 034 remains the owner of package registry semantics.
+- Defining a public registry protocol for distributing starters. RFC 125 is the owner of package registry semantics, superseding RFC 034; RFC 117 owns the Loaf project and dependency model.
 - Defining package ranking, recommendations, telemetry, download analytics, or marketplace UI details for `incan.pub`.
 - Defining private catalog hosting, identity, authorization, administration, or commercial policy.
 - Defining the low-level `.incnlib` mix manifest schema in full. This RFC may consume library-declared mix metadata when available, but it primarily defines the project lifecycle UX for applying starter and mix descriptors.
@@ -513,7 +514,7 @@ This RFC adds the following lifecycle commands and flags:
 
 `oven mix add` requires a project root. If no `loaf.toml` is found, it must fail with a diagnostic suggesting `oven init` or `oven new`.
 
-`oven add <pkg>` remains the RFC 034 package dependency command. If the added package advertises mixes, the CLI should report those mixes and show the corresponding `oven mix add <mix-id>` command, but it must not apply project setup as part of plain dependency addition.
+`oven add <pkg>` remains the RFC 118 package dependency command. If the added package advertises mixes, the CLI should report those mixes and show the corresponding `oven mix add <mix-id>` command, but it must not apply project setup as part of plain dependency addition.
 
 `oven mix status` requires a project root. It must report enabled mix provenance and should report whether the project still appears consistent with each enabled mix's declared expectations. When catalog or registry metadata is available, status should also report the latest compatible descriptor version and whether the recorded source is yanked, revoked, superseded, or unknown.
 
@@ -751,7 +752,7 @@ Mixes are project-level activation units. Library manifests may eventually adver
 
 Where library manifests and starter descriptors overlap, library manifest data should be the source of truth for package-owned dependency and feature requirements. Starter descriptors should compose those mixes rather than copy stale requirements by hand.
 
-Plain package addition remains owned by RFC 034. A package may advertise mixes, and the package-add workflow may point users at those mixes, but mix application is a separate command surface because it may create files and mutate project structure.
+Plain package addition remains owned by RFC 118, with registry semantics under RFC 125. A package may advertise mixes, and the package-add workflow may point users at those mixes, but mix application is a separate command surface because it may create files and mutate project structure.
 
 ### Relationship to `ctx`
 
@@ -832,7 +833,7 @@ Rejected because imports should not mutate projects or create hidden configurati
 
 ### Make plain `oven add <pkg>` apply default mix setup
 
-Rejected because it overloads dependency addition with project mutation. RFC 034 defines `oven add <pkg>` as the package workflow, analogous to `cargo add`. It should be safe to add a dependency without creating source files or scripts. Packages may advertise mixes and the CLI may suggest them after adding the dependency, but applying mix setup belongs to `oven mix add`.
+Rejected because it overloads dependency addition with project mutation. RFC 118 defines `oven add <pkg>` as the package workflow, analogous to `cargo add`. It should be safe to add a dependency without creating source files or scripts. Packages may advertise mixes and the CLI may suggest them after adding the dependency, but applying mix setup belongs to `oven mix add`.
 
 ### Store all starter behavior in `loaf.toml`
 

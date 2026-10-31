@@ -36,7 +36,7 @@ This RFC defines an Incan-owned agent context graph: a deterministic, compiler-b
 6. **Risk is evidence, not vibes:** process signals such as churn, ownership concentration, co-change, coverage gaps, stale decisions, and recent volatility may influence agent context and architecture advice, but they must be deterministic records with cited evidence and visible limitations.
 7. **Task context is a product surface:** the primary agent workflow is not raw graph browsing; it is task-ranked, budgeted context packing that returns the most useful symbols, relationships, diagnostics, risk signals, architecture signals, and source anchors for a concrete change.
 8. **LSP and CLI share one fact model:** live editor features, command-line graph export, MCP context tools, and architecture-advice tools should reuse the same source-analysis substrate instead of building parallel extractors with different semantics.
-9. **Identity is durable:** nodes, edges, modules, files, and context packs should have stable content-addressed identities so stale data, cache keys, feedback expiry, graph diffs, and audit output are mechanically checkable.
+9. **Identity and content are distinct:** graph objects have durable logical identities; separate semantic or content digests expose changes. Content-addressed snapshots and context packs are follow-up consumers of those facts, not replacements for declaration identity.
 10. **Compact output matters:** graph output intended for agents must be token-aware and deterministic, with a compact textual format in addition to JSON/JSONL.
 11. **Evaluation is part of the feature:** Incan should define a small benchmark harness for agent-context quality so claims are measured on Incan packages and workspaces rather than inherited from generic tool marketing.
 
@@ -66,7 +66,7 @@ Repowise adds a useful adjacent lesson for architecture tooling: structural sour
 - Define CLI and MCP surfaces for raw graph exploration and task-ranked context packing.
 - Make the same graph facts available to LSP/editor features and architecture-advice tooling without requiring separate extraction logic.
 - Define a compact, deterministic agent context format alongside JSON and JSONL.
-- Define content-addressed identities for graph objects and graph snapshots.
+- Define durable graph-object identities and separate semantic/content digests, with content-addressed graph snapshots as follow-up work.
 - Allow optional feedback and task-memory signals while requiring automatic staleness/expiry when the underlying graph changes.
 - Support stdlib, package, workspace, and generated-artifact exploration.
 - Keep external storage, embeddings, hosted services, visualization, and product-specific agent integrations outside the compiler boundary.
@@ -526,7 +526,7 @@ A declaration's semantic digest must be a digest over its **checked meaning**: t
 
 It must be computed from checked values, not by normalizing rendered text. Rendered forms embed positional data inside composite strings — an identity spelling that carries its own declaration span, for example — and scrubbing those after the fact reliably misses cases that omitting the field cannot. A digest built by text substitution over a debug rendering is not conformant even where it happens to produce the same answer.
 
-The digest must exclude everything the compiler cannot observe in its output: comments, documentation, formatting, declaration order, and physical location. It must include everything it can: signatures, types, visibility, control flow, ownership and borrowing facts, and resolved call and reference targets.
+The digest must exclude non-semantic source details: comments, documentation, formatting, physical location, and declaration ordering only where reordering preserves checked meaning. It must include observable order, including parameter and payload-field order, ordered construction pipelines, and control-flow arm order, alongside signatures, types, visibility, ownership and borrowing facts, and resolved call and reference targets. A field or pipeline reorder that changes argument binding or execution must not produce a cache hit merely because its declarations otherwise have the same content.
 
 The digest must be language-neutral. An Incan declaration and a Rust declaration contribute the same kind of fact and are compared the same way; a consumer asking whether a declaration changed must not need to know which language it is written in. A digest that covers only one language is not partial but **unsound**, because a consumer folding it will report a hit for a change it cannot see.
 

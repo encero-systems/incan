@@ -229,7 +229,7 @@ A span block maps to a `std.telemetry` span with at least:
 - events supplied by the block options or added through the active span handle;
 - status derived from explicit user calls or from `ScopeExit`.
 
-`ScopeExit.Success` should normally leave status unset unless the user explicitly marks success. `ScopeExit.Error` and `ScopeExit.Panic` should mark or record an error according to the accepted `std.telemetry` policy.
+`ScopeExit.Success` should normally leave status unset unless the user explicitly marks success. `ScopeExit.Error` and `ScopeExit.Panic` should mark or record an error according to the accepted std.telemetry policy. RFC 094 classifies both question-mark propagation and an explicit return whose evaluated Result is Err as failure; span status mapping must not lose that outcome merely because the source used return. If a span manager declares fallible finalization, it must follow RFC 094's failure-retention contract rather than overwrite the body's failure. Whether telemetry finalization itself is fallible remains a provider-policy question, not a decision made by this integration rule.
 
 Logs emitted through `std.logging` inside a span block should be correlated with the active span when telemetry is configured. This means the resulting log records may include trace and span identifiers through the `std.telemetry.core` record model.
 

@@ -69,6 +69,8 @@ The larger design still needs an RFC because this surface touches several langua
 - Allowing overload aliases to change signatures, defaults, decorators, or runtime behavior.
 - Defining new syntax for overload declaration beyond the existing overload model.
 
+RFC 141 separately specifies structured type matching and named compile-time type operations. Type[T] tokens retain this RFC’s bounded dispatch role; that separate capability does not make tokens generally matchable or turn reflected descriptions into static generic arguments.
+
 ## Guide-level explanation
 
 A type-directed library API uses `Type[T]` when the type is an argument to the API contract rather than a value carried by the user's data.
@@ -121,10 +123,10 @@ targets: list[Type[int]] = [int]
 The same API family should also support generic spelling when the library declares how `T` maps to its result type. A typed cast API should not need helper families or broad unions just because the caller prefers explicit call-site generics. The library declares one overload body per admitted `T`, keyed on the type parameter itself rather than on a value-position argument, and the compiler selects among them the same way it already selects trait implementations by type argument:
 
 ```incan
-def cast[T: int](expr: ColumnExpr) -> IntColumnExpr:
+def cast[T with Int](expr: ColumnExpr) -> IntColumnExpr:
     return IntColumnExpr(source=expr.name)
 
-def cast[T: float](expr: ColumnExpr) -> FloatColumnExpr:
+def cast[T with Float](expr: ColumnExpr) -> FloatColumnExpr:
     return FloatColumnExpr(source=expr.name)
 
 amount = cast[int](col("amount"))

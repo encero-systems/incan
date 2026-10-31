@@ -1,6 +1,6 @@
 # RFC 096: Declaration metadata blocks
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-12
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,7 +12,7 @@
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 086 (schema descriptors and adapters)
     - RFC 091 (constrained integer newtype storage carriers)
-- **Issue:** https://github.com/encero-systems/incan/issues/667
+- **Issue:** [#667](https://github.com/encero-systems/incan/issues/667)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -224,7 +224,7 @@ metadata_entry = metadata_key metadata_assign metadata_value ;
 metadata_assign = "=" ;
 ```
 
-The metadata block must attach to the field declaration immediately before it. It is part of the field declaration, not a nested executable block. The parser must not allow statements, function definitions, control flow, or local variable declarations inside a field metadata block.
+The metadata block must attach to the field declaration immediately before it, after its complete type and optional default expression. Braces belonging to a default dictionary or another supported expression remain part of that expression; a following declaration-local metadata block is separate. Parser and formatter acceptance must preserve that boundary, including dictionary defaults followed by blocks. It is part of the field declaration, not a nested executable block. The parser must not allow statements, function definitions, control flow, or local variable declarations inside a field metadata block.
 
 The field metadata block must normalize to the same field metadata map defined by RFC 021 and RFC 085. Tooling and checked metadata consumers must not need to know whether a key was written as `[description="..."]` or in a braced block.
 
@@ -262,11 +262,13 @@ model Invalid:
 
 The compiler must report duplicate declaration-local metadata keys at the later source location and must include the field name and the earlier key location in the diagnostic.
 
-Alias sugar remains the preferred spelling for wire names. A braced metadata block may contain `alias = "wire"` for migration and generated-source compatibility, but it must conflict with any different alias provided by `as "wire"` or `[alias="wire"]` on the same field.
+Alias sugar remains the preferred spelling for wire names. A braced metadata block must continue to accept `alias = "wire"` as an equivalent checked spelling, including ordinary authored source. It is not a temporary migration-only form. The declaration-local duplicate-key rule applies across this spelling, `as "wire"`, and `[alias="wire"]`: supplying alias more than once must be rejected even when the repeated values are equal. Preferred style must not change wire semantics.
 
 ### Metadata values
 
 Metadata block values must use the safe metadata value set defined by RFC 085 and RFC 086. Values must be compile-time metadata values, not runtime expressions. A metadata block must not evaluate user code.
+
+Metadata blocks reuse RFC 085 and RFC 086 key identity, safe-value checks, and explicit adapter/tooling activation rules. Unknown namespaced metadata remains inert under baseline compilation and is preserved for an explicit consumer; changing brackets to braces must not enable a namespace or grant it language semantics. An invoked adapter retains its own key and compatibility validation. Unqualified keys remain governed by the standard/compiler-owned key contracts.
 
 Namespaced metadata keys are written as dotted paths:
 
@@ -280,7 +282,7 @@ model Event:
     }
 ```
 
-The compiler must preserve each metadata entry's source location and provenance in checked metadata where the surrounding descriptor already records provenance.
+The compiler must preserve each metadata entry's source location and provenance in checked metadata where the surrounding descriptor already records provenance. Compiler-semantic validate, normalize, and default_factory entries retain the same checked callable/operation identities and construction obligations as RFC 085 and RFC 122; changing their spelling to a braced block must not execute them, create another validation engine, or make them descriptive adapter overrides. Composed source fields retain RFC 087's provenance and obligation rules rather than acquiring target-local precedence merely because their source spelling used a block.
 
 ### Merge and precedence
 
@@ -307,7 +309,7 @@ customer_id as "CustomerId": CustomerId {
 }
 ```
 
-The formatter should prefer alias sugar over `alias = "..."` in declaration metadata blocks when formatting source it is allowed to rewrite semantically. It must not rewrite generated source, macro output, or user source when preserving exact spelling is required by a tool mode.
+Ordinary formatting must preserve the authored choice of bracket metadata, braced metadata, and alias spelling by default. An explicit fix or project-level formatter setting may opt into equivalent metadata-layout normalization, including moving dense bracket metadata into blocks and preferring alias sugar. Opt-in project policy may apply during ordinary formatting for that project, including editor formatting using the same policy; it must be visible and deterministic rather than silently enabled for every project. Normalization must preserve checked values, field identity, comments and provenance needed for diagnostics, and must not resolve duplicate keys by precedence. A mode requiring exact source spelling must not perform these rewrites, even when a broader project style requests normalization. This RFC selects the formatter behavior, not a new project manifest or configuration parser.
 
 ### Constrained primitive option blocks
 
@@ -327,7 +329,7 @@ This is semantically equivalent to:
 type CustomerScore = newtype int[gt=0, lt=100, storage=i8]
 ```
 
-The option block is part of the constrained primitive type expression. It is not a newtype body and it does not allow methods, docstrings, or runtime statements. A newtype that needs a body must still use the existing body-bearing declaration form:
+The option block is admitted specifically on the constrained primitive underlying of a newtype declaration; it does not make `int { ... }` a general runtime expression or admit metadata on arbitrary type declarations. The option block is part of the constrained primitive type expression. It is not a newtype body and it does not allow methods, docstrings, or runtime statements. A newtype that needs a body must still use the existing body-bearing declaration form:
 
 ```incan
 type CustomerScore = newtype int {
@@ -436,7 +438,7 @@ Declaration metadata blocks can make models taller. Single-entry blocks should r
 
 The implementation should normalize all declaration-local field metadata into the existing field metadata descriptor before schema descriptor extraction. The parser should retain source provenance for each metadata entry so duplicate-key diagnostics and checked metadata tools can explain whether a value came from brackets, alias sugar, or a block.
 
-The constrained primitive block form should normalize into the same constrained primitive representation as bracket syntax. Later compiler stages should not distinguish `int[ge=0, le=10]` from `int { ge = 0; le = 10 }` except for source spans and formatting.
+The constrained primitive block form should normalize into the same constrained primitive representation as bracket syntax. Later compiler stages should not distinguish bracket options from the equivalent multiline braced options except for source spans and formatting.
 
 ## Layers affected
 
@@ -448,13 +450,10 @@ The constrained primitive block form should normalize into the same constrained 
 - **LSP / Tooling**: should offer hover, completion, diagnostics, and quick fixes for metadata keys in braced blocks, including migration suggestions from dense inline metadata to block form.
 - **Documentation generation**: should render field metadata identically regardless of whether it was written in brackets or a declaration metadata block.
 
-## Unresolved questions
+## Design Decisions
 
-- Should `alias = "WireName"` inside a declaration metadata block remain accepted long term, or should alias be allowed only through `as "WireName"` and legacy brackets?
-- Should declaration metadata blocks eventually be allowed on enum variants, function parameters, properties, type aliases, and trait requirements?
-- Should the constrained primitive block form use raw `int { ... }` as drafted here, or should it require a disambiguating marker such as `int where { ... }`?
-- Should the formatter automatically migrate dense bracket metadata to braced metadata blocks, or should that remain an explicit lint/fix mode?
-- Should metadata block keys use the same namespace validation policy as RFC 086 schema keys, or should declaration-local metadata remain limited to RFC 085 keys plus explicitly enabled namespaces?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Braced `alias = "WireName"` remains a supported equivalent spelling, not a temporary migration form. Alias sugar stays the preferred readable style. Declaration-local duplicate keys, including repeated equal aliases across spellings, are errors rather than ordered overrides.
+- The primary surface is model-owned field metadata, plus the separately selected constrained primitive option blocks in newtype underlyings. RFC 086 retains schema/projection ownership. No automatic expansion to enum cases, function parameters, computed properties, ordinary aliases, or trait requirements is introduced; any added declaration target needs its own applicability contract.
+- Constrained primitive options use the drafted `int { ... }` form without an extra `where` keyword. The block belongs to the newtype underlying, while a following colon opens an actual newtype body. Default-expression braces and field metadata braces remain distinct; parser/formatter acceptance must exercise the collisions rather than claim proof from a sketch.
+- Default formatting preserves authored metadata and alias spelling. An explicit fix or project-level opt-in may normalize layout during ordinary formatting; exact-spelling modes retain their guarantee. No implicit whole-project migration is selected.
+- Metadata blocks reuse RFC 085/086 checked keys, safe values, provenance and explicit adapter activation. Inert namespaced data does not become executable or compiler-semantic through braced spelling.

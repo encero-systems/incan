@@ -1,6 +1,6 @@
 # RFC 099: Generic trait-targeted methods
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-15
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,22 +13,24 @@
     - RFC 091 (constrained integer newtype storage carriers)
     - RFC 098 (native associated types for traits)
     - RFC 101 (`std.collections.OrdinalMap`)
-- **Issue:** https://github.com/encero-systems/incan/issues/581
-- **Blocks:** https://github.com/encero-systems/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
+    - RFC 131 (typed error umbrellas and retained validation failures)
+    - RFC 144 (owner-qualified trait contracts)
+- **Issue:** <https://github.com/encero-systems/incan/issues/581>
+- **Blocks:** <https://github.com/encero-systems/incan/issues/596> (v0.5 RFC 101 trait-system bridge removal)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
 
 ## Summary
 
-This RFC introduces generic trait-targeted methods: methods declared inside the owning type body may carry their own type parameters, target a trait instantiation with `for Trait[...]`, and add `where` constraints that make the method define a checked family of trait adoptions rather than one concrete adoption at a time. It also defines how trait-owned capability families can make an existing deterministic type family satisfy a trait without adding Rust-shaped external implementation blocks. The primary motivation is numeric and storage-carrier dispatch: `std.io.BytesIO` should be able to define one `write[T ... for BinaryWrite[T] ...]` method family for exact-width integers and another for storage-backed integer newtypes, while traits such as `OrdinalKey` should be able to own deterministic key conformance for language scalar families.
+This RFC introduces generic trait-targeted methods: methods declared inside the owning type body may carry their own type parameters, target a trait instantiation with `from Trait[...]`, and add `where` constraints that make the method define a checked family of trait adoptions rather than one concrete adoption at a time. It also defines how trait-owned capability families can make an existing deterministic type family satisfy a trait without adding Rust-shaped external implementation blocks. The primary motivation is numeric and storage-carrier dispatch: `std.io.BytesIO` should be able to define one `write[T ... from BinaryWrite[T] ...]` method family for exact-width integers and another for storage-backed integer newtypes, while traits such as `OrdinalKey` should be able to own deterministic key conformance for language scalar families.
 
 ## Core model
 
 1. **Behavior lives on the owning type:** when a class, model, enum, newtype, or rusttype owns behavior, generic trait-targeted methods are written in that declaration body.
-2. **The method header names the trait target:** `for TraitExpression` inside the method generic header says the method satisfies that trait instantiation, not merely that it is an inherent overload.
+2. **The method header names the trait target:** `from TraitExpression` inside the method generic header says the method satisfies that trait instantiation, not merely that it is an inherent overload.
 3. **Generic constraints are part of the adoption family:** bounds such as `T with StorageBackedInteger` and `where T.Storage with FixedWidthInteger` decide which static type arguments the adoption family covers.
-4. **No Rust `impl` syntax leaks into Incan:** the backend may emit Rust `impl` blocks, but source uses class bodies, `with`, `for`, and `where`.
+4. **No Rust `impl` syntax leaks into Incan:** the backend may emit Rust `impl` blocks, but source uses class bodies, `with`, `from`, and method-local `where`.
 5. **Storage dispatch is explicit:** a storage-backed newtype may delegate representation work through `T.Storage`, but the source-level type remains the nominal newtype and no ambient primitive conversion is created.
 6. **Overlaps must be diagnosed:** if two generic trait-targeted methods could satisfy the same trait instantiation for the same receiver type and type arguments, the compiler must reject the ambiguity unless another accepted RFC defines specialization.
 7. **Traits may own capability families:** when a trait defines a canonical contract over a finite or registry-backed language type family, the trait can expose that conformance through checked capability metadata instead of reopening each existing type declaration.
@@ -51,7 +53,7 @@ RFC 101 exposed the complementary case. `std.collections.OrdinalKey` owns a dete
 - Support numeric family dispatch for exact-width integer and float helper traits without requiring a hand-authored method per primitive type.
 - Support storage-carrier dispatch for constrained integer newtypes without weakening RFC 091's logical-type versus storage-carrier boundary.
 - Support trait-owned capability families for deterministic registry-backed contracts such as stable ordinal keys.
-- Preserve the existing `with TraitName` and method-level `for TraitName` mental model from RFC 043.
+- Preserve the existing `with TraitName` adoption model, RFC 144’s `from` contract ownership, and RFC 043’s existing concrete method target from RFC 043.
 - Reject overlapping adoption families clearly rather than adding specialization by accident.
 - Preserve trait adoption families, where-constraint proofs, trait-owned capability-family membership, selected substitutions, and overlap diagnostics in checked metadata, generated docs, LSP views, and package manifests.
 
@@ -68,82 +70,132 @@ RFC 101 exposed the complementary case. `std.collections.OrdinalKey` owns a dete
 
 ## Guide-level explanation
 
-A class that owns behavior can define a generic trait-targeted method directly in its body. The method's generic header lists the method type parameter, the trait target, and any extra constraints that determine when the adoption family exists:
+All new forms and standard APIs described here are proposed, not evidence of current compiler support. Existing implicit validated newtype conversion remains governed by RFC 017 and RFC 091.
+
+### One method, many checked trait instantiations
+
+The following independent module defines every application trait and type. Abstract trait signatures deliberately use ellipses; the application method bodies are complete.
 
 ```incan
-class BytesIO:
-    def write[T with FixedWidthNumeric for BinaryWrite[T]](
-        mut self,
-        value: T,
-        endian: Endian,
-    ) -> Result[None, IoError]:
-        ...
+# Complete module. Render and Sink are application traits.
+trait Render:
+    def render(self) -> str: ...
+
+trait Sink[T]:
+    def put(mut self, value: T) -> str: ...
+
+class Label with Render:
+    pub text: str
+
+    pub def render(self) -> str:
+        return self.text
+
+class Formatter:
+    pub def put[T with Render from Sink[T]](mut self, value: T) -> str:
+        return value.render()
+
+def main() -> None:
+    mut formatter = Formatter()
+    label = Label(text="atoms")
+    assert formatter.put(label) == "atoms"
 ```
 
-This reads as: `BytesIO` supports `BinaryWrite[T]` for every `T` that satisfies `FixedWidthNumeric`, and this method is the `write` method for that trait target. Users still call it like an ordinary method:
+`T with Render` limits which values the method accepts. `from Sink[T]` identifies the contract whose `put` this method supplies. `Formatter` therefore satisfies each eligible `Sink[T]` without listing every type in its header. `from` denotes contract ownership, not a value-conversion direction. This new generic-header form follows RFC 144; RFC 043's existing concrete `def method(...) for Trait -> ResultType` form remains valid. This RFC neither deprecates that form nor adds a second concrete `from` spelling.
+
+### Keep ordinary validated input ergonomic
 
 ```incan
-buf = BytesIO()
-value: u32 = 42
-buf.write(value, Endian.Little)?
-```
-
-The same shape handles storage-backed integer newtypes without pretending the newtype is its storage carrier. A storage-backed type exposes a storage associated type through RFC 098-style projection, and the method family can require that storage type to be writable:
-
-```incan
+# Proposed storage-backed newtype and extraction contract.
 type Month = newtype int[ge=1, le=12, storage=u8]
 
-class BytesIO:
-    def write[
-        T with StorageBackedInteger
-        for BinaryWrite[T]
-        where T.Storage with FixedWidthInteger
-        where BytesIO with BinaryWrite[T.Storage]
-    ](
-        mut self,
-        value: T,
-        endian: Endian,
-    ) -> Result[None, IoError]:
-        storage: T.Storage = value.to_storage()
-        return self.write(storage, endian)
+def bill_for(month: Month) -> None:
+    println(month)
+
+def carrier_for(month: Month) -> u8:
+    return month.to_storage()  # Proposed checked storage extraction.
+
+def main() -> None:
+    bill_for(4)
+    # RFCs 017/091 keep ordinary validated int-to-Month input ergonomics.
+    # bill_for(13) is rejected/fails the checked domain construction contract.
+
+    # No new rule makes an arbitrary int automatically fit into u8.
+    # to_storage is only for an already validated Month value.
+    # It extracts the declared carrier; it does not validate raw input.
+
+# Existing implicit input conversion is retained. The new public operation
+# is the reverse representation direction used by numeric writer families.
 ```
 
-The declaration does not say `Month` is a `u8`. It says `BytesIO` can write a `Month` because `Month` has a storage carrier, that carrier is a fixed-width integer, and `BytesIO` already knows how to write that carrier. The explicit projection keeps the representation decision visible in source while preserving the domain type at the API boundary.
+`bill_for(4)` retains ordinary validated input coercion. `to_storage()` is the opposite, representation-oriented direction on an already validated value. It returns the declared carrier and never turns an arbitrary `int` into `u8`. The standard storage capability described below provides it; application code does not restate its inferred Storage binding.
 
-The feature is also useful outside `std.io`. A codec, hasher, serializer, graph store, or binary protocol writer can write one method family for a trait capability instead of copying the same method for every numeric width or storage-backed domain type:
+### Read storage without admitting an invalid domain value
+
+`std.io` owns the existing `BytesIO`, `Endian`, `IoError`, `BinaryRead[T]`, and `BinaryWrite[T]` names. The following complete application uses the proposed storage-backed adoption family with that existing typed-read surface:
 
 ```incan
-class FrameWriter:
-    def put[
-        T with StorageBackedInteger
-        for FrameEncode[T]
-        where T.Storage with FrameEncode
-    ](mut self, value: T) -> Result[None, FrameError]:
-        return self.put(value.to_storage())
+from std.io import BytesIO, Endian, IoError
+
+type Month = newtype int[ge=1, le=12, storage=u8]
+
+def read_month(raw: bytes) -> Result[Month, IoError]:
+    buffer = BytesIO(raw)
+    month: Month = buffer.read(Endian.Little)?
+    return Ok(month)
+
+def main() -> None:
+    match read_month(b"\x04"):
+        Ok(month) => println(month)
+        Err(failure) => println(failure)
+    # The carrier is 4 and checked Month construction succeeds.
+
+    match read_month(b"\x0d"):
+        Ok(month) => println(month)
+        Err(failure) => println(failure)
+    # 13 fits the u8 carrier but fails Month’s 1..12 constraint.
 ```
 
-Plain class inheritance stays separate:
+The reader first decodes the declared carrier, then converts it through the checked logical underlying and canonical `from_underlying` validation path. A transport or decoding failure retains its ordinary `IoError`. A failed domain construction returns the proposed `std.io.IoError.InvalidData(original: ValidationError)` case, retaining the original standard RFC 131 validation umbrella as its cause. ValidationError is the standard boundary from RFC 017/RFC 131, not an application-defined text error; its final defining module follows that owning contract. The additional I/O case belongs to `std.io`; it does not invent a second validation mechanism or change a failure into success. Existing I/O operation, position and path context must remain available through the owning I/O diagnostic contract. Current legacy string-backed I/O failures alone do not satisfy the new retained-failure requirement.
+
+The carrier value 13 is representable; the semantic Month is invalid. Both checks matter. This proposed recoverable read must not use the panic behavior of ordinary implicit input coercion, perform a lossy cast, or expose a partially validated newtype.
+
+### Which standard families exist, and who owns them
+
+The proposed `std.derives.numeric` module owns `FixedWidthInteger`, `FixedWidthFloat`, `FixedWidthNumeric`, and `StorageBackedInteger`. The first three are standard marker traits whose automatic membership is checked from the numeric registry. `StorageBackedInteger` has the ordinary RFC 098 inferred-member shape:
 
 ```incan
-class CountingBytesIO extends BytesIO:
-    bytes_written: int
+# Proposed standard declaration in std.derives.numeric.
+pub trait StorageBackedInteger[infer Storage]:
+    def to_storage(self) -> Self.Storage: ...
 ```
 
-`extends` creates a new class with inherited behavior. Generic trait-targeted methods add checked behavior to the class that contains the method declaration.
+Each supported constrained integer newtype receives its Storage binding from its checked `storage=` declaration. That binding must satisfy FixedWidthInteger; a consumer must not fabricate one from a similarly named member. For `Month`, the binding is `u8`.
+
+| Contract | Concrete reason a type satisfies it | What does not count |
+| --- | --- | --- |
+| FixedWidthInteger | Canonical exact-width integer identity from the numeric registry | A name containing int or an arbitrary nominal wrapper |
+| FixedWidthFloat | Canonical exact-width float identity from the numeric registry | An unrelated type with numeric-looking methods |
+| FixedWidthNumeric | Membership in the checked integer or float family | An unchecked package assertion |
+| StorageBackedInteger | A validated constrained integer newtype with a checked carrier | Treating every primitive as a storage-backed domain wrapper |
+| std.collections.OrdinalKey | The canonical stable encoding contract and scalar metadata owned by RFC 101 | Reopening a scalar in a consuming package |
+
+These are ordinary stdlib-owned traits with compiler-checked conformance facts. This RFC does not add a public decorator or callback that lets arbitrary packages assert automatic scalar-family membership. Users can still author the ordinary owned method families demonstrated by Formatter. The published facts must explain the owning trait, type identity, membership proof, associated bindings and required behavior; callers must not rediscover membership by parsing names. These type conformance facts are distinct from RFC 104 runtime authority grants.
+
+Aliases such as int and i64 denote one canonical family member. Diagnostics retain the author's spelling as the primary explanation and show the canonical equivalence when useful; aliases do not create duplicate implementations.
 
 ## Reference-level explanation
 
 ### Method header form
 
-A concrete type body may contain a generic trait-targeted method with the form `def name[TypeParams for TraitExpression where Constraints...](params...) -> ReturnType:`. The `TypeParams` portion follows the existing method generic parameter rules. The optional `for TraitExpression` inside the generic header targets the method at a trait instantiation that may refer to the method's type parameters. The optional `where` clauses introduce additional constraints used to decide whether the trait-targeted method applies for a particular substitution.
+A concrete type body may contain a generic trait-targeted method with the form `def name[TypeParams from TraitExpression where Constraints...](params...) -> ReturnType:`. The `TypeParams` portion follows the existing method generic parameter rules. The optional `from TraitExpression` inside the generic header targets the method at a trait instantiation that may refer to the method's type parameters. The optional `where` clauses introduce additional constraints used to decide whether the trait-targeted method applies for a particular substitution.
 
-The `for TraitExpression` form inside the generic header is distinct from the existing concrete method target form `def name(params...) for TraitExpression -> ReturnType:`. The existing form remains valid when the trait target does not need method-local type parameters. A method must not use both target forms at once. If the trait target mentions a method-local type parameter, the target must appear inside the generic header so that the parameter is in scope for the target.
+The `from TraitExpression` form inside the generic header is distinct from the existing concrete method target form `def name(params...) for TraitExpression -> ReturnType:`. The existing form remains valid when the trait target does not need method-local type parameters. A method must not use both target forms at once. If the trait target mentions a method-local type parameter, the target must appear inside the generic header so that the parameter is in scope for the target.
 
 ### Adoption-family semantics
 
 A generic trait-targeted method in a concrete type body establishes a trait adoption family for the enclosing type. For each substitution of the method type parameters that satisfies the method's bounds and `where` constraints, the enclosing type is considered to adopt the targeted trait instantiation, and the method body satisfies the corresponding trait method. The compiler must check the method signature against the targeted trait method after substituting the method type parameters, associated type projections, and constraints.
 
-The enclosing type does not need to list every covered trait instantiation in its declaration header. For example, `BytesIO` should not have to spell `with BinaryWrite[u8], BinaryWrite[i8], BinaryWrite[u16], ...` when a single generic trait-targeted method covers the exact-width numeric family. The adoption family is still explicit because it is attached to a method that names `for BinaryWrite[T]` and declares the constraints on `T`.
+The enclosing type does not need to list every covered trait instantiation in its declaration header. For example, `BytesIO` should not have to spell `with BinaryWrite[u8], BinaryWrite[i8], BinaryWrite[u16], ...` when a single generic trait-targeted method covers the exact-width numeric family. The adoption family is still explicit because it is attached to a method that names `from BinaryWrite[T]` and declares the constraints on `T`.
 
 ### Trait-owned capability families
 
@@ -166,9 +218,15 @@ This RFC defines method-local `where` constraints only for generic trait-targete
 
 ### Storage-backed integer dispatch
 
-Storage-backed constrained integer newtypes may expose a trait-owned `StorageBackedInteger` capability. That capability should include an associated type named `Storage`, whose binding is the exact-width integer storage carrier declared by `storage=<integer-carrier>`, and a value-level method that lets already-validated values expose their storage representation for representation-oriented work. A type such as `type Month = newtype int[ge=1, le=12, storage=u8]` therefore satisfies `StorageBackedInteger` with `type Storage = u8`.
+Storage-backed constrained integer newtypes must expose the standard `StorageBackedInteger` capability. That capability must include the RFC 098 inferred type member `Storage`, whose binding is the exact-width integer storage carrier declared by `storage=<integer-carrier>`, and `to_storage(self) -> Self.Storage` for already-validated values to expose their storage representation. A type such as `type Month = newtype int[ge=1, le=12, storage=u8]` therefore satisfies `StorageBackedInteger` with an inferred `Storage` binding of `u8` under RFC 098.
 
 Using `T.Storage` in a generic trait-targeted method must not create ambient primitive conversion. A `Month` remains a `Month`, a `u8` remains a `u8`, and a method that delegates through `value.to_storage()` is explicitly choosing a representation path for an already-validated value. Reconstructing a storage-backed newtype from storage data must continue to use the checked newtype construction path so storage carrier values that are representable but semantically invalid still fail validation.
+
+### Checked binary reading of storage-backed values
+
+The standard storage-backed BinaryRead[T] family must preserve `read(self, endian: Endian) -> Result[T, IoError]`. BinaryWrite[T] likewise retains its published receiver and `write(self, value: T, endian: Endian) -> Result[None, IoError]` contract. A generic implementation's receiver must match the targeted trait; this feature must not silently add or remove mutation permission.
+
+Reading must decode T.Storage, check conversion into T's logical underlying domain, and call the canonical checked construction path. An invalid carrier-to-domain conversion or an Err from from_underlying must remain a recoverable failure, retaining the original ValidationError under `std.io.IoError.InvalidData(original: ValidationError)`. Its causal relationship must identify original under RFC 131; standard I/O context must not be erased. The read must not cast through a truncated primitive, use implicit-coercion panic behavior, discard the typed failure into a message, or expose an invalid T. Transport/decoding errors retain their ordinary I/O identity. This is an additive retained-domain-failure contract for the existing I/O umbrella, not a replacement error framework.
 
 ### Coherence and ambiguity
 
@@ -197,7 +255,7 @@ These facts are part of the public semantic contract. A package consumer, genera
 The compact one-line form is:
 
 ```incan
-def write[T with StorageBackedInteger for BinaryWrite[T] where T.Storage with FixedWidthInteger](...) -> Result[None, IoError]:
+def write[T with StorageBackedInteger from BinaryWrite[T] where T.Storage with FixedWidthInteger](...) -> Result[None, IoError]:
     ...
 ```
 
@@ -206,26 +264,24 @@ The multiline form is preferred when the header contains more than one constrain
 ```incan
 def write[
     T with StorageBackedInteger
-    for BinaryWrite[T]
+    from BinaryWrite[T]
     where T.Storage with FixedWidthInteger
     where BytesIO with BinaryWrite[T.Storage]
 ](
-    mut self,
+    self,
     value: T,
     endian: Endian,
 ) -> Result[None, IoError]:
     ...
 ```
 
-The `for` clause belongs inside the generic header because the target trait instantiation may use method type parameters. The `where` clauses also belong in the generic header because they constrain the adoption family, not the runtime body. No colon appears inside the bracket list; `:` remains the block introducer after the return type.
+The `from` clause belongs inside the generic header because the target trait instantiation may use method type parameters. The `where` clauses also belong in the generic header because they constrain the adoption family, not the runtime body. No colon appears inside the bracket list; `:` remains the block introducer after the return type.
 
 ### Numeric family traits
 
-The standard library or builtin trait surface should define numeric family traits over the RFC 009 registry rather than forcing each numeric helper surface to discover widths by string matching. This RFC uses illustrative names such as `FixedWidthInteger`, `FixedWidthFloat`, `FixedWidthNumeric`, and `StorageBackedInteger`; the final names should align with the existing stdlib trait naming style before this RFC moves out of Draft.
+`std.derives.numeric` is the public home of FixedWidthInteger, FixedWidthFloat, FixedWidthNumeric and StorageBackedInteger. Numeric membership must use canonical registry identities: signed and unsigned exact-width integer primitives for the integer family, exact-width float primitives for the float family, and their union for FixedWidthNumeric. Transparent aliases normalize before membership; nominal newtypes must not enter a primitive family merely because of their underlying type. StorageBackedInteger instead applies to the checked RFC 091 constrained-integer declarations carrying explicit storage. The primitive and nominal storage-backed families therefore do not overlap merely by representation. An authored with adoption of a standard automatic numeric/storage family must satisfy that same checked membership predicate; an empty marker body must not let an arbitrary nominal type assert membership.
 
-The important contract is registry-backed membership. If a trait claims to represent fixed-width integers, its membership must come from the numeric registry introduced by RFC 009, not from duplicated lists in each library. Aliases such as `byte` and `integer` should resolve to their canonical numeric identities before family membership is checked, so alias spelling does not create extra adoption families.
-
-The same registry-backed model applies outside numeric I/O. A trait such as `OrdinalKey` may define a deterministic key family over language scalar registries and exact stdlib scalar metadata. That does not make `str` or `u32` reopenable; it means the trait contract and registry facts together establish one canonical conformance.
+A standard family uses ordinary trait declarations plus compiler-checked numeric, storage or encoding metadata. The compiler must preserve the source trait's canonical identity and supply every required conformance fact. This RFC admits no unchecked public family-membership annotation, external reopening, arbitrary predicate callback or consumer-specific alternate conformance. The initial standard contracts are the four numeric/storage families and RFC 101's std.collections.OrdinalKey family under its owning deterministic-encoding contract. New automatic families require a separately checked contract rather than a package-level assertion.
 
 ### Interaction with `std.io`
 
@@ -235,7 +291,7 @@ RFC 056 deliberately made numeric reads and writes trait-backed rather than a pu
 
 ### Interaction with associated types
 
-This RFC relies on RFC 098-style associated type projection for `T.Storage`. If RFC 098 changes the projection spelling, the examples and reference rules in this RFC must update to match the accepted projection syntax. Generic associated types are not required because `Storage` is one concrete storage carrier per storage-backed integer type.
+This RFC relies on RFC 098-style associated type projection for `T.Storage`. The Storage member uses RFC 098’s `infer Storage` trait-header declaration and T.Storage projection; a checked adoption supplies its carrier. No separate `type Storage` declaration is added to each newtype body. Generic associated types are not required because `Storage` is one concrete storage carrier per storage-backed integer type.
 
 ### Interaction with class inheritance
 
@@ -263,7 +319,7 @@ Adding general method overloading would also solve some call-site ergonomics, bu
 
 ## Drawbacks
 
-Generic trait-targeted methods make method headers more expressive and therefore more complex. A header such as `def write[T with StorageBackedInteger for BinaryWrite[T] where T.Storage with FixedWidthInteger](...)` carries type parameters, a trait target, and constraints in one place. That is acceptable for capability-heavy stdlib code, but docs should continue to show ordinary methods first and reserve this form for APIs that truly need generic trait adoption families.
+Generic trait-targeted methods make method headers more expressive and therefore more complex. A header such as `def write[T with StorageBackedInteger from BinaryWrite[T] where T.Storage with FixedWidthInteger](...)` carries type parameters, a trait target, and constraints in one place. That is acceptable for capability-heavy stdlib code, but docs should continue to show ordinary methods first and reserve this form for APIs that truly need generic trait adoption families.
 
 The trait solver also has more work to do. It must reason about adoption families, associated type projections, alias-normalized numeric family membership, and overlap detection. The benefit is that this work becomes central and checked instead of being duplicated across stdlib modules and backend codegen branches.
 
@@ -273,29 +329,26 @@ Storage-carrier dispatch may tempt users to think representation and semantics a
 
 This section is non-normative. A practical implementation should model generic trait-targeted methods as checked trait adoption families attached to the enclosing type's metadata. During typechecking, the method's type parameters, target trait expression, and `where` constraints should be stored together so trait conformance queries can ask whether a concrete trait instantiation is covered. Trait-owned capability families should be stored in the same conformance model, keyed by trait identity and type-family predicate, so generic bounds, method lookup, lowering, metadata export, and diagnostics read the same facts. Backend lowering may then emit a target-language generic implementation, a finite expansion for registry-known families, or another representation that preserves the same checked semantics.
 
-Storage-backed constrained newtypes should expose their storage carrier through checked metadata produced by RFC 091. The storage-backed capability should be derived from that metadata rather than requiring users to restate `type Storage = ...` manually for every storage-backed newtype.
+Storage-backed constrained newtypes should expose their storage carrier through checked metadata produced by RFC 091. The storage-backed capability should be derived from that metadata rather than requiring users to restate an additional Storage member declaration manually for every storage-backed newtype.
 
 ## Layers affected
 
-- **Parser / AST**: method generic headers must accept `for TraitExpression` and method-local `where` constraints.
+- **Parser / AST**: method generic headers must accept `from TraitExpression` and method-local `where` constraints.
 - **Typechecker / Symbol resolution**: concrete type metadata must record generic trait-targeted adoption families, trait metadata must record trait-owned capability families, method signatures must be checked against targeted trait methods, `where` constraints must be evaluated, and overlapping families must be rejected.
 - **IR Lowering**: lowered method metadata must preserve the targeted trait instantiation and generic constraints so backend dispatch remains checked.
 - **Emission**: Rust emission should lower eligible generic trait-targeted methods to valid Rust trait implementations or equivalent generated code while respecting coherence.
 - **Stdlib / Runtime (`incan_stdlib`)**: numeric family traits and storage-backed integer traits should be exposed where `std.io`, codecs, serializers, and related APIs need them.
-- **Formatter**: multiline generic method headers with `for` and repeated `where` clauses must format stably.
+- **Formatter**: multiline generic method headers with `from` and repeated `where` clauses must format stably.
 - **Library manifests / checked API metadata**: public adoption-family metadata must preserve trait targets, constraints, capability-family predicates, substitutions, overlap diagnostics, and provenance.
 - **LSP / Tooling**: hover, completion, go-to-definition, diagnostics, semantic inspection, and explanation commands should surface the trait target, adoption family constraints, concrete substitutions, and reasons a substitution was accepted or rejected.
 - **Documentation**: trait, class, numeric, newtype, and `std.io` docs should explain when generic trait-targeted methods are appropriate.
 
-## Unresolved questions
+## Design Decisions
 
-- Should the target clause be spelled exactly as `for BinaryWrite[T]` inside the generic header, or should the language choose a different keyword to avoid overloading the existing method-level `for Trait` target?
-- Should method-local `where` constraints be limited to generic trait-targeted methods in this RFC, or should the RFC introduce a general `where` surface for all generic functions and type declarations?
-- What are the final stdlib names for numeric family traits such as `FixedWidthInteger`, `FixedWidthNumeric`, and `StorageBackedInteger`?
-- Should storage-backed integer newtypes expose a standard `to_storage()` method, a property, or a more explicit representation adapter?
-- Should binary reading for storage-backed newtypes be included in the same design, and if so, what error type should construction-from-storage use when the storage value is representable but violates the newtype's semantic constraints?
-- Should alias-normalized types such as `int` and `i64` appear as one trait instantiation in diagnostics or preserve the authored spelling where possible?
-- What exact source spelling, metadata annotation, or trait declaration shape should a trait use to declare a trait-owned capability family, and which families are accepted for the RFC 099 implementation milestone?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- New generic targets use from inside the method generic header, next to their subject bounds. RFC 043's existing concrete method-level for target stays valid; this RFC does not deprecate it or silently add another concrete spelling.
+- Method-local where constraints remain scoped to trait-targeted adoption families. General trailing where clauses on unrelated functions/types are not introduced.
+- Standard numeric family names and registry-backed membership are retained. Numeric/storage traits live in std.derives.numeric, while OrdinalKey retains RFC 101's std.collections ownership. Standard automatic membership uses checked trait/registry facts rather than a new unchecked public annotation.
+- Existing validated input coercions remain available. to_storage() explicitly extracts the declared carrier from an already validated value and preserves the nominal domain distinction; Storage is an implementation-chosen member under RFC 098.
+- Binary reading is included. It decodes the carrier and performs checked logical construction, returning the retained validation failure through IoError.InvalidData rather than panic, text conversion or unchecked wrapping.
+- Alias-equivalent types share one canonical adoption. Diagnostics prefer authored spelling and may explain its canonical equivalence without creating duplicate trait implementations.
+- The family-membership explanation must distinguish authored owned method families from standard automatic scalar conformance and identify their actual declaring modules and proof sources.

@@ -4,6 +4,7 @@
 - **Created:** 2026-09-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
+    - RFC 164 (proposed explicit ownership and borrowing contracts)
     - RFC 006 (Python-style generators)
     - RFC 016 (`loop` and `break <value>`)
     - RFC 023 (compilable stdlib; §6 implicit ownership and borrowing)
@@ -384,6 +385,10 @@ Incan stays Rust-like in borrowing, exclusive access, and lifetime safety. Pytho
 **Scala is prior art for separating binding reassignment from object mutation.** `val` fixes a binding and `var` permits reassignment; the collection type determines whether its contents can change. Neither declaration requests an independent copy. This distinction helps state the questions separately, but does not make Scala's reference model the Incan borrowing contract. See [Scala bindings](https://docs.scala-lang.org/scala3/book/taste-vars-data-types.html) and [Scala collection mutability](https://docs.scala-lang.org/overviews/collections-2.13/overview.html).
 
 **Explicit cloning must have an honest contract.** Rust's [Clone contract](https://doc.rust-lang.org/std/clone/trait.Clone.html) shows why copying a wrapper does not necessarily make all reachable state independent. Incan explicitly requires an independent clone here: its mutable interior must not remain borrowed from or shared with the source. An imported clone operation that only duplicates a shared handle cannot silently satisfy that contract. This is a deliberate semantic requirement, not an assumption that Rust's method name guarantees it.
+
+### Relationship to RFC 164
+
+RFC 164 separately proposes optional explicit ownership modes and result-source relationships. This RFC remains the authority for ordinary inferred bindings and its `mut` contract. Bare `T` annotations continue to follow the rules here; the proposed `Owned[T]` form would be an explicit transfer request, not an ordinary annotation or an implicit copy. RFC 164 must define that extension and its interaction with writable parameters before adoption. RFC 164 targets 0.6 and preserves the settled defaults here. Its `Reference[T] from source` form describes returned exclusive access, including fluent chains and static field projections; retained writable references still require `mut`. Its explicit `BorrowedMut[T]` contract must not be treated as synonymous with every ordinary `mut T` parameter, because scalar and imported-type behavior remains distinct.
 
 ### Relationship to RFC 023
 

@@ -7,11 +7,11 @@
     - RFC 015 (hatch-like tooling and project lifecycle CLI)
     - RFC 020 (Cargo offline and locked policy)
     - RFC 033 (`ctx` typed configuration context)
-    - RFC 034 (`incan.pub` package registry)
+    - RFC 125 (`incan.pub` Loaf registry; supersedes RFC 034)
     - RFC 075 (starter profiles and capability packs)
     - RFC 076 (project mutation policy and recovery)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
-- **Issue:** https://github.com/encero-systems/incan/issues/402
+- **Issue:** <https://github.com/encero-systems/incan/issues/402>
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
@@ -65,7 +65,7 @@ This RFC keeps the boundary narrow. It does not create a general template progra
 ## Non-Goals
 
 - Defining starter profiles, capability packs, or their command surface. RFC 075 owns that layer.
-- Defining package registry transport, ranking, or remote discovery. RFC 034 owns package registry semantics.
+- Defining package registry transport, ranking, or remote discovery. RFC 125 owns package registry semantics, superseding RFC 034; RFC 117 owns Loaf project and dependency authority.
 - Defining private catalog hosting, identity, authorization, administration, or commercial policy.
 - Defining a general-purpose template language comparable to Jinja, Handlebars, Tera, or Liquid.
 - Supporting arbitrary generator scripts, shell commands, network calls, plugin execution, or procedural macros during template rendering.
@@ -551,7 +551,7 @@ V1 should support at least descriptor validation and dry-run rendering against f
 
 Template rendering must not execute arbitrary code. It must not run shell commands, load dynamic plugins, fetch remote URLs, evaluate expressions, or inspect unrelated files in the project.
 
-Templates distributed through packages inherit the package trust story. If package templates are distributed through `incan.pub`, registry integrity, checksum, yanking, and publisher identity rules belong to RFC 034 or later registry RFCs. Rendering remains local and must still validate paths and output.
+Templates distributed through packages inherit the package trust story. If package templates are distributed through `incan.pub`, registry integrity, checksums, signed state changes, and publisher identity rules belong to RFC 125. Rendering remains local and must still validate paths and output.
 
 Procedural extension points are especially risky for upgradeable templates. If a template suite needs environment-derived defaults, optional slices, or target cleanup, those concerns should be represented as typed parameters, descriptor conditions, and mutation-plan rules rather than hidden Python, shell, or plugin hooks. A later RFC may define sandboxed hooks, but v1 should assume hooks make provenance and updates less reliable.
 
@@ -608,7 +608,7 @@ Templates that need compiler-visible configuration should generate ordinary Inca
 
 ### Relationship to catalogs and `incan.pub`
 
-`incan.pub` is a natural public distribution point for package-owned templates because it already owns package identity and versioning in RFC 034. This RFC does not require registry support. It only requires that templates loaded from packages, registries, git sources, local paths, or private catalogs be rendered locally with the same safety rules as built-in templates.
+`incan.pub` is a natural public distribution point for package-owned templates because it already owns Loaf package identity and versioning under RFC 125 and RFC 117. This RFC does not require registry support. It only requires that templates loaded from packages, registries, git sources, local paths, or private catalogs be rendered locally with the same safety rules as built-in templates.
 
 When registry or catalog metadata is available, it can make template status and upgrade previews much more useful: it can expose latest compatible versions, yanked sources, integrity metadata, and precomputed source diffs between template versions. The catalog layer may help with discovery and trust. The local lifecycle CLI still owns project-specific planning, rendering, validation, conflict handling, and file mutation.
 

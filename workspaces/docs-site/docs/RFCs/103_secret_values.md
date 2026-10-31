@@ -16,7 +16,7 @@
     - RFC 093 (`std.telemetry` observability)
     - RFC 102 (semantic layer inspection surface)
     - RFC 104 (ambient runtime capabilities and receipts)
-- **Issue:** https://github.com/encero-systems/incan/issues/661
+- **Issue:** <https://github.com/encero-systems/incan/issues/661>
 - **RFC PR:** -
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -224,6 +224,8 @@ String interpolation and formatting protocols must use the redacted representati
 
 The normative security boundary for this RFC is Incan-owned plaintext emission. `SecretStr` and `SecretBytes` must not reveal raw contents through Incan-owned display, debug, panic formatting, assertion messages, diagnostics, structured logs, telemetry attributes, semantic inspection, generated reports, CLI help, CLI echo, default serialization, or action metadata.
 
+Preventing secret disclosure is an Incan-wide invariant, not a per-library preference or an optional diagnostic setting. Input handling must uphold it before a secret wrapper has been constructed, including when parsing, decoding, validation, or a trusted boundary fails. Incan-owned diagnostic capture and emission must preserve checked sensitivity information and must not introduce ordinary plaintext copies solely for diagnostics. Source excerpts, upstream messages, paths, and other diagnostic metadata must not bypass the invariant. Where an input surface cannot establish that an excerpt or detail is safe to expose, it must omit or redact it rather than emit potentially secret material. Verbose output, stack traces, inspection, and audit export do not grant reveal authority. RFC 131 and RFC 146 apply this invariant to error diagnostics and typed decoding respectively.
+
 This boundary also applies to nested structures. A model, list, dict, result, error, request, response, action input, or telemetry event containing a secret value must preserve redaction when formatted or serialized through Incan-owned mechanisms.
 
 Trusted stdlib APIs may reveal plaintext internally only for the duration of the operation that requires it, such as computing an HMAC or sending an HTTP authorization header. That internal reveal must not become observable through error values, debug payloads, telemetry attributes, retry reports, or generated artifacts.
@@ -393,19 +395,19 @@ Migration helpers may wrap existing `str` or `bytes` values explicitly. Such hel
 ## Alternatives considered
 
 - **Plain `newtype str` and `newtype bytes` only**
-  - Rejected because newtypes alone do not define formatting, debug, serialization, logging, telemetry, equality, cloning, and memory behavior.
+    - Rejected because newtypes alone do not define formatting, debug, serialization, logging, telemetry, equality, cloning, and memory behavior.
 - **Logging-only redaction**
-  - Rejected because secrets leak through more than logs: debug strings, exception messages, assertions, generated reports, telemetry, HTTP diagnostics, CLI echo, and semantic inspection all matter.
+    - Rejected because secrets leak through more than logs: debug strings, exception messages, assertions, generated reports, telemetry, HTTP diagnostics, CLI echo, and semantic inspection all matter.
 - **HTTP-only secret headers**
-  - Rejected because the same token often starts in environment or CLI config, flows through `ctx`, enters an HTTP client, appears in telemetry, and may be referenced by typed actions.
+    - Rejected because the same token often starts in environment or CLI config, flows through `ctx`, enters an HTTP client, appears in telemetry, and may be referenced by typed actions.
 - **One generic `Secret[T]` as the first surface**
-  - Rejected for the initial version because strings and bytes have distinct encoding, display, comparison, and memory concerns. A generic wrapper may still be useful later.
+    - Rejected for the initial version because strings and bytes have distinct encoding, display, comparison, and memory concerns. A generic wrapper may still be useful later.
 - **Always serialize redacted placeholders**
-  - Rejected for data serialization because silently writing `<redacted>` into JSON payloads, config files, or generated artifacts can create corrupt data and hide bugs.
+    - Rejected for data serialization because silently writing `<redacted>` into JSON payloads, config files, or generated artifacts can create corrupt data and hide bugs.
 - **Unscoped raw getters**
-  - Rejected because a method that returns an ordinary `str` or `bytes` as the primary reveal path makes it too easy to store, log, serialize, or return plaintext accidentally.
+    - Rejected because a method that returns an ordinary `str` or `bytes` as the primary reveal path makes it too easy to store, log, serialize, or return plaintext accidentally.
 - **Always require manual reveal before wire use**
-  - Rejected because it pushes raw exposure into user code and makes the safe path noisier than the risky path.
+    - Rejected because it pushes raw exposure into user code and makes the safe path noisier than the risky path.
 
 ## Drawbacks
 
