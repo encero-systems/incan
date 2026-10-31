@@ -7,6 +7,8 @@ from std.environ import get_or
 from std.fs import Path
 from files import write
 from engine_programs import read_program
+from engine_client import service_identity
+from segment_store import snapshot
 from engine_proofs import report
 from std.json import parse
 from rust::std::process import Command
@@ -133,6 +135,13 @@ def detail(refusal: Refusal) -> str:
 
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
+    admission = scratch_directory()?
+    store = admission.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    installed = service_identity(store)?
+    assert snapshot(store).map_err((error) => error.message())?.generation == 1
+    assert service_identity(store)?.compiler_generation == installed.compiler_generation
+    assert snapshot(store).map_err((error) => error.message())?.generation == 1
     process_lifecycle()?
     identity = Identity(
         store_id="store",
