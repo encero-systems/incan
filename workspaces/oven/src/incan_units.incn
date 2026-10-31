@@ -42,6 +42,7 @@ from unit_compiler import compile_prepared_unit, crate_name, described_by, run_c
 from unit_freshness import Key, unit_key
 from unit_rust import compile_library_unit, prepare_native
 from shared_link import development_link, library_witness, linkage_key, witness_current
+from jec import begin as begin_work, record as record_work
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
@@ -293,6 +294,7 @@ pub def run_program(
     By default this process is replaced by the program. A scoped engine execution sets `wait` to keep its execution
     interest alive until the child exits; a signal-terminated child returns status one.
     """
+    preparing = begin_work()
     program = f"{binary.0}"
     mut command = Command.new(binary.0)
     match argv0:
@@ -301,6 +303,7 @@ pub def run_program(
     for argument in arguments:
         command.arg(argument)
     trace_launch(program)
+    record_work("program_prepare", program, preparing)
     _ = flush_trace()
     if wait:
         status = command.status().map_err((error) => f"cannot run {program}: {error}")?

@@ -166,7 +166,10 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
     4. A worker that retired with this reply is not dialed again: the next request starts a fresh one.
     """
     # 1. Unsupported observations and failed startup retain the existing one-process compilation path.
-    match connection_for(toolchain):
+    connecting = begin()
+    found_connection = connection_for(toolchain)
+    record("worker_connect", toolchain.driver, connecting)
+    match found_connection:
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
             return Ok(None)
@@ -370,7 +373,9 @@ def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     clock = begin()
     child = command.spawn().map_err((error) => f"cannot start compiler worker: {error}")?
     record("driver_spawn", toolchain.driver, clock)
+    waiting = begin()
     started = await_ready(listener, child, endpoint)
+    record("worker_ready", toolchain.driver, waiting)
     discard_file(Path(endpoint.ready))
     return started
 

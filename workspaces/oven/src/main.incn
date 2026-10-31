@@ -34,6 +34,7 @@ from toolchain_archive import toolchain_command, parse_arguments as archive_opti
 from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
 from pub::incan_platform.trace import flush as flush_trace
+from jec import begin as begin_work, record as record_work
 
 
 pub model Options:
@@ -65,6 +66,7 @@ def command_line() -> None:
     2. Answer help before accessing projects, installations or transports.
     3. Execute the selected command.
     """
+    starting = begin_work()
     trace_boundary("command_entered")
     # 1. A missing command is a syntax error.
     mut arguments: list[str] = []
@@ -85,6 +87,7 @@ def command_line() -> None:
             return
         None => pass
     # 3. Each command keeps its own parsing and execution boundary.
+    record_work("cli_start", command, starting)
     dispatch(command, rest)
 
 
@@ -327,7 +330,10 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     3. Become the program.
     """
     # 1. When the project's owner serves the unit, it made the executable, and a refused compile is the run's result.
-    match via_owner("run", options, Path(options.path)):
+    requesting = begin_work()
+    owned = via_owner("run", options, Path(options.path))
+    record_work("legacy_request", options.path, requesting)
+    match owned:
         Some(reply) =>
             if reply.exit != 0:
                 return Ok(status_code(reply.exit))
