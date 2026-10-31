@@ -2,6 +2,7 @@
 
 from rust::std::env import current_exe
 from rust::std::io import Write, stderr
+from rust::std::path import Path as RustPath
 from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.fs import Path
@@ -11,10 +12,21 @@ from std.regex import Regex
 pub def repository_root() -> Result[Path, str]:
     """Find the repository above the scripts project's Oven output directory."""
     binary = current_exe().map_err((error) => error.to_string())?
-    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
-    while directory.name() != "target" and directory.parent().0 != directory.0:
-        directory = directory.parent()
-    return Ok(directory.parent().parent())
+    return repository_above(Path(binary.to_string_lossy().into_owned()).parent())
+
+
+pub def repository_above(start: Path) -> Result[Path, str]:
+    """Find a checkout above an absolute directory, refusing a root without one instead of cycling path spellings."""
+    if not RustPath.new(start.0).is_absolute():
+        return Err(f"cannot find repository above a relative path: {start.0}")
+    mut directory = start
+    while true:
+        if directory.joinpath("AGENTS.md").is_file() and directory.joinpath("scripts/check_support.incn").is_file():
+            return Ok(directory)
+        parent = directory.parent()
+        if parent.0 in [directory.0, "", "."]:
+            return Err(f"cannot find repository above {start.0}")
+        directory = parent
 
 
 pub def read(path: Path) -> Result[str, str]:
