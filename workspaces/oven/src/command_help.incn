@@ -9,6 +9,7 @@ from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_he
 const VERSION_USAGE: str = "incan --version"
 const RUN_USAGE: str = "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const CHECK_USAGE: str = "incan check PATH [--format text|json] [UNIT OPTIONS]"
+const EXPLAIN_USAGE: str = "incan explain CODE"
 const TEST_USAGE: str = "incan test PATH [UNIT OPTIONS]"
 const DESCRIBE_USAGE: str = "incan describe-unit PATH [UNIT OPTIONS]"
 const BUILD_USAGE: str = "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
@@ -30,6 +31,7 @@ pub def usage() -> str:
             VERSION_USAGE,
             RUN_USAGE,
             CHECK_USAGE,
+            EXPLAIN_USAGE,
             TEST_USAGE,
             DESCRIBE_USAGE,
             BUILD_USAGE,
@@ -49,6 +51,8 @@ pub def command_help(command: str, arguments: list[str]) -> Option[str]:
     if command in ["run", "check", "test", "describe-unit", "build"]:
         if requested(arguments, list(UNIT_VALUE_OPTIONS) + ["--format"]):
             return Some(unit_help(command))
+    elif command == "explain" and requested(arguments):
+        return Some(render(EXPLAIN_USAGE, [], "incan explain INCAN-T0001"))
     elif command == "bakery":
         for subcommand in ["gc", "verify", "repair-payload"]:
             if nested_help(arguments, subcommand):
