@@ -33,3 +33,33 @@ pub from std.io import IoError as BinaryError
 pub from standard import relayed_root, RelayedError
 
 pub from std.environ import EnvironError, get_as as read_value
+
+
+pub def format_scalar(value: int) -> int:
+    """Keep integer overload results distinct from string results."""
+    return value + 1
+
+
+pub def format_scalar(value: str) -> str:
+    """Keep string overload results distinct from integer results."""
+    return value + "!"
+
+
+pub model WrappedValue:
+    pub value: int
+
+
+pub def measure(value: WrappedValue) -> int:
+    return value.value
+
+
+pub def measure(value: str) -> int:
+    return len(value)
+
+
+pub def echo[T](value: T) -> T:
+    return value
+
+
+pub def echo(value: str, count: int) -> str:
+    return value
