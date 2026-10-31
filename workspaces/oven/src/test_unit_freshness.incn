@@ -861,6 +861,13 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     )?
     assert changed_environment.digest != first.digest
     verify_relative_dependency_evidence(setup, native, arguments, environment, scratch.path().joinpath("moved"))?
+    # A scan listing a file that no longer exists is stale, not an error: it names no identity and observes nothing.
+    removed = scratch.path().joinpath("removed.rs")
+    listed_removed = removed.0.replace(" ", "\\ ")
+    write(dependencies, f"library: {escaped} {listed_removed}\n\n# env-dep:CARGO_PKG_NAME=old\n")?
+    stale = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    assert stale.digest == "" and "no current dependency scan" in stale.refusal
+    assert removed.0 not in compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
     # A compile-time path can change observable bytes; refusing portability must leave local execution available.
     write(dependencies, f"library: {escaped}\n\n# env-dep:CARGO_MANIFEST_DIR=old\n")?
     refused = library_key(

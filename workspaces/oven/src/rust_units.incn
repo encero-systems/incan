@@ -1384,8 +1384,8 @@ pub def compile_binary(
     3. A binary that links the toolchain's own libraries carries the runpaths to find them.
     4. Reuse an unchanged binary, or compile and atomically publish it.
 
-    Prior dependency evidence that cannot identify the selected checkout is rediscovered before compilation.
-    Published dep-info names project sources relatively, so a later checkout can validate the same unit.
+    Dependency evidence that is absent, stale or cannot identify the selected checkout is rescanned before anything
+    is hashed. Published dep-info names project sources relatively, so a later checkout can validate the same unit.
     """
     # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
     directory = output.joinpath("bin")
@@ -1406,12 +1406,13 @@ pub def compile_binary(
         arguments = arguments + runpath_arguments(selected)
     # 4. A baked binary of the identity is viewed; otherwise it is compiled and baked.
     dependencies = directory.joinpath(f"{output_name}.d")
-    mut inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
+    mut inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
     if inputs.refusal != "":
-        # A prior view may carry evidence without a portable source mapping; observe this checkout before compiling.
+        # Evidence that is absent or stale, or a prior view's without a portable source mapping, names no identity:
+        # scan this checkout before compiling.
         discovered = dependency_arguments(arguments, dependencies)
         invoke_rustc(request.rustc, discovered, environment, declared.unstable, name)?
-        inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
+        inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
     label = f"unit {name} rust binary"
     store = rust_store()?
     held = claim_rust(store, f"binary {inputs.digest}")?
@@ -1440,7 +1441,7 @@ pub def compile_binary(
         declared.unstable,
         name,
     )?
-    current = binary_key(output_name, directory, staged_dependencies, facet, declared, request, arguments, environment)?
+    current = binary_key(directory, staged_dependencies, facet, declared, request, arguments, environment)?
     if (
         current.digest != inputs.digest
         or not inputs_unchanged(staged_dependencies, observations, Some(Path(facet.project)), arguments)?
@@ -1531,7 +1532,6 @@ def runpath_arguments(libraries: ToolchainLibraries) -> list[str]:
 
 
 def binary_key(
-    name: str,
     directory: Path,
     dependencies: Path,
     facet: LocalFacet,
@@ -1540,9 +1540,10 @@ def binary_key(
     arguments: list[str],
     environment: Dict[str, str],
 ) -> Result[Key, str]:
-    """Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths."""
-    if not dependencies.is_file():
-        invoke_rustc(request.rustc, dependency_arguments(arguments, dependencies), environment, declared.unstable, name)?
+    """
+    Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths. Evidence
+    that is absent or stale names no identity, so the caller scans before anything is hashed.
+    """
     for argument in arguments:
         if argument.startswith("link-arg=-Wl,-rpath,/"):
             return Ok(
