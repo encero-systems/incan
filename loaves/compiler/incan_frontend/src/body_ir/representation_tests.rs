@@ -6,6 +6,7 @@ use super::{
     union_layouts,
 };
 use crate::typechecker::{TypeCheckInfo, TypeChecker};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Compare complete serialized bodies and ordered union layouts after independent local operations, including an
 /// empty sibling, repeated shapes and nested callable unions. Ordered values and coordinates are never removed.
@@ -89,6 +90,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_eq!(independent.len(), 2);
 
     assert!(union_layouts::storage_types(std::iter::empty()).is_empty());
+    assert_settled_function_seeds()?;
     assert_shared_loans()?;
     assert_equality_contract()?;
     let mut changed = seed.clone();
@@ -197,6 +199,7 @@ fn assert_same_module(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let before = format!("{expected:#?}");
     let after = format!("{actual:#?}");
+    capture_module_oracle(expected, actual, &before, &after)?;
     if expected != actual || before.as_bytes() != after.as_bytes() {
         let mut left = before.lines();
         let mut right = after.lines();
@@ -213,5 +216,138 @@ fn assert_same_module(
         }
     }
     assert_eq!(postcard::to_stdvec(expected)?, postcard::to_stdvec(actual)?);
+    Ok(())
+}
+
+/// Prove the settled read boundary feeds scalar function seeds without another body's facts. The expected module
+/// is constructed independently; empty declaration/layout inputs are justified by this fixture, not a general producer.
+fn assert_settled_function_seeds() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def chosen(value: int) -> int:\n    if value > 0:\n        return value + 1\n    return value - 1\ndef sibling(value: str) -> str:\n    return value\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let providers = ProviderOperationCatalog::new();
+    let context = BodyIrContext {
+        modules: &[],
+        provider_operations: &providers,
+        registry_package: None,
+        library_package: None,
+    };
+    let expected = super::build_module_seed(&program, &[], checker.type_info(), &context);
+    let mut actual = expected.clone();
+    actual.bodies.clear();
+    let identity = super::body_ir_module_identity(&[]);
+    let mut declaration_reads = 0;
+    for declaration in &program.declarations {
+        let crate::ast::Declaration::Function(function) = &declaration.node else {
+            return Err("the seed fixture must contain only scalar functions".into());
+        };
+        let checked = checker
+            .checked_body(declaration.span)
+            .ok_or("missing settled function")?;
+        assert!(!checked.is_refused());
+        let binding = checker
+            .declaration_view()
+            .function(declaration.span)
+            .ok_or("missing signature")?;
+        declaration_reads += 1;
+        let declaration_owner = checker
+            .checked_declaration(declaration.span)
+            .ok_or("missing checked declaration owner")?;
+        let mut references = declaration_owner.references().clone();
+        references
+            .resolved_identities
+            .extend(checked.references().resolved_identities.clone());
+        references
+            .resolved_write_identities
+            .extend(checked.references().resolved_write_identities.clone());
+        references
+            .resolved_write_types
+            .extend(checked.references().resolved_write_types.clone());
+        let mut info = TypeCheckInfo {
+            expressions: checked.expressions().clone(),
+            references,
+            calls: checked.calls().clone(),
+            protocols: checked.protocols().clone(),
+            rust: checked.rust().clone(),
+            traits: checked.traits().clone(),
+            c_abi: checked.c_abi().clone(),
+            ..TypeCheckInfo::default()
+        };
+        info.declarations
+            .function_bindings_by_span
+            .insert(declaration.span, binding.clone());
+        if let Some(canonical) = &binding.identity {
+            info.declarations
+                .declaration_identities
+                .insert(declaration.span, canonical.clone());
+        }
+        let facts = super::BodyIrLoweringFacts {
+            published_methods: &[],
+            model_constants: &Default::default(),
+            local_enum_declarations: &Default::default(),
+            published_callable_returns: &Default::default(),
+            published_callable_defaults: &Default::default(),
+            published_newtype_returns: &Default::default(),
+            published_storage_types: &Default::default(),
+            published_constants: &Default::default(),
+            type_info: &info,
+            runtime_type_conflicts: &Default::default(),
+            retain_nominal_carriers: true,
+            function_default_sources: &Default::default(),
+            local_function_declarations: &Default::default(),
+            local_nongeneric_functions: &Default::default(),
+            local_receiver_methods: &[],
+            local_trait_partials: &[],
+            local_nominal_declarations: &Default::default(),
+            local_fieldless_enum_declarations: &Default::default(),
+            local_value_enum_declarations: &Default::default(),
+            module_identity: &identity,
+            registry_package: None,
+            provider_operations: &providers,
+            rust_module: None,
+        };
+        let mut body = super::lower_function_body(function, declaration.span, &facts);
+        super::representation_facts::retain(&mut body);
+        actual.bodies.push(body);
+    }
+    assert_eq!(actual.bodies.len(), 2);
+    assert_same_module(&expected, &actual)?;
+    eprintln!(
+        "settled-input-fixture\tbodies={}\tselected_signatures={declaration_reads}",
+        actual.bodies.len()
+    );
+    Ok(())
+}
+
+/// Retain both complete native and publication streams when the qualification harness requests evidence. The
+/// sequence identifies comparisons only; it is not an evaluation counter or a persistent compiler authority.
+fn capture_module_oracle(
+    expected: &bir::BodyIrModule,
+    actual: &bir::BodyIrModule,
+    before: &str,
+    after: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COMPARISON: AtomicUsize = AtomicUsize::new(0);
+    let Some(directory) = std::env::var_os("INCAN_BODY_IR_ORACLE_DIR") else {
+        return Ok(());
+    };
+    let directory = std::path::PathBuf::from(directory);
+    std::fs::create_dir_all(&directory)?;
+    let sequence = COMPARISON.fetch_add(1, Ordering::Relaxed);
+    std::fs::write(directory.join(format!("{sequence:04}-expected.native.txt")), before)?;
+    std::fs::write(directory.join(format!("{sequence:04}-actual.native.txt")), after)?;
+    std::fs::write(
+        directory.join(format!("{sequence:04}-expected.publication.bin")),
+        postcard::to_stdvec(expected)?,
+    )?;
+    std::fs::write(
+        directory.join(format!("{sequence:04}-actual.publication.bin")),
+        postcard::to_stdvec(actual)?,
+    )?;
     Ok(())
 }
