@@ -44,7 +44,7 @@ pub model Reader:
         return Ok(count)
 
     def texts(mut self) -> Result[list[str], str]:
-        """Decode ordinary vectors with one native string split; embedded NUL fields use explicit lengths."""
+        """Decode ordinary vectors with one native string split; fields containing its separator use explicit lengths."""
         count = self.number()?
         tag = self.number()?
         if tag == 0:
@@ -101,7 +101,7 @@ pub def put_text(buffer: _BytesIO, value: str) -> Result[None, str]:
 
 
 pub def put_texts(buffer: _BytesIO, values: list[str]) -> Result[None, str]:
-    """Pack ordinary vectors into one UTF-8 field; preserve NUL-containing strings with explicit lengths."""
+    """Pack ordinary vectors into one UTF-8 field; preserve strings containing its separator with explicit lengths."""
     put_number(buffer, len(values))?
     if len([value for value in values if "\\x00" in value]) == 0:
         put_number(buffer, 0)?

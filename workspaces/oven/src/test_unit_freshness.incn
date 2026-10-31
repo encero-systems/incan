@@ -1867,7 +1867,7 @@ def verify_page_refusals(path: Path, data: bytes) -> Result[None, str]:
 
 
 def verify_page_vectors(path: Path) -> Result[None, str]:
-    """Packed vectors retain empty and Unicode strings; embedded NUL contents use the canonical length form."""
+    """Packed vectors retain empty and Unicode strings; separator contents use the canonical length form."""
     for values in [[], [""], ["first", "λ", ""], ["embedded\\x00value", ""]]:
         buffer = BytesIO(b"")
         put_texts(buffer, values)?
