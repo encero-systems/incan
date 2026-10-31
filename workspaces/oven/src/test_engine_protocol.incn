@@ -18,6 +18,7 @@ from rust::std::process import Command
 from pub::incan_platform.ipc import dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid, connect_with
 from observation import observe
+from toolchain import load_toolchain, toolchain_directory
 from unit_freshness import fingerprint
 from engine_channel import Channel, SendOutcome
 from engine_codec import decode, encode
@@ -240,6 +241,9 @@ def check_worker_retirement() -> Result[None, str]:
     trace = root.joinpath("worker.trace")
     observations = root.joinpath("observations")
     observations.mkdir(true, true).map_err((error) => error.message())?
+    _ = load_toolchain()?
+    jec = root.joinpath("jec")
+    jec.mkdir(true, true).map_err((error) => error.message())?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     outcome = Command
         .new(binary)
@@ -250,6 +254,7 @@ def check_worker_retirement() -> Result[None, str]:
         .env("INCAN_NATIVE_TIMING", "1")
         .env("OVEN_TRACE", trace.0)
         .env("INCAN_ENGINE_TRACE", observations.0)
+        .env("INCAN_JEC_TRACE", jec.0)
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
         .env("INCAN_ENGINE_REQUEST", "worker-order")
         .output()
@@ -267,6 +272,7 @@ def check_worker_retirement() -> Result[None, str]:
             assert value.status == "Stopping"
         _ => return Err("retirement proof did not stop its engine")
     _ = channel.transport.close()
+    check_frozen_installation_reads(jec)?
     # Stop acknowledges that the resident service drained its buffered observations.
     lines = trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
     waits = len([line for line in lines if "worker_observer_joined" in line])
@@ -277,6 +283,30 @@ def check_worker_retirement() -> Result[None, str]:
     assert len(released_requests) == 1, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
     check_worker_clock(observations)?
+    return Ok(None)
+
+
+def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
+    """A new work bakery imports the installed page without reopening its original frozen documents."""
+    prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
+    mut events = 0
+    mut reads = 0
+    mut reused = 0
+    for file in directory.iterdir().map_err((error) => error.message())?:
+        for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line == "":
+                continue
+            event = parse(line).map_err((error) => error.message())?
+            events += 1
+            category = trace_text(event, "category")?
+            if category == "installation_page_reuse":
+                reused += 1
+            if category == "file_read":
+                reads += 1
+                input = trace_text(event, "input")?
+                assert not input.startswith(prefix), f"new work bakery reopened frozen input {input}"
+    assert events > 0 and reads > 0, "the cold invocation must record its actual file reads"
+    assert reused == 0, "one request repeated its installation page selection"
     return Ok(None)
 
 

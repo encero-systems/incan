@@ -31,6 +31,7 @@ from unit import UnitDescription, describe
 from unit_freshness import Key, artifact_identity, compiler_fingerprint, description_digest, ledger_name, reconciled_key
 from apple_sdk import sdk_paths
 from unit_rust import prepare_native
+from installation_page import begin_command, end_command
 
 const FALLBACK_REASON: str = "the owner serves standard-only projects without Rust facets or vocabulary entries"
 
@@ -134,6 +135,7 @@ pub model Owner:
         reset_trace()
         trace_boundary("owner_received")
         mut reply = self.respond("refused")
+        begin_command()
         match self.try_prepare(request):
             Ok(found) => reply = found
             Err(reason) =>
@@ -141,6 +143,7 @@ pub model Owner:
                     reply = self.respond("fallback", reason)
                 else:
                     reply.reason = reason
+        end_command()
         reply.trace = taken_trace()
         record(Operation.OwnerRequest, f"{request.command}|{request.path}|{request.profile}", clock)
         return reply

@@ -28,8 +28,13 @@ def resolved_home(path: Path) -> Result[Path, str]:
 
 
 pub def bakery() -> Result[Path, str]:
-    """The one physical bakery selected by the home or its explicit storage override."""
+    """The work bakery selected by the home or its explicit storage override."""
     configured = get_or("INCAN_BAKERY", "")
     if configured != "":
         return Path(configured).absolute().map_err((error) => error.message())
+    return installation_catalog()
+
+
+pub def installation_catalog() -> Result[Path, str]:
+    """The home's installed facts, shared across work bakeries just like its admitted compiler identity."""
     return Ok(home()?.joinpath("bakery"))

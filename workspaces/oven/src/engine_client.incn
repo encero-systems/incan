@@ -24,6 +24,7 @@ from toolchain import load_toolchain, toolchain_file
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
+from home_paths import installation_catalog
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
@@ -165,7 +166,7 @@ pub def service_identity(store: Path) -> Result[Identity, str]:
 def installed_compiler() -> Result[str, str]:
     """Read this home's installation admission once, before deciding whether a service is needed."""
     admitting = begin_work()
-    catalog = home()?.joinpath("bakery")
+    catalog = installation_catalog()?
     compiler = installation_compiler(catalog)?
     record_work(Operation.EngineAdmission, catalog.0, admitting)
     return Ok(compiler)
