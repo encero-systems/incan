@@ -5,11 +5,12 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.environ import get_or
 from std.fs import Path
-from files import write
-from engine_programs import read_program, select_program, program_handle, NativeUnit
+from files import write, json_text
+from bakery import Collected, collect
+from engine_programs import read_program, select_program, program_handle, NativeUnit, obtain, selected_program
 from engine_epochs import prepare_submit
 from engine_client import service_identity
-from segment_store import snapshot, durable_commits
+from segment_store import Transaction, snapshot, durable_commits, begin, put, commit, commit_group, compact
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Command
@@ -160,6 +161,8 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
     process_lifecycle()?
     check_worker_retirement()?
+    check_collection_before_selection()?
+    check_collection_during_execution()?
     identity = Identity(
         store_id="store",
         profile="profile",
@@ -314,6 +317,133 @@ def trace_text(row: JsonValue, key: str) -> Result[str, str]:
 def trace_number(row: JsonValue, key: str) -> Result[int, str]:
     """Read a required nanosecond or process field without coercion."""
     return row.require(key).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def check_collection_before_selection() -> Result[None, str]:
+    """A published cold unit and a reused warm unit remain selectable when collection runs before selection."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    store = root.joinpath("store")
+    for turn in range(2):
+        view = f"selection-{turn}"
+        captured = prepare_submit(
+            store,
+            Submit(
+                command="build",
+                view=view,
+                input_selection="debug",
+                requested_roots=source.0,
+                options="",
+                observation_policy="",
+            ),
+        )?
+        handle = program_handle(captured.identity, "collection-proof", view)?
+        produced = obtain(
+            store,
+            captured.revision,
+            handle,
+            root.joinpath("console").0,
+            Some(captured.epoch),
+            "collection-proof",
+        )?
+        assert produced.code == 0 and produced.native_bakes == 1 - turn
+        mut group: list[Transaction] = []
+        if let Some(transaction) = captured.transaction:
+            group.append(transaction)
+        if let Some(transaction) = produced.transaction:
+            group.append(transaction)
+        committed = commit_group(group).map_err((error) => error.message())?
+        # The publication handle pins the result while no caller view has selected it.
+        collect(store, -1)?
+        match produced.unit:
+            None => return Err("native publication had no unit")
+            Some(unit) =>
+                selected = select_program(store, view, unit, handle)?
+                assert selected_program(selected.snapshot, handle)? == Some(unit)
+                ran = Command.new(unit.binary).output().map_err((error) => str(error))?
+                assert ran.status.success() and ran.stdout == b"hello\x0a"
+        assert committed.generation > 0
+    return Ok(None)
+
+
+def check_collection_during_execution() -> Result[None, str]:
+    """Cold and warm programs keep executing from their selected view while collection retires obsolete layouts."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    started = root.joinpath("started")
+    release = root.joinpath("release")
+    finished = root.joinpath("finished")
+    mut code = "from std.fs import Path\nfrom rust::std::thread import sleep\nfrom rust::std::time import Duration\n\ndef main() -> Result[None, str]:\n"
+    code += f"    Path({json_text(JsonValue.string(started.0))?}).write_text(\"started\", \"utf-8\", \"strict\", None).map_err((error) => error.message())?\n"
+    code += f"    while not Path({json_text(JsonValue.string(release.0))?}).is_file():\n        sleep(Duration.from_millis(2))\n"
+    code += f"    Path({json_text(JsonValue.string(finished.0))?}).write_text(\"finished\", \"utf-8\", \"strict\", None).map_err((error) => error.message())?\n    return Ok(None)\n"
+    write(source, code)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    for _turn in range(2):
+        mut child = Command
+            .new(binary)
+            .arg("run")
+            .arg(source.0)
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .spawn()
+            .map_err((error) => str(error))?
+        for _poll in range(15000):
+            if started.is_file():
+                break
+            if child.try_wait().map_err((error) => str(error))? is not None:
+                return Err("program exited before its execution lease could be tested")
+            sleep(Duration.from_millis(2))
+        if not started.is_file():
+            write(release, "release")?
+            child.kill().map_err((error) => str(error))?
+            child.wait().map_err((error) => str(error))?
+            return Err("program did not reach its execution barrier")
+        collected = collect_superseded(store)
+        alive = child.try_wait().map_err((error) => str(error))? is None
+        write(release, "release")?
+        status = child.wait().map_err((error) => str(error))?
+        assert alive and status.success() and finished.is_file(), "collection affected a running view"
+        assert collected?.layouts_removed > 0
+        started.unlink().map_err((error) => error.message())?
+        release.unlink().map_err((error) => error.message())?
+        finished.unlink().map_err((error) => error.message())?
+    mut identity = service_identity(store)?
+    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    mut channel = connect_with(store, identity, binary).map_err(detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="execution collection proof completed"))).map_err(detail)?
+    stopped = channel.receive().map_err(detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("execution collection proof did not stop its engine")
+    # Stop is acknowledged; peer withdrawal may race the local shutdown.
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+def collect_superseded(store: Path) -> Result[Collected, str]:
+    """Supersede and compact layouts while another process holds an execution lease over the old generation."""
+    fields = store.joinpath("CURRENT").read_text("utf-8", "strict").map_err((error) => error.message())?.strip().split(
+        " ",
+    )
+    manifest = store.joinpath(f"snapshots/{fields[0]}.{fields[1][:16]}.manifest")
+    for turn in range(4):
+        commit(
+            put(begin(snapshot(store).map_err((error) => error.message())?), "execution-test", str(turn).encode("utf-8")),
+        ).map_err((error) => error.message())?
+    compact(store).map_err((error) => error.message())?
+    reclaimed = collect(store, -1)?
+    assert manifest.is_file(), "collection discarded a running program's leased generation"
+    return Ok(reclaimed)
 
 
 def check_bodies() -> Result[None, str]:
