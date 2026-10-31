@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from std.json import JsonValue, parse
-from bakery import Fact, find
+from bakery import Fact, find, fact_file
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
@@ -14,6 +14,7 @@ from unit import describe
 from unit_rust import prepare_native
 from unit_freshness import fingerprint, unit_key
 from observation import FileMetadata, file_metadata
+from shared_link import development_link, linkage_key, library_witness, witness_current
 from jec import begin as begin_work, record as record_work
 
 const SCHEMA: str = "incan.engine.native-unit/1"
@@ -70,7 +71,7 @@ pub def obtain(store: Path, revision: str, handle: str, console: str) -> Result[
     match read_program(store, handle)?:
         Some(unit) =>
             fact = unit_record(store, unit)?
-            view_executable(store, fact, Path(unit.binary), "program")?
+            view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)?
             return Ok(ProgramOutcome(code=0, unit=Some(unit)))
         None => pass
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
@@ -100,13 +101,15 @@ pub def obtain(store: Path, revision: str, handle: str, console: str) -> Result[
         if loaf.is_dependency():
             return Err("unit records do not yet capture editable path dependencies")
     ready = prepare_native(described, toolchain)?
-    key = unit_key(ready, toolchain)?
-    if key.refusal != "":
-        return Err(key.refusal)
+    compiled_key = unit_key(ready, toolchain)?
+    if compiled_key.refusal != "":
+        return Err(compiled_key.refusal)
+    # Build and run ask for the same debug program, including its existing shared native linkage policy.
+    key = linkage_key(compiled_key, development_link(ready, true))?
     binary = program_binary(ready)
     record_work("engine_prepare", epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit.
-    produced = obtain_executable(ready, toolchain, binary, key, selected_store=Some(store))?
+    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store))?
     if produced.code != 0:
         return Ok(ProgramOutcome(code=produced.code, evaluations=produced.evaluations, console=console, epoch_reads=1))
     # 4. Source edits cannot certify a native unit for a different captured epoch.
@@ -147,7 +150,7 @@ pub def select_program(store: Path, view: str, unit: NativeUnit) -> Result[Nativ
 
 pub def program_handle(epoch: str, producer: str) -> Result[str, str]:
     """The opaque handle of a captured program's native descriptor, kept apart from its RFC 124 unit identity."""
-    return Ok(f"program:{fingerprint([epoch, producer])?}")
+    return Ok(f"program:{fingerprint(["incan.engine.program/2", epoch, producer])?}")
 
 
 pub def read_program(store: Path, handle: str) -> Result[Option[NativeUnit], str]:
@@ -174,11 +177,20 @@ def decoded_program(text: str) -> Result[NativeUnit, str]:
 
 
 def unit_record(store: Path, unit: NativeUnit) -> Result[Fact, str]:
-    """Verify that a selected payload belongs to the exact immutable unit record before making a view."""
+    """Verify the exact executable payload and any recorded native loader generations before making a view."""
     fact = required_unit(store, unit.identity)?
     if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
         return Err("selected native payload disagrees with its unit record")
+    if let Some(witness) = loader_witness(store, fact, unit):
+        if not witness_current(witness):
+            return Err("selected native loader inputs disagree with their unit record")
     return Ok(fact)
+
+
+def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
+    """Resolve the loader witness through this unit's immutable payload binding, never an ambient path."""
+    binary = Path(unit.binary)
+    return fact_file(store, fact, library_witness(Path(binary.name())).0)
 
 
 def required_unit(store: Path, identity: str) -> Result[Fact, str]:
