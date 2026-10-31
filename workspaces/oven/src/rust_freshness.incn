@@ -3,12 +3,17 @@
 from rust::std::env import VarError, var as env_var
 from std.fs import Path
 from files import read, write
-from observation import Ledger, load_ledger, observe, skipped_directory, SETTLE_SECONDS
+from observation import Ledger, file_metadata, load_ledger, observe, skipped_directory, SETTLE_SECONDS
 from toolchain import Toolchain
 from unit_freshness import Key, compiler_fingerprint, fingerprint
 from unit_publication import published_identity, source_origins
 from invocation_identity import invocation_facts
 from source_identity import source_inputs
+
+# A unit whose dependency scan is absent, or lists a file that no longer exists, as after a module is removed, has no
+# current scan. That is not an error: the scan names no identity, and the unit is scanned again before anything is
+# hashed.
+const STALE_SCAN: str = "unit identity refused: no current dependency scan"
 
 
 pub def library_key(
@@ -43,11 +48,13 @@ def observed_library_key(
     """
     Key the actual compiler inputs; unavailable dependency evidence prevents reuse.
 
-    1. Read the files and environment keys rustc recorded.
+    1. Read the files and environment keys rustc recorded; a unit without a current scan names no identity.
     2. Reconcile their current contents, read in this checkout, and the exact linked libraries.
     3. Bind them to the compiler, arguments and package environment, spelling the project's own paths from it.
     """
     # 1. Read the files and environment keys rustc recorded, in whichever checkout it compiled.
+    if not dependencies.is_file():
+        return Err(f"{STALE_SCAN}: none is recorded")
     text = read(dependencies)?
     paths, variables = dependency_inputs(text)?
     selected = source_paths(project, dependencies, arguments, paths)?
@@ -126,7 +133,7 @@ pub def reconciled_rust_key(
     3. Keep the input dimensions and publication provenance beside the completed identity.
     """
     # 1. Naming a linked artifact never hashes its bytes.
-    sources = source_inputs(paths, project, ledger)?
+    sources = recorded_sources(paths, project, ledger)?
     mut artifacts: list[str] = []
     for path in sorted(linked + extern_paths(arguments)):
         artifacts.append(published_identity(Path(path)).map_err((error) => f"artifacts: {error}")?)
@@ -151,6 +158,28 @@ pub def reconciled_rust_key(
             provenance=[project.0],
         ),
     )
+
+
+def recorded_sources(paths: list[str], project: Path, mut ledger: Ledger) -> Result[list[str], str]:
+    """
+    The contents of the files a dependency scan lists. When one of them no longer exists, the scan is stale rather
+    than the unit broken: it names no identity, and the unit is scanned again.
+    """
+    match source_inputs(paths, project, ledger):
+        Ok(sources) => return Ok(sources)
+        Err(reason) =>
+            # Only a failed read pays for the extra status queries; an unchanged unit queries each file once.
+            match removed_input(paths)?:
+                Some(path) => return Err(f"{STALE_SCAN}: {path} no longer exists")
+                None => return Err(reason)
+
+
+def removed_input(paths: list[str]) -> Result[Option[str], str]:
+    """The first file a dependency scan lists that no longer exists; `None` when every one still does."""
+    for path in paths:
+        if file_metadata(Path(path))? is None:
+            return Ok(Some(path))
+    return Ok(None)
 
 
 def extern_identities(arguments: list[str]) -> Result[list[str], str]:
@@ -232,7 +261,10 @@ pub def compilation_observations(
                     Err(_) => pass
                     Ok(inputs) =>
                         external, _ = inputs
-                        paths.extend(source_paths(project, dependencies, arguments, external)?)
+                        listed = source_paths(project, dependencies, arguments, external)?
+                        # A stale scan lists files that are no inputs any more; the compilation records its own.
+                        if removed_input(listed)? is None:
+                            paths.extend(listed)
     # 2. Retain their metadata before the compiler can read them.
     mut observations: Dict[str, str] = {}
     for path in paths:
@@ -287,7 +319,7 @@ def authored_files(root: Path, mut visited: set[str]) -> Result[list[str], str]:
     return Ok(paths)
 
 
-def dependency_inputs(text: str) -> Result[tuple[list[str], list[str]], str]:
+pub def dependency_inputs(text: str) -> Result[tuple[list[str], list[str]], str]:
     """Read rustc's first dependency rule and tracked environment names, never its recorded values."""
     mut paths: list[str] = []
     mut variables: list[str] = []

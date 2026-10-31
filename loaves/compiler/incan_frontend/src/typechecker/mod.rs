@@ -47,7 +47,7 @@ mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
-pub(crate) use body_check::CheckedBodyView;
+pub(crate) use body_check::{BodyIrOracleInputs, CheckedBodyInputError, CheckedBodyView};
 pub use check_work::CheckWork;
 mod check_expr;
 mod check_stmt;
@@ -71,6 +71,7 @@ mod native_newtype_facts;
 mod native_storage;
 mod nominal_identities;
 mod nominal_type_param_bounds;
+mod open_native_owners;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
@@ -435,8 +436,9 @@ pub struct CAbiRawCallResult {
 /// A Rust associated call whose owner type arguments the call itself left open (#1720).
 ///
 /// `HashMap.new()` on `rust::std::collections::HashMap` names neither `K` nor `V`, and nothing at the call fixes
-/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. Rust would still fill them
-/// from a later reader of the value; the checker keeps this record only long enough to learn whether one exists.
+/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. A local bound to the value can
+/// still have them fixed by its first use (#2481); the checker keeps this record until it knows whether such a use
+/// exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenRustGenericCall {
     /// The receiver as the source spells it (`HashMap`), for the diagnostic.
@@ -445,13 +447,19 @@ pub struct OpenRustGenericCall {
     pub method: String,
     /// The owner's type parameters the call left open, in declaration order (`K`, `V`).
     pub type_params: Vec<String>,
+    /// The call's native result with those parameters open, once callee retention has computed it. A local bound to
+    /// the call holds it as its native carrier until a use fixes the parameters.
+    pub native: Option<ResolvedType>,
+    /// The native result's nominal item (`std::collections::HashMap`), which selects the local's native methods.
+    pub native_item: Option<String>,
 }
 
-/// A local bound to an [`OpenRustGenericCall`] that no later statement has read yet (#1720).
+/// A local bound to an [`OpenRustGenericCall`], watched until its first use fixes the call's open parameters (#1720).
 ///
-/// Dropped on the first read of the name; whatever is left when the declaring block ends is refused, because a
-/// binding nothing reads gives Rust nothing to infer the arguments from and the build would stop on the call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The first read must be a use that determines them, and the binding takes the type that use fixes at once. When
+/// the statement holding a first read that fixed nothing ends, the call is refused for its open parameters (#2481). A
+/// binding nothing reads is refused when its declaring block ends, naming the binding to annotate.
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpenRustGenericBinding {
     /// The local's name.
     pub name: String,
@@ -461,6 +469,14 @@ pub struct OpenRustGenericBinding {
     pub span: Span,
     /// The call whose open parameters the binding carries.
     pub call: OpenRustGenericCall,
+    /// The declaring assignment, checked again against the type the first use fixes.
+    pub assignment: crate::ast::AssignmentStmt,
+    /// The declaring statement's span, which keys the binding's checked type.
+    pub statement: Span,
+    /// The binding's canonical identity: only a read of this binding can fix it.
+    pub identity: Option<CanonicalSymbolId>,
+    /// The statement block of the first read, once something read the binding.
+    pub read_in: Option<usize>,
 }
 
 impl Drop for TypeCompatibilityDepthGuard<'_> {
@@ -605,11 +621,14 @@ pub struct TypeChecker {
     /// Raw C result bindings whose enum outcome may establish branch-local output validity.
     pub c_abi_raw_call_results: Vec<CAbiRawCallResult>,
     /// Rust associated calls in the current statement whose owner type arguments were left open, keyed by call
-    /// span, waiting for the statement to say whether a local receives the value (#1720). Cleared when the
-    /// statement ends: a value nested somewhere else may still be fixed by its context.
+    /// span, waiting for the statement to say whether a local receives the value (#1720). When the statement ends,
+    /// one left nested somewhere else is refused unless its callee was retained.
     open_rust_generic_calls: HashMap<crate::ast::Span, OpenRustGenericCall>,
-    /// Locals bound to open Rust associated calls that nothing has read yet (#1720).
+    /// Locals bound to open Rust associated calls that no use has fixed yet (#1720, #2481).
     open_rust_generic_bindings: Vec<OpenRustGenericBinding>,
+    /// Equally ranked trait callees of a native method call, by call span, kept for that call's refusal when no later
+    /// selection step chooses a callee (#2481).
+    tied_rust_trait_callees: HashMap<crate::ast::Span, Vec<String>>,
     /// Statement-block identities used to scope pending generic-call bindings.
     statement_blocks: StatementBlockState,
     /// Slot identities currently readable in the active control-flow path.
@@ -1024,6 +1043,7 @@ impl TypeChecker {
             unbound_c_abi_raw_call_results: HashMap::new(),
             open_rust_generic_calls: HashMap::new(),
             open_rust_generic_bindings: Vec::new(),
+            tied_rust_trait_callees: HashMap::new(),
             statement_blocks: StatementBlockState::default(),
             c_abi_raw_call_results: Vec::new(),
             available_c_abi_output_slots: HashSet::new(),
@@ -2766,8 +2786,12 @@ impl TypeChecker {
         &self.type_info
     }
 
-    /// Hand the accumulated type information to a later stage once checking is over, without copying it.
-    pub fn into_type_info(self) -> TypeCheckInfo {
+    /// Hand the accumulated type information to a later stage once checking is over. The opt-in Body IR oracle also
+    /// retains indexed immutable owner references; checking and settlement are never repeated.
+    pub fn into_type_info(mut self) -> TypeCheckInfo {
+        if std::env::var_os("INCAN_BODY_IR_FREE_ORACLE").is_some() {
+            self.type_info.body_ir_oracle_inputs = Some(self.body_ir_oracle_inputs());
+        }
         self.type_info
     }
 

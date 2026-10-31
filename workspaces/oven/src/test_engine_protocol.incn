@@ -5,8 +5,18 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.environ import get_or
 from std.fs import Path
+from files import write
+from engine_programs import read_program, select_program, program_handle, NativeUnit
+from engine_epochs import prepare_submit
+from engine_client import service_identity
+from segment_store import snapshot, durable_commits
+from engine_proofs import report
+from std.json import parse
+from rust::std::process import Command
 from pub::incan_platform.ipc import dial, listen
-from engine_endpoint import endpoint, handshake, owner_uid
+from engine_endpoint import endpoint, handshake, owner_uid, connect_with
+from observation import observe
+from unit_freshness import fingerprint
 from engine_channel import Channel, SendOutcome
 from engine_codec import decode, encode
 from engine_messages import (
@@ -128,7 +138,28 @@ def detail(refusal: Refusal) -> str:
 
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
+    admission = scratch_directory()?
+    store = admission.path().joinpath("store")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    installed = service_identity(store)?
+    assert snapshot(store).map_err((error) => error.message())?.generation == 0
+    assert service_identity(store)?.compiler_generation == installed.compiler_generation
+    assert snapshot(store).map_err((error) => error.message())?.generation == 0
+    admissions = durable_commits()
+    other = admission.path().joinpath("another-store")
+    other.mkdir(true, true).map_err((error) => error.message())?
+    assert service_identity(other)?.compiler_generation == installed.compiler_generation
+    assert durable_commits() == admissions, "a fresh store repeated installation admission in the same home"
+    assert service_identity(Path(f"{store.0}/."))?.store_id == installed.store_id
+    native = NativeUnit(identity="unit", payload="payload", binary="program")
+    handle = program_handle("epoch", "compiler", "selection")?
+    first_selection = select_program(store, "selection", native, handle)?
+    repeat_selection = select_program(store, "selection", native, handle)?
+    assert first_selection.encodings == 1 and first_selection.commits == 1
+    assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
+    assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
     process_lifecycle()?
+    check_worker_retirement()?
     identity = Identity(
         store_id="store",
         profile="profile",
@@ -192,6 +223,47 @@ def handshake_refused(state: ServiceState, hello: Hello, uid: u32) -> bool:
     match state.negotiate(hello, uid):
         Ok(_) => return false
         Err(_) => return true
+
+
+def check_worker_retirement() -> Result[None, str]:
+    """A one-activation compiler retires without joining its caller monitor's polling timeout."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    trace = root.joinpath("worker.trace")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", root.joinpath("store").0)
+        .env("INCAN_NATIVE_TIMING", "1")
+        .env("OVEN_TRACE", trace.0)
+        .output()
+        .map_err((error) => str(error))?
+    assert outcome.status.success() and outcome.stdout == b"hello\x0a" and outcome.stderr == b""
+    lines = trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
+    waits = len([line for line in lines if "worker_observer_joined" in line])
+    detached = len([line for line in lines if "worker_observer_detached" in line])
+    releases = len([line for line in lines if "worker_heap_released" in line])
+    assert waits == 0 and detached == 1 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # Stop this test's disposable engine before the temporary directory leaves scope.
+    store = root.joinpath("store")
+    mut identity = service_identity(store)?
+    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    mut channel = connect_with(store, identity, binary).map_err(detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="retirement proof completed"))).map_err(detail)?
+    stopped = channel.receive().map_err(detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("retirement proof did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
 
 
 def check_bodies() -> Result[None, str]:
@@ -304,6 +376,9 @@ def process_lifecycle() -> Result[None, str]:
     """Two real starters share one lifetime lock; drain settles requests and a disconnected idle service exits."""
     scratch = scratch_directory()?
     root = scratch.path()
+    root.joinpath("project").mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("project/hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
     identity = Identity(
         store_id="process-store",
         profile="v1",
@@ -335,8 +410,8 @@ def process_lifecycle() -> Result[None, str]:
                 Submit(
                     command="build",
                     view="view",
-                    input_selection="inputs",
-                    requested_roots="roots",
+                    input_selection="debug",
+                    requested_roots=source.0,
                     options="",
                     observation_policy="",
                 ),
@@ -369,11 +444,17 @@ def process_lifecycle() -> Result[None, str]:
             Message.Accepted(_) => accepted = true
             Message.Captured(value) =>
                 assert accepted
-                assert value.epoch == "pending-capture"
+                assert len(value.epoch) == 64
+                assert value.snapshot != ""
                 captured = true
             Message.Complete(value) =>
                 assert captured
-                assert value.binding_outcome == BindingOutcome.NotSelected
+                assert value.binding_outcome == BindingOutcome.Selected
+                assert value.status == CompletionStatus.Success
+                assert value.admission_proof.startswith("sha256:")
+                # Capture, the shared unit and this caller's selection publish atomically once.
+                publications = snapshot(root).map_err((error) => error.message())?.generation
+                assert publications == 1, f"native request published {publications} generations instead of 1"
                 completed = true
             Message.Refused(value) =>
                 assert value.code == 13
@@ -390,8 +471,105 @@ def process_lifecycle() -> Result[None, str]:
     # A fresh service with a one-second timeout exits after its last client disconnects, without Drain.
     mut idle = launch_service(binary, root, identity)?
     mut idle_channel = await_service(root, identity)?
+    check_unchanged_request(idle_channel, root, source)?
+    another = root.joinpath("another-project")
+    another.mkdir(true, true).map_err((error) => error.message())?
+    copied_source = another.joinpath("hello.incn")
+    write(copied_source, source.read_text("utf-8", "strict").map_err((error) => error.message())?)?
+    for turn in range(2):
+        check_service_reuse(idle_channel, root, copied_source, turn)?
+    assert not another.joinpath("target/incan/observations").exists(), "a native hit repeated unit preparation"
     idle_channel.transport.close()?
     await_exit(idle, true)?
+    return Ok(None)
+
+
+def check_unchanged_request(mut channel: Channel, root: Path, source: Path) -> Result[None, str]:
+    """The first rerun after projection publishes zero durable generations and performs zero capture encodings."""
+    before = snapshot(root).map_err((error) => error.message())?
+    request = joined([scalar(20, 8), scalar(0, 8)])
+    submit = Submit(
+        command="run",
+        view="view",
+        input_selection="debug",
+        requested_roots=source.0,
+        options="",
+        observation_policy="",
+    )
+    captured = prepare_submit(root, submit)?
+    assert captured.encodings == 0 and captured.commits == 0 and captured.identity_encodings == 0
+    _ = channel.send(request, Message.Submit(submit)).map_err(detail)?
+    mut complete = false
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        match frame.message:
+            Message.Complete(value) =>
+                assert value.status == CompletionStatus.Success
+                assert snapshot(root).map_err((error) => error.message())?.generation == before.generation
+                complete = true
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+        channel.acknowledge(frame).map_err(detail)?
+        if complete:
+            break
+    assert complete
+    return Ok(None)
+
+
+def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: int) -> Result[None, str]:
+    """A new virtual view reuses the prior build; its unchanged repeat also reads and hashes no source."""
+    request = joined([scalar(3 + turn, 8), scalar(0, 8)])
+    _ = channel
+        .send(
+            request,
+            Message.Submit(
+                Submit(
+                    command="run",
+                    view="second-view",
+                    input_selection="debug",
+                    requested_roots=source.0,
+                    options="",
+                    observation_policy="proofs",
+                ),
+            ),
+        )
+        .map_err(detail)?
+    mut captured = false
+    mut completed = false
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        match frame.message:
+            Message.Captured(_) => captured = true
+            Message.Complete(value) =>
+                assert captured
+                assert value.binding_outcome == BindingOutcome.Selected
+                assert value.status == CompletionStatus.Success
+                proof = parse(report(root, value.observation_handle)?).map_err((error) => error.message())?
+                mut counters = ["unit_evaluations", "native_bakes"]
+                if turn > 0:
+                    counters.extend(["source_reads", "source_hashes", "epoch_reads"])
+                else:
+                    assert proof.require("epoch_reads").map_err((error) => error.message())?.expect_int().map_err(
+                        (error) => error.message(),
+                    )? == 0, "the new virtual view reread its already captured epoch"
+                for name in counters:
+                    assert proof.require(name).map_err((error) => error.message())?.expect_int().map_err(
+                        (error) => error.message(),
+                    )? == 0
+                match read_program(root, value.result_handles)?:
+                    None => return Err("completed program descriptor is missing")
+                    Some(unit) =>
+                        assert Path(f"{unit.binary}.native-shared.json").is_file()
+                        output = Command.new(unit.binary).output().map_err((error) => str(error))?
+                        assert output.status.success()
+                        assert output.stdout == b"hello\x0a"
+                completed = true
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+        channel.acknowledge(frame).map_err(detail)?
+        if completed:
+            break
+    assert completed
     return Ok(None)
 
 

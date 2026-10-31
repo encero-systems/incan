@@ -1,12 +1,8 @@
-"""
-Recover missing legacy producer edges from pinned rustc metadata, retaining each artifact reading and, once per
-closure generation, the completed closure.
-"""
+"""Recover exact legacy producer edges from retained rustc artifact readings; registry_pages owns completed closures."""
 
 from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
-from graph_queries import nested, text
 from observation import observe
 from retained_readings import recall, retain
 from registry_units import RegistryUnit, sole_library
@@ -14,112 +10,20 @@ from rust_target import decoded
 from toolchain import load_toolchain, rust_compiler
 
 # The selection under which a closure's completion is retained, followed by the pinned compiler that read it.
-pub const COMPLETION: str = "registry-completion/1"
+pub const COMPLETION: str = "registry-completion/2"
 
 
-pub def complete_legacy(units: list[RegistryUnit], closure: Path) -> Result[list[RegistryUnit], str]:
-    """
-    Complete the units of the closure document `closure` without inventing edges from names or compatible feature sets.
-
-    The completion is retained once per closure generation and pinned compiler (see `retained_readings`), so a command
-    whose installation is unchanged reads no artifact metadata and derives no edges.
-
-    1. Fully recorded closures require no compiler metadata queries.
-    2. A retained completion answers while every entry directory and artifact it read is unchanged.
-    3. Otherwise complete the units from the compiler's metadata, and retain that when no entry changed meanwhile.
-    """
-    # 1. New producers already publish all required entry identities.
+pub def complete_legacy(units: list[RegistryUnit]) -> Result[list[RegistryUnit], str]:
+    """Complete missing producer edges from exact native hashes; the caller owns typed-page retention and claims."""
     toolchain = load_toolchain()?
     if len([unit for unit in units if not unit.recorded]) == 0 and len(toolchain.externs) == 0:
         return Ok(units)
-    # 2. The closure's generation and the compiler's identity name the completion; each entry vouches for itself.
-    rustc = rust_compiler(toolchain)
-    observed = observe(closure)?
-    selection = completion_selection(rustc)?
-    listings = entry_listings(units)
-    if let Some(value) = recall(closure, selection, observed.stamp):
-        if let Some(completed) = retained_completion(units, listings, value):
-            return Ok(completed)
-    # 3. An entry that changed while it was read is read again by the next command.
-    completed = completed_units(units, rustc, toolchain.sysroot)?
-    if entry_listings(units) == listings:
-        retain(closure, selection, observed, completion_record(completed, listings))
-    return Ok(completed)
+    return completed_units(units, rust_compiler(toolchain), toolchain.sysroot)
 
 
 pub def completion_selection(rustc: str) -> Result[str, str]:
-    """The retained question a completion answers: the closure as read by this pinned compiler generation."""
+    """The exact compiler generation that interprets a completed closure, separate from project locks."""
     return Ok(f"{COMPLETION}:{rustc}:{observe(Path(rustc))?.stamp}")
-
-
-def entry_listings(units: list[RegistryUnit]) -> Dict[str, str]:
-    """Each unit's entry directory identity, which changes when a library is added to or removed from it."""
-    mut listings: Dict[str, str] = {}
-    for unit in units:
-        match observe(Path(unit.directory)):
-            Ok(found) => listings[unit.entry] = found.stamp
-            Err(_) => listings[unit.entry] = ""
-    return listings
-
-
-def completion_record(completed: list[RegistryUnit], listings: Dict[str, str]) -> JsonValue:
-    """What completion set on each unit, with the identities of the entry directory and artifact it read."""
-    mut rows: list[JsonValue] = []
-    for unit in completed:
-        mut stamp = ""
-        if unit.artifact != "":
-            match observe(Path(unit.artifact)):
-                Ok(found) => stamp = found.stamp
-                Err(_) => pass
-        mut row: Dict[str, JsonValue] = {}
-        row["entry"] = JsonValue.string(unit.entry)
-        row["listing"] = JsonValue.string(listings[unit.entry])
-        row["artifact"] = JsonValue.string(unit.artifact)
-        row["stamp"] = JsonValue.string(stamp)
-        row["name"] = JsonValue.string(unit.name)
-        row["crate_hash"] = JsonValue.string(unit.crate_hash)
-        row["kind"] = JsonValue.string(unit.kind)
-        row["refusal"] = JsonValue.string(unit.refusal)
-        row["recorded"] = JsonValue.bool(unit.recorded)
-        row["dependencies"] = JsonValue.array([JsonValue.string(entry) for entry in unit.dependencies])
-        rows.append(JsonValue.object(row))
-    return JsonValue.array(rows)
-
-
-def retained_completion(
-    units: list[RegistryUnit],
-    listings: Dict[str, str],
-    value: JsonValue,
-) -> Option[list[RegistryUnit]]:
-    """The retained completion of `units`, or `None` when any entry directory or artifact it read has changed since."""
-    mut rows: Dict[str, JsonValue] = {}
-    for row in value.as_array().unwrap_or([]):
-        rows[text(row, "entry")] = row
-    mut completed: list[RegistryUnit] = []
-    for original in units:
-        if original.entry not in rows:
-            return None
-        row = rows[original.entry]
-        if text(row, "listing") != listings[original.entry]:
-            return None
-        artifact = text(row, "artifact")
-        if artifact != "":
-            match observe(Path(artifact)):
-                Err(_) => return None
-                Ok(found) =>
-                    if found.stamp != text(row, "stamp"):
-                        return None
-        mut unit = original
-        unit.artifact = artifact
-        unit.name = text(row, "name")
-        unit.crate_hash = text(row, "crate_hash")
-        unit.kind = text(row, "kind")
-        unit.refusal = text(row, "refusal")
-        unit.recorded = nested(row, "recorded").as_bool().unwrap_or(false)
-        edges = nested(row, "dependencies").as_array().unwrap_or([])
-        unit.dependencies = [entry.as_str().unwrap_or("") for entry in edges]
-        completed.append(unit)
-    return Some(completed)
 
 
 def completed_units(units: list[RegistryUnit], rustc: str, sysroot: str) -> Result[list[RegistryUnit], str]:

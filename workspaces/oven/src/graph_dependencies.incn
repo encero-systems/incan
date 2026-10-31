@@ -11,7 +11,7 @@ from graph_incan import inspect_incan, interface_directory
 from graph_queries import nested, text
 from bakery import viewed_fact
 from home import dependency_artifact_dir
-from intake import library_source, read_project
+from intake import ManifestReader, library_source, read_project
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from publication import publish
 from observation import trace
@@ -19,6 +19,7 @@ from rust_activation import DependencyDomain
 from rust_units import (
     BuiltUnit,
     RustBuild,
+    RegistryUnits,
     build_dependencies,
     facet_bindings,
     compile_rust_library,
@@ -26,6 +27,7 @@ from rust_units import (
     ordered,
     read_receipt,
     read_registry_units,
+    project_registry,
     receipt_document,
     registry_selection,
     selected_registry,
@@ -53,6 +55,16 @@ pub model GraphDependencies:
     pub interfaces: Dict[str, Path]
     # Directories of every library Oven's last build compiled, which an installed native artifact may link.
     pub closure: list[str]
+    # Unselected installation data belongs to this inspection, shared with additional source and standard projects.
+    pub registry: RegistryUnits
+
+
+model GraphPreparation:
+    """One inspection's source readings and completed source projects, released with the request."""
+
+    registry: RegistryUnits
+    manifests: ManifestReader = ManifestReader()
+    sources: list[str] = []
 
 
 def receipt_path(root: Path, request: RustBuild) -> Path:
@@ -84,7 +96,7 @@ def native_units(
     previous = read_receipt(receipt_path(root, request))?
     # 2. The key covers the compiler, the sources, the registry artifacts and the recorded libraries.
     digest = fingerprint(native_inputs(facets, request, toolchain, previous)?)?
-    entry = Path(f"{cache_file(root, digest)?.0}.native")
+    entry = Path(f"{cache_file(digest)?.0}.native")
     # 3. A preparation done before for this very key is read back, not repeated.
     if entry.is_file():
         return read_receipt(entry, true)
@@ -131,11 +143,29 @@ pub def prepare_graph(
     ancestors: list[str] = [],
     published_only: bool = false,
 ) -> Result[GraphDependencies, str]:
+    """Prepare one inspection with one registry reading and one source-project traversal, never retained globally."""
+    mut preparation = GraphPreparation(registry=read_registry_units(Path(toolchain.registry_units))?)
+    return prepare_project_graph(
+        root, profile, features, substitutes, toolchain, ancestors, published_only, preparation,
+    )
+
+
+def prepare_project_graph(
+    root: Path,
+    profile: str,
+    features: FeatureRequest,
+    substitutes: Dict[str, str],
+    toolchain: Toolchain,
+    ancestors: list[str],
+    published_only: bool,
+    mut preparation: GraphPreparation,
+) -> Result[GraphDependencies, str]:
     """
     Read published dependency graphs and check remaining Incan source without compiling any Incan unit.
 
     A Rust consumer of Incan requires an existing native library from its last successful build or installed
     toolchain. That library supplies rustc metadata; a bootstrap Rust graph never substitutes for authored Incan facts.
+    Additional source projects share the command's unselected registry reading, applying their own lock bindings.
 
     1. A project that selects itself as a codegraph source again is a cycle.
     2. Activate the graph of local facets, in an order where each follows the facets it links.
@@ -145,6 +175,9 @@ pub def prepare_graph(
     # 1. A project that is its own codegraph source, directly or through others, would never finish.
     if root.0 in ancestors:
         return Err(f"cyclic codegraph source selection: {root.0}")
+    preparation.sources.append(root.0)
+    available = preparation.registry
+    reader = preparation.manifests
     # 2. The facets are the Rust graph the manifest activates, each coming after the facets it links.
     rustc = rust_compiler(toolchain)
     started = Instant.now()
@@ -155,14 +188,14 @@ pub def prepare_graph(
         defaults=features.default_features,
         all_features=features.all_features,
     )
-    facets = ordered(local_facets(demand, target_configuration(rustc)?, substitutes)?)?
+    facets = ordered(local_facets(demand, target_configuration(rustc)?, substitutes, reader)?)?
     trace(f"graph unit discovery {root.0}: {started.elapsed().as_millis()} ms")
     prepared = Instant.now()
     request = RustBuild(
         project=root.0,
         profile=profile,
         rustc=rustc,
-        registry=selected_registry(read_registry_units(Path(toolchain.registry_units), root.0)?, facets, profile)?,
+        registry=selected_registry(project_registry(available, root.0, reader)?, facets, profile)?,
         features=features.features,
         default_features=features.default_features,
         all_features=features.all_features,
@@ -171,22 +204,24 @@ pub def prepare_graph(
         toolchain=Some(toolchain),
         compiler=compiler_fingerprint(toolchain)?,
         incan_compiler=Some(compile_incan_library),
+        manifests=reader,
     )
     # 3. Native libraries exist before the Incan units are checked, and each unit is checked after its dependencies.
     mut built: Dict[str, BuiltUnit] = {}
-    if requires_vocabulary_execution(facets)?:
+    if requires_vocabulary_execution(facets, reader)?:
         built = build_dependencies(request, facets, false)?
     else:
         built = native_units(root, facets, request, toolchain)?
     trace(f"graph native lookup {root.0}: {prepared.elapsed().as_millis()} ms")
     closure = native_closure(root, request)?
     checked = Instant.now()
-    checked_paths, interfaces = checked_units(facets, built, request, toolchain, len(ancestors) == 0, published_only)?
+    checked_paths, interfaces = checked_units(facets, built, request, toolchain, len(ancestors) == 0,
+                                             published_only, available)?
     trace(f"graph checked exports {root.0}: {checked.elapsed().as_millis()} ms")
     # 4. Further projects the manifest names are inspected on their own, and their graphs join this one's.
     mut paths = checked_paths
     if not published_only:
-        paths = paths + source_graphs(root, profile, toolchain, ancestors)?
+        paths = paths + source_graphs(root, profile, toolchain, ancestors, preparation)?
     return Ok(
         GraphDependencies(
             facets=facets,
@@ -195,27 +230,39 @@ pub def prepare_graph(
             paths=paths,
             interfaces=interfaces,
             closure=closure,
+            registry=available,
         ),
     )
 
 
-def source_graphs(root: Path, profile: str, toolchain: Toolchain, ancestors: list[str]) -> Result[list[GraphUnit], str]:
-    """The graphs of the projects the manifest names under `tool.incan.codegraph.sources`, each prepared on its own."""
-    match optional_strings(read_manifest(root)?, "tool.incan.codegraph.sources")?:
+def source_graphs(
+    root: Path,
+    profile: str,
+    toolchain: Toolchain,
+    ancestors: list[str],
+    mut preparation: GraphPreparation,
+) -> Result[list[GraphUnit], str]:
+    """Visit each canonical source project once, preserving cycle refusal before skipping a completed selection."""
+    match optional_strings(read_manifest(root, preparation.manifests)?, "tool.incan.codegraph.sources")?:
         None => return Ok([])
         Some(sources) =>
             mut paths: list[GraphUnit] = []
             for source in sources:
                 project = root.joinpath(source).resolve().map_err((error) => error.message())?
-                additional = prepare_graph(project, profile, FeatureRequest(), {}, toolchain, ancestors + [root.0])?
+                if project.0 in ancestors + [root.0]:
+                    return Err(f"cyclic codegraph source selection: {project.0}")
+                if project.0 in preparation.sources:
+                    continue
+                additional = prepare_project_graph(project, profile, FeatureRequest(), {}, toolchain,
+                                                   ancestors + [root.0], false, preparation)?
                 paths = paths + additional.paths
             return Ok(paths)
 
 
-def requires_vocabulary_execution(facets: list[LocalFacet]) -> Result[bool, str]:
+def requires_vocabulary_execution(facets: list[LocalFacet], reader: ManifestReader) -> Result[bool, str]:
     """A declared vocabulary registration executes native code, so its providers need ordinary complete builds."""
     for facet in facets:
-        project = read_project(Path(facet.project)).map_err((error) => error.message())?
+        project = read_project(Path(facet.project), reader).map_err((error) => error.message())?
         if project.intent.vocab_entry is not None:
             return Ok(true)
     return Ok(false)
@@ -241,7 +288,7 @@ def build_native_units(
     # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
     mut search: list[str] = []
     for facet in facets:
-        declared = rust_facet(facet.project, false)?
+        declared = rust_facet(facet.project, false, request.manifests)?
         # 1. A facet with no Rust library binds the native library recorded for its crate, if any, and builds nothing.
         if declared.kind == "":
             match recorded_native(declared.crate_name, previous, toolchain.externs):
@@ -329,11 +376,15 @@ pub def unit_natives(
     return Ok(natives)
 
 
-pub def unit_loaves(facet: LocalFacet, interfaces: Dict[str, Path]) -> Result[list[UnitLoaf], str]:
+pub def unit_loaves(
+    facet: LocalFacet,
+    interfaces: Dict[str, Path],
+    reader: ManifestReader = ManifestReader(),
+) -> Result[list[UnitLoaf], str]:
     """Project selected Incan dependency edges into the session's ordinary public-import namespace."""
     mut loaves: list[UnitLoaf] = []
     for edge in facet.local:
-        name = rust_facet(edge.project, false)?.package
+        name = rust_facet(edge.project, false, reader)?.package
         if name in interfaces:
             loaves.append(UnitLoaf(key=edge.alias, name=name, dir=interfaces[name].0, standard=false))
     return Ok(loaves)
@@ -412,7 +463,8 @@ def checked_units(
     request: RustBuild,
     toolchain: Toolchain,
     inspect_root: bool,
-    published_only: bool = false,
+    published_only: bool,
+    registry: RegistryUnits,
 ) -> Result[Tuple[list[GraphUnit], Dict[str, Path]], str]:
     """
     Read dependency publications, checking legacy and own Incan units after their dependencies for usable interfaces.
@@ -425,7 +477,7 @@ def checked_units(
     mut paths: list[GraphUnit] = []
     mut interfaces: Dict[str, Path] = {}
     for facet in facets:
-        declared = rust_facet(facet.project, false)?
+        declared = rust_facet(facet.project, false, request.manifests)?
         package = declared.package
         own = inspect_root and facet.project == request.project and facet.domain == DependencyDomain.Target
         # 1. A dependency with a compiled Loaf contributes the graph it published, and its interface joins the others.
@@ -450,14 +502,18 @@ def checked_units(
         # 2. Any other facet with an Incan library is checked from source, against the interfaces checked before it.
         if published_only:
             continue
-        source = library_source(Path(facet.project))?
+        source = library_source(Path(facet.project), request.manifests)?
         if not source.is_file():
             continue
-        loaves = unit_loaves(facet, interfaces)?
+        loaves = unit_loaves(facet, interfaces, request.manifests)?
         natives = unit_natives(facet, built, request, loaves)?
         trace(f"graph checking {package}")
         started = Instant.now()
-        path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, loaves)?
+        mut selected: list[LocalFacet] = []
+        if facet.domain == DependencyDomain.Target:
+            selected = facets
+        path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, loaves,
+                             registry=Some(registry), reader=request.manifests, facets=selected)?
         trace(f"graph checked {package}: {started.elapsed().as_millis()} ms")
         if not is_unchecked(path):
             interfaces[package] = interface_directory(path)

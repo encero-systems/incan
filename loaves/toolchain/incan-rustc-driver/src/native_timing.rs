@@ -9,7 +9,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::OpenOptionsExt;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// The prefix rustc gives its JSON phase records.
 const RUSTC_RECORD: &[u8] = b"time: ";
@@ -50,10 +50,15 @@ impl Timing {
             return;
         };
         let now = Instant::now();
+        let ended_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|value| value.as_nanos());
         let record = serde_json::json!({
             "boundary": boundary,
             "elapsed": now.duration_since(clock.started).as_secs_f64(),
             "interval": now.duration_since(clock.previous).as_secs_f64(),
+            "ended_ns": ended_ns,
         });
         write_trace(format!("native-time: {record}\n").as_bytes());
         clock.previous = now;

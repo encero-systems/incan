@@ -3,6 +3,7 @@
 from rust::std::io import Write, stderr
 from rust::std::process import id
 from rust::std::string import String as RustString
+from rust::std::time import SystemTime, UNIX_EPOCH
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
@@ -115,13 +116,19 @@ pub def relay(lines: list[str]) -> None:
 
 
 def compatibility_work(directory: str, span: &EngineSpan) -> None:
-    """Export the old JEC keys from the same completed span for existing measurement scripts."""
+    """
+    Export the old JEC keys from the same completed span for existing measurement scripts. The wall-clock end lets a
+    measurement partition nested spans against its own command timestamps without double counting.
+    """
+    mut ended = 0
+    if let Ok(now) = SystemTime.now().duration_since(UNIX_EPOCH):
+        ended = int(now.as_nanos())
     fields = JsonValue.object(
         {"schema": JsonValue.string("incan.jec/1"), "process": JsonValue.int(span.process), "category": JsonValue.string(
             span.operation,
-        ), "input": JsonValue.string(span.key), "nanoseconds": JsonValue.int(span.end_ns - span.start_ns), "bytes": JsonValue.int(
-            span.counters.bytes,
-        ), "allocations": JsonValue.null()},
+        ), "input": JsonValue.string(span.key), "nanoseconds": JsonValue.int(span.end_ns - span.start_ns), "ended_ns": JsonValue.int(
+            ended,
+        ), "bytes": JsonValue.int(span.counters.bytes), "allocations": JsonValue.null()},
     )
     match fields.to_json():
         Err(_) => return

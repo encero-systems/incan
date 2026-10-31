@@ -345,18 +345,39 @@ const RUST_BORROW_WITHOUT_LIFETIME_CONTRACT: DiagnosticCatalogEntry = Diagnostic
     docs_url: None,
 };
 
+const RUST_CALLEE_NOT_SELECTED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0122",
+    title: "Rust callee cannot be selected",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A Rust method call's arguments check, but no single native callee can be selected for it, so it cannot be compiled.",
+    explanation: "A native method call compiles only through the one Rust function the compiler selects for it: an inherent method of the receiver's type, or the method of one trait implementation. Selection fails in three ways. A type parameter of the callee stays open, because nothing in the receiver, the arguments, the type the result is expected to have or the first use of the local the result is bound to fixes it. No admitted implementation applies, as when an imported trait declares the method but the receiver's type does not implement that trait. Or several implementations apply equally and nothing in the call chooses one. The message names the callee and which of the three it is.",
+    examples: &[
+        "from rust::std::io import Write\nfrom rust::std::string import String as RustString\n\ndef main() -> None:\n    mut text = RustString.from(\"a\")\n    text.flush()",
+        "from rust::std::convert import AsRef\nfrom rust::std::path import PathBuf\n\ndef main() -> None:\n    path = PathBuf.from(\"a\")\n    path.as_ref()",
+    ],
+    common_causes: &[
+        "Calling a method of an imported trait on a value whose type does not implement that trait.",
+        "A generic method whose type parameter only its result names, with nothing fixing the result's type.",
+        "A method that several trait implementations of the receiver's type provide, such as `as_ref()`.",
+    ],
+    fixes: &[
+        "Write the type arguments in the call, or annotate the type the result is bound to.",
+        "Call the method on a value whose type implements the trait that declares it.",
+        "Call a method or conversion whose signature names the type it produces.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/how-to/rust_interop/"),
+};
+
 const RUST_OWNER_TYPE_ARGS_NOT_INFERRED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0105",
     title: "Rust type arguments cannot be inferred",
     severity: "error",
     phase: "typecheck",
     summary: "A Rust associated call leaves its owner's type arguments open and nothing later in the program fixes them.",
-    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. Rust fills them from a later use of the binding, such as an insert, a typed return, or an annotation on the binding; a binding that is never read again, or a result that is not bound at all, gives it nothing to work with, and the build stops on the call. The check fires only when the compiler can see the owner's type parameters and the value has no later reader.",
+    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. A later use of the binding fixes them: its first use, such as an insert, passing it to a typed parameter, a typed return, or assigning it to an annotated place. A binding that is never read again, or a result that is not bound at all, gives nothing to fix them, and the call is refused here, naming the binding to annotate. The check fires only when the compiler can see the owner's type parameters and the value has no later reader. A binding whose first use fixes nothing, such as `len(m)`, is refused with `INCAN-T0122`.",
     examples: &["from rust::std::collections import HashMap\n\ndef main() -> None:\n    mut untyped = HashMap.new()"],
-    common_causes: &[
-        "A collection constructed and then never used.",
-        "A binding whose only later uses do not mention the element types, such as `len(m)`.",
-    ],
+    common_causes: &["A collection constructed and then never used."],
     fixes: &[
         "Write the type arguments in the call: `HashMap.new[str, int]()`.",
         "Annotate the binding: `untyped: HashMap[str, int] = HashMap.new()`.",
@@ -758,6 +779,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS,
     RUST_OWNER_TYPE_ARGS_NOT_INFERRED,
     RUST_BORROW_WITHOUT_LIFETIME_CONTRACT,
+    RUST_CALLEE_NOT_SELECTED,
     ITERATED_PLACE_REPLACEMENT,
     CALLABLE_MARKER_NOT_SUPPORTED,
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
@@ -1118,6 +1140,14 @@ mod tests {
             Some("untyped"),
             Span::default(),
         );
+        let open_parameter = ["S".to_string()];
+        let candidates = ["AsRef<OsStr>::as_ref".to_string(), "AsRef<Path>::as_ref".to_string()];
+        let unselected = [
+            errors::NativeCalleeGap::OpenTypeParameters(&open_parameter),
+            errors::NativeCalleeGap::NoCandidate,
+            errors::NativeCalleeGap::Ambiguous(&candidates),
+        ]
+        .map(|gap| errors::rust_callee_not_selected("rust::native::Owner.method", gap, Span::default()));
 
         assert_eq!(
             code_for_error(&self_mutation, DiagnosticPhase::Typecheck),
@@ -1140,7 +1170,27 @@ mod tests {
             code_for_error(&open_generics, DiagnosticPhase::Typecheck),
             "INCAN-T0105"
         );
-        for code in ["INCAN-T0102", "INCAN-T0103", "INCAN-T0104", "INCAN-T0105"] {
+        for refusal in &unselected {
+            assert_eq!(code_for_error(refusal, DiagnosticPhase::Typecheck), "INCAN-T0122");
+        }
+        assert_eq!(
+            unselected.each_ref().map(|refusal| refusal.message.as_str()),
+            [
+                "Cannot select the Rust callee of `rust::native::Owner.method`: its type parameter `S` is not fixed by \
+                 the call",
+                "Cannot select the Rust callee of `rust::native::Owner.method`: no admitted implementation of the \
+                 method applies to this receiver and these arguments",
+                "Cannot select the Rust callee of `rust::native::Owner.method`: `AsRef<OsStr>::as_ref` and \
+                 `AsRef<Path>::as_ref` apply equally",
+            ]
+        );
+        for code in [
+            "INCAN-T0102",
+            "INCAN-T0103",
+            "INCAN-T0104",
+            "INCAN-T0105",
+            "INCAN-T0122",
+        ] {
             let Some(entry) = explain(code) else {
                 return Err(format!("{code} must have a catalog explanation").into());
             };

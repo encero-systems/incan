@@ -1,4 +1,4 @@
-# behavior: graph CLI, MCP and LSP agree on identities, bounded context, freshness, git evidence and expiring feedback
+# behavior: graph readers share preparation, preserve body views and linked referents, and agree on identity and freshness
 # graph-commands:
 #   src/main.incn --query defs helper
 #   src/main.incn --query callers helper

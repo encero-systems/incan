@@ -32,11 +32,12 @@ pub def resolve_features(
     request: FeatureRequest,
     reader: ManifestReader = ManifestReader(),
     selected_toolchain: Option[Toolchain] = None,
+    selected_facets: list[LocalFacet] = [],
 ) -> Result[ActiveGraph, str]:
     """
     Project the build engine's selection onto the Incan dependency declarations.
 
-    1. Select the shared graph against the installed compiler's target facts.
+    1. Reuse the caller's activated facets, or select the shared graph against the installed compiler's target facts.
     2. Retain Incan projects and edges from the validated intake, preserving direct aliases.
     """
     # 1. Descriptions and compilation use the same engine and the same target configuration.
@@ -51,7 +52,9 @@ pub def resolve_features(
         defaults=request.default_features,
         all_features=request.all_features,
     )
-    facets = local_facets(demand, target_configuration(rust_compiler(toolchain))?, {}, reader)?
+    mut facets = selected_facets
+    if len(facets) == 0:
+        facets = local_facets(demand, target_configuration(rust_compiler(toolchain))?, {}, reader)?
     # 2. Rust facets participate in activation but are not published as Incan Loaves.
     known = [project.root for project in intake.projects]
     mut reached: list[str] = []

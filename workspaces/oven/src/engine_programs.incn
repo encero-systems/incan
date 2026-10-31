@@ -1,0 +1,359 @@
+"""The E1a unit-record producer: obtain today's whole native unit and select its exact payload in a project view."""
+
+from std.fs import Path
+from std.environ import get_or
+from std.fs.locking import FileLock
+from rust::std::rc import Rc
+from engine_capture import BuildEpoch, InputRole
+from std.json import JsonValue, parse
+from bakery import Fact, find, fact_file, register_root
+from engine_epochs import record_text, load_epoch
+from features import FeatureRequest
+from files import json_text
+from incan_units import obtain_executable, program_binary, executable_view, view_executable
+from json_fields import required_text
+from segment_store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put, snapshot
+from toolchain import load_toolchain
+from unit import describe
+from unit_rust import prepare_native
+from unit_freshness import fingerprint, unit_key
+from observation import FileMetadata, file_metadata
+from shared_link import development_link, linkage_key, library_witness, witness_current
+from jec import begin as begin_work, record as record_work
+
+const SCHEMA: str = "incan.engine.native-unit/1"
+
+
+@derive(Eq)
+pub model NativeUnit:
+    """An exact unit record and executable payload; output location is selection provenance, never unit identity."""
+
+    pub identity: str
+    pub payload: str
+    pub binary: str
+
+    def encoded(self) -> Result[str, str]:
+        """The language-neutral native descriptor stored in a caller's virtual view."""
+        return json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string(SCHEMA), "unit": JsonValue.string(self.identity), "payload": JsonValue.string(
+                    self.payload,
+                ), "binary": JsonValue.string(self.binary)},
+            ),
+        )
+
+
+pub model ProgramOutcome:
+    """One caller's selection and the whole-unit producer work performed for it."""
+
+    pub code: i32
+    pub unit: Option[NativeUnit] = None
+    pub evaluations: int = 0
+    pub native_bakes: int = 0
+    pub console: str = ""
+    pub epoch_reads: int = 0
+    pub transaction: Option[Transaction] = None
+    pub claim: Option[Rc[FileLock]] = None
+
+
+pub model NativeSelection:
+    """The exact selected view and the encoding and publication work needed to select it."""
+
+    pub snapshot: Snapshot
+    pub encodings: int = 1
+    pub commits: int = 1
+    pub transaction: Option[Transaction] = None
+
+
+pub def obtain(
+    store: Path,
+    revision: str,
+    handle: str,
+    console: str,
+    captured: Option[BuildEpoch] = None,
+    producer: str = "",
+) -> Result[ProgramOutcome, str]:
+    """
+    Ask for a unit record, using the existing RFC 124 producer on a miss.
+
+    1. Read a previously finalized native descriptor without preparing frozen inputs again.
+    2. Otherwise read the captured epoch, describe the program and finalize its RFC 124 identity.
+    3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
+    4. Return the descriptor after checking capture; caller selection publishes it in the caller's view.
+    """
+    # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
+    match read_program(store, handle)?:
+        Some(unit) =>
+            restore_program(store, unit)?
+            return Ok(ProgramOutcome(code=0, unit=Some(unit)))
+        None => pass
+    # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
+    opening = begin_work()
+    mut epoch_reads = 0
+    if captured is None:
+        epoch_reads = 1
+    epoch = request_epoch(store, revision, captured, handle)?
+    record_work("engine_epoch", revision, opening)
+    if len(epoch.roots) != 1:
+        return Err("unit records require exactly one program root")
+    selector = standalone_selector(epoch, producer)?
+    if let Some(unit) = indexed_program(store, epoch, selector)?:
+        restore_program(store, unit)?
+        return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
+    preparing = begin_work()
+
+    mut toolchain = load_toolchain()?
+    toolchain.console = console
+    toolchain.retire_worker = true
+    described = describe(
+        Path(epoch.roots[0]),
+        epoch.selection.profile,
+        FeatureRequest(),
+        selected_toolchain=Some(toolchain),
+    )?
+    if (
+        described.kind != "program"
+        or described.vocabulary
+        or len(described.contract_models) > 0
+        or len(described.c_headers) > 0
+    ):
+        return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
+    for loaf in described.loaves:
+        if loaf.is_dependency():
+            return Err("unit records do not yet capture editable path dependencies")
+    ready = prepare_native(described, toolchain)?
+    compiled_key = unit_key(ready, toolchain)?
+    if compiled_key.refusal != "":
+        return Err(compiled_key.refusal)
+    # Build and run ask for the same debug program, including its existing shared native linkage policy.
+    key = linkage_key(compiled_key, development_link(ready, true))?
+    binary = program_binary(ready)
+    record_work("engine_prepare", epoch.roots[0], preparing)
+    # 3. Exactly one existing producer owns claiming and publishing a native unit.
+    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true)?
+    if produced.code != 0:
+        return Ok(
+            ProgramOutcome(
+                code=produced.code,
+                evaluations=produced.evaluations,
+                console=console,
+                epoch_reads=epoch_reads,
+            ),
+        )
+    # 4. Source edits cannot certify a native unit for a different captured epoch.
+    for input in epoch.inputs:
+        if not captured_file_current(Path(input.path), input.metadata):
+            return Err("captured inputs changed before native selection; submit a new request")
+    fact = produced_fact(produced.fact)?
+    unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    return Ok(
+        ProgramOutcome(
+            code=0,
+            unit=Some(unit),
+            evaluations=produced.evaluations,
+            native_bakes=produced.native_bakes,
+            console=console,
+            epoch_reads=epoch_reads,
+            transaction=index_program(store, selector, unit, produced.transaction)?,
+            claim=produced.claim,
+        ),
+    )
+
+
+pub def select_program(store: Path, view: str, unit: NativeUnit, handle: str) -> Result[NativeSelection, str]:
+    """Commit a standalone selection through the engine's shared preparation boundary."""
+    mut selection = prepare_selection(store, view, unit, handle)?
+    if let Some(transaction) = selection.transaction:
+        selection.snapshot = commit(transaction).map_err((error) => error.message())?
+    return Ok(selection)
+
+
+pub def prepare_selection(store: Path, view: str, unit: NativeUnit, handle: str) -> Result[NativeSelection, str]:
+    """Stage the descriptor and its caller selection; an equal selection encodes and publishes nothing."""
+    if program_view(handle)? != view:
+        return Err("native descriptor belongs to a different project view")
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    if record_text(selected, "incan.engine.selected-native-unit/2")? == Some(handle):
+        match record_text(selected, program_key(handle))?:
+            None => return Err("selected native descriptor is missing")
+            Some(text) =>
+                if decoded_program(text)? == unit:
+                    return Ok(NativeSelection(snapshot=selected, encodings=0, commits=0))
+    mut transaction = begin(selected)
+    transaction = put(transaction, program_key(handle), unit.encoded()?.encode("utf-8"))
+    transaction = put(transaction, "incan.engine.selected-native-unit/2", handle.encode("utf-8"))
+    return Ok(NativeSelection(snapshot=selected, transaction=Some(transaction)))
+
+
+pub def program_handle(epoch: str, producer: str, view: str) -> Result[str, str]:
+    """The opaque handle of a captured program's native descriptor, kept apart from its RFC 124 unit identity."""
+    return Ok(f"program:{fingerprint(["incan.engine.program/3", epoch, producer])?}:{view}")
+
+
+pub def read_program(store: Path, handle: str) -> Result[Option[NativeUnit], str]:
+    """Read one finalized descriptor by handle; damaged schema and missing selected payloads refuse."""
+    view = program_view(handle)?
+    return selected_program(snapshot(store, view).map_err((error) => error.message())?, handle)
+
+
+pub def selected_program(selected: Snapshot, handle: str) -> Result[Option[NativeUnit], str]:
+    """Read a descriptor from the exact immutable view whose generation the execution pin protects."""
+    if selected.view != program_view(handle)?:
+        return Err("native program handle belongs to another virtual view")
+    match record_text(selected, program_key(handle))?:
+        None => return Ok(None)
+        Some(text) => return Ok(Some(decoded_program(text)?))
+
+
+def program_view(handle: str) -> Result[str, str]:
+    """Decode only the bounded view locator of an opaque handle; it is never a compilation identity input."""
+    if len(handle) < 74 or not handle.startswith("program:") or handle[72:73] != ":":
+        return Err("invalid native program handle")
+    for character in handle[8:72]:
+        if character not in "0123456789abcdef":
+            return Err("invalid native program identity")
+    return Ok(handle[73:])
+
+
+def decoded_program(text: str) -> Result[NativeUnit, str]:
+    """Validate the single native descriptor schema for both immutable records and selected view bindings."""
+    value = parse(text).map_err((error) => error.message())?
+    if required_text(value, "schema")? != SCHEMA:
+        return Err("unsupported native unit descriptor")
+    return Ok(
+        NativeUnit(
+            identity=required_text(value, "unit")?,
+            payload=required_text(value, "payload")?,
+            binary=required_text(value, "binary")?,
+        ),
+    )
+
+
+pub def restore_program(store: Path, unit: NativeUnit) -> Result[None, str]:
+    """Validate the selected immutable unit and restore only missing or changed derived executable views."""
+    fact = unit_record(store, unit)?
+    return view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)
+
+
+def unit_record(store: Path, unit: NativeUnit) -> Result[Fact, str]:
+    """Verify the exact executable payload and any recorded native loader generations before making a view."""
+    fact = required_unit(store, unit.identity)?
+    if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
+        return Err("selected native payload disagrees with its unit record")
+    if let Some(witness) = loader_witness(store, fact, unit):
+        if not witness_current(witness):
+            return Err("selected native loader inputs disagree with their unit record")
+    return Ok(fact)
+
+
+def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
+    """Resolve the loader witness through this unit's immutable payload binding, never an ambient path."""
+    binary = Path(unit.binary)
+    return fact_file(store, fact, library_witness(Path(binary.name())).0)
+
+
+def required_unit(store: Path, identity: str) -> Result[Fact, str]:
+    """A selected unit must exist; absence after descriptor publication is a store failure, never a rebake."""
+    match find(store, identity)?:
+        Some(fact) => return Ok(fact)
+        None => return Err("selected native unit record is missing")
+
+
+def executable_payload(fact: Fact, name: str) -> Result[str, str]:
+    """The payload identity of the descriptor's executable, excluding sidecars and debug files."""
+    for file in fact.files:
+        if file.path == name and file.program:
+            return Ok(file.digest)
+    return Err("unit record does not contain the selected executable")
+
+
+def program_key(handle: str) -> str:
+    """The one record family that maps captured program inputs to a finalized native descriptor."""
+    return f"incan.engine.native-unit\t{handle}"
+
+
+def captured_file_current(path: Path, recorded: FileMetadata) -> bool:
+    """Refuse a file replaced while compilation ran; this observation never enters compilation identity."""
+    match file_metadata(path):
+        Ok(Some(found)) => return found == recorded
+        _ => return false
+
+
+def request_epoch(store: Path, revision: str, captured: Option[BuildEpoch], handle: str) -> Result[BuildEpoch, str]:
+    """Use this activation's captured inputs, or open a previously committed capture."""
+    match captured:
+        Some(epoch) => return Ok(epoch)
+        None => return load_epoch(store, revision, program_view(handle)?)
+
+
+def produced_fact(found: Option[Fact]) -> Result[Fact, str]:
+    """A successful native producer must return its exact staged or committed fact."""
+    match found:
+        Some(fact) => return Ok(fact)
+        None => return Err("producer completed without a native fact")
+
+
+def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str], str]:
+    """
+    Index an exact standalone input selection without redefining its native unit identity.
+
+    Only manifest-free units wholly inside their file's directory qualify. Logical names, exact input bytes, the
+    installed pin, profile and admitted compiler select an already finalized RFC 124 record. Any broader input shape
+    takes the existing producer path. Metadata, projection paths and absent ancestor manifests do not affect a unit.
+    """
+    if producer == "" or len(epoch.roots) != 1 or get_or("INCAN_STDLIB", "") != "":
+        return Ok(None)
+    source = Path(epoch.roots[0])
+    prefix = source.parent().0 + "/"
+    mut inputs = ["incan.engine.standalone-inputs/1", producer, source.name(), epoch.selection.profile]
+    mut bindings: list[str] = []
+    for input in epoch.inputs:
+        if input.role == InputRole.ToolchainPin:
+            bindings.append(f"toolchain-pin:{input.path}:{input.digest}")
+        elif input.path.startswith(prefix) and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
+            bindings.append(f"{input.role.value()}:{input.path[len(prefix):]}:{input.digest}")
+        else:
+            return Ok(None)
+    for absent in epoch.absent:
+        if Path(absent.path).name() != "loaf.toml":
+            return Ok(None)
+    for listing in epoch.listings:
+        if not (listing.path == source.parent().0 or listing.path.startswith(prefix)):
+            return Ok(None)
+        names = [listing.path[len(source.parent().0):]]
+        contents = names + [f"file:{name}" for name in listing.files] + [f"directory:{name}" for name in listing.directories]
+        bindings.append(f"listing:{fingerprint(contents)?}")
+    return Ok(Some(f"incan.engine.standalone-program\t{fingerprint(inputs + sorted(bindings))?}"))
+
+
+def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Result[Option[NativeUnit], str]:
+    """Resolve a finalized unit index and give its executable the requesting project's ordinary projection path."""
+    match selector:
+        None => return Ok(None)
+        Some(key) =>
+            match record_text(snapshot(store).map_err((error) => error.message())?, key)?:
+                None => return Ok(None)
+                Some(encoded) =>
+                    unit = decoded_program(encoded)?
+                    if unit.binary in ["", ".", ".."] or Path(unit.binary).name() != unit.binary:
+                        return Err("standalone native index contains an invalid executable name")
+                    register_root(store, Path(epoch.roots[0]).parent().0, unit.identity)?
+                    binary = executable_view(Path(epoch.roots[0]).parent(), epoch.selection.profile, "bin", unit.binary)
+                    return Ok(Some(NativeUnit(identity=unit.identity, payload=unit.payload, binary=binary.0)))
+
+
+def index_program(
+    store: Path,
+    selector: Option[str],
+    unit: NativeUnit,
+    native: Option[Transaction],
+) -> Result[Option[Transaction], str]:
+    """Add a path-independent finalized-unit index to the same atomic request, never a second publication."""
+    match selector:
+        None => return Ok(native)
+        Some(key) =>
+            mut transaction = begin(snapshot(store).map_err((error) => error.message())?)
+            if let Some(prepared) = native:
+                transaction = prepared
+            descriptor = NativeUnit(identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name())
+            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_ABSENT)))

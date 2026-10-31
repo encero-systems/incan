@@ -37,6 +37,8 @@ pub model CompileRequest:
     pub stdout: str
     pub stderr: str
     pub cwd: str
+    # Require process teardown after this activation when the producer cannot release its retained compiler state.
+    pub retire_after: bool = false
 
 
 pub enum Fault:
@@ -114,8 +116,16 @@ def request_of(document: JsonValue) -> Result[CompileRequest, str]:
             stdout=absolute_field(document, "stdout")?,
             stderr=absolute_field(document, "stderr")?,
             cwd=absolute_field(document, "cwd")?,
+            retire_after=retirement_requested(document)?,
         ),
     )
+
+
+def retirement_requested(document: JsonValue) -> Result[bool, str]:
+    """Read the optional activation-lifetime contract; older callers keep the reusable-worker policy."""
+    match document.get("retire_after"):
+        None => return Ok(false)
+        Some(value) => return value.expect_bool().map_err((_) => "retire_after must be Boolean")
 
 
 def command_of(arguments: list[str]) -> Result[WorkerCommand, str]:
@@ -226,8 +236,19 @@ def encoded(document: JsonValue) -> bytes:
         Err(_) => return "{}".encode("utf-8")
 
 
-pub def request_document(generation: str, arguments: list[str], directory: str, stdout: str, stderr: str) -> JsonValue:
-    """The original compiler invocation plus its owner's current working directory and request-local console sinks."""
+pub def request_document(
+    generation: str,
+    arguments: list[str],
+    directory: str,
+    stdout: str,
+    stderr: str,
+    retire_after: bool = false,
+) -> JsonValue:
+    """
+    The original compiler invocation plus its owner's current working directory, request-local console sinks and
+    activation lifetime. An ordinary request keeps its wire bytes: only a required teardown writes `retire_after`,
+    whose absence the worker reads as `false`.
+    """
     mut fields: Dict[str, JsonValue] = {}
     fields["schema"] = JsonValue.string(SCHEMA)
     fields["generation"] = JsonValue.string(generation)
@@ -235,6 +256,8 @@ pub def request_document(generation: str, arguments: list[str], directory: str, 
     fields["cwd"] = JsonValue.string(directory)
     fields["stdout"] = JsonValue.string(stdout)
     fields["stderr"] = JsonValue.string(stderr)
+    if retire_after:
+        fields["retire_after"] = JsonValue.bool(true)
     return JsonValue.object(fields)
 
 

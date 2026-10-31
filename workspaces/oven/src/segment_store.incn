@@ -29,10 +29,13 @@ object read this way is content-named and never rewritten in place, as a mapping
 Writing: a transaction begun on one view collects writes with their preconditions. Under the publication lock it
 validates every precondition against the latest generation, stages only changed records, then installs the segment,
 pages, manifest and `CURRENT`, each synced with its directory,
-in that order. A transaction whose writes are all already present commits nothing and adds no bytes.
+in that order. Related transactions across views share one generation switch; an execution pin's durable descriptor
+and live lock precede that switch. A transaction whose writes are all already present commits nothing and adds no bytes.
 """
 
 from rust::std::process import id, exit as process_exit
+from rust::std::rc import Rc
+from jec import begin as begin_work, record as record_work
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.environ import get_or
@@ -40,8 +43,9 @@ from std.fs import MappedView, Path
 from std.fs.locking import FileLock
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError, _BytesIO
+from pub::incan_platform.durability import sync_ordered
 from store_index import Entry, IndexError, Location, build, entries as index_entries, find as index_find, insert
-from store_index import copied_index_bytes, page_path, page_reads, view_digest
+from store_index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
 
 const FORMAT: str = "incan.segment-store/3"
 const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
@@ -197,6 +201,26 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
     match natural(fields[0]):
         None => return Err(failure("format", pointer.0, "malformed generation"))
         Some(generation) => return read_manifest(root, generation, fields[1], view)
+
+
+pub def view_snapshot(selected: Snapshot, name: str) -> Result[Snapshot, StoreError]:
+    """Select another virtual view of the same immutable generation without rereading CURRENT."""
+    check_view_key(name)?
+    mut index = ""
+    for entry in selected.views:
+        if entry.view == name:
+            index = entry.root
+    return Ok(
+        Snapshot(
+            root=selected.root,
+            generation=selected.generation,
+            digest=selected.digest,
+            view=name,
+            index=index,
+            segments=selected.segments,
+            views=selected.views,
+        ),
+    )
 
 
 pub def current(view: Snapshot) -> Result[Snapshot, StoreError]:
@@ -517,45 +541,105 @@ pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
 
 
 pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
-    """
-    Publish a transaction's writes to its view and return the generation that holds them, seen through that view.
+    """Publish one view through the same atomic group boundary used by multi-view requests."""
+    return commit_group([transaction])
 
-    1. Acquire the publication lock and read the selected committed generation.
-    2. Validate every precondition against that generation; a write already present
-       is dropped, and a conflicting one refuses the whole transaction.
-    3. With nothing left to write, return the latest generation before creating staging or writing bytes.
-    4. Install the segment, then the index pages on changed paths, then the manifest, then `CURRENT`, each synced.
+
+pub model Publication:
+    """One atomic generation and its optional already-held execution pin."""
+
+    pub snapshot: Snapshot
+    pub pin: Option[Rc[FileLock]] = None
+
+
+pub def commit_group(transactions: list[Transaction]) -> Result[Snapshot, StoreError]:
+    """Publish all requested views in one durable generation without an execution pin."""
+    return publish_group(transactions, "").map((published) => published.snapshot)
+
+
+pub def commit_pinned(transactions: list[Transaction], view: str) -> Result[Publication, StoreError]:
+    """Publish a request's durable view under one switch, with its execution pin held before visibility."""
+    check_view_key(view)?
+    return publish_group(transactions, view)
+
+
+def publish_group(transactions: list[Transaction], execution_view: str) -> Result[Publication, StoreError]:
     """
-    root = transaction.root
+    Publish all views in one durable generation, or none of them.
+
+    1. Lock publication and validate every write before staging any bytes.
+    2. Stage each changed view's records and index; no view becomes visible yet.
+    3. Switch one manifest and CURRENT after every referenced object is durable.
+    """
+    if len(transactions) == 0:
+        return Err(failure("format", "transaction", "an empty group has no selected view"))
+    first = transactions[0]
+    root = first.root
     ensure_directory(root.joinpath("locks"))?
-    staged = root.joinpath("staging").joinpath(transaction.id)
-    held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
-    latest = snapshot(root, transaction.view)?
-    if transaction.fork != "":
-        return publish_fork(root, latest, transaction, staged)
-    # 2. and 3. Only what is not already committed is written.
-    remaining = pending_writes(latest, transaction.writes)?
-    if len(remaining) == 0:
-        return Ok(latest)
+    locking = begin_work()
+    held = root.joinpath("locks/publication").lock_exclusive().map_err((error) => io_failure(root, error))?
+    record_work("store_lock", root.0, locking)
+    mut selected_view = first.view
+    if execution_view != "":
+        selected_view = execution_view
+    latest = snapshot(root, selected_view)?
+    staged = root.joinpath("staging").joinpath(first.id)
+    if len(transactions) == 1 and first.fork != "":
+        if execution_view != "":
+            return Err(failure("format", "transaction", "a fork does not select an execution view"))
+        return publish_fork(root, latest, first, staged).map((view) => Publication(snapshot=view))
+    # 1. Duplicate views are combined before their preconditions are checked.
+    mut writes: Dict[str, list[Write]] = {}
+    for transaction in transactions:
+        if transaction.root.0 != root.0 or transaction.fork != "":
+            return Err(failure("format", "transaction", "a group needs one store and no forks"))
+        check_view_key(transaction.view)?
+        mut combined = writes.get(transaction.view, [])
+        combined.extend(transaction.writes)
+        writes[transaction.view] = combined
+    mut changed: Dict[str, list[Write]] = {}
+    for view in sorted([name for name in writes.keys()]):
+        remaining = pending_writes(view_snapshot(latest, view)?, writes[view])?
+        if len(remaining) > 0:
+            changed[view] = remaining
+    if len(changed) == 0:
+        return pinned_publication(latest, execution_view)
+
     ensure_directory(staged)?
     publication_boundary("staging-created")
-    # 4. Each step is durable before the next one names it.
-    encoded = encoded_frames(remaining)?
-    delta = staged.joinpath("delta.seg")
-    place_synced(delta, encoded.data)?
-    name = install_segment(root, encoded.data, delta)?
-    publication_boundary("segment-installed")
-    pages = staged.joinpath("pages")
-    index = insert(root, latest.index, pages, leaf_entries(encoded, name)).map_err(index_failure)?
-    publication_boundary("pages-staged")
-    install_pages(root, pages)?
-    publication_boundary("pages-installed")
+    # 2. The old manifest remains selected until all views have been staged.
     mut segments = latest.segments
-    if name not in segments:
-        segments.append(name)
-    published = switch(root, latest, segments, with_view(latest.views, transaction.view, index), transaction.id)?
+    mut views = latest.views
+    for name in sorted([view for view in changed.keys()]):
+        directory = staged.joinpath(hexlify(sha256.digest(name.encode("utf-8"))))
+        index, segment = stage_view(root, view_snapshot(latest, name)?, changed[name], directory)?
+        if segment not in segments:
+            segments.append(segment)
+        views = with_view(views, name, index)
+    # 3. One switch is the only visibility and durability boundary for the entire request.
+    published = publish_switch(root, latest, segments, views, first.id, execution_view)?
     remove_tree(staged)
     return Ok(published)
+
+
+pub def durable_commits() -> int:
+    """Successful durable generation switches in this process; no-op commits add zero."""
+    return counted.get("durable_commits", 0)
+
+
+def stage_view(root: Path, latest: Snapshot, writes: list[Write], staged: Path) -> Result[tuple[str, str], StoreError]:
+    """Install a view's immutable objects without selecting them; the caller holds publication's lock."""
+    encoded = encoded_frames(writes)?
+    delta = staged.joinpath("delta.seg")
+    place_synced(delta, encoded.data)?
+    segment = install_segment(root, encoded.data, delta)?
+    publication_boundary("segment-installed")
+    pages = staged.joinpath("pages")
+    index = insert(root, latest.index, pages, leaf_entries(encoded, segment)).map_err(index_failure)?
+    publication_boundary("pages-staged")
+    install_pages(root, pages, [index])?
+    publication_boundary("pages-installed")
+    return Ok((index, segment))
 
 
 def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged: Path) -> Result[Snapshot, StoreError]:
@@ -625,27 +709,26 @@ def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreE
         found = file_digest(target, "sha256").map_err((error) => failure("integrity", target.0, error.message()))?
         if hexlify(found) != name:
             return Err(failure("integrity", target.0, "an installed segment does not match its name"))
+        sync_directory(target.parent())?
         return Ok(name)
     source.replace(target).map_err((error) => io_failure(target, error))?
-    target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
+    sync_directory(target.parent())?
     return Ok(name)
 
 
-def install_pages(root: Path, pages: Path) -> Result[None, StoreError]:
-    """Install the staged index pages that are not installed yet, each synced, then sync the index directory once."""
+def install_pages(root: Path, pages: Path, roots: list[str]) -> Result[None, StoreError]:
+    """Sync and install only the final roots' new pages, then sync the index directory once."""
     if not pages.is_dir():
         return Ok(None)
     target_directory = root.joinpath("indexes")
     ensure_directory(target_directory)?
-    for page in pages.iterdir().map_err((error) => io_failure(pages, error))?:
-        if not page.name().endswith(".page"):
-            continue
+    for page in staged_pages(pages, roots).map_err(index_failure)?:
         target = page_path(root, page.name()[:-5])
         if target.is_file():
             continue
         sync_file(page)?
         page.replace(target).map_err((error) => io_failure(target, error))?
-    target_directory.sync_directory().map_err((error) => io_failure(target_directory, error))?
+    sync_directory(target_directory)?
     return Ok(None)
 
 
@@ -656,6 +739,18 @@ def switch(
     views: list[ViewRoot],
     transaction: str,
 ) -> Result[Snapshot, StoreError]:
+    """Switch a generation through the same publication boundary, without an execution pin."""
+    return publish_switch(root, latest, segments, views, transaction, "").map((published) => published.snapshot)
+
+
+def publish_switch(
+    root: Path,
+    latest: Snapshot,
+    segments: list[str],
+    views: list[ViewRoot],
+    transaction: str,
+    execution_view: str,
+) -> Result[Publication, StoreError]:
     """Write and sync the next manifest, then replace `CURRENT`; the caller holds the publication lock."""
     following = latest.generation + 1
     mut lines = [MANIFEST_SCHEMA, f"generation {following}", f"parent {latest.generation} {latest.digest}"]
@@ -672,15 +767,41 @@ def switch(
     manifest = manifest_path(root, following, digest)
     ensure_directory(manifest.parent())?
     place_synced(manifest, document)?
-    manifest.parent().sync_directory().map_err((error) => io_failure(manifest.parent(), error))?
+    sync_directory(manifest.parent())?
     publication_boundary("manifest-directory-synced")
     marker = root.joinpath("FORMAT")
     if not marker.is_file():
         place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
+    # Order every referenced object and name before one drive flush, before CURRENT can name the graph.
+    sync_directory(root)?
+    sync_directory(root.parent())?
+    sync_durable(manifest)?
+    publication_boundary("objects-durable")
+    # The manifest is the pin's durable descriptor; its live OS lock precedes visibility.
+    mut returned_view = latest.view
+    if execution_view != "":
+        returned_view = execution_view
+    mut selected_index = ""
+    for entry in views:
+        if entry.view == returned_view:
+            selected_index = entry.root
+    selected = Snapshot(
+        root=root,
+        generation=following,
+        digest=digest,
+        view=returned_view,
+        index=selected_index,
+        segments=segments,
+        views=views,
+    )
+    pinned = pinned_publication(selected, execution_view)?
     place_synced(root.joinpath("CURRENT"), f"{following} {digest}\n".encode("utf-8"))?
-    root.sync_directory().map_err((error) => io_failure(root, error))?
+    sync_directory(root)?
+    sync_durable(root.joinpath("CURRENT"))?
+    publication_boundary("current-durable")
     publication_boundary("root-synced")
-    return snapshot(root, latest.view)
+    counted["durable_commits"] = counted.get("durable_commits", 0) + 1
+    return Ok(pinned)
 
 
 pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
@@ -696,21 +817,38 @@ pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
     return lock.lock_exclusive().map_err((error) => io_failure(lock, error))
 
 
+def pinned_publication(view: Snapshot, name: str) -> Result[Publication, StoreError]:
+    """Acquire a selected generation's lease before its acknowledgment; an unpinned commit retains its selected view."""
+    if name == "":
+        return Ok(Publication(snapshot=view))
+    selected = view
+    if view.view != name:
+        return Err(failure("format", name, "execution pin must name the returned view"))
+    held = lease(selected)?
+    publication_boundary("pin-acquired")
+    return Ok(Publication(snapshot=selected, pin=Some(Rc.new(held))))
+
+
 pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
     """
     Register a lease on `view`'s generation and view for as long as the returned lock is held.
 
-    The lease file names the generation, its manifest digest and the view's index root it pins; its lock proves the
-    holder is alive. Collection, once it exists, keeps every root a live lease names, and only those of the leased
-    view: other views' entries in shared pages are not reachability roots for it.
+    The lock name identifies the generation, manifest digest and view; the immutable manifest is the one durable
+    descriptor of its index root. The OS lock proves live interest and needs no second durable descriptor file.
+    Equal snapshot/view descriptors share the lock identity with independent guards. Collection must take that
+    identity's exclusive lock and retain the selected view's roots while a shared holder is alive. Host failure ends
+    every live interest; recovery reads the committed manifest, never a duplicate lease record.
     """
     leases = view.root.joinpath("leases")
     ensure_directory(leases)?
-    serial = counted.get("leases", 0) + 1
-    counted["leases"] = serial
-    path = leases.joinpath(f"{id()}-{serial}")
-    place_synced(path, f"{view.generation} {view.digest} {view.view} {view.index}\n".encode("utf-8"))?
-    return path.lock_exclusive().map_err((error) => io_failure(path, error))
+    name = hexlify(sha256.digest(view.view.encode("utf-8")))
+    path = leases.joinpath(f"{view.generation}-{view.digest}-{name}")
+    held = path.lock_shared().map_err((error) => io_failure(path, error))?
+    if view.generation > 0:
+        checked = read_manifest(view.root, view.generation, view.digest, view.view)?
+        if checked.index != view.index:
+            return Err(failure("integrity", path.0, "lease disagrees with its immutable manifest"))
+    return Ok(held)
 
 
 # ---- Compaction ----
@@ -748,7 +886,7 @@ pub def compact(root: Path) -> Result[Snapshot, StoreError]:
         relocated = in_key_order(relocate(leaf_entries(held_encoded, name), encoded))
         index = build(staged.joinpath("pages"), relocated).map_err(index_failure)?
         views.append(ViewRoot(view=entry.view, root=index))
-    install_pages(root, staged.joinpath("pages"))?
+    install_pages(root, staged.joinpath("pages"), [view.root for view in views])?
     published = switch(root, latest, [name], views, "compaction")?
     remove_tree(staged)
     return Ok(published)
@@ -817,6 +955,16 @@ pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[str], Store
     Each new file is synced before it is renamed into place, and each payload directory that received one is synced
     once after all of them, before the caller's commit names them.
     """
+    return store_payloads(root, sources, true)
+
+
+pub def prepare_payloads(root: Path, sources: list[Path]) -> Result[list[str], StoreError]:
+    """Stage ordered immutable payloads for a transaction that flushes their complete graph before publication."""
+    return store_payloads(root, sources, false)
+
+
+def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[list[str], StoreError]:
+    """Install each immutable payload once; optionally finish an independent durable insertion."""
     mut digests: list[str] = []
     mut touched: set[str] = set()
     for source in sources:
@@ -827,10 +975,17 @@ pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[str], Store
                 return Err(failure("integrity", target.0, "a stored payload does not match its name"))
         else:
             install_payload(source, target)?
-            touched.add(target.parent().0)
+        # An intact existing name may belong to a writer that died before ordering its directory entry.
+        touched.add(target.parent().0)
         digests.append(digest)
     for directory in sorted([name for name in touched]):
-        Path(directory).sync_directory().map_err((error) => io_failure(Path(directory), error))?
+        sync_directory(Path(directory))?
+    if len(touched) > 0:
+        sync_directory(root.joinpath("payloads"))?
+        sync_directory(root)?
+        sync_directory(root.parent())?
+        if durable:
+            sync_durable(root)?
     return Ok(digests)
 
 
@@ -839,8 +994,8 @@ def install_payload(source: Path, target: Path) -> Result[None, StoreError]:
     ensure_directory(target.parent())?
     temporary = Path(f"{target.0}.{id()}.tmp")
     source.copy(temporary, true, true).map_err((error) => io_failure(temporary, error))?
-    sync_file(temporary)?
     temporary.chmod(true).map_err((error) => io_failure(temporary, error))?
+    sync_file(temporary)?
     temporary.replace(target).map_err((error) => io_failure(target, error))?
     return Ok(None)
 
@@ -906,21 +1061,27 @@ def ensure_directory(path: Path) -> Result[None, StoreError]:
 
 
 def sync_file(path: Path) -> Result[None, StoreError]:
-    """Sync one file's contents to storage."""
-    handle = path.open("rb").map_err((error) => io_failure(path, error))?
-    return handle.sync().map_err((error) => io_failure(path, error))
+    """Order one staged file's contents; the publication barriers perform the full durable drive flush."""
+    clock = begin_work()
+    result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
+    record_work("store_file_sync", path.0, clock)
+    return result
 
 
 def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
     """Write a complete file beside its destination, synchronize it, then atomically publish its name."""
     ensure_directory(target.parent())?
     temporary = Path(f"{target.0}.{id()}.tmp")
+    writing = begin_work()
     temporary.write_bytes(data).map_err((error) => io_failure(temporary, error))?
+    record_work("store_file_write", target.0, writing)
     boundary = publication_kind(target)
     publication_boundary(f"{boundary}-written")
     sync_file(temporary)?
     publication_boundary(f"{boundary}-synced")
+    renaming = begin_work()
     temporary.replace(target).map_err((error) => io_failure(target, error))?
+    record_work("store_file_rename", target.0, renaming)
     publication_boundary(f"{boundary}-replaced")
     return Ok(None)
 
@@ -970,7 +1131,8 @@ pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
     # 3. Publish only after the candidate is complete and verified.
     pointer = root.joinpath("CURRENT")
     place_synced(pointer, f"{candidate.generation} {candidate.digest}\n".encode("utf-8"))?
-    root.sync_directory().map_err((error) => io_failure(root, error))?
+    sync_directory(root)?
+    sync_durable(pointer)?
     return snapshot(root, committed.view)
 
 
@@ -1005,7 +1167,9 @@ pub def quarantine_record(view: Snapshot, key: str, codec_damage: bool = false) 
                     .write_bytes(f"missing {source.0}\n".encode("utf-8"))
                     .map_err((error) => io_failure(target, error))?
             sync_file(target)?
-            target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
+            sync_directory(target.parent())?
+            sync_directory(view.root)?
+            sync_durable(target)?
     return Ok(None)
 
 
@@ -1029,8 +1193,10 @@ pub def quarantine_payload(root: Path, digest: str) -> Result[None, StoreError]:
     # 2. Preserve the damaged inode instead of editing or deleting its bytes.
     target = quarantine_path(root, digest)?
     source.replace(target).map_err((error) => io_failure(source, error))?
-    source.parent().sync_directory().map_err((error) => io_failure(source.parent(), error))?
-    target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
+    sync_directory(source.parent())?
+    sync_directory(target.parent())?
+    sync_directory(root)?
+    sync_durable(target)?
     return Ok(None)
 
 
@@ -1062,3 +1228,26 @@ pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[None,
     if put_payload(root, source)? != expected:
         return Err(failure("integrity", source.0, "replacement changed during re-admission"))
     return Ok(None)
+
+
+def sync_directory(path: Path) -> Result[None, StoreError]:
+    """Synchronize directory entries, measuring OS durability separately from record encoding and locks."""
+    clock = begin_work()
+    result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
+    record_work("store_directory_sync", path.0, clock)
+    return result
+
+
+def sync_durable(path: Path) -> Result[None, StoreError]:
+    """Flush the ordered graph or selected pointer to durable storage; Apple uses F_FULLFSYNC through Rust."""
+    clock = begin_work()
+    handle = path.open("rb").map_err((error) => io_failure(path, error))?
+    handle.sync().map_err((error) => io_failure(path, error))?
+    counted["durable_syncs"] = counted.get("durable_syncs", 0) + 1
+    record_work("store_durable_sync", path.0, clock)
+    return Ok(None)
+
+
+pub def durable_syncs() -> int:
+    """Completed strong storage barriers in this process, independent of ordinary file and directory ordering."""
+    return counted.get("durable_syncs", 0)

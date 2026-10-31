@@ -23,12 +23,14 @@ from json_fields import field, required_items, required_text, strings
 from intake import library_source, read_project, ManifestReader
 from native_closure_input import NativeClosureInput
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
-from observation import observe, trace
+from observation import Observation, observe, trace
 from jec import begin, record as record_work
 from publication import place, publish
 from rust_activation import DependencyDomain
 from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits, is_dynamic_library
-from registry_metadata import complete_legacy
+from registry_metadata import complete_legacy, completion_selection
+from registry_pages import artifact_stamps, directory_stamps, question, recall_catalog, retain_catalog
+from registry_pages import current as catalog_current
 from retained_readings import installed_digest
 from rust_target import (
     compiler_sysroot,
@@ -39,7 +41,7 @@ from rust_target import (
     target_configuration,
 )
 from toml_fields import optional_string, read_manifest, required_string
-from toolchain import NativeCrate, Toolchain, load_toolchain, located
+from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
 from toolchain_access import BINARY_SEPARATOR, read_access
 from unit_freshness import (
     Key,
@@ -64,7 +66,7 @@ from rust_freshness import (
 )
 from rust_portable import portable_reusable, record_portable
 from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal_rust, view_prior_evidence
-from bakery import find, register_root, seal, staging, view
+from bakery import bakery, claim, find, register_root, seal, staging, view
 from unit_publication import import_payload
 from registry_units import sole_library as registry_artifact
 
@@ -116,11 +118,32 @@ pub def read_registry_units(
     """
     Registry units from a closure result (`incan.oven.closure/1`): every compiled unit and its store directory.
 
-    1. The document is a closure of this version.
-    2. The store's entries directory follows from the artifact of the first extern.
-    3. Each unit is read with its store directory, and those directories are the search path.
+    1. Read the typed page selected for this closure and compiler generation.
+    2. Reconcile its exact directory and artifact observations.
+    3. On a miss, claim and complete the closure once; project locks bind only after that shared reading.
     """
-    # 1. Only a closure of this version describes units the way the rest of Oven reads them.
+    # 1. A settled generation can be read directly from its admitted, mapped typed page.
+    clock = begin()
+    observed = observe(path)?
+    selection = completion_selection(rust_compiler(load_toolchain()?))?
+    key = question(path, observed, selection)?
+    if let Some(catalog) = recall_catalog(key)?:
+        record_work("registry_index", path.0, clock)
+        # 2. Directory membership and artifact rewrites invalidate independently of the closure file.
+        completion_clock = begin()
+        if catalog_current(catalog):
+            record_work("registry_completion", path.0, completion_clock)
+            return project_registry(catalog_registry(catalog.units, path)?, project, reader)
+    # 3. Only one caller completes a missing generation; waiters recheck after taking its claim.
+    held = claim(bakery()?, f"registry/catalog/{key}")?
+    if let Some(catalog) = recall_catalog(key)?:
+        if catalog_current(catalog):
+            return project_registry(catalog_registry(catalog.units, path)?, project, reader)
+    return project_registry(read_registry_catalog(path, key, observed)?, project, reader)
+
+
+def read_registry_catalog(path: Path, key: str, observed: Observation) -> Result[RegistryUnits, str]:
+    """Complete a missing generation under its claim, bracketing producer observations before sealing its typed page."""
     clock = begin()
     document = read_json(path)?
     schema = required_text(document, "schema")?
@@ -130,24 +153,34 @@ pub def read_registry_units(
     entries = entries_directory(document, path)?
     # 3. Each unit knows its own artifact directory, and every such directory is searched for dependencies.
     mut units: list[RegistryUnit] = []
-    mut search: list[str] = []
     for item in required_items(document, "units")?:
         unit = registry_unit(item, entries)?
         units.append(unit)
+    record_work("registry_index", path.0, clock)
+    completion_clock = begin()
+    listings = directory_stamps(units)
+    artifacts = artifact_stamps(units)
+    completed = complete_legacy(units)?
+    record_work("registry_completion", path.0, completion_clock)
+    retain_catalog(key, path, observed, completed, listings, artifacts)?
+    return catalog_registry(completed, path)
+
+
+def catalog_registry(units: list[RegistryUnit], path: Path) -> Result[RegistryUnits, str]:
+    """Bind installation preferences separately from the page so project-specific locks never leak into shared facts."""
+    mut search: list[str] = []
+    for unit in units:
         if unit.directory not in search:
             search.append(unit.directory)
-    record_work("registry_index", path.0, clock)
-    completed = complete_legacy(units, path)?
-    registry = RegistryUnits(
-        units=completed,
+    return Ok(RegistryUnits(
+        units=units,
         search=search,
         anchors=[],
-        installation_bindings=recorded_registry_bindings(completed, path)?,
-    )
-    return project_registry(registry, project, reader)
+        installation_bindings=recorded_registry_bindings(units, path)?,
+    ))
 
 
-def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
+pub def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
     """A project's explicit build.registry-lock supersedes the installation's standard-producer root selection."""
     path = registry_record_path(project, reader)?
     if path == "":
@@ -1385,8 +1418,8 @@ pub def compile_binary(
     3. A binary that links the toolchain's own libraries carries the runpaths to find them.
     4. Reuse an unchanged binary, or compile and atomically publish it.
 
-    Prior dependency evidence that cannot identify the selected checkout is rediscovered before compilation.
-    Published dep-info names project sources relatively, so a later checkout can validate the same unit.
+    Dependency evidence that is absent, stale or cannot identify the selected checkout is rescanned before anything
+    is hashed. Published dep-info names project sources relatively, so a later checkout can validate the same unit.
     """
     # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
     directory = output.joinpath("bin")
@@ -1407,12 +1440,13 @@ pub def compile_binary(
         arguments = arguments + runpath_arguments(selected)
     # 4. A baked binary of the identity is viewed; otherwise it is compiled and baked.
     dependencies = directory.joinpath(f"{output_name}.d")
-    mut inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
+    mut inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
     if inputs.refusal != "":
-        # A prior view may carry evidence without a portable source mapping; observe this checkout before compiling.
+        # Evidence that is absent or stale, or a prior view's without a portable source mapping, names no identity:
+        # scan this checkout before compiling.
         discovered = dependency_arguments(arguments, dependencies)
         invoke_rustc(request.rustc, discovered, environment, declared.unstable, name)?
-        inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
+        inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
     label = f"unit {name} rust binary"
     store = rust_store()?
     held = claim_rust(store, f"binary {inputs.digest}")?
@@ -1441,7 +1475,7 @@ pub def compile_binary(
         declared.unstable,
         name,
     )?
-    current = binary_key(output_name, directory, staged_dependencies, facet, declared, request, arguments, environment)?
+    current = binary_key(directory, staged_dependencies, facet, declared, request, arguments, environment)?
     if (
         current.digest != inputs.digest
         or not inputs_unchanged(staged_dependencies, observations, Some(Path(facet.project)), arguments)?
@@ -1532,7 +1566,6 @@ def runpath_arguments(libraries: ToolchainLibraries) -> list[str]:
 
 
 def binary_key(
-    name: str,
     directory: Path,
     dependencies: Path,
     facet: LocalFacet,
@@ -1541,9 +1574,10 @@ def binary_key(
     arguments: list[str],
     environment: Dict[str, str],
 ) -> Result[Key, str]:
-    """Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths."""
-    if not dependencies.is_file():
-        invoke_rustc(request.rustc, dependency_arguments(arguments, dependencies), environment, declared.unstable, name)?
+    """
+    Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths. Evidence
+    that is absent or stale names no identity, so the caller scans before anything is hashed.
+    """
     for argument in arguments:
         if argument.startswith("link-arg=-Wl,-rpath,/"):
             return Ok(

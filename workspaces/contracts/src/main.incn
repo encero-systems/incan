@@ -232,8 +232,9 @@ def run_all(settings: Settings, scratch: Path) -> bool:
     3. The total, the units Oven compiled and reused, and the families that could not be read are reported.
     """
     families = [family for family in FAMILIES if selected_family(family, settings.selectors)]
-    if not settings.serial_families and settings.jobs > 1 and len(families) > 1:
-        return run_family_workers(settings, scratch, families)
+    if not settings.family_worker and not settings.serial_families and settings.jobs > 1:
+        if len(families) > 1 or "graph" in families:
+            return run_family_workers(settings, scratch, families)
     mut total = Tally(passed=0, failed=0, pending=0)
     mut units = Units()
     mut refused = 0
@@ -271,9 +272,12 @@ def run_family_workers(settings: Settings, scratch: Path, families: list[str]) -
     3. Forward complete reports in family order and aggregate their observed case and unit lines.
     """
     # 1. Every active worker receives the same share, so their command slots sum to at most the requested budget.
-    slots = min([3, settings.jobs, len(families)])
+    order = family_work_order(settings, families)
+    if len(order) == 0:
+        report_total(Tally(passed=0, failed=0, pending=0), Units(), 0)
+        return true
+    slots = min([3, settings.jobs, len(order)])
     jobs = settings.jobs // slots
-    order = family_work_order(families)
     match family_requests(settings, scratch, order, jobs):
         Err(reason) =>
             println(f"REFUSED family workers: {reason}")
@@ -289,6 +293,9 @@ def run_family_workers(settings: Settings, scratch: Path, families: list[str]) -
             mut units = Units()
             mut refused = 0
             for family in families:
+                if family == "graph":
+                    refused += forward_graph(order, results, total, units)
+                    continue
                 for index in range(len(order)):
                     if order[index] == family:
                         refused += forward_family(family, results[index], total, units)
@@ -305,11 +312,16 @@ def report_total(total: Tally, units: Units, refused: int) -> None:
         println(f"{refused} families could not be read")
 
 
-def family_work_order(families: list[str]) -> list[str]:
-    """Start graph's sequential protocol probes first while other families fill the remaining command slots."""
+def family_work_order(settings: Settings, families: list[str]) -> list[str]:
+    """Schedule independent graph cases separately; each case's edit/query protocol stays sequential in its worker."""
     if "graph" not in families:
         return families
-    return ["graph"] + [family for family in families if family != "graph"]
+    match discover_family(settings.root, "graph"):
+        # Discovery refusal belongs to a supervised worker, just like the other families' refusals.
+        Err(_) => return ["graph"] + [family for family in families if family != "graph"]
+        Ok(fixtures) =>
+            cases = [fixture.case_name() for fixture in fixtures if selected_case(fixture.case_name(), settings.selectors)]
+            return cases[:1] + [family for family in families if family != "graph"] + cases[1:]
 
 
 def family_requests(settings: Settings, scratch: Path, families: list[str], jobs: int) -> Result[list[Invocation], str]:
@@ -323,7 +335,7 @@ def family_requests(settings: Settings, scratch: Path, families: list[str], jobs
         incan = Path(incan).absolute().map_err((error) => error.message())?.0
     mut requests: list[Invocation] = []
     for family in families:
-        project = retained.joinpath(f"family-worker-{family}")
+        project = retained.joinpath(f"family-worker-{family.replace("/", "-")}")
         make_directory(project)?
         mut arguments = [incan, root.0, "--family-worker", "--scratch", retained.0, "--jobs", str(jobs)]
         if settings.isolated:
@@ -333,6 +345,8 @@ def family_requests(settings: Settings, scratch: Path, families: list[str], jobs
         if let Some(seconds) = settings.timeout:
             arguments.extend(["--timeout", str(seconds)])
         mut selected = [item for item in settings.selectors if item == family or item.startswith(f"{family}/")]
+        if "/" in family:
+            selected = [family]
         if len(selected) == 0:
             selected = [family]
         arguments.extend(selected)
@@ -340,7 +354,45 @@ def family_requests(settings: Settings, scratch: Path, families: list[str], jobs
     return Ok(requests)
 
 
-def forward_family(family: str, result: Result[Outcome, str], mut total: Tally, mut units: Units) -> int:
+def forward_graph(
+    order: list[str],
+    results: list[Result[Outcome, str]],
+    mut total: Tally,
+    mut units: Units,
+) -> int:
+    """Restore canonical case order and one summary per graph area after independent workers finish."""
+    mut area = ""
+    mut tally = Tally(passed=0, failed=0, pending=0)
+    mut refused = 0
+    for selected in sorted([item for item in order if item == "graph" or item.startswith("graph/")]):
+        for index in range(len(order)):
+            if order[index] != selected:
+                continue
+            if selected == "graph":
+                return forward_family("graph", results[index], total, units)
+            current = selected.split("/")[1]
+            if current != area:
+                if area != "":
+                    println(tally.line(f"area graph/{area}"))
+                area = current
+                tally = Tally(passed=0, failed=0, pending=0)
+            passed, failed, pending = total.passed, total.failed, total.pending
+            refused += forward_family("graph", results[index], total, units, true)
+            tally.passed += total.passed - passed
+            tally.failed += total.failed - failed
+            tally.pending += total.pending - pending
+    if area != "":
+        println(tally.line(f"area graph/{area}"))
+    return refused
+
+
+def forward_family(
+    family: str,
+    result: Result[Outcome, str],
+    mut total: Tally,
+    mut units: Units,
+    suppress_areas: bool = false,
+) -> int:
     """Forward case evidence, refusing missing completion markers, abnormal exits and inconsistent worker status."""
     match result:
         Err(reason) =>
@@ -355,6 +407,8 @@ def forward_family(family: str, result: Result[Outcome, str], mut total: Tally, 
                     completed += 1
                     continue
                 if worker_footer(line):
+                    continue
+                if suppress_areas and line.startswith("area "):
                     continue
                 println(line)
                 if line.startswith("PASS "):

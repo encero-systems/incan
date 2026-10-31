@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, and close binders projected from source collections, as for Command.args, Command.envs and Vec.extend (#2256, #2432)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, and take a local's open owner arguments from its first use, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place (#2256, #2432, #2481)
 # expect-stdout:
 #   7
 #   leaf
@@ -18,6 +18,12 @@
 #   3
 #   2
 #   3
+#   2
+#   2
+#   0
+#   1
+#   1
+#   1
 #   false
 
 """Retain generic instantiations, scalar and text loans, and a nonreturning native result in one case."""
@@ -215,6 +221,40 @@ def show_projected_binders() -> None:
     println(values.len())
 
 
+def vector_length(values: Vec[int]) -> usize:
+    """Read a native vector whose element type fixes the open owner argument of the caller's local."""
+    return values.len()
+
+
+def collected() -> Vec[int]:
+    """Return a local whose open owner argument the typed return fixes."""
+    values = Vec.new()
+    return values
+
+
+def show_first_use_arguments() -> None:
+    """Take each local's open owner arguments from its first use, then use the local as the type it fixed."""
+    mut table = HashMap.new()
+    table.insert("a", 1)
+    table.insert("b", 2)
+    println(table.len())
+    mut values = Vec.new()
+    values.push(4)
+    values.push(5)
+    println(values.len())
+    mut passed = Vec.new()
+    println(vector_length(passed))
+    passed.push(7)
+    println(vector_length(passed))
+    mut returned = collected()
+    returned.push(9)
+    println(returned.len())
+    placed = Vec.new()
+    mut held: Vec[str] = placed
+    held.push("x")
+    println(held.len())
+
+
 def show_nonreturning_call() -> None:
     """Print the result of the selected Rust function, then end the program through a nonreturning one."""
     println(panicking())
@@ -232,7 +272,7 @@ def main() -> None:
     1. Exercise generic instantiations and scalar references.
     2. Exercise text references and typed native factories.
     3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
-    4. Observe binders projected from source collections.
+    4. Observe binders projected from source collections and owner arguments fixed by a local's first use.
     5. Observe a native nonreturning call, which ends the program.
     """
     # 1. Exercise generic instantiations and scalar references.
@@ -245,7 +285,8 @@ def main() -> None:
     check_foreign_values()
     show_thread_capture()
     check_native_cursor_forwarding()
-    # 4. Observe binders projected from source collections.
+    # 4. Observe binders projected from source collections and owner arguments fixed by a local's first use.
     show_projected_binders()
+    show_first_use_arguments()
     # 5. Observe a native nonreturning call, which ends the program.
     show_nonreturning_call()

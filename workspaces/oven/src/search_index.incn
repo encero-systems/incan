@@ -18,16 +18,17 @@ from loaf_local_graph import unique
 from observation import observe
 from publication import publish
 from retained_readings import recall, retain
-from rust_units import read_registry_units
+from rust_units import RegistryUnits, read_registry_units
 from toolchain import Toolchain, toolchain_file
 
 const SCHEMA: str = "incan.search-index/1"
 const SELECTION: str = "search-index/1"
 
 
-pub def search_index(toolchain: Toolchain) -> Result[str, str]:
+pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = None) -> Result[str, str]:
     """
     The path of the toolchain generation's search index, published when the generation has none yet.
+    A caller that already read the registry supplies it, so first publication does not repeat that reading.
 
     1. Observe the toolchain description and the registry closure the index is derived from.
     2. A path retained for exactly those identities answers while its index exists.
@@ -43,7 +44,7 @@ pub def search_index(toolchain: Toolchain) -> Result[str, str]:
             if Path(path).is_file():
                 return Ok(path)
     # 3. The same directories always publish the same bytes, and so the same path.
-    path = published_index(toolchain)?
+    path = published_index(toolchain, registry)?
     retain(description, selection, observed, JsonValue.string(path))
     return Ok(path)
 
@@ -57,7 +58,7 @@ def registry_identity(toolchain: Toolchain) -> str:
         Err(_) => return "no registry closure"
 
 
-def published_index(toolchain: Toolchain) -> Result[str, str]:
+def published_index(toolchain: Toolchain, available: Option[RegistryUnits]) -> Result[str, str]:
     """
     Publish the sorted, distinct directories of the toolchain's crates and of its registry units in one document named
     by its SHA-256, unless that document already exists.
@@ -65,7 +66,10 @@ def published_index(toolchain: Toolchain) -> Result[str, str]:
     mut directories = toolchain.search
     registry = Path(toolchain.registry_units)
     if toolchain.registry_units != "" and registry.is_file():
-        directories = directories + read_registry_units(registry)?.search
+        known = match available:
+            Some(known) => known
+            None => read_registry_units(registry)?
+        directories = directories + known.search
     listed = JsonValue.array([JsonValue.string(directory) for directory in unique(directories)])
     text = json_text(JsonValue.object({"schema": JsonValue.string(SCHEMA), "search": listed}))?
     digest = hexlify(sha256.digest(text.encode("utf-8")))

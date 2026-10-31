@@ -10,6 +10,8 @@ from std.json import JsonValue
 from files import json_text, make_directory, read, read_json, remove, write as write_file
 from json_fields import required_items, required_text
 from registry_metadata import completion_selection
+from registry_pages import question, recall_catalog, current as catalog_current
+from registry_codec import Catalog, decode as decode_catalog, encode as encode_catalog
 from retained_readings import INSTALLED_DIGEST, installed_digest, recall, retain
 from segment_store import readmit_payload
 from bakery import fact_file, find, forget_verified, seal, staging
@@ -994,7 +996,8 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     directory = scratch.joinpath("registry")
     make_directory(directory.joinpath("entries"))?
     linked = directory.joinpath("entries").joinpath(entry)
-    linked.symlink_to(source).map_err((error) => error.message())?
+    mut copy_entry = Command.new("/bin/cp")
+    assert copy_entry.arg("-R").arg(source.0).arg(linked.0).status().map_err((error) => str(error))?.success()
     artifact = JsonValue.string(f"entries/{entry}/artifacts/{sole_artifact(source)?}")
     externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": artifact})})
     closure = directory.joinpath("closure.json")
@@ -1003,18 +1006,73 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     settled(closure)?
     first = read_registry_units(closure)?.units[0]
     assert first.name != "" and first.crate_hash != ""
-    # 2. A retained completion that names the crate otherwise shows that no producer metadata was read again.
+    # 2. The exact typed page answers without a closure or completion JSON document.
     selection = completion_selection(rust_compiler(toolchain))?
     observed = observe(closure)?
-    rows = recall(closure, selection, observed.stamp).unwrap_or(JsonValue.null()).as_array().unwrap_or([])
-    assert len(rows) == 1
-    mut row = rows[0].as_object().unwrap_or({})
-    row["name"] = JsonValue.string("retained")
-    retain(closure, selection, observed, JsonValue.array([JsonValue.object(row)]))
-    assert read_registry_units(closure)?.units[0].name == "retained"
+    key = question(closure, observed, selection)?
+    match recall_catalog(key)?:
+        None => assert false, "the completed closure has no typed page"
+        Some(catalog) =>
+            assert catalog_current(catalog)
+            assert catalog.units == [first]
+            check_registry_page_codec(scratch, catalog)?
+            # Directory membership and artifact rewrites expire the page without changing producer identities.
+            marker = Path(first.directory).joinpath("observation-probe")
+            write(marker, "new directory member")?
+            assert not catalog_current(catalog)
+            assert read_registry_units(closure)?.units[0] == first
+            remove(marker)?
+            assert read_registry_units(closure)?.units[0] == first
+            current = recall_catalog(key)?
+            match current:
+                None => assert false, "directory repair did not retain a replacement typed page"
+                Some(refreshed) =>
+                    artifact_file = Path(first.artifact)
+                    contents = artifact_file.read_bytes().map_err((error) => error.message())?
+                    artifact_file.chmod(false).map_err((error) => error.message())?
+                    artifact_file.write_bytes(contents).map_err((error) => error.message())?
+                    assert not catalog_current(refreshed)
+                    assert read_registry_units(closure)?.units[0] == first
+    assert read_registry_units(closure)?.units[0] == first
     # 3. Another closure generation is completed again from the producer's metadata.
     rewrite_in_place(closure, read(closure)?)?
+    next = question(closure, observe(closure)?, selection)?
+    assert next != key
+    assert question(closure, observed, selection + ":changed")? != key
+    # An explicit match keeps this test usable by bootstrap compilers affected by #2431.
+    match recall_catalog(next)?:
+        Some(_) => assert false, "a rewritten closure reused the previous generation's page"
+        None => pass
     assert read_registry_units(closure)?.units[0].name == first.name
+    return Ok(None)
+
+
+def check_registry_page_codec(scratch: Path, catalog: Catalog) -> Result[None, str]:
+    """Typed pages round-trip exact fields and refuse truncated, oversized and unknown-version encodings."""
+    page = scratch.joinpath("registry-codec.page")
+    bytes = encode_catalog(catalog)?
+    page.write_bytes(bytes).map_err((error) => error.message())?
+    mapped = page.map_read().map_err((error) => error.message())?
+    match mapped.view(0, mapped.len()):
+        None => assert false, "the typed page is not mapped"
+        Some(view) =>
+            assert decode_catalog(view)?.units == catalog.units
+            for length in [0, 7, 35, view.len() - 1]:
+                if let Some(truncated) = view.slice(0, length):
+                    match decode_catalog(truncated):
+                        Ok(_) => assert false, "a truncated registry page was accepted"
+                        Err(_) => pass
+    # Malformed scalar counts and versions are rejected before any row allocation.
+    mut invalid_index = 0
+    for damaged in [b"\xff\xff\xff\xff\xff\xff\xff\xff", b"\x00\x00\x00\x00\x00\x00\x00\x00"]:
+        file = scratch.joinpath(f"registry-invalid-{invalid_index}.page")
+        invalid_index += 1
+        file.write_bytes(damaged).map_err((error) => error.message())?
+        mapping = file.map_read().map_err((error) => error.message())?
+        if let Some(view) = mapping.view(0, mapping.len()):
+            match decode_catalog(view):
+                Ok(_) => assert false, "an invalid registry page was accepted"
+                Err(_) => pass
     return Ok(None)
 
 
@@ -1108,6 +1166,13 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     )?
     assert changed_environment.digest != first.digest
     verify_relative_dependency_evidence(setup, native, arguments, environment, scratch.path().joinpath("moved"))?
+    # A scan listing a file that no longer exists is stale, not an error: it names no identity and observes nothing.
+    removed = scratch.path().joinpath("removed.rs")
+    listed_removed = removed.0.replace(" ", "\\ ")
+    write(dependencies, f"library: {escaped} {listed_removed}\n\n# env-dep:CARGO_PKG_NAME=old\n")?
+    stale = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    assert stale.digest == "" and "no current dependency scan" in stale.refusal
+    assert removed.0 not in compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
     # A compile-time path can change observable bytes; refusing portability must leave local execution available.
     write(dependencies, f"library: {escaped}\n\n# env-dep:CARGO_MANIFEST_DIR=old\n")?
     refused = library_key(

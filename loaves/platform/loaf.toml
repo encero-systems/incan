@@ -7,5 +7,6 @@ description = "The OS-facing layer below std: thin wrappers over OS and Rust fac
 rust-edition = "2024"
 
 [dependencies]
+rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }
 serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"], default-features = true }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0", default-features = true }

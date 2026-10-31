@@ -15,7 +15,7 @@ from publication import publish
 from unit_freshness import artifact_identity, fingerprint
 from toolchain import Toolchain
 
-const INDEX_DOMAIN: str = "incan.context.index/4"
+const INDEX_DOMAIN: str = "incan.context.index/5"
 
 
 pub model RecordRange:
@@ -294,7 +294,7 @@ pub class ContextIndex:
 
 def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, str]:
     """
-    Persist a package index in the requesting project's preparation cache, bound to the export's full file identity.
+    Persist a package projection in the home, retaining physical anchors only where the rendered records need them.
 
     1. Reuse only a complete index for this artifact and source anchor.
     2. Decode each record once, recording its ranking keys and payload byte range.
@@ -302,18 +302,21 @@ def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, 
     """
     # 1. A changed export, package or anchor selects another immutable index.
     anchors = anchor_root(owner).0
+    mut projection_root = anchors
+    # Virtual package anchors are independent of the project requesting their records.
+    if unit.root.0.startswith("@"):
+        projection_root = ""
     key = fingerprint(
         [
             INDEX_DOMAIN,
-            anchors,
-            unit.path.0,
+            projection_root,
             unit.root.0,
             unit.package,
             unit.version,
             artifact_identity(stamp_file(unit))?,
         ],
     )?
-    path = Path(f"{cache_file(owner, key)?.0}.context-index")
+    path = Path(f"{cache_file(key)?.0}.context-index")
     if path.is_file() and Path(f"{path.0}.records").is_file() and Path(f"{path.0}.terms").is_file():
         return Ok(path)
     # 2. Only preparation decodes all payloads; requests read the vocabulary and lightweight rows.

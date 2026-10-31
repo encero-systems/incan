@@ -68,6 +68,8 @@ pub model Key:
     pub refusal: str = ""
     # Exact descriptor publication is a provenance guard, separate from portable invocation identity.
     pub descriptor: str = ""
+    # The admitted compiler input for revalidation; an opaque caller-owned key may omit its derivation context.
+    pub compiler: str = ""
 
 
 pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
@@ -234,6 +236,7 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
             parts=key.parts,
             provenance=[unit.project_root, unit.source],
             descriptor=fingerprint([json_text(unit.to_json())?])?,
+            compiler=key.compiler,
         ),
     )
 
@@ -258,7 +261,7 @@ def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[s
     return Ok(contents)
 
 
-def vocabulary_facts(path: Path) -> Result[str, str]:
+pub def vocabulary_facts(path: Path) -> Result[str, str]:
     """Identify prepared vocabulary semantics and producer identities, excluding worker payload checksums and locations."""
     prepared = read_json(path)?
     worker = prepared.require("worker").map_err((error) => error.message())?
@@ -294,7 +297,7 @@ def assembled(compiler: str, described: str, sources: list[str], artifacts: list
     linked = fingerprint(artifacts)?
     digest = "sha256:" + fingerprint([UNIT_DOMAIN, compiler, described, authored, linked])?
     parts = [f"compiler {compiler}", f"description {described}", f"sources {authored}", f"artifacts {linked}"]
-    return Ok(Key(digest=digest, parts=parts))
+    return Ok(Key(digest=digest, parts=parts, compiler=compiler))
 
 
 def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:

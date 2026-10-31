@@ -1,0 +1,304 @@
+"""Revision-bound compiler reads over one pinned snapshot; sources own bytes, this scope owns read evidence."""
+
+
+pub const READ_SCHEMA: str = "incan.compiler-fact-reads/1"
+
+
+@derive(Eq)
+pub model RecordKey:
+    """Full logical identity; locations, revisions and invocation-local table slots are excluded."""
+
+    pub family: str
+    pub identity: str
+    pub identity_profile: str
+    pub origin: str
+    pub facet: str
+    pub context: str = ""
+
+
+@derive(Eq)
+pub model ReadScope:
+    """Exact leased snapshot and producer profile, retained by the source for the activation's lifetime."""
+
+    pub snapshot: str
+    pub profile: str
+
+
+@derive(Eq)
+pub model PayloadSelection:
+    """A snapshot-bound payload reference and exact byte range, not a physical location."""
+
+    pub reference: str
+    pub offset: int
+    pub length: int
+
+
+@derive(Eq)
+pub model MemberSelection:
+    """A schema-owned selector, ordering and bounded continuation, including empty-result evidence."""
+
+    pub selector: str
+    pub order: str
+    pub lower: str
+    pub upper: str
+    pub continuation: str
+
+
+@derive(Eq)
+pub enum RecordSelection:
+    """A field, exact payload range, or bounded ordered membership selector, including its continuation boundary."""
+
+    Field(str)
+    Payload(PayloadSelection)
+    Members(MemberSelection)
+
+
+@derive(Eq)
+pub model RecordRequest:
+    """One bounded selection; the source must return evidence for precisely this key and selection."""
+
+    pub key: RecordKey
+    pub selection: RecordSelection
+    pub byte_limit: int = 65536
+
+
+@derive(Eq)
+pub model RevisionEvidence:
+    """Exact immutable binding and semantic value; payload and selector evidence remain separate."""
+
+    pub scope: ReadScope
+    pub request: RecordRequest
+    pub revision: str
+    pub semantic_digest: str
+
+
+@derive(Eq)
+pub model SelectedFact:
+    """One selected encoded value and its authenticated source evidence, never a decoded dependency closure."""
+
+    pub evidence: RevisionEvidence
+    pub value: bytes
+    pub selection_digest: str
+
+
+@derive(Eq)
+pub model AbsentFact:
+    """A proven semantic exclusion for the exact request, never an unloaded or unfinished supplier."""
+
+    pub scope: ReadScope
+    pub request: RecordRequest
+    pub exclusion_digest: str
+
+
+@derive(Eq)
+pub enum ReadFault:
+    """Infrastructure faults terminate the activation and cannot become source diagnostics or semantic absence."""
+
+    SnapshotMismatch
+    ProfileMismatch
+    SelectionMismatch
+    InvalidEvidence
+    UnfinishedSupplier
+    DamagedRecord
+    WitnessUnavailable
+    ClosedScope
+    OutsidePreparation
+
+
+pub enum RecordRead:
+    """Final selected value, witnessed semantic absence, or a typed infrastructure fault."""
+
+    Found(SelectedFact)
+    Absent(AbsentFact)
+    Failed(ReadFault)
+
+
+pub enum ReadWitness:
+    """Successful reads only: found and exclusion evidence preserve their different invalidation contracts."""
+
+    Found(RevisionEvidence, str)
+    Absent(AbsentFact)
+
+
+pub model ReadCounters:
+    """Source calls and encoded response bytes, including invalid replies; source I/O and decode costs are separate."""
+
+    pub operations: int
+    pub response_bytes: int
+
+
+@derive(Eq)
+pub model PreparationEvidence:
+    """The certified output and earlier selector evidence remain dependencies even when no value is read."""
+
+    pub output: RecordKey
+    pub rank_certificate: str
+    pub selector_witnesses: str
+
+
+pub model ReadReceipt:
+    """Complete activation evidence, including empty reads, exact profile and measured response bytes."""
+
+    pub schema: str
+    pub scope: ReadScope
+    pub preparation: PreparationEvidence
+    pub witnesses: list[ReadWitness]
+    pub operations: int
+    pub response_bytes: int
+
+
+pub trait RecordSource:
+    """The source authenticates revisions, payload digests and selector proofs under the scope's lease."""
+
+    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
+        """Return exactly the requested projection; known unfinished, damaged and unleased inputs fail closed."""
+        pass
+
+
+pub class RecordReads:
+    """One activation's actual reads; a fault is sticky and prevents publication of a partial witness set."""
+
+    scope: ReadScope
+    preparation: PreparationEvidence
+    allowed: list[RecordRequest]
+    witnesses: list[ReadWitness] = []
+    fault: Option[ReadFault] = None
+    closed: bool = false
+    operations: int = 0
+    response_bytes: int = 0
+
+    def read[S with RecordSource](mut self, source: S, request: RecordRequest) -> RecordRead:
+        """1. Validate the activation. 2. Read once. 3. Bind evidence and count the selected bytes."""
+        # 1. Validate the activation before touching the source.
+        if self.closed:
+            return RecordRead.Failed(ReadFault.ClosedScope)
+        match self.fault:
+            Some(fault) => return RecordRead.Failed(fault)
+            None => pass
+        if not valid_activation(self.scope, self.preparation) or not valid_request(request):
+            self.fault = Some(ReadFault.InvalidEvidence)
+            return RecordRead.Failed(ReadFault.InvalidEvidence)
+
+        if request not in self.allowed:
+            self.fault = Some(ReadFault.OutsidePreparation)
+            return RecordRead.Failed(ReadFault.OutsidePreparation)
+
+        # 2. The source performs exactly one requested lookup.
+        self.operations += 1
+        result = source.read(self.scope, request)
+
+        # 3. Count all returned bytes, including a reply whose binding is invalid.
+        match result:
+            RecordRead.Found(found) => self.response_bytes += len(found.value)
+            _ => pass
+
+        # Bind the returned evidence before exposing the selected value.
+        match validate_read(self.scope, request, result):
+            Some(fault) =>
+                self.fault = Some(fault)
+                return RecordRead.Failed(fault)
+            None => pass
+        match result:
+            RecordRead.Found(found) =>
+                self.witnesses.append(ReadWitness.Found(found.evidence, found.selection_digest))
+            RecordRead.Absent(absent) => self.witnesses.append(ReadWitness.Absent(absent))
+            RecordRead.Failed(fault) =>
+                self.fault = Some(fault)
+                return RecordRead.Failed(fault)
+        return result
+
+    def counters(self) -> ReadCounters:
+        """Read this activation's work without exposing mutable counter state or decoded values."""
+        return ReadCounters(operations=self.operations, response_bytes=self.response_bytes)
+
+    def finish(mut self) -> Result[ReadReceipt, ReadFault]:
+        """Close once and transfer the complete evidence; a failed scope can never publish partial success."""
+        if self.closed:
+            return Err(ReadFault.ClosedScope)
+        self.closed = true
+        if not valid_activation(self.scope, self.preparation):
+            self.fault = Some(ReadFault.InvalidEvidence)
+        match self.fault:
+            Some(fault) =>
+                self.witnesses = []
+                return Err(fault)
+            None =>
+                witnesses = self.witnesses
+                self.witnesses = []
+                return Ok(ReadReceipt(
+                    schema=READ_SCHEMA, scope=self.scope, preparation=self.preparation, witnesses=witnesses,
+                    operations=self.operations, response_bytes=self.response_bytes,
+                ))
+
+
+pub def valid_request(request: RecordRequest) -> bool:
+    """Reject incomplete full keys and invalid range requests before the source can observe them."""
+    if request.byte_limit <= 0 or request.byte_limit > 65536:
+        return false
+    if not valid_key(request.key):
+        return false
+    match request.selection:
+        RecordSelection.Field(name) => return name != ""
+        RecordSelection.Payload(payload) =>
+            return (
+                payload.reference != "" and payload.offset >= 0 and payload.length >= 0
+                and payload.length <= request.byte_limit
+            )
+        RecordSelection.Members(members) => return members.selector != "" and members.order != ""
+
+
+def validate_read(scope: ReadScope, request: RecordRequest, result: RecordRead) -> Option[ReadFault]:
+    """Check the complete response binding; the source's integrity proof is not reconstructed by this adapter."""
+    match result:
+        RecordRead.Failed(fault) => return Some(fault)
+        RecordRead.Absent(absent) =>
+            mismatch = binding_fault(scope, request, absent.scope, absent.request)
+            if mismatch != None:
+                return mismatch
+            if absent.exclusion_digest == "":
+                return Some(ReadFault.InvalidEvidence)
+        RecordRead.Found(found) =>
+            mismatch = binding_fault(scope, request, found.evidence.scope, found.evidence.request)
+            if mismatch != None:
+                return mismatch
+            if len(found.value) > request.byte_limit:
+                return Some(ReadFault.InvalidEvidence)
+            if found.evidence.revision == "" or found.evidence.semantic_digest == "" or found.selection_digest == "":
+                return Some(ReadFault.InvalidEvidence)
+            match request.selection:
+                RecordSelection.Payload(payload) =>
+                    if len(found.value) != payload.length:
+                        return Some(ReadFault.InvalidEvidence)
+                _ => pass
+    return None
+
+
+def binding_fault(
+    expected_scope: ReadScope,
+    expected_request: RecordRequest,
+    actual_scope: ReadScope,
+    actual_request: RecordRequest,
+) -> Option[ReadFault]:
+    """Scope mismatch takes precedence; full-key and complete selector equality prevent cross-record substitution."""
+    if expected_scope.snapshot != actual_scope.snapshot:
+        return Some(ReadFault.SnapshotMismatch)
+    if expected_scope.profile != actual_scope.profile:
+        return Some(ReadFault.ProfileMismatch)
+    if expected_request != actual_request:
+        return Some(ReadFault.SelectionMismatch)
+    return None
+
+
+pub def valid_key(key: RecordKey) -> bool:
+    """A reusable compiler key always binds its family, identity profile, origin, declaration and facet."""
+    return (
+        key.family != "" and key.identity_profile != "" and key.origin != "" and key.identity != "" and key.facet != ""
+    )
+
+
+def valid_activation(scope: ReadScope, preparation: PreparationEvidence) -> bool:
+    """Even an empty read set must carry its certified output, profile and earlier selector dependencies."""
+    return (
+        scope.snapshot != "" and scope.profile != "" and valid_key(preparation.output)
+        and preparation.rank_certificate != "" and preparation.selector_witnesses != ""
+    )

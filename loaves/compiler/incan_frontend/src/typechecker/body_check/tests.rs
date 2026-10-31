@@ -73,6 +73,10 @@ impl TypeChecker {
                 "a body refusal belongs to its statement result"
             );
         }
+        let first = program.declarations.iter().find(|declaration|
+            matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == "first"))
+            .ok_or("missing accepted warning control")?;
+        assert_warning_only_inputs(&checker, &program, first.span)?;
         for body in &checker.checked_bodies {
             assert!(
                 checker.checked_declarations.iter().all(|owner| {
@@ -545,4 +549,35 @@ impl TypeChecker {
         );
         Ok(())
     }
+}
+
+/// Warning and lint diagnostics preserve accepted native predecessor reads independently of other owners' failures.
+/// The control is stored as the checker stores a local diagnostic, as an anchored value of the checked program.
+fn assert_warning_only_inputs(
+    checker: &TypeChecker,
+    program: &crate::ast::Program,
+    span: Span,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut warning_only = checker
+        .checked_body(span)
+        .ok_or("missing warning control body")?
+        .clone();
+    let declaration = checker
+        .checked_declaration(span)
+        .ok_or("missing warning control declaration")?;
+    let mut positions = DiagnosticPositions::new(program, checker.symbols.declaration_origin());
+    let mut warning = crate::diagnostics::CompileError::warning("warning control".to_owned(), span);
+    for kind in [
+        crate::diagnostics::ErrorKind::Warning,
+        crate::diagnostics::ErrorKind::Lint,
+    ] {
+        warning.kind = kind;
+        warning_only.diagnostics = vec![positions.store(warning.clone())];
+        assert!(
+            !warning_only.is_refused(),
+            "non-fatal diagnostics keep an accepted predecessor readable"
+        );
+        warning_only.reference_inputs(declaration)?;
+    }
+    Ok(())
 }

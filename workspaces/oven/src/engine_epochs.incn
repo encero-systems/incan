@@ -1,0 +1,179 @@
+"""Prepare request captures for atomic publication; idle services retain no decoded inputs."""
+
+from rust::std::str import from_utf8
+from std.fs import Path
+from engine_capture import (
+    BuildEpoch,
+    CaptureRequest,
+    CaptureCounters,
+    CaptureOutcome,
+    InputSelection,
+    admitted_home,
+    capture,
+    decoded_epoch,
+)
+from engine_messages import Submit
+from segment_store import Lookup, Snapshot, Transaction, begin, commit, lookup, owned, put, snapshot
+from unit_freshness import fingerprint
+from jec import begin as begin_work, record as record_work
+
+
+pub model CapturedRequest:
+    """A captured input set and its staged publication, scoped to this activation."""
+
+    pub epoch: BuildEpoch
+    pub revision: str
+    pub identity: str
+    pub snapshot: Snapshot
+    pub counters: CaptureCounters
+    # Canonical epoch encodings and publication attempts performed by this capture, including no-op commits.
+    pub encodings: int = 1
+    pub commits: int = 1
+    pub identity_encodings: int = 1
+    pub head: str = ""
+    pub transaction: Option[Transaction] = None
+
+
+pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
+    """Commit a standalone capture through the same preparation boundary the engine request uses."""
+    mut captured = prepare_submit(store, submit)?
+    if let Some(transaction) = captured.transaction:
+        captured.snapshot = commit(transaction).map_err((error) => error.message())?
+    return Ok(captured)
+
+
+pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
+    """
+    Capture a file request and prepare its revision without publishing any part of the request.
+
+    1. Validate the supported request selection and read its previous captured revision.
+    2. Capture through the single metadata-first capture implementation.
+    3. Stage the epoch and request head together; unchanged requests encode and publish nothing.
+    """
+    # 1. This stage accepts one program file and one profile, with no implicit option fallbacks.
+    if submit.command not in ["run", "build"]:
+        return Err(f"unit records do not implement `{submit.command}`")
+    if submit.input_selection not in ["debug", "release"] or submit.options != "":
+        return Err("unit records require a debug or release profile and no additional build options")
+    source = Path(submit.requested_roots).absolute().map_err((error) => error.message())?
+    if not source.0.endswith(".incn") or submit.view == "":
+        return Err("unit records require one Incan program file and a project view")
+    admitted = admitted_home()?
+    head = f"incan.engine.capture-head\t{fingerprint([submit.view, source.0, submit.input_selection, admitted.pin])?}"
+    before = snapshot(store, submit.view).map_err((error) => error.message())?
+    prior_revision, prior_identity, previous = previous_epoch(before, head)?
+    # 2. Build and run select the same program inputs; the verb is an execution action, not a compiled identity.
+    request = CaptureRequest(
+        roots=[source.0],
+        selection=InputSelection(command="run", profile=submit.input_selection),
+        whole_unit=true,
+    )
+    # Complete nanosecond metadata guards this Unix request; no coarse timestamp grace delays unchanged reuse.
+    checking = begin_work()
+    captured = capture(request, previous, admitted, 0)?
+    record_work("engine_capture_inputs", source.0, checking)
+    match captured.epoch:
+        None => return Err(f"capture could not settle inputs: {captured.unstable}")
+        Some(epoch) =>
+            if captured.outcome == CaptureOutcome.Unchanged and prior_identity != "":
+                return Ok(
+                    CapturedRequest(
+                        epoch=epoch,
+                        revision=prior_revision,
+                        identity=prior_identity,
+                        snapshot=before,
+                        counters=captured.counters,
+                        encodings=0,
+                        commits=0,
+                        identity_encodings=0,
+                        head=head,
+                    ),
+                )
+            # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
+            publishing = begin_work()
+            encoded = epoch.encoded()?
+            revision = fingerprint([encoded])?
+            identity = epoch.identity()?
+            mut transaction = begin(before)
+            transaction = put(transaction, epoch_key(revision), encoded.encode("utf-8"))
+            transaction = put(transaction, head, f"{revision} {identity}".encode("utf-8"))
+
+            record_work("engine_capture_encode", source.0, publishing)
+            return Ok(
+                CapturedRequest(
+                    epoch=epoch,
+                    revision=revision,
+                    identity=identity,
+                    snapshot=before,
+                    head=head,
+                    transaction=Some(transaction),
+                    counters=captured.counters,
+                ),
+            )
+
+
+pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, str]:
+    """Capture post-projection metadata before the atomic commit; refuse semantic changes during production."""
+    if captured.commits == 0:
+        return Ok(captured)
+    request = CaptureRequest(roots=captured.epoch.roots, selection=captured.epoch.selection, whole_unit=true)
+    checked = capture(request, Some(captured.epoch), admitted_home()?, 0)?
+    match checked.epoch:
+        None => return Err("inputs did not settle before request publication")
+        Some(epoch) =>
+            if checked.outcome == CaptureOutcome.Changed:
+                return Err("captured inputs changed before request publication")
+            if checked.outcome == CaptureOutcome.Unchanged:
+                return Ok(captured)
+            mut refreshed = captured
+            encoded = epoch.encoded()?
+            refreshed.epoch = epoch
+            refreshed.revision = fingerprint([encoded])?
+            mut transaction = begin(captured.snapshot)
+            transaction = put(transaction, epoch_key(refreshed.revision), encoded.encode("utf-8"))
+            transaction = put(transaction, captured.head, f"{refreshed.revision} {captured.identity}".encode("utf-8"))
+            refreshed.transaction = Some(transaction)
+            return Ok(refreshed)
+
+
+def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, str, Option[BuildEpoch]], str]:
+    """Read the selected revision and semantic identity; a revision-only head is upgraded once after capture."""
+    match record_text(view, head)?:
+        None => return Ok(("", "", None))
+        Some(text) =>
+            fields = text.split(" ")
+            if len(fields) not in [1, 2]:
+                return Err("malformed capture head")
+            for field in fields:
+                if len(field) != 64:
+                    return Err("malformed capture identity")
+                for character in field:
+                    if character not in "0123456789abcdef":
+                        return Err("malformed capture identity")
+            revision = fields[0]
+            mut identity = ""
+            if len(fields) == 2:
+                identity = fields[1]
+            match record_text(view, epoch_key(revision))?:
+                None => return Err("capture head names a missing epoch record")
+                Some(encoded) => return Ok((revision, identity, Some(decoded_epoch(encoded)?)))
+
+
+pub def load_epoch(store: Path, revision: str, view: str) -> Result[BuildEpoch, str]:
+    """Activate one exact persisted capture revision for a producer; callers drop it when that activation ends."""
+    match record_text(snapshot(store, view).map_err((error) => error.message())?, epoch_key(revision))?:
+        None => return Err("captured epoch record is missing")
+        Some(text) => return decoded_epoch(text)
+
+
+pub def record_text(view: Snapshot, key: str) -> Result[Option[str], str]:
+    """Decode one selected UTF-8 record at the store boundary, preserving typed store failures as messages."""
+    match lookup(view, key).map_err((error) => error.message())?:
+        Lookup.Found(value) => return Ok(Some(str(from_utf8(owned(value)).map_err((error) => str(error))?)))
+        Lookup.Absent => return Ok(None)
+        Lookup.Deleted => return Ok(None)
+
+
+def epoch_key(revision: str) -> str:
+    """The store family for one exact capture revision."""
+    return f"incan.engine.build-epoch\t{revision}"

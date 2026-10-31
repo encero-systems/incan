@@ -72,6 +72,8 @@ pub model Toolchain:
     pub c_compiler: str = ""
     # Explicit target facts for synthetic or cross-target toolchains; empty selects rustc's reported host.
     pub target: str = ""
+    # A unit-record activation cannot retain the bulk compiler's decoded caches while idle (#2481, S3).
+    pub retire_worker: bool = false
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
@@ -134,7 +136,7 @@ def admitted(directory: Path) -> Result[bool, str]:
     """Whether this installed generation, at this location, was admitted; a reinstall or a move admits again."""
     marker = admission_marker(directory)?
     if not marker.is_file():
-        return Ok(False)
+        return Ok(false)
     return Ok(read(marker)? == observe(directory.joinpath("toolchain.json"))?.stamp)
 
 

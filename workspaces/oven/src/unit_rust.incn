@@ -231,9 +231,11 @@ pub def prepare_linked(
     described: UnitDescription,
     toolchain: Toolchain,
     checking_interfaces: list[str] = [],
+    registry: Option[RegistryUnits] = None,
 ) -> Result[UnitDescription, str]:
     """
     Bind exact native inputs and register a producer vocabulary after shared dependency preparation is complete.
+    A supplied registry is reused only for the generation's search index, without changing the unit's selected roots.
 
     The description names the toolchain generation's search index and lists only the directories beyond it: its Loaves'
     and those their native closures add. A closure published before the index existed also lists the toolchain's own
@@ -245,7 +247,7 @@ pub def prepare_linked(
     """
     # 1. Every unit of the toolchain generation names the same index.
     mut unit = described
-    unit.search_index = Some(search_index(toolchain)?)
+    unit.search_index = Some(search_index(toolchain, registry)?)
     unit.rust_abi = toolchain.rust_abi
     unit = with_toolchain_crates(unit, toolchain)
     unit = with_declared_libraries(unit, toolchain)?
