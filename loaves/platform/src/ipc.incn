@@ -16,6 +16,7 @@ from rust::std::time import Duration
 
 pub const MAX_FRAME: int = 16777216
 const HEADER_DIGITS: int = 8
+const CLOSED: str = "the connection is closed"
 const OWNER_ONLY: u32 = 384
 # The byte of the ASCII digit zero.
 const DIGIT_ZERO: int = 48
@@ -30,34 +31,52 @@ pub model PeerIdentity:
 
 
 pub class Connection:
-    """One end of a Unix socket, speaking length-framed byte payloads."""
+    """One end of a Unix socket, speaking length-framed byte payloads. A closed connection holds no socket."""
 
-    # Shared and interior-mutable, because a foreign socket can be neither cloned nor copied.
-    pub stream: Rc[RefCell[UnixStream]]
+    # Shared and interior-mutable, because a foreign socket can be neither cloned nor copied. Closing takes the socket
+    # out of the cell, which releases its descriptor at once for every holder of the connection.
+    stream: Rc[RefCell[Option[UnixStream]]]
 
     def peer(self) -> Result[PeerIdentity, str]:
         """Read OS peer credentials; the standard wrapper uses getpeereid or SO_PEERCRED."""
-        match self.stream.borrow().peer_cred():
-            Err(error) => return Err(f"cannot identify socket peer: {error}")
-            Ok(found) => return Ok(PeerIdentity(uid=found.uid, gid=found.gid, pid=found.pid.map((pid) => int(pid))))
+        match self.stream.borrow().as_ref():
+            None => return Err(CLOSED)
+            Some(open) =>
+                match open.peer_cred():
+                    Err(error) => return Err(f"cannot identify socket peer: {error}")
+                    Ok(found) =>
+                        return Ok(PeerIdentity(uid=found.uid, gid=found.gid, pid=found.pid.map((pid) => int(pid))))
 
     def close(self) -> Result[None, str]:
-        """Close both directions of this socket without relying on the last shared wrapper being dropped."""
-        return self.stream.borrow().shutdown(Shutdown.Both).map_err((error) => f"cannot close socket: {error}")
+        """
+        Close both directions of this socket and release its descriptor, for every holder of this connection at once.
+        Closing a closed connection does nothing.
+
+        A shutdown alone does not reliably end the peer's stream: on macOS, a peer whose write races the shutdown can
+        miss the end of the stream and wait for it forever. Releasing the descriptor always ends it.
+        """
+        match self.stream.replace(None):
+            None => return Ok(None)
+            # The descriptor is released when `open` goes out of scope, whether or not the shutdown succeeds.
+            Some(open) => return open.shutdown(Shutdown.Both).map_err((error) => f"cannot close socket: {error}")
 
     def descriptor(self) -> int:
         """
-        The OS descriptor number of this socket, valid while the connection is open. It lends the socket to native
-        code that only observes it; ownership stays with this connection.
+        The OS descriptor number of this socket while the connection is open, and -1 once it is closed. It lends the
+        socket to native code that only observes it; ownership stays with this connection.
         """
-        return int(self.stream.borrow().as_raw_fd())
+        match self.stream.borrow().as_ref():
+            None => return -1
+            Some(open) => return int(open.as_raw_fd())
 
     def read_part(mut self, count: int, bound: int) -> Result[bytes, str]:
         """Read exactly a bounded part, checking its length before allocating the receive buffer."""
         if count < 0 or count > bound:
             return Err("transport read exceeds its bound")
         mut payload = zeros(count)
-        self.stream.borrow_mut().read_exact(payload).map_err((error) => f"cannot read frame: {error}")?
+        match self.stream.borrow_mut().as_mut():
+            None => return Err(CLOSED)
+            Some(open) => open.read_exact(payload).map_err((error) => f"cannot read frame: {error}")?
         return Ok(payload)
 
     def send(mut self, payload: bytes) -> Result[None, str]:
@@ -78,9 +97,12 @@ pub class Connection:
 
     def write_part(mut self, part: bytes, what: str) -> Result[None, str]:
         """Write all of one part of a frame; a failure names the part."""
-        match self.stream.borrow_mut().write_all(part):
-            Ok(_) => return Ok(None)
-            Err(error) => return Err(f"cannot write {what}: {error}")
+        match self.stream.borrow_mut().as_mut():
+            None => return Err(CLOSED)
+            Some(open) =>
+                match open.write_all(part):
+                    Ok(_) => return Ok(None)
+                    Err(error) => return Err(f"cannot write {what}: {error}")
 
     def receive(mut self) -> Result[bytes, str]:
         """
@@ -101,13 +123,35 @@ pub class Connection:
         mut limit: Option[Duration] = None
         if seconds != 0:
             limit = Some(Duration.from_secs(seconds))
-        # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal.
-        _ = self.stream.borrow_mut().set_read_timeout(limit)
+        # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal. A closed
+        # connection has no reads left to bound.
+        match self.stream.borrow().as_ref():
+            None => pass
+            Some(open) => _ = open.set_read_timeout(limit)
 
     def write_at_most(mut self, seconds: u64) -> None:
         """Bound each write by `seconds`."""
-        # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal.
-        _ = self.stream.borrow_mut().set_write_timeout(Some(Duration.from_secs(seconds)))
+        # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal. A closed
+        # connection has no writes left to bound.
+        match self.stream.borrow().as_ref():
+            None => pass
+            Some(open) => _ = open.set_write_timeout(Some(Duration.from_secs(seconds)))
+
+    def readable(self) -> Result[bool, str]:
+        """Ask the OS whether a byte or EOF is waiting, without consuming or retaining protocol data."""
+        match self.stream.borrow().as_ref():
+            None => return Err(CLOSED)
+            Some(open) =>
+                open.set_nonblocking(true).map_err((error) => f"cannot poll socket: {error}")?
+                mut byte: bytes = [0u8]
+                observed = open.peek(byte)
+                open.set_nonblocking(false).map_err((error) => f"cannot restore socket mode: {error}")?
+                match observed:
+                    Ok(_) => return Ok(true)
+                    Err(error) =>
+                        if error.kind() == ErrorKind.WouldBlock:
+                            return Ok(false)
+                        return Err(f"cannot poll socket: {error}")
 
 
 pub def length_of(header: bytes) -> Result[int, str]:
@@ -154,7 +198,7 @@ def zeros(count: int) -> bytes:
 
 def connection(stream: UnixStream) -> Connection:
     """Speak frames over `stream`."""
-    return Connection(stream=Rc.new(RefCell.new(stream)))
+    return Connection(stream=Rc.new(RefCell.new(Some(stream))))
 
 
 pub class Listener:
@@ -247,21 +291,6 @@ pub def stale(path: str) -> bool:
     match dial_live(path):
         Ok(found) => return found is None
         Err(_) => return false
-
-
-pub def readable(connected: Connection) -> Result[bool, str]:
-    """Ask the OS whether a byte or EOF is waiting, without consuming or retaining protocol data."""
-    mut stream = connected.stream.borrow_mut()
-    stream.set_nonblocking(true).map_err((error) => f"cannot poll socket: {error}")?
-    mut byte: bytes = [0u8]
-    observed = stream.peek(byte)
-    stream.set_nonblocking(false).map_err((error) => f"cannot restore socket mode: {error}")?
-    match observed:
-        Ok(_) => return Ok(true)
-        Err(error) =>
-            if error.kind() == ErrorKind.WouldBlock:
-                return Ok(false)
-            return Err(f"cannot poll socket: {error}")
 
 
 pub def session_id() -> Result[bytes, str]:

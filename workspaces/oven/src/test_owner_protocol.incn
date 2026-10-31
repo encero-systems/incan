@@ -70,6 +70,15 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     assert answer.exit == 3
     assert answer.binary == "/p/target/bin/p"
     assert answer.trace == ["oven: x"]
+    # Closing releases the socket at once, also for another holder of the connection, so the peer reads the end of
+    # the stream although its own write was never read; closing again does nothing.
+    mut holder = server
+    send_document(client, request.to_json())?
+    server.close()?
+    assert holder.descriptor() == -1
+    assert refused_frame(receive_document(holder))
+    assert refused_frame(receive_document(client))
+    holder.close()?
     # A header states a length of eight digits, within the bound.
     assert padded(42) == "00000042"
     assert length_of(padded(MAX_FRAME).encode("utf-8"))? == MAX_FRAME
