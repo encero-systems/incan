@@ -360,7 +360,7 @@ def abandoned_digest(store: Path, source: Path) -> Result[str, str]:
 
 def prove_active_staging_survives(store: Path) -> Result[Path, str]:
     """Force collection while an active producer owns its staging, then abandon that producer on return."""
-    identity = digest_of("ee1")
+    identity = "sha256:" + digest_of("ee1")
     held = claim(store, identity)?
     active = staging(store, identity)?
     write(active.joinpath("payload"), "active producer")?
