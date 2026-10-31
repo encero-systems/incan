@@ -4,7 +4,11 @@ from rust::std::env import args
 from rust::std::io import Write, stderr
 from rust::std::process import exit
 from rust::std::string import String as RustString
+from std.environ import get_or
 from std.fs import Path
+from engine_selector import select as select_engine, command as engine_command
+from engine_service import serve as serve_engine, refusal_code
+from bakery import bakery_command, parse_bakery, repair_payload_command
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
@@ -80,7 +84,19 @@ def dispatch(command: str, rest: list[str]) -> None:
         require_no_arguments(command, rest)
         println(f"incan {TOOLCHAIN}")
         return
+    if command == "--internal-engine":
+        match serve_engine(rest):
+            Ok(_) => return
+            Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        return
+    match select_engine(get_or("INCAN_ENGINE", "legacy")):
+        Err(reason) => fail(f"incan {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
+        Ok(engine) =>
+            match engine_command(engine, command):
+                Ok(_) => pass
+                Err(reason) => fail(f"incan {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
     if command == "run":
+
         run(rest)
         return
     if command == "_run-built":
@@ -123,6 +139,14 @@ def dispatch(command: str, rest: list[str]) -> None:
         match archive_options(rest):
             Err(reason) => argument_error("toolchain", reason)
             Ok(options) => finish("toolchain", toolchain_command(options))
+        return
+    if command == "bakery":
+        if len(rest) > 0 and rest[0] == "repair-payload":
+            finish("bakery", repair_payload_command(rest))
+            return
+        match parse_bakery(rest):
+            Err(reason) => argument_error("bakery", reason)
+            Ok(keep_days) => finish("bakery", bakery_command(keep_days))
         return
     if command.startswith("-"):
         fail(f"incan: unknown option `{command}`", 2)

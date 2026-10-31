@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::plan::{CalleeKind, Constant, Operand, OperandKind, Plan, PlanType, RvalueKind, StatementKind};
 use incan_driver::unit::UnitLoaf;
-use incan_frontend::loaf_index::LoafArtifact;
+use incan_frontend::loaf_index::LoafNativeClosure;
 use rustc_ast::{
     self as ast,
     visit::{self, Visitor},
@@ -137,11 +137,7 @@ pub(crate) fn link_externs(
     let closures = loaves
         .iter()
         .filter(|loaf| !loaf.standard || reached.contains(&loaf.name))
-        .map(|loaf| {
-            LoafArtifact::read(&loaf.dir, &loaf.name)
-                .and_then(|artifact| artifact.native_closure())
-                .map_err(|error| error.to_string())
-        })
+        .map(|loaf| LoafNativeClosure::read(&loaf.dir, &loaf.name).map_err(|error| error.to_string()))
         .collect::<Result<Vec<_>, _>>()?;
     let mut selected = direct.to_vec();
     for root in roots {

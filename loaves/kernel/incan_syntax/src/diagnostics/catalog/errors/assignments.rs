@@ -1,4 +1,4 @@
-//! Errors about assignments with several targets.
+//! Errors about assignment compatibility and replacement of borrowed iteration storage.
 
 use crate::ast::Span;
 use crate::diagnostics::CompileError;
@@ -23,4 +23,14 @@ pub fn chained_assignment_value_has_no_one_type(
         span,
     )
     .with_hint("Assign each target in its own statement")
+}
+
+/// Refuse invalidating storage a list loop still borrows, before native borrowing could observe a dangling iterator.
+pub fn iterated_place_replacement(place: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot replace '{place}' or its parent while iterating '{place}'"),
+        span,
+    )
+    .with_stable_code("INCAN-T0121")
+    .with_hint("Finish the borrowed iteration before replacing the collection, or iterate an explicit clone")
 }

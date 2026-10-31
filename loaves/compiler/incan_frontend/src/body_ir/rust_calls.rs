@@ -210,7 +210,7 @@ impl BodyBuilder<'_, '_> {
 
     /// Evaluate one checked native adjustment chain once. Reference parameters borrow the original place; owned
     /// storage constructions consume their input instead of silently borrowing it.
-    fn lower_native_adjustment_value(
+    pub(super) fn lower_native_adjustment_value(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
         steps: &[RustCheckedCall],

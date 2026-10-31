@@ -1,0 +1,677 @@
+"""Versioned, tagged binary bodies; lengths are validated before each decode allocation."""
+
+from engine_messages import (
+    BindingOutcome,
+    CompletionStatus,
+    Resolution,
+    EffectDisposition,
+    Message,
+    Hello,
+    Welcome,
+    Submit,
+    Accepted,
+    Captured,
+    Prepare,
+    NeedPrerequisite,
+    Evaluate,
+    Produced,
+    Query,
+    Page,
+    Event,
+    Complete,
+    Cancel,
+    Cancelled,
+    Resolve,
+    Pin,
+    Release,
+    Drain,
+    Stop,
+    Ack,
+    Refused,
+)
+from engine_wire import Decoder, MAX_PAYLOAD, Refusal, RefusalKind, joined, scalar, text, wide
+
+
+pub def encode(message: Message) -> Result[tuple[int, bytes], Refusal]:
+    """Encode one v1 body and return its header tag; no records are sent on this channel."""
+    match message:
+        Message.Hello(value) => return bounded(1, encode_hello(value)?)
+        Message.Welcome(value) => return bounded(2, encode_welcome(value)?)
+        Message.Submit(value) => return bounded(3, encode_submit(value)?)
+        Message.Accepted(value) => return bounded(4, encode_accepted(value)?)
+        Message.Captured(value) => return bounded(5, encode_captured(value)?)
+        Message.Prepare(value) => return bounded(6, encode_prepare(value)?)
+        Message.NeedPrerequisite(value) => return bounded(7, encode_needprerequisite(value)?)
+        Message.Evaluate(value) => return bounded(8, encode_evaluate(value)?)
+        Message.Produced(value) => return bounded(9, encode_produced(value)?)
+        Message.Query(value) => return bounded(10, encode_query(value)?)
+        Message.Page(value) => return bounded(11, encode_page(value)?)
+        Message.Event(value) => return bounded(12, encode_event(value)?)
+        Message.Complete(value) => return bounded(13, encode_complete(value)?)
+        Message.Cancel(value) => return bounded(14, encode_cancel(value)?)
+        Message.Cancelled(value) => return bounded(15, encode_cancelled(value)?)
+        Message.Resolve(value) => return bounded(16, encode_resolve(value)?)
+        Message.Pin(value) => return bounded(17, encode_pin(value)?)
+        Message.Release(value) => return bounded(18, encode_release(value)?)
+        Message.Drain(value) => return bounded(19, encode_drain(value)?)
+        Message.Stop(value) => return bounded(20, encode_stop(value)?)
+        Message.Ack(value) => return bounded(21, encode_ack(value)?)
+        Message.Refused(value) => return bounded(22, encode_refused(value)?)
+
+
+pub def bounded(tag: int, raw: bytes) -> Result[tuple[int, bytes], Refusal]:
+    """Enforce the complete body bound after individually bounded fields have been encoded."""
+    if len(raw) > MAX_PAYLOAD:
+        return Err(Refusal(kind=RefusalKind.Oversized, detail="engine body exceeds 65536 bytes"))
+    return Ok((tag, raw))
+
+
+pub def decode(tag: int, raw: bytes) -> Result[Message, Refusal]:
+    """Decode only the exact known version and tag, rejecting trailing bytes."""
+    if len(raw) > MAX_PAYLOAD:
+        return Err(Refusal(kind=RefusalKind.Oversized, detail="engine body exceeds 65536 bytes"))
+    mut reader = Decoder(raw=raw)
+    if reader.number(2)? != 1:
+        return Err(Refusal(kind=RefusalKind.Version, detail="unsupported body schema version"))
+    message = decode_fields(tag, reader)?
+    reader.finish()?
+    return Ok(message)
+
+
+def decode_fields(tag: int, mut reader: Decoder) -> Result[Message, Refusal]:
+    """Dispatch required variants without guessing compatibility with another protocol."""
+    if tag == 1:
+        return Ok(Message.Hello(decode_hello(reader)?))
+    if tag == 2:
+        return Ok(Message.Welcome(decode_welcome(reader)?))
+    if tag == 3:
+        return Ok(Message.Submit(decode_submit(reader)?))
+    if tag == 4:
+        return Ok(Message.Accepted(decode_accepted(reader)?))
+    if tag == 5:
+        return Ok(Message.Captured(decode_captured(reader)?))
+    if tag == 6:
+        return Ok(Message.Prepare(decode_prepare(reader)?))
+    if tag == 7:
+        return Ok(Message.NeedPrerequisite(decode_needprerequisite(reader)?))
+    if tag == 8:
+        return Ok(Message.Evaluate(decode_evaluate(reader)?))
+    if tag == 9:
+        return Ok(Message.Produced(decode_produced(reader)?))
+    if tag == 10:
+        return Ok(Message.Query(decode_query(reader)?))
+    if tag == 11:
+        return Ok(Message.Page(decode_page(reader)?))
+    if tag == 12:
+        return Ok(Message.Event(decode_event(reader)?))
+    if tag == 13:
+        return Ok(Message.Complete(decode_complete(reader)?))
+    if tag == 14:
+        return Ok(Message.Cancel(decode_cancel(reader)?))
+    if tag == 15:
+        return Ok(Message.Cancelled(decode_cancelled(reader)?))
+    if tag == 16:
+        return Ok(Message.Resolve(decode_resolve(reader)?))
+    if tag == 17:
+        return Ok(Message.Pin(decode_pin(reader)?))
+    if tag == 18:
+        return Ok(Message.Release(decode_release(reader)?))
+    if tag == 19:
+        return Ok(Message.Drain(decode_drain(reader)?))
+    if tag == 20:
+        return Ok(Message.Stop(decode_stop(reader)?))
+    if tag == 21:
+        return Ok(Message.Ack(decode_ack(reader)?))
+    if tag == 22:
+        return Ok(Message.Refused(decode_refused(reader)?))
+    return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required engine message tag"))
+
+
+def encode_hello(value: Hello) -> Result[bytes, Refusal]:
+    """Encode Hello's ordered v1 fields."""
+    if value.credits < 0 or value.credits > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="Hello.credits exceeds u32"))
+    if value.payload_limit < 0 or value.payload_limit > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="Hello.payload_limit exceeds u32"))
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.store_id)?,
+                text(value.profile)?,
+                text(value.service_generation)?,
+                text(value.compiler_generation)?,
+                scalar(int(value.peer_uid), 4),
+                scalar(int(value.credits), 4),
+                scalar(int(value.payload_limit), 4),
+            ],
+        ),
+    )
+
+
+def decode_hello(mut reader: Decoder) -> Result[Hello, Refusal]:
+    """Decode Hello's fields only after checking their declared lengths."""
+    store_id = reader.text()?
+    profile = reader.text()?
+    service_generation = reader.text()?
+    compiler_generation = reader.text()?
+    peer_uid: u32 = reader.number(4)?.wrapping_resize()
+    credits = int(reader.number(4)?)
+    payload_limit = int(reader.number(4)?)
+    return Ok(
+        Hello(
+            store_id=store_id,
+            profile=profile,
+            service_generation=service_generation,
+            compiler_generation=compiler_generation,
+            peer_uid=peer_uid,
+            credits=credits,
+            payload_limit=payload_limit,
+        ),
+    )
+
+
+def encode_welcome(value: Welcome) -> Result[bytes, Refusal]:
+    """Encode Welcome's ordered v1 fields."""
+    if value.credits < 0 or value.credits > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="Welcome.credits exceeds u32"))
+    if value.payload_limit < 0 or value.payload_limit > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="Welcome.payload_limit exceeds u32"))
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.store_id)?,
+                text(value.profile)?,
+                text(value.service_generation)?,
+                text(value.compiler_generation)?,
+                scalar(int(value.peer_uid), 4),
+                scalar(int(value.credits), 4),
+                scalar(int(value.payload_limit), 4),
+            ],
+        ),
+    )
+
+
+def decode_welcome(mut reader: Decoder) -> Result[Welcome, Refusal]:
+    """Decode Welcome's fields only after checking their declared lengths."""
+    store_id = reader.text()?
+    profile = reader.text()?
+    service_generation = reader.text()?
+    compiler_generation = reader.text()?
+    peer_uid: u32 = reader.number(4)?.wrapping_resize()
+    credits = int(reader.number(4)?)
+    payload_limit = int(reader.number(4)?)
+    return Ok(
+        Welcome(
+            store_id=store_id,
+            profile=profile,
+            service_generation=service_generation,
+            compiler_generation=compiler_generation,
+            peer_uid=peer_uid,
+            credits=credits,
+            payload_limit=payload_limit,
+        ),
+    )
+
+
+def encode_submit(value: Submit) -> Result[bytes, Refusal]:
+    """Encode Submit's ordered v1 fields."""
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.command)?,
+                text(value.view)?,
+                text(value.input_selection)?,
+                text(value.requested_roots)?,
+                text(value.options)?,
+                text(value.observation_policy)?,
+            ],
+        ),
+    )
+
+
+def decode_submit(mut reader: Decoder) -> Result[Submit, Refusal]:
+    """Decode Submit's fields only after checking their declared lengths."""
+    command = reader.text()?
+    view = reader.text()?
+    input_selection = reader.text()?
+    requested_roots = reader.text()?
+    options = reader.text()?
+    observation_policy = reader.text()?
+    return Ok(
+        Submit(
+            command=command,
+            view=view,
+            input_selection=input_selection,
+            requested_roots=requested_roots,
+            options=options,
+            observation_policy=observation_policy,
+        ),
+    )
+
+
+def encode_accepted(value: Accepted) -> Result[bytes, Refusal]:
+    """Encode Accepted's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.capture_token)?, text(value.interest_token)?]))
+
+
+def decode_accepted(mut reader: Decoder) -> Result[Accepted, Refusal]:
+    """Decode Accepted's fields only after checking their declared lengths."""
+    capture_token = reader.text()?
+    interest_token = reader.text()?
+    return Ok(Accepted(capture_token=capture_token, interest_token=interest_token))
+
+
+def encode_captured(value: Captured) -> Result[bytes, Refusal]:
+    """Encode Captured's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.epoch)?, text(value.snapshot)?]))
+
+
+def decode_captured(mut reader: Decoder) -> Result[Captured, Refusal]:
+    """Decode Captured's fields only after checking their declared lengths."""
+    epoch = reader.text()?
+    snapshot = reader.text()?
+    return Ok(Captured(epoch=epoch, snapshot=snapshot))
+
+
+def encode_prepare(value: Prepare) -> Result[bytes, Refusal]:
+    """Encode Prepare's ordered v1 fields."""
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.stage)?,
+                text(value.snapshot)?,
+                text(value.demand_root)?,
+                text(value.producer_profile)?,
+            ],
+        ),
+    )
+
+
+def decode_prepare(mut reader: Decoder) -> Result[Prepare, Refusal]:
+    """Decode Prepare's fields only after checking their declared lengths."""
+    stage = reader.text()?
+    snapshot = reader.text()?
+    demand_root = reader.text()?
+    producer_profile = reader.text()?
+    return Ok(Prepare(stage=stage, snapshot=snapshot, demand_root=demand_root, producer_profile=producer_profile))
+
+
+def encode_needprerequisite(value: NeedPrerequisite) -> Result[bytes, Refusal]:
+    """Encode NeedPrerequisite's ordered v1 fields."""
+    if value.earlier_rank < 0 or value.earlier_rank > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="NeedPrerequisite.earlier_rank exceeds u32"))
+    return Ok(joined([scalar(1, 2), text(value.keys_root)?, scalar(int(value.earlier_rank), 4)]))
+
+
+def decode_needprerequisite(mut reader: Decoder) -> Result[NeedPrerequisite, Refusal]:
+    """Decode NeedPrerequisite's fields only after checking their declared lengths."""
+    keys_root = reader.text()?
+    earlier_rank = int(reader.number(4)?)
+    return Ok(NeedPrerequisite(keys_root=keys_root, earlier_rank=earlier_rank))
+
+
+def encode_evaluate(value: Evaluate) -> Result[bytes, Refusal]:
+    """Encode Evaluate's ordered v1 fields."""
+    if value.cancellation_generation < 0 or value.cancellation_generation > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="Evaluate.cancellation_generation exceeds u32"))
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.work_root)?,
+                text(value.snapshot)?,
+                text(value.prepared_root)?,
+                text(value.reservation)?,
+                scalar(int(value.cancellation_generation), 4),
+            ],
+        ),
+    )
+
+
+def decode_evaluate(mut reader: Decoder) -> Result[Evaluate, Refusal]:
+    """Decode Evaluate's fields only after checking their declared lengths."""
+    work_root = reader.text()?
+    snapshot = reader.text()?
+    prepared_root = reader.text()?
+    reservation = reader.text()?
+    cancellation_generation = int(reader.number(4)?)
+    return Ok(
+        Evaluate(
+            work_root=work_root,
+            snapshot=snapshot,
+            prepared_root=prepared_root,
+            reservation=reservation,
+            cancellation_generation=cancellation_generation,
+        ),
+    )
+
+
+def encode_produced(value: Produced) -> Result[bytes, Refusal]:
+    """Encode Produced's ordered v1 fields."""
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.staged_root)?,
+                text(value.witness_root)?,
+                text(value.diagnostic_root)?,
+                text(value.counter_root)?,
+            ],
+        ),
+    )
+
+
+def decode_produced(mut reader: Decoder) -> Result[Produced, Refusal]:
+    """Decode Produced's fields only after checking their declared lengths."""
+    staged_root = reader.text()?
+    witness_root = reader.text()?
+    diagnostic_root = reader.text()?
+    counter_root = reader.text()?
+    return Ok(
+        Produced(
+            staged_root=staged_root,
+            witness_root=witness_root,
+            diagnostic_root=diagnostic_root,
+            counter_root=counter_root,
+        ),
+    )
+
+
+def encode_query(value: Query) -> Result[bytes, Refusal]:
+    """Encode Query's ordered v1 fields."""
+    if value.row_limit < 0 or value.row_limit > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="Query.row_limit exceeds u32"))
+    if value.byte_limit < 0 or value.byte_limit > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="Query.byte_limit exceeds u32"))
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.snapshot)?,
+                text(value.query_root)?,
+                text(value.cursor)?,
+                scalar(int(value.row_limit), 4),
+                scalar(int(value.byte_limit), 4),
+            ],
+        ),
+    )
+
+
+def decode_query(mut reader: Decoder) -> Result[Query, Refusal]:
+    """Decode Query's fields only after checking their declared lengths."""
+    snapshot = reader.text()?
+    query_root = reader.text()?
+    cursor = reader.text()?
+    row_limit = int(reader.number(4)?)
+    byte_limit = int(reader.number(4)?)
+    return Ok(Query(snapshot=snapshot, query_root=query_root, cursor=cursor, row_limit=row_limit, byte_limit=byte_limit))
+
+
+def encode_page(value: Page) -> Result[bytes, Refusal]:
+    """Encode Page's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.snapshot)?, text(value.rows_root)?, text(value.cursor)?]))
+
+
+def decode_page(mut reader: Decoder) -> Result[Page, Refusal]:
+    """Decode Page's fields only after checking their declared lengths."""
+    snapshot = reader.text()?
+    rows_root = reader.text()?
+    cursor = reader.text()?
+    return Ok(Page(snapshot=snapshot, rows_root=rows_root, cursor=cursor))
+
+
+def encode_event(value: Event) -> Result[bytes, Refusal]:
+    """Encode Event's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.status)?, text(value.trace_handle)?]))
+
+
+def decode_event(mut reader: Decoder) -> Result[Event, Refusal]:
+    """Decode Event's fields only after checking their declared lengths."""
+    status = reader.text()?
+    trace_handle = reader.text()?
+    return Ok(Event(status=status, trace_handle=trace_handle))
+
+
+def encode_complete(value: Complete) -> Result[bytes, Refusal]:
+    """Encode Complete's ordered v1 fields."""
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.snapshot)?,
+                text(value.admission_proof)?,
+                text(value.result_handles)?,
+                scalar(encode_bindingoutcome(value.binding_outcome), 2),
+                scalar(encode_completionstatus(value.status), 2),
+                text(value.observation_handle)?,
+            ],
+        ),
+    )
+
+
+def decode_complete(mut reader: Decoder) -> Result[Complete, Refusal]:
+    """Decode Complete's fields only after checking their declared lengths."""
+    snapshot = reader.text()?
+    admission_proof = reader.text()?
+    result_handles = reader.text()?
+    binding_outcome = decode_bindingoutcome(int(reader.number(2)?))?
+    status = decode_completionstatus(int(reader.number(2)?))?
+    observation_handle = reader.text()?
+    return Ok(
+        Complete(
+            snapshot=snapshot,
+            admission_proof=admission_proof,
+            result_handles=result_handles,
+            binding_outcome=binding_outcome,
+            status=status,
+            observation_handle=observation_handle,
+        ),
+    )
+
+
+def encode_cancel(value: Cancel) -> Result[bytes, Refusal]:
+    """Encode Cancel's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.interest_token)?]))
+
+
+def decode_cancel(mut reader: Decoder) -> Result[Cancel, Refusal]:
+    """Decode Cancel's fields only after checking their declared lengths."""
+    interest_token = reader.text()?
+    return Ok(Cancel(interest_token=interest_token))
+
+
+def encode_cancelled(value: Cancelled) -> Result[bytes, Refusal]:
+    """Encode the exact effect disposition, never a guessed numeric boolean."""
+    return Ok(
+        joined([scalar(1, 2), text(value.interest_token)?, scalar(encode_effectdisposition(value.effects_stopped), 2)]),
+    )
+
+
+def decode_cancelled(mut reader: Decoder) -> Result[Cancelled, Refusal]:
+    """Reject unknown effect dispositions before reporting cancellation complete."""
+    token = reader.text()?
+    effects = decode_effectdisposition(int(reader.number(2)?))?
+    return Ok(Cancelled(interest_token=token, effects_stopped=effects))
+
+
+def encode_resolve(value: Resolve) -> Result[bytes, Refusal]:
+    """Encode Resolve's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.transaction)?, scalar(encode_resolution(value.outcome), 2)]))
+
+
+def decode_resolve(mut reader: Decoder) -> Result[Resolve, Refusal]:
+    """Decode Resolve's fields only after checking their declared lengths."""
+    transaction = reader.text()?
+    outcome = decode_resolution(int(reader.number(2)?))?
+    return Ok(Resolve(transaction=transaction, outcome=outcome))
+
+
+def encode_pin(value: Pin) -> Result[bytes, Refusal]:
+    """Encode Pin's ordered v1 fields."""
+    return Ok(
+        joined(
+            [
+                scalar(1, 2),
+                text(value.snapshot)?,
+                text(value.allowed_roots)?,
+                text(value.lease_id)?,
+                text(value.purpose)?,
+            ],
+        ),
+    )
+
+
+def decode_pin(mut reader: Decoder) -> Result[Pin, Refusal]:
+    """Decode Pin's fields only after checking their declared lengths."""
+    snapshot = reader.text()?
+    allowed_roots = reader.text()?
+    lease_id = reader.text()?
+    purpose = reader.text()?
+    return Ok(Pin(snapshot=snapshot, allowed_roots=allowed_roots, lease_id=lease_id, purpose=purpose))
+
+
+def encode_release(value: Release) -> Result[bytes, Refusal]:
+    """Encode Release's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.lease_id)?]))
+
+
+def decode_release(mut reader: Decoder) -> Result[Release, Refusal]:
+    """Decode Release's fields only after checking their declared lengths."""
+    lease_id = reader.text()?
+    return Ok(Release(lease_id=lease_id))
+
+
+def encode_drain(value: Drain) -> Result[bytes, Refusal]:
+    """Encode Drain's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.reason)?]))
+
+
+def decode_drain(mut reader: Decoder) -> Result[Drain, Refusal]:
+    """Decode Drain's fields only after checking their declared lengths."""
+    reason = reader.text()?
+    return Ok(Drain(reason=reason))
+
+
+def encode_stop(value: Stop) -> Result[bytes, Refusal]:
+    """Encode Stop's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), text(value.reason)?]))
+
+
+def decode_stop(mut reader: Decoder) -> Result[Stop, Refusal]:
+    """Decode Stop's fields only after checking their declared lengths."""
+    reason = reader.text()?
+    return Ok(Stop(reason=reason))
+
+
+def encode_ack(value: Ack) -> Result[bytes, Refusal]:
+    """Encode Ack's ordered v1 fields."""
+    return Ok(joined([scalar(1, 2), wide(value.sequence, 8)]))
+
+
+def decode_ack(mut reader: Decoder) -> Result[Ack, Refusal]:
+    """Decode Ack's fields only after checking their declared lengths."""
+    sequence = reader.number(8)?
+    return Ok(Ack(sequence=sequence))
+
+
+def encode_refused(value: Refused) -> Result[bytes, Refusal]:
+    """Encode Refused's ordered v1 fields."""
+    if value.code < 0 or value.code > 4294967295:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="Refused.code exceeds u32"))
+    return Ok(joined([scalar(1, 2), scalar(int(value.code), 4), text(value.command)?, text(value.detail)?]))
+
+
+def decode_refused(mut reader: Decoder) -> Result[Refused, Refusal]:
+    """Decode Refused's fields only after checking their declared lengths."""
+    code = int(reader.number(4)?)
+    if code < 1 or code > 14:
+        return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required refusal code"))
+    command = reader.text()?
+    detail = reader.text()?
+    return Ok(Refused(code=code, command=command, detail=detail))
+
+
+def encode_bindingoutcome(value: BindingOutcome) -> int:
+    """The stable v1 BindingOutcome variant tag."""
+    match value:
+        BindingOutcome.Selected => return 1
+        BindingOutcome.NotSelected => return 2
+        BindingOutcome.Rejected => return 3
+        BindingOutcome.Superseded => return 4
+
+
+def decode_bindingoutcome(tag: int) -> Result[BindingOutcome, Refusal]:
+    """Fail closed for an unknown required BindingOutcome variant."""
+    if tag == 1:
+        return Ok(BindingOutcome.Selected)
+    if tag == 2:
+        return Ok(BindingOutcome.NotSelected)
+    if tag == 3:
+        return Ok(BindingOutcome.Rejected)
+    if tag == 4:
+        return Ok(BindingOutcome.Superseded)
+    return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required BindingOutcome variant"))
+
+
+def encode_completionstatus(value: CompletionStatus) -> int:
+    """The stable v1 CompletionStatus variant tag."""
+    match value:
+        CompletionStatus.Success => return 1
+        CompletionStatus.Unavailable => return 2
+        CompletionStatus.Failed => return 3
+        CompletionStatus.Cancelled => return 4
+
+
+def decode_completionstatus(tag: int) -> Result[CompletionStatus, Refusal]:
+    """Fail closed for an unknown required CompletionStatus variant."""
+    if tag == 1:
+        return Ok(CompletionStatus.Success)
+    if tag == 2:
+        return Ok(CompletionStatus.Unavailable)
+    if tag == 3:
+        return Ok(CompletionStatus.Failed)
+    if tag == 4:
+        return Ok(CompletionStatus.Cancelled)
+    return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required CompletionStatus variant"))
+
+
+def encode_resolution(value: Resolution) -> int:
+    """The stable v1 Resolution variant tag."""
+    match value:
+        Resolution.Committed => return 1
+        Resolution.NotCommitted => return 2
+        Resolution.Unknown => return 3
+
+
+def decode_resolution(tag: int) -> Result[Resolution, Refusal]:
+    """Fail closed for an unknown required Resolution variant."""
+    if tag == 1:
+        return Ok(Resolution.Committed)
+    if tag == 2:
+        return Ok(Resolution.NotCommitted)
+    if tag == 3:
+        return Ok(Resolution.Unknown)
+    return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required Resolution variant"))
+
+
+def encode_effectdisposition(value: EffectDisposition) -> int:
+    """The stable v1 EffectDisposition variant tag."""
+    match value:
+        EffectDisposition.Stopped => return 1
+        EffectDisposition.Pending => return 2
+        EffectDisposition.NoEffects => return 3
+
+
+def decode_effectdisposition(tag: int) -> Result[EffectDisposition, Refusal]:
+    """Fail closed for an unknown required EffectDisposition variant."""
+    if tag == 1:
+        return Ok(EffectDisposition.Stopped)
+    if tag == 2:
+        return Ok(EffectDisposition.Pending)
+    if tag == 3:
+        return Ok(EffectDisposition.NoEffects)
+    return Err(Refusal(kind=RefusalKind.Schema, detail="unknown required EffectDisposition variant"))

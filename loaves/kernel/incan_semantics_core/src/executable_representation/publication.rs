@@ -166,7 +166,7 @@ pub(super) fn project_compiled_frame(
     }
     frame.runtime_requirements.clear();
     frame.extern_delegation = None;
-    frame.named_type_identities = audit.used_nominal_types;
+    frame.named_type_identities = std::sync::Arc::new(audit.used_nominal_types);
     require_module_initialization(module, &mut audit.requirements);
     let native_callables = module.loaf_callables.iter().collect::<Vec<_>>();
     let callables = selected_native_calls(&audit.native_calls, &native_callables)?;
@@ -274,7 +274,7 @@ pub(super) fn project_body(
     }
     audit.parameters(&mut body.params)?;
     audit.statements(&mut body.block.stmts)?;
-    body.named_type_identities = audit.used_nominal_types;
+    body.named_type_identities = std::sync::Arc::new(audit.used_nominal_types);
     require_module_initialization(module, &mut audit.requirements);
     Ok(ProjectedBody {
         body,
@@ -404,7 +404,7 @@ pub(super) fn project_static(
     }
     let mut value = source.clone();
     let checked_types = match &source.initial {
-        crate::body_ir::StaticInitializer::Computed(body) => body.named_type_identities.clone(),
+        crate::body_ir::StaticInitializer::Computed(body) => (*body.named_type_identities).clone(),
         _ => BTreeMap::new(),
     };
     let mut audit = PublicationAudit::new(module, library, eligible, &checked_types);

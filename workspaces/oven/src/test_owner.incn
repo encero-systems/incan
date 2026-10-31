@@ -2,9 +2,10 @@
 
 from std.fs import Path
 from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, listen
 from files import read, remove, write
 from owner_endpoint import Endpoint, attach, bindable, endpoint_for, greeted, socket_prefix, timeout_for
-from owner_protocol import Connection, Reply, Request, listen
+from owner_protocol import Reply, Request
 from owner_state import Owner, unchanged, watch
 from scratch import scratch_directory
 from intake import ManifestReader

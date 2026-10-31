@@ -13,6 +13,7 @@ const TEST_USAGE: str = "incan test PATH [UNIT OPTIONS]"
 const DESCRIBE_USAGE: str = "incan describe-unit PATH [UNIT OPTIONS]"
 const BUILD_USAGE: str = "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
 const OWNER_USAGE: str = "incan owner stop"
+const BAKERY_USAGE: str = "incan bakery gc [--keep-days N] | verify | repair-payload SHA256 FILE"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--features",
@@ -34,6 +35,7 @@ pub def usage() -> str:
             BUILD_USAGE,
             FORMAT_USAGE,
             OWNER_USAGE,
+            BAKERY_USAGE,
             GRAPH_USAGE,
             MCP_USAGE,
             PACK_USAGE,
@@ -47,6 +49,10 @@ pub def command_help(command: str, arguments: list[str]) -> Option[str]:
     if command in ["run", "check", "test", "describe-unit", "build"]:
         if requested(arguments, list(UNIT_VALUE_OPTIONS) + ["--format"]):
             return Some(unit_help(command))
+    elif command == "bakery":
+        for subcommand in ["gc", "verify", "repair-payload"]:
+            if nested_help(arguments, subcommand):
+                return Some(render(BAKERY_USAGE, [], "incan bakery verify"))
     elif command == "fmt" and requested(arguments):
         return Some(format_help())
     elif command == "mcp" and requested(arguments):

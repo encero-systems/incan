@@ -15,9 +15,11 @@ from rust::std::thread import sleep, spawn
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, dial, listen
 from files import discard_file
 from observation import now_seconds, trace
-from owner_protocol import Connection, Reply, Request, dial, listen, reply_of, request_of
+from owner_protocol import Reply, Request, discard_reply, receive_document, reply_of, request_of
+from owner_protocol import send_document, send_quietly
 from owner_state import Owner
 
 
@@ -61,7 +63,7 @@ pub def serve_owner(arguments: list[str]) -> Result[i32, str]:
 def announce(ready: str, generation: str) -> Result[None, str]:
     """Tell the command that started this owner that it is listening, so it can connect."""
     mut connection = dial(ready)?
-    connection.send(Reply(status="ready", generation=generation, pid=id()).to_json())?
+    send_document(connection, Reply(status="ready", generation=generation, pid=id()).to_json())?
     return Ok(None)
 
 
@@ -70,8 +72,8 @@ def serve_connection(mut owner: Owner, connection: Connection, idle: int) -> boo
     mut served = connection
     served.wait_at_most(READ_SECONDS)
     served.write_at_most(WRITE_SECONDS)
-    reply = answer(owner, served.receive(), idle)
-    served.send_quietly(reply.to_json())
+    reply = answer(owner, receive_document(served), idle)
+    send_quietly(served, reply.to_json())
     return reply.status == "retiring"
 
 
@@ -113,6 +115,6 @@ def asked_whether_idle(socket: str, generation: str) -> bool:
             mut asking = connection
             asking.wait_at_most(READ_SECONDS)
             # The question only proves an owner is listening; the owner itself decides whether to retire.
-            asking.send_quietly(Request(command="idle", generation=generation).to_json())
-            asking.discard_reply()
+            send_quietly(asking, Request(command="idle", generation=generation).to_json())
+            discard_reply(asking)
             return true

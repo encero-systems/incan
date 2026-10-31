@@ -55,6 +55,8 @@ Integer finalizers are intentionally absent from cryptographic namespaces. Use d
 
 `finalize_bytes()` returns the digest for bytes supplied so far and resets the handle for a new stream. `Sha256Hasher` hashes exactly the bytes callers give it; it does not choose, serialize, or certify canonical identity bytes for an application.
 
+`Sha256Hasher.update_view(view: MappedView) -> None` adds the bytes of a [`std.fs`](fs.md) mapped view where they lie; no byte is copied out of the mapping.
+
 ## File and reader helpers
 
 | API | Returns | Description |

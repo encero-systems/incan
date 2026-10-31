@@ -36,6 +36,20 @@ Oven writes `oven: launch epoch=SECONDS program=PATH` immediately before a progr
 
 Repeat a newly linked executable directly to compare first and later launch costs. File faults and child CPU time can narrow a hypothesis, but identifying a system service requires an operating-system trace. Do not infer a specific service from elapsed time alone.
 
+## Iterate on hand-written Rust
+
+Debug builds of Rust facets, libraries, binaries and test harnesses use rustc incremental compilation. To use the same scratch reuse while iterating on an optimized compiler build, select it explicitly:
+
+```sh
+INCAN_RUST_INCREMENTAL=1 incan build loaves/toolchain/incan-rustc-driver --profile release
+```
+
+Set `INCAN_RUST_INCREMENTAL=0` to disable it, including for debug builds. An unset variable enables it only for debug; `1` enables it for release iteration as well. Ordinary release builds and `scripts/release-dev8.sh` qualification remain non-incremental. Use qualification outputs for packaging; iteration changes rustc's code generation policy and symbol namespace.
+
+Scratch lives below the requesting build's `target/incan/rust/<profile>/`, separately for each library, binary and test role. It can be removed to recover disk space without invalidating the source or published artifacts. The scratch directory is never part of a unit identity, store record or bundle. Freshness still checks all source and linked inputs; a stable iteration symbol namespace lets rustc reuse unchanged work across edits. Incan-generated native units remain non-incremental because their pinned adapter does not yet track per-definition query inputs.
+
+Measure an initial iteration build separately from an edit rebuild: the first creates rustc's scratch. For an edit/revert comparison, retain both sets of contract verdicts and compare them with the clean build. Record wall time, profile, revision, sample count and scratch disk size; a warm filesystem cache or shared host must be identified in the measurement.
+
 ## Measure ordinary latency
 
 Debug `run` and `test` reuse native shared libraries. Warm the dependency identities before collecting an edit batch; their first preparation is a separate cold condition. `build` outputs and release executables retain their ordinary archive linkage. See [Native linkage during development](../explanation/development-linking.md).

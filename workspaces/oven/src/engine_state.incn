@@ -1,0 +1,130 @@
+"""Disposable service interests and lifecycle decisions, independent of transport and store contents."""
+
+from engine_messages import Hello, Welcome
+from engine_wire import DATA_CREDITS, MAX_PAYLOAD, Refusal, RefusalKind, zero_id
+
+pub const IDLE_SECONDS: int = 600
+const MAX_INTERESTS: int = 16
+const MAX_PINS: int = 16
+
+
+pub model Identity:
+    """Complete descriptor identity; shortened endpoint names never authorize a connection."""
+
+    pub store_id: str
+    pub profile: str
+    pub service_generation: str
+    pub compiler_generation: str
+    pub uid: u32
+
+    def hello(self) -> Hello:
+        """Offer the exact engine identity and fixed v1 transport limits."""
+        return Hello(
+            store_id=self.store_id,
+            profile=self.profile,
+            service_generation=self.service_generation,
+            compiler_generation=self.compiler_generation,
+            peer_uid=self.uid,
+            credits=DATA_CREDITS,
+            payload_limit=MAX_PAYLOAD,
+        )
+
+
+pub model Interest:
+    """One request interest; cancellation never detaches another request's interest."""
+
+    pub request: bytes
+    pub token: str
+    pub work: str
+
+
+pub class ServiceState:
+    """Bounded volatile control state; no semantic facts or durable request log live here."""
+
+    pub identity: Identity
+    pub interests: list[Interest] = []
+    pub pins: list[str] = []
+    pub clients: int = 0
+    pub workers: int = 0
+    pub effects: int = 0
+    pub draining: bool = false
+    pub stopping: bool = false
+    pub last_active: int = 0
+
+    def negotiate(self, hello: Hello, peer_uid: u32) -> Result[Welcome, Refusal]:
+        """Check OS identity and all full protocol/profile/generation/store identities before work."""
+        expected = self.identity
+        if peer_uid != expected.uid or hello.peer_uid != peer_uid:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine peer user mismatch"))
+        if hello.store_id != expected.store_id:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine store mismatch"))
+        if hello.profile != expected.profile:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine profile mismatch"))
+        if hello.service_generation != expected.service_generation:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine service generation mismatch"))
+        if hello.compiler_generation != expected.compiler_generation:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="engine compiler generation mismatch"))
+        if hello.credits != DATA_CREDITS or hello.payload_limit != MAX_PAYLOAD:
+            return Err(Refusal(kind=RefusalKind.Version, detail="engine transport limits mismatch"))
+        return Ok(
+            Welcome(
+                store_id=expected.store_id,
+                profile=expected.profile,
+                service_generation=expected.service_generation,
+                compiler_generation=expected.compiler_generation,
+                peer_uid=expected.uid,
+                credits=DATA_CREDITS,
+                payload_limit=MAX_PAYLOAD,
+            ),
+        )
+
+    def accept(mut self, request: bytes, work: str, token: str) -> Result[None, Refusal]:
+        """Accept at most sixteen control interests; drained services never accept another submit."""
+        if self.draining or self.stopping:
+            return Err(Refusal(kind=RefusalKind.Draining, detail="engine is draining"))
+        if len(request) != 16 or request == zero_id() or token == "":
+            return Err(Refusal(kind=RefusalKind.Identity, detail="submit requires a request and interest identity"))
+        for interest in self.interests:
+            if interest.request == request or interest.token == token:
+                return Err(Refusal(kind=RefusalKind.Identity, detail="duplicate request or interest"))
+        if len(self.interests) == MAX_INTERESTS:
+            return Err(Refusal(kind=RefusalKind.Busy, detail="engine admission window is full"))
+        self.interests.append(Interest(request=request, token=token, work=work))
+        return Ok(None)
+
+    def detach(mut self, request: bytes, token: str) -> Result[None, Refusal]:
+        """Detach exactly the matching interest; a token never authorizes another request."""
+        for interest in self.interests:
+            if interest.request == request and interest.token == token:
+                self.interests = [item for item in self.interests if item.token != token]
+                return Ok(None)
+        return Err(Refusal(kind=RefusalKind.Identity, detail="unknown request interest"))
+
+    def pin(mut self, lease: str) -> Result[None, Refusal]:
+        """Retain one scoped reader interest; this stage does not issue durable execution leases."""
+        if lease == "" or lease in self.pins:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="invalid or duplicate reader lease"))
+        if len(self.pins) == MAX_PINS:
+            return Err(Refusal(kind=RefusalKind.Busy, detail="engine reader window is full"))
+        self.pins.append(lease)
+        return Ok(None)
+
+    def release(mut self, lease: str) -> Result[None, Refusal]:
+        """Release a known scoped reader, leaving all other readers pinned."""
+        if lease not in self.pins:
+            return Err(Refusal(kind=RefusalKind.Identity, detail="unknown reader lease"))
+        self.pins = [item for item in self.pins if item != lease]
+        return Ok(None)
+
+    def busy(self) -> bool:
+        """Whether a client, worker, effect, request or pinned reader prevents idle retirement."""
+        return self.clients > 0 or self.workers > 0 or self.effects > 0 or len(self.pins) > 0 or len(self.interests) > 0
+
+    def exits(mut self, now: int, timeout: int = IDLE_SECONDS) -> bool:
+        """Drain waits for admitted work and readers; idle retirement starts only after all interests leave."""
+        if self.busy():
+            self.last_active = now
+            return false
+        if self.stopping or self.draining:
+            return true
+        return now - self.last_active >= timeout

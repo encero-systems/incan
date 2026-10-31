@@ -12,7 +12,7 @@
 //! | `modules`     | Module/import resolution errors                          |
 //! | `const_eval`  | Const-expression evaluation & builtin calls              |
 //! | `rust_module` | `rust.module()` / `@rust.extern` diagnostics (RFC 023)   |
-//! | `assignments` | Assignments with several targets                         |
+//! | `assignments` | Assignment compatibility and borrowed collection replacement |
 //! | `c_abi`       | Checked C ABI diagnostics (RFC 116)                      |
 //! | `capability_requirements` | Types lacking a derive or task capability a program needs of them |
 //! | `derive_contract` | Derive requirements and conflicts, dunder signatures, receivers of static methods |

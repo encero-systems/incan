@@ -345,7 +345,7 @@ fn default_method(name: &str, methods: &FallibleIteratorMethods, span: Span) -> 
 }
 
 /// Declare a structural forwarding method; only rustc's ordinary MIR executes the generic call adapter.
-fn method(
+pub(crate) fn method(
     name: &str,
     mutable: bool,
     parameters: ThinVec<ast::GenericParam>,

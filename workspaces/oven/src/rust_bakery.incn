@@ -1,0 +1,99 @@
+"""
+Rust units in the home bakery: the same ask path as Incan units, for producers whose identity needs dependency evidence.
+
+A Rust unit's identity covers the files rustc observed (its dep-info), so it is known only once that evidence is at
+hand. The bakery records, per unit name, the identity it was last baked under. An ask whose directory has no evidence
+yet views that unit's evidence first, keys the unit from it, and finds the unit when its inputs are unchanged.
+"""
+
+from std.fs import Path
+from std.fs.locking import FileLock
+from bakery import Fact, bakery, claim, find, lookup, reached, register_root, seal, staging, view_directory
+from files import make_directory
+from observation import trace
+from unit_freshness import fingerprint
+from unit_publication import record_payload, record_path
+
+
+pub def rust_unit_name(kind: str, crate_name: str, context: str) -> str:
+    """The name a Rust unit is indexed under: its kind, crate and location-independent selection context."""
+    return f"rust {kind}\t{crate_name}\t{context}"
+
+
+pub def claim_rust(store: Path, name: str) -> Result[FileLock, str]:
+    """Claim the bakes of one Rust unit name; its identity is known only after its dependency evidence is."""
+    return claim(store, fingerprint(["rust-unit-name", name])?)
+
+
+pub def view_prior_evidence(store: Path, name: str, directory: Path, evidence: Path) -> Result[None, str]:
+    """
+    View the unit last baked under `name` into `directory` when it holds no dependency evidence of its own.
+
+    The viewed evidence only proposes inputs to key: a unit is reused only when that key's identity is baked.
+    """
+    if evidence.is_file():
+        return Ok(None)
+    match lookup(store, name)?:
+        None => return Ok(None)
+        Some(identity) =>
+            match find(store, identity)?:
+                None => return Ok(None)
+                Some(fact) =>
+                    view_directory(store, fact, directory)?
+                    trace(f"bakery {identity[:12]}: viewed prior evidence of {name}")
+                    return Ok(None)
+
+
+pub def baked_rust(store: Path, identity: str, directory: Path, project: str) -> Result[bool, str]:
+    """View the baked unit of `identity` into `directory`; false when it is not baked."""
+    match find(store, identity)?:
+        None => return Ok(false)
+        Some(fact) =>
+            register_root(store, project, identity)?
+            view_directory(store, fact, directory)?
+            return Ok(true)
+
+
+pub def seal_rust(
+    store: Path,
+    identity: str,
+    name: str,
+    producer: str,
+    provenance: list[str],
+    directory: Path,
+    outputs: list[Path],
+    evidence: list[Path],
+    project: str,
+    linked: list[str],
+) -> Result[Fact, str]:
+    """
+    Bake a completed Rust unit from the outputs rustc left in `directory`, then make `directory` its view.
+
+    Each output's producer record, naming the native producer identity, goes with it, so consumers name it by that
+    identity wherever it is viewed.
+    """
+    staged = staging(store, identity)?
+    for output in outputs:
+        record_payload(output, producer, provenance)?
+        clone_into(output, staged)?
+        clone_into(record_path(output), staged)?
+    for proof in evidence:
+        clone_into(proof, staged)?
+    reaches = reached(store, [Path(artifact).parent().0 for artifact in linked])?
+    fact = seal(store, identity, staged, "rust", name, reaches, "rust unit")?
+    register_root(store, project, identity)?
+    view_directory(store, fact, directory)?
+    return Ok(fact)
+
+
+def clone_into(source: Path, directory: Path) -> Result[None, str]:
+    """Copy one completed output into the staging directory under its own name."""
+    make_directory(directory)?
+    target = directory.joinpath(source.name())
+    source.copy(target, true, true).map_err((error) => f"{source.0}: {error.message()}")?
+    return Ok(None)
+
+
+pub def rust_store() -> Result[Path, str]:
+    """The bakery Rust units are baked in."""
+    return bakery()

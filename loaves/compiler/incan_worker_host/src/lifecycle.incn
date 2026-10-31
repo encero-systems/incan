@@ -1,0 +1,119 @@
+"""
+When a compiler worker retires: the lifecycle policy, apart from the sockets it is applied to.
+
+A worker serves one activation at a time. It retires after `IDLE_SECONDS` without a request; when its physical
+footprint stays more than `FOOTPRINT_MARGIN` bytes above its post-start baseline for `FOOTPRINT_STRIKES` activations
+in a row; at once when its footprint after an activation exceeds `FOOTPRINT_CEILING`, because only exiting returns a
+heavy compile's peak heap; when a request of another protocol or generation reaches it; and when the process could not
+be restored after an activation. A contained compiler panic does not retire it.
+"""
+
+from rust::std::time import Instant
+from protocol import Fault, Reply
+
+pub const IDLE_SECONDS: int = 10
+pub const FOOTPRINT_MARGIN: int = 16777216
+pub const FOOTPRINT_STRIKES: int = 2
+# A compile of the lowering library through a worker passes 6.5 GB; a dev-loop harness of every subject peaks at
+# 182 MB. One GiB leaves more than five times that peak.
+pub const FOOTPRINT_CEILING: int = 1073741824
+
+
+pub enum ActivationOutcome:
+    """How the compiler entry ended one activation."""
+
+    # The command ran and exits with this status, as its short-lived command would.
+    Exited(int)
+    # The activation could not begin, for example because a console file could not be opened; nothing ran.
+    Unavailable(str)
+    # The compiler panicked; the entry contained the panic and restored its own state.
+    Panicked
+    # The process could not be restored after the activation.
+    UnsafeCleanup(str)
+
+
+pub enum Retirement:
+    """Why a worker retires."""
+
+    Idle
+    Footprint
+    Incompatible
+    # The process state is unsafe for any further request, so no queued request is served either.
+    Unsafe
+
+
+pub model Settled:
+    """The reply to an activation and the retirement it causes, if any."""
+
+    pub reply: Reply
+    pub retirement: Option[Retirement]
+
+
+pub model Bounds:
+    """A worker's limits: its idle period, its footprint margin over the baseline, and its footprint ceiling."""
+
+    pub idle_millis: int
+    pub margin: int
+    pub ceiling: int
+
+
+pub class Lifecycle:
+    """The policy state of one worker: idleness, its footprint baseline and how many activations exceeded it."""
+
+    pub bounds: Bounds
+    # The physical footprint after startup, in bytes; negative when it cannot be read.
+    pub baseline: int
+    # Consecutive activations after which the footprint exceeded the baseline by more than the margin.
+    pub strikes: int = 0
+    last_activity: Instant
+
+    def touch(mut self) -> None:
+        """A request was answered: the idle period starts again."""
+        self.last_activity = Instant.now()
+
+    def idle(self) -> bool:
+        """Whether the worker has served nothing for its whole idle period."""
+        return int(self.last_activity.elapsed().as_millis()) >= self.bounds.idle_millis
+
+    def settle(mut self, outcome: ActivationOutcome, footprint: int) -> Settled:
+        """
+        The reply to an ended activation and whether the worker retires after it.
+
+        1. An unrestored process retires at once; it serves no queued request.
+        2. Otherwise the outcome becomes the reply: a panic is a compiler fault, and the worker stays.
+        3. The footprint decides the rest; an unknown footprint retires nothing.
+        """
+        self.touch()
+        mut reply = Reply.Completed(0)
+        match outcome:
+            ActivationOutcome.UnsafeCleanup(reason) =>
+                # 1. Nothing about this process can be trusted for another request.
+                fault = Reply.CompilerFault(Fault.UnsafeCleanup(reason))
+                return Settled(reply=fault, retirement=Some(Retirement.Unsafe))
+            ActivationOutcome.Exited(code) => reply = Reply.Completed(code)
+            ActivationOutcome.Unavailable(reason) => reply = Reply.Refused(reason)
+            # 2. The entry contained the panic, so only this request failed.
+            ActivationOutcome.Panicked => reply = Reply.CompilerFault(Fault.Panicked)
+        # 3. The ceiling retires at once; excess over the baseline must persist across consecutive activations.
+        if self.over_footprint(footprint):
+            return Settled(reply=reply, retirement=Some(Retirement.Footprint))
+        return Settled(reply=reply, retirement=None)
+
+    def over_footprint(mut self, footprint: int) -> bool:
+        """
+        Whether the footprint after an activation retires the worker: above the ceiling, or more than the margin above
+        the baseline for the last `FOOTPRINT_STRIKES` activations. One back within the margin ends the run.
+        """
+        if footprint < 0:
+            self.strikes = 0
+            return false
+        if self.baseline >= 0 and footprint - self.baseline > self.bounds.margin:
+            self.strikes += 1
+        else:
+            self.strikes = 0
+        return footprint > self.bounds.ceiling or self.strikes >= FOOTPRINT_STRIKES
+
+
+pub def lifecycle(baseline: int, bounds: Bounds) -> Lifecycle:
+    """A worker's policy state, its idle period starting now."""
+    return Lifecycle(bounds=bounds, baseline=baseline, last_activity=Instant.now())

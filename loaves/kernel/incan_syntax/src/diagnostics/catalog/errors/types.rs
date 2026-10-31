@@ -2589,6 +2589,29 @@ pub fn rusttype_forwarding_generic_trait_blocked(type_name: &str, trait_name: &s
     .with_hint("Use a local newtype wrapper for a handwritten impl when Rust metadata omits trait type arguments")
 }
 
+/// A class implements a Rust trait only when both are concrete and the trait declares nothing but methods.
+pub fn class_rust_trait_adoption_unsupported(class_name: &str, trait_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Class `{class_name}` cannot implement Rust trait `{trait_name}`"),
+        span,
+    )
+    .with_hint("A class implements a Rust trait without type parameters, associated types or associated constants")
+}
+
+/// A class method fills a Rust trait method only as a concrete instance method with a body.
+pub fn class_rust_trait_method_unsupported(
+    class_name: &str,
+    method_name: &str,
+    trait_name: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Method `{method_name}` of class `{class_name}` cannot implement Rust trait `{trait_name}`"),
+        span,
+    )
+    .with_hint("Implement a Rust trait method as an instance method with a body and without type parameters")
+}
+
 /// Awaitable-to-Future rusttype bridging is intentionally gated until pin/projection metadata exists.
 pub fn awaitable_future_bridge_blocked(type_name: &str, span: Span) -> CompileError {
     CompileError::type_error(

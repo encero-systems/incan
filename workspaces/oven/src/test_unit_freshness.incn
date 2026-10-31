@@ -1,14 +1,17 @@
 """Reuse contracts: an unchanged unit is keyed from metadata alone, and any relevant change is a different key."""
 
-from rust::std::fs import OpenOptions, metadata
+from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions
+from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, read, remove, write as write_file
-from compiler_refusals import check_or_replay, compile_or_replay
-from incan_units import executable_outputs, install_executable, test_report
+from segment_store import readmit_payload
+from bakery import fact_file, find, forget_verified, seal, staging
+from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
+from incan_units import executable_outputs, test_report, view_executable
 from intake import ManifestReader
 from observation import SETTLE_SECONDS, file_digest, load_ledger, now_seconds, observe
 from vocabulary import published_workers, stage_vocabulary
@@ -196,11 +199,29 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     # RFC 124: checkout, target and installed-home locations are publication provenance.
     relocated = fixture(scratch.path().joinpath("another-checkout"))?
     assert reconcile(scratch.path().joinpath("another-checkout"), relocated)?.key == first.key
+    verify_be34_position_changes(scratch.path().joinpath("positions"))?
     verify_source_move(scratch.path().joinpath("moved-entry"))?
     verify_project_entries(scratch.path().joinpath("project-entries"))?
     verify_invocation_identity(setup)?
     verify_descriptor_selection(setup)?
     verify_published_identity(scratch.path().joinpath("publication"))?
+    return Ok(None)
+
+
+def verify_be34_position_changes(scratch: Path) -> Result[None, str]:
+    """BE-34: comments and moved declarations may rekey native units because native debug tables read positions."""
+    setup = fixture(scratch)?
+    source = Path(setup.unit.source)
+    helper = "def helper() -> int:\n    return 1\n\n"
+    main = "def main() -> None:\n    println(helper())\n"
+    write(source, helper + main)?
+    original = reconcile(scratch, setup)?
+    write(source, "# position-only edit\n" + helper + main)?
+    commented = reconcile(scratch, setup)?
+    assert commented.key != original.key, "BE-34: the native unit reads changed positions"
+    write(source, main + "\n" + helper)?
+    moved = reconcile(scratch, setup)?
+    assert moved.key != original.key, "BE-34: moving declarations updates native position inputs"
     return Ok(None)
 
 
@@ -377,6 +398,17 @@ def verify_import_records(scratch: Path) -> Result[None, str]:
     return Ok(None)
 
 
+def retained_refusal(store: Path, key: Key) -> Result[Path, str]:
+    """Where the bakery stores the certified refusal of `key`."""
+    identity = refusal_identity(key)?
+    match find(store, identity)?:
+        None => return Err(f"refusal {identity[:12]} is not baked")
+        Some(fact) =>
+            match fact_file(store, fact, "outcome"):
+                Some(path) => return Ok(path)
+                None => return Err(f"refusal {identity[:12]} has no outcome")
+
+
 def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     """
     Exercise certified replay, edited input, malformed storage and abnormal failures with a counted compiler that
@@ -391,7 +423,7 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     driver = Path(setup.toolchain.driver)
     attempts = scratch.joinpath("attempts")
     source = Path(setup.unit.source)
-    cache = scratch.joinpath("refusal.json")
+    cache = scratch.joinpath("bakery")
     mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
     script += "[ \"$6\" = --certify ] && [ \"$8\" = --library ] || exit 2\n"
     script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\n"
@@ -408,7 +440,7 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     key = unit_key(setup.unit, setup.toolchain)?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, key, "test")? == 1
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, key, "test")? == 1
-    retained = cache.read_bytes().map_err((error) => error.message())?
+    retained = retained_refusal(cache, key)?.read_bytes().map_err((error) => error.message())?
     expected = b"\xffoutnamed refusal\x00tail"
     assert retained[len(retained) - len(expected):] == expected
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
@@ -426,13 +458,21 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     edited = unit_key(setup.unit, setup.toolchain)?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
-    write(cache, "incomplete document")?
+    # A damaged retained refusal is an error until its exact bytes are explicitly re-admitted.
+    retained_path = retained_refusal(cache, edited)?
+    replacement = scratch.joinpath("verified-refusal")
+    retained_path.copy(replacement, true, true).map_err((error) => error.message())?
+    damage(retained_path, "incomplete document")?
+    forget_verified()
+    match compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test"):
+        Ok(_) =>
+            assert false, "a damaged refusal was treated as absence"
+        Err(error) =>
+            assert "integrity" in error, error
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
+    readmit_payload(cache, replacement, retained_path.name()).map_err((error) => error.message())?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
-    framed = cache.read_bytes().map_err((error) => error.message())?
-    cache.write_bytes(framed[:len(framed) - 1]).map_err((error) => error.message())?
-    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxxx"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
     # 3. Retry crashes, signals, I/O failures and success without artifacts.
     for mode in ["crash", "signal", "io", "missing"]:
         write(source, mode)?
@@ -467,7 +507,7 @@ def verify_check_replay(scratch: Path) -> Result[None, str]:
     driver = Path(setup.toolchain.driver)
     attempts = scratch.joinpath("attempts")
     source = Path(setup.unit.source)
-    record = scratch.joinpath("main.text.oven-check")
+    record = scratch.joinpath("bakery")
     mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
     script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\nprevious=''\n"
     script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\n"
@@ -761,52 +801,35 @@ def settled(path: Path) -> Result[None, str]:
 
 
 pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
-    """Reuse needs a stamp for the key and the outputs it recorded; every interruption leaves a rebuild, not a mix."""
+    """An executable is never half written: only sealed facts are viewed, and a view is replaced in one step."""
     scratch = scratch_directory()?
-    bin = scratch.path().joinpath("bin")
-    output = bin.joinpath("app")
-    stamp = bin.joinpath("app.oven-inputs")
-    staged = bin.joinpath("app-4242")
-    one = Key(digest="key one", parts=["compiler c", "sources one"])
-    two = Key(digest="key two", parts=["compiler c", "sources two"])
-    three = Key(digest="key three", parts=["compiler c", "sources three"])
-    write(staged, "first build")?
-    # A build that was interrupted before installing leaves only its staged file.
-    assert not reusable([output], stamp, one)?
-    install_executable(staged, output, "program", stamp, one)?
-    assert reusable([output], stamp, one)?
-    assert not reusable([output], stamp, two)?
-    stale = staleness([output], stamp, two)?
-    assert stale == "sources changed", stale
-    assert not staged.is_file()
-    # A replacement in flight does not disturb the installed pair.
-    write(staged, "second build, still being linked")?
-    assert reusable([output], stamp, one)?
-    assert read(output)? == "first build"
-    # An installation that fails after the old stamp is withdrawn leaves no stamp to vouch for the old outputs.
-    remove(staged)?
-    match install_executable(staged, output, "program", stamp, two):
-        Ok(_) =>
-            assert false, "installing a missing build succeeded"
-        Err(_) => pass
-    assert not reusable([output], stamp, one)?
-    assert not reusable([output], stamp, two)?
-    assert staleness([output], stamp, two)? == "no stored build"
-    # An output replaced behind the stamp's back is not the output it recorded.
-    write(staged, "third build")?
-    install_executable(staged, output, "program", stamp, three)?
-    assert reusable([output], stamp, three)?
-    write(output, "someone else's binary")?
-    assert not reusable([output], stamp, three)?
-    # A test unit's report is installed and vouched for with its executable; without the report nothing is reused.
+    store = scratch.path().joinpath("bakery")
+    one = "1a00000000000000000000000000000000000000000000000000000000000000"
+    # A bake that was interrupted before sealing is not a fact, so nothing views it.
+    staged = staging(store, one)?
+    write(staged.joinpath("app"), "first build, still being linked")?
+    match find(store, one)?:
+        Some(_) =>
+            assert false, "an unsealed bake was found"
+        None => pass
+    write(staged.joinpath("app"), "first build")?
+    write(test_report(staged.joinpath("app")), "[]")?
+    fact = seal(store, one, staged, "test", "app", [], "test")?
+    # A test unit's report is viewed with its executable, and a lost view is recreated from the fact.
     tests = scratch.path().joinpath("tests")
-    write(tests.joinpath("app-77"), "test executable")?
-    write(test_report(tests.joinpath("app-77")), "[]")?
-    install_executable(tests.joinpath("app-77"), tests.joinpath("app"), "test", tests.joinpath("app.oven-inputs"), one)?
-    outputs = executable_outputs("test", tests.joinpath("app"))
-    assert reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
+    view_executable(store, fact, tests.joinpath("app"), "test")?
+    for path in executable_outputs("test", tests.joinpath("app")):
+        assert path.is_file(), path.0
     remove(test_report(tests.joinpath("app")))?
-    assert not reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
+    view_executable(store, fact, tests.joinpath("app"), "test")?
+    assert read(test_report(tests.joinpath("app")))? == "[]"
+    # A view replaced behind Oven's back is the user's; the next view restores the fact's executable.
+    write(tests.joinpath("app"), "someone else's binary")?
+    match fact_file(store, fact, "app"):
+        Some(payload) => assert read(payload)? == "first build"
+        None => return Err("the baked executable is absent")
+    view_executable(store, fact, tests.joinpath("app"), "test")?
+    assert read(tests.joinpath("app"))? == "first build"
     # Rust libraries retain rustc's file dependencies, including escaped paths outside the source directory.
     setup = fixture(scratch.path())?
     native = scratch.path().joinpath("native")
@@ -1002,7 +1025,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
         installed=native_artifacts(toolchain.externs),
     )
     built = {"native-core@target": BuiltUnit(crate_name="core", artifact=setup.dependency.0, directory=scratch.0)}
-    arguments = library_compile_arguments(facet, declared, installed, request, built, [])?
+    arguments = library_compile_arguments(facet, declared, installed, request, built, [], false)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     key = rust_library_producer_key(facet, installed, arguments, environment, request, toolchain)?
     stamp = installed.joinpath("library.oven-inputs")
@@ -1020,8 +1043,14 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     request.installed["data"] = [artifact.0, artifact.0]
     require_installed_refusal(facet, declared, output, request, built, "unique")?
     request.installed["data"] = [artifact.0]
+    # Without a location-bound stamp the content proof alone vouches for the installed producer; with neither, it
+    # is stale.
     remove(stamp)?
+    proof = installed.joinpath("library.portable-inputs")
+    saved_proof = read(proof)?
+    remove(proof)?
     require_installed_refusal(facet, declared, output, request, built, "no stored build")?
+    write(proof, saved_proof)?
     record(stamp, key, [artifact, graph, dependencies])?
     facet.features = ["alloc"]
     require_installed_refusal(facet, declared, output, request, built, "features")?
@@ -1173,7 +1202,9 @@ def verify_installed_graph_refresh(
     assert graph.read_text("utf-8", "strict").map_err((error) => error.message())? == "new checked graph"
     assert artifact_identity(artifact)? == native_before
     assert artifact_identity(dependencies)? == dependencies_before
+    # The mutating observer stays with this case; later cases refresh graphs with the ordinary one.
     write(included, "one included value")?
+    write(driver, script)?
     return Ok(None)
 
 
@@ -1302,3 +1333,9 @@ def verify_closure_readings(path: Path) -> Result[None, str]:
     write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
     assert json_text(readings.read(path)?)? == json_text(first)?
     return Ok(None)
+
+
+def damage(path: Path, text: str) -> Result[None, str]:
+    """Overwrite a sealed payload file, as a stray tool would, past its read-only permissions."""
+    set_permissions(path.0, Permissions.from_mode(420)).map_err((error) => str(error))?
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())

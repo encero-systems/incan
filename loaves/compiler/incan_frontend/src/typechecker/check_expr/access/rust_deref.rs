@@ -8,11 +8,77 @@ use crate::typechecker::type_info::RustCheckedCall;
 use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, RustTypeInfo};
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
+use incan_lang::lang::types::numerics::NumericTypeId;
 
 const DEREF_TRAIT: &str = "std::ops::Deref";
 const DEREF_MUT_TRAIT: &str = "std::ops::DerefMut";
 
 impl TypeChecker {
+    /// Select byte slicing from the inspected native carrier and its instantiated Deref targets. The checked call
+    /// borrows the final slice directly, so only the selected bytes are copied. Body IR receives ordinary native
+    /// calls, including every dereference, and never infers a target from a wrapper's name. Direct returns retain
+    /// their native view before an owned source projection can replace it.
+    pub(super) fn retain_rust_byte_slice(
+        &mut self,
+        base: &Spanned<Expr>,
+        source: &ResolvedType,
+        span: Span,
+    ) -> Option<()> {
+        if let Expr::Paren(inner) = &base.node {
+            return self.retain_rust_byte_slice(inner, source, span);
+        }
+        let mut owner = self
+            .type_info
+            .rust
+            .checked_calls
+            .get(&base.span)
+            .map(|call| call.return_type.clone())
+            .or_else(|| self.rust_native_value_type(base))
+            .unwrap_or_else(|| source.clone());
+        let mut steps = Vec::new();
+        let byte = ResolvedType::Numeric(NumericTypeId::U8);
+        for _ in 0..12 {
+            while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = owner {
+                owner = *inner;
+            }
+            if let ResolvedType::Generic(name, arguments) = &owner
+                && name == "[]"
+                && arguments.as_slice() == std::slice::from_ref(&byte)
+            {
+                self.type_info.rust.native_return_consumers.insert(base.span);
+                self.type_info.rust.return_coercions.remove(&base.span);
+                let bound = ResolvedType::Generic("Option".into(), vec![ResolvedType::Int]);
+                self.type_info.rust.checked_calls.insert(
+                    span,
+                    RustCheckedCall {
+                        storage: None,
+                        source_type_parameters: self.native_call_type_parameters(),
+                        receiver_adjustments: steps,
+                        path: "incan_std_core::collections::list_slice".into(),
+                        type_arguments: vec![byte],
+                        parameters: vec![
+                            CallableParam::positional(ResolvedType::Ref(Box::new(owner))),
+                            CallableParam::positional(bound.clone()),
+                            CallableParam::positional(bound.clone()),
+                            CallableParam::positional(bound),
+                        ],
+                        return_type: ResolvedType::Bytes,
+                        result_item_path: Some("std::vec::Vec".into()),
+                        has_receiver: false,
+                    },
+                );
+                return Some(());
+            }
+            let target = self.rust_associated_type(&owner, DEREF_TRAIT, "Target")?;
+            if target == owner {
+                return None;
+            }
+            steps.push(self.rust_deref_adjustment(&owner, &target, false)?);
+            owner = target;
+        }
+        None
+    }
+
     /// Resolve a public field through metadata-selected shared Deref targets. Retain the same field identity and
     /// native payload as a direct read, plus every executable adjustment; no target is inferred from a field name.
     pub(super) fn resolve_rust_deref_field(

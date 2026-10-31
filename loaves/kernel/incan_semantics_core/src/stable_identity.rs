@@ -23,10 +23,11 @@
 //!   appear to change. Nested declarations instead carry their stable named owner plus a collision-local ordinal; the
 //!   module-global table position never enters this identity.
 
+pub mod source_signature;
+
 use serde::{Deserialize, Serialize};
 
 use crate::facts::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
-use crate::types::IncanType;
 
 /// Stable location of a declaration within its semantic owner.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -65,39 +66,9 @@ pub struct StableDeclarationContext {
 pub struct DeclarationSignature(String);
 
 impl DeclarationSignature {
-    /// Build a signature from a callable's checked parameter and return types.
-    ///
-    /// Parameter *names* are deliberately excluded. Renaming a parameter does not produce a different declaration,
-    /// and including the name would make a rename look like a new declaration to every consumer keyed on identity.
-    pub fn from_callable_types<'a>(
-        parameters: impl IntoIterator<Item = &'a IncanType>,
-        return_type: &IncanType,
-    ) -> Self {
-        let rendered = parameters.into_iter().map(render_type).collect::<Vec<_>>().join(",");
-        Self(format!("({rendered})->{}", render_type(return_type)))
-    }
-
     /// The canonical rendering.
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-/// Render one checked type into the signature alphabet.
-///
-/// This is deliberately a total function over [`IncanType`] rather than a `Display` implementation: the rendering is
-/// an identity input, so it must change only when the type changes, and keeping it local stops an unrelated
-/// formatting change elsewhere from silently rekeying every declaration in the workspace.
-fn render_type(value: &IncanType) -> String {
-    match value {
-        IncanType::Never => "!".to_string(),
-        IncanType::Primitive(primitive) => format!("{primitive:?}"),
-        IncanType::Named(name) => name.clone(),
-        IncanType::Generic { base, args } => {
-            let rendered = args.iter().map(render_type).collect::<Vec<_>>().join(",");
-            format!("{base}[{rendered}]")
-        }
-        other => format!("{other:?}"),
     }
 }
 
@@ -130,7 +101,8 @@ impl StableDeclarationId {
     /// Derive a stable identity from the compilation's canonical identity.
     ///
     /// The span and raw scope discriminant are dropped. A nested declaration requires checked semantic owner context;
-    /// absence fails closed instead of recreating the old colliding `Nested` key. `signature` separates overloads and
+    /// absence fails closed instead of recreating the old colliding `Nested` key. Explicit member owner context applies
+    /// even when the canonical member has no scope discriminant. `signature` separates overloads and
     /// should be supplied from final checked types whenever available.
     pub fn from_canonical(
         canonical: &CanonicalSymbolId,
@@ -138,8 +110,8 @@ impl StableDeclarationId {
         context: Option<StableDeclarationContext>,
     ) -> Option<Self> {
         let location = match canonical.scope_discriminant {
-            None => StableDeclarationLocation::ModuleLevel,
-            Some(_) => {
+            None if context.is_none() => StableDeclarationLocation::ModuleLevel,
+            _ => {
                 let context = context?;
                 StableDeclarationLocation::Nested {
                     owner: Box::new(context.owner),
@@ -198,10 +170,36 @@ impl StableDeclarationId {
 
 #[cfg(test)]
 mod tests {
+    use super::source_signature::SourceSignatureContext;
     use super::*;
     use crate::facts::ScopeDiscriminant;
     use crate::hir::HirSourceSpan;
-    use crate::types::IncanPrimitiveType;
+    use crate::types::{IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType};
+    use std::collections::BTreeMap;
+
+    /// Build primitive/builtin source signatures through the production projection used by the checker.
+    fn signature<'a>(
+        parameters: impl IntoIterator<Item = &'a IncanType>,
+        result: &IncanType,
+    ) -> Option<DeclarationSignature> {
+        let parameters = parameters
+            .into_iter()
+            .map(|ty| IncanCallableParam {
+                name: Some("parameter".into()),
+                ty: ty.clone(),
+                kind: IncanCallableParamKind::Normal,
+                has_default: false,
+                is_partial_preset: false,
+                is_mut: false,
+                native_owned: false,
+            })
+            .collect::<Vec<_>>();
+        SourceSignatureContext {
+            nominals: &BTreeMap::new(),
+            binders: &[],
+        }
+        .callable(&parameters, result, false)
+    }
 
     fn canonical(name: &str, span: (usize, usize), scope: Option<usize>) -> CanonicalSymbolId {
         canonical_of_kind(name, span, scope, SemanticSourceTargetKind::Function)
@@ -375,39 +373,29 @@ mod tests {
         let str_type = IncanType::Primitive(IncanPrimitiveType::Str);
         let result = IncanType::Named("Result".to_string());
         let with = (
-            StableDeclarationId::from_canonical(
-                &one_argument,
-                Some(DeclarationSignature::from_callable_types([&str_type], &result)),
-                None,
-            ),
-            StableDeclarationId::from_canonical(
-                &two_arguments,
-                Some(DeclarationSignature::from_callable_types(
-                    [&str_type, &str_type],
-                    &result,
-                )),
-                None,
-            ),
+            StableDeclarationId::from_canonical(&one_argument, signature([&str_type], &result), None),
+            StableDeclarationId::from_canonical(&two_arguments, signature([&str_type, &str_type], &result), None),
         );
         assert_ne!(with.0, with.1, "the signature separates them");
     }
 
     /// Renaming a parameter does not produce a different declaration, so names must stay out of the signature.
     #[test]
-    fn signature_ignores_parameter_names_by_construction() {
+    fn signature_ignores_parameter_names_by_construction() -> Result<(), Box<dyn std::error::Error>> {
         let str_type = IncanType::Primitive(IncanPrimitiveType::Str);
         let int_type = IncanType::Primitive(IncanPrimitiveType::Int);
-        let unit = IncanType::Named("None".to_string());
-        let signature = DeclarationSignature::from_callable_types([&str_type, &int_type], &unit);
+        let unit = IncanType::Primitive(IncanPrimitiveType::Unit);
+        let original = signature([&str_type, &int_type], &unit).ok_or("missing checked signature")?;
         assert!(
-            !signature.as_str().contains("key"),
+            !original.as_str().contains("key"),
             "no parameter name reaches the rendering"
         );
         assert_eq!(
-            signature,
-            DeclarationSignature::from_callable_types([&str_type, &int_type], &unit),
+            Some(original),
+            signature([&str_type, &int_type], &unit),
             "the rendering is deterministic"
         );
+        Ok(())
     }
 
     /// A differing parameter type is a differing declaration; a differing return type is too.
@@ -415,14 +403,8 @@ mod tests {
     fn signature_tracks_types_in_both_positions() {
         let str_type = IncanType::Primitive(IncanPrimitiveType::Str);
         let int_type = IncanType::Primitive(IncanPrimitiveType::Int);
-        assert_ne!(
-            DeclarationSignature::from_callable_types([&str_type], &int_type),
-            DeclarationSignature::from_callable_types([&int_type], &int_type)
-        );
-        assert_ne!(
-            DeclarationSignature::from_callable_types([&str_type], &int_type),
-            DeclarationSignature::from_callable_types([&str_type], &str_type)
-        );
+        assert_ne!(signature([&str_type], &int_type), signature([&int_type], &int_type));
+        assert_ne!(signature([&str_type], &int_type), signature([&str_type], &str_type));
     }
 
     /// The rendering is persisted and compared across edits, so it must carry no offset at all.

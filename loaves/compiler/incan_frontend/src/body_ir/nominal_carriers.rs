@@ -159,7 +159,7 @@ fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &Const
     retain_constructor_results(
         &body.block.stmts,
         &mut body.locals,
-        &mut body.named_type_identities,
+        std::sync::Arc::make_mut(&mut body.named_type_identities),
         constructors,
     );
     for parameter in &body.params {
@@ -167,7 +167,7 @@ fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &Const
             retain_constructor_results(
                 &default.stmts,
                 &mut body.locals,
-                &mut body.named_type_identities,
+                std::sync::Arc::make_mut(&mut body.named_type_identities),
                 constructors,
             );
         }
@@ -184,7 +184,9 @@ pub(crate) fn retain_published_frame(body: &mut bir::Body) {
         .filter_map(|identity| nominal_carrier_key(identity).map(|key| (key, identity.clone())))
         .collect();
     for (key, identity) in keys {
-        body.named_type_identities.entry(key).or_insert(identity);
+        std::sync::Arc::make_mut(&mut body.named_type_identities)
+            .entry(key)
+            .or_insert(identity);
     }
     retain_body_types(body, None);
 }
@@ -731,7 +733,7 @@ fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
     retain_selected_returns(
         &body.block.stmts,
         &mut body.locals,
-        &mut body.named_type_identities,
+        std::sync::Arc::make_mut(&mut body.named_type_identities),
         returns,
     );
     for parameter in &body.params {
@@ -739,7 +741,7 @@ fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
             retain_selected_returns(
                 &default.stmts,
                 &mut body.locals,
-                &mut body.named_type_identities,
+                std::sync::Arc::make_mut(&mut body.named_type_identities),
                 returns,
             );
         }
@@ -758,7 +760,7 @@ fn return_carriers(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) ->
                     identity.clone(),
                     ReturnCarrier {
                         ty: body.return_type.clone(),
-                        identities: body.named_type_identities.clone(),
+                        identities: (*body.named_type_identities).clone(),
                     },
                 )
             })

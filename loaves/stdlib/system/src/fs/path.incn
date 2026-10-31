@@ -30,6 +30,7 @@ from rust::rustix::fs import statvfs
 from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
 from std.fs.glob import matches
 from std.fs.locking import FileLock, exclusive as lock_exclusive, shared as lock_shared, try_exclusive as try_lock_exclusive, try_shared as try_lock_shared
+from std.fs.mapping import MappedFile, map_read as map_file_read
 from std.fs.metadata import DirEntry, PathStat, DiskUsage
 from std.io import IoError
 
@@ -638,6 +639,17 @@ pub type Path = newtype str:
         """Acquire a blocking shared advisory lock for this path's stable sibling lock entry."""
         match lock_shared(self.0):
             Ok(lock) => return Ok(lock)
+            Err(err) => return Err(_io_error(self, err))
+
+    def map_read(self) -> Result[MappedFile, IoError]:
+        """
+        Map this file read-only into memory.
+
+        Returns:
+            A `MappedFile` whose reads touch only the pages they need, or `Err(IoError)` if the file cannot be mapped.
+        """
+        match map_file_read(self.0):
+            Ok(mapped) => return Ok(mapped)
             Err(err) => return Err(_io_error(self, err))
 
     def lock_exclusive(self) -> Result[FileLock, IoError]:

@@ -1,9 +1,12 @@
 """Public graph command contracts, including warm-query equality and wire-format agreement."""
 
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.hash import file_digest
+from std.environ import get_or
 from std.json import JsonValue
-from rust::std::fs import OpenOptions, metadata
-from rust::std::os::unix::fs import MetadataExt
+from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions
+from rust::std::os::unix::fs import MetadataExt, PermissionsExt
 from compare import compare
 from files import (
     items,
@@ -188,7 +191,7 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
     before = read(source)?
     mut failures: list[str] = []
     check_comment_freshness(incan, project, source, before)?
-    write(source, f"\n{before}")?
+    write(source, f"{prefix_comment(source)} source positions are provenance\n{before}")?
     moved = document(incan, project, "jsonl")?
     stale = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
     if stale.code != Some(0) or not snapshot_stale(stale.stdout)?:
@@ -197,6 +200,19 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
         failures.append("source edit reused stale source spans")
     if declaration_identities(original)? != declaration_identities(moved)?:
         failures.append("line movement changed a declaration identity")
+    if "def read_item(item: Item) -> int:" in before:
+        if body_meanings(original) != body_meanings(moved):
+            failures.append("a position-only edit changed checked nominal body meaning")
+        write(source, before.replace("\n\nmodel Item:", "\n\n# nominal declaration moved\nmodel Item:"))?
+        shifted = document(incan, project, "jsonl")?
+        if body_meanings(original) != body_meanings(shifted):
+            failures.append("moving a nominal declaration changed checked body meaning")
+        write(source, before.replace("def read_item(item: Item) -> int:", "def read_item(item: Other) -> int:"))?
+        changed = document(incan, project, "jsonl")?
+        if body_meanings(original) == body_meanings(changed):
+            failures.append("a real nominal type edit kept every checked body digest")
+        if declaration_identities(original)? == declaration_identities(changed)?:
+            failures.append("a real source signature change retained every declaration identity")
     write(source, "this is invalid in both languages {")?
     invalid = document(incan, project, "jsonl")?
     refused = invoke(incan, ["inspect", "codegraph", ".", "--strict"], project)?
@@ -206,6 +222,23 @@ def check_source_edits(incan: str, project: Path, original: GraphDocument, snaps
     if "is unchecked" not in invalid.stderr or invalid.digest == original.digest:
         failures.append(f"broken source was not exported as an unchecked unit with a warning: {invalid.stderr}")
     return Ok(failures)
+
+
+def body_meanings(document: GraphDocument) -> Dict[str, str]:
+    """Index every exported checked body by its edit-stable source declaration key."""
+    mut meanings: Dict[str, str] = {}
+    for record in document.records:
+        digest = string_field(record, "semantic_digest")
+        if string_field(record, "record") == "declaration" and digest != "":
+            meanings[string_field(record, "stable_key")] = digest
+    return meanings
+
+
+def prefix_comment(source: Path) -> str:
+    """Use the selected source language's comment token for a position-only edit."""
+    if source.name().endswith(".rs"):
+        return "//"
+    return "#"
 
 
 def library_artifacts(project: Path) -> Result[list[str], str]:
@@ -348,7 +381,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
 
     1. Build the provider. Its compiled Loaf carries a version-one binary graph that names no physical project root.
     2. A consumer reads the published graph, though the provider's source has since become invalid.
-    3. A corrupt published graph is refused, not silently replaced or reused.
+    3. A corrupt view is restored; stored damage refuses lookup until exact bytes are explicitly re-admitted.
     4. A provider with no published graph is exported once, and the export is stable.
     """
     provider = project.joinpath("deps").joinpath("checked")
@@ -383,12 +416,27 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     if original.code != Some(0) or published.code != Some(0) or original.stdout != published.stdout:
         return Err(f"published dependency graph was rechecked from source: {published.stderr}")
     write(source, before)?
-    # 3. A corrupt published graph is refused, never silently replaced or reused.
+    # 3. Views are restored automatically; stored damage requires explicit verified re-admission.
+    stored = stored_payload(publications[0])?
     for graph in publications:
         write_bytes(graph, b"\x7f\x00\x00\x00")?
-    corrupt = invoke(incan, arguments, project)?
-    if corrupt.code == Some(0):
-        return Err("a corrupt published graph was silently replaced or reused")
+    restored = invoke(incan, arguments, project)?
+    if restored.code != Some(0) or restored.stdout != original.stdout:
+        return Err(f"a corrupt view in target/ reached the published graph: {restored.stderr}")
+    if read_bytes(publications[0])? == b"\x7f\x00\x00\x00":
+        return Err("a corrupt view in target/ was not restored from the published graph")
+    replacement = project.joinpath("verified-graph-replacement")
+    write_bytes(replacement, read_bytes(stored)?)?
+    corrupt_fact(stored)?
+    refused = invoke(incan, arguments, project)?
+    if refused.code == Some(0) or "store integrity error" not in refused.stderr:
+        return Err(f"stored damage was not reported: {refused.stderr}")
+    repaired = invoke(incan, ["bakery", "repair-payload", stored.name(), replacement.0], project)?
+    if repaired.code != Some(0):
+        return Err(f"verified graph re-admission failed: {repaired.stderr}")
+    restored_fact = invoke(incan, arguments, project)?
+    if restored_fact.code != Some(0) or restored_fact.stdout != original.stdout:
+        return Err(f"re-admitted graph differs from its publication: {restored_fact.stderr}")
     # 4. A provider with no published graph is exported once, and a second export gives the same answer.
     for graph in publications:
         remove(graph)?
@@ -469,3 +517,21 @@ def check_rust_links(document: GraphDocument) -> Result[None, str]:
             if callee.startswith(f"{root}::") and string_field(record, "target_id") not in declarations:
                 return Err(f"resolved Rust call has no declaration in its represented crate: {callee}")
     return Ok(None)
+
+
+def stored_payload(view: Path) -> Result[Path, str]:
+    """The bakery payload a view was cloned from: payloads are named by the digest of their bytes."""
+    digest = hexlify(file_digest(view, "sha256").map_err((error) => f"{view.0}: {error.message()}")?)
+    mut store = Path(get_or("INCAN_BAKERY", ""))
+    if store.0 == "":
+        mut home = Path(get_or("INCAN_HOME", ""))
+        if home.0 == "":
+            home = Path(get_or("HOME", "")).joinpath(".incan")
+        store = home.joinpath("bakery")
+    return Ok(store.joinpath("payloads").joinpath(digest[:2]).joinpath(digest))
+
+
+def corrupt_fact(path: Path) -> Result[None, str]:
+    """Overwrite a stored payload past its read-only permission, as a stray tool would."""
+    set_permissions(path.0, Permissions.from_mode(420)).map_err((error) => str(error))?
+    return write_bytes(path, b"\x7f\x00\x00\x00")

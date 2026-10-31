@@ -25,7 +25,8 @@ pub def validate_project_implementation(
     imported trait without type parameters names a slot another module declares: it holds only when this module retains
     the adopter's layout, the declaring module retains the trait around the slot, the adopter's own method or the slot's
     own default fills it, and some module retains that body under its direct-call identity. A slot of a standard-library
-    or SDK protocol has no declaring project module and holds by its identity ([`is_protocol_slot`]).
+    or SDK protocol has no declaring project module and holds by its identity ([`is_protocol_slot`]). Nor has a Rust
+    trait's slot: it holds when the adopter's own adoption lists it and some module retains the filling body.
     Matching spellings never establish any of these.
     """
     if module.is_well_formed_trait_implementation(implementation):
@@ -43,6 +44,11 @@ pub def validate_project_implementation(
         ):
             return Ok(None)
         return Err("invalid Body IR trait implementation without a retained declaration")
+    # A Rust trait has no declaring project module; the adopter's own adoption record names its slots instead.
+    if adopted_rust_slot(module, implementation):
+        if retains_body(modules, implementation.implementation):
+            return Ok(None)
+        return Err("invalid Body IR Rust trait implementation without a retained declaration")
     if not declares_slot(modules, implementation.method):
         return Err("invalid Body IR trait implementation without its declaring trait")
     if not retains_body(modules, implementation.implementation):
@@ -80,6 +86,27 @@ def fills_its_slot(implementation: &TraitImplementation) -> bool:
         return false
     # The adopter's own method shares its module, and spans of different files may nest, so the origin is compared too.
     return filled.origin == implementation.owner.origin and contains(implementation.owner, filled)
+
+
+def adopted_rust_slot(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+    """Whether the adopter's own Rust trait adoption lists this slot; rustc checks the implementation itself."""
+    match implementation.method.origin:
+        SymbolOrigin.RustCrate(_path) => pass
+        _ => return false
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
+        if declaration.canonical != implementation.owner.clone():
+            continue
+        for adoption in declaration.trait_adoptions:
+            if adoption.trait_identity.origin != implementation.method.origin:
+                continue
+            match adoption.methods:
+                Some(slots) =>
+                    for slot in slots:
+                        if slot == implementation.method:
+                            return true
+                None => pass
+    return false
 
 
 def retains_owner(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:

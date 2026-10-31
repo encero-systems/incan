@@ -1,0 +1,15 @@
+# behavior: two builds of one unit started together bake it once; the other waits on the claim and finds the sealed fact, and both succeed
+# environment:
+#   INCAN_BAKERY=target/case-bakery
+# cli-commands:
+#   bakery verify
+# cli-concurrent:
+#   build src/main.incn
+#   build src/main.incn
+# expect-exit: 0
+# expect-trace-at-most-once:
+#   program: compiled
+
+def main() -> None:
+    """A program both builds compile."""
+    println("baked once")

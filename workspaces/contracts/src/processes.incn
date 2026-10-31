@@ -65,6 +65,7 @@ pub def launch(
     selector: Option[str],
     environment: list[str],
     stdout_file: Option[Path] = None,
+    capture: str = "",
 ) -> Result[Child, str]:
     """
     Start one child with separate captured streams; the caller owns waiting and collection.
@@ -80,8 +81,8 @@ pub def launch(
         command.env(name, value)
     command.process_group(0)
     command.stdin(Stdio.null())
-    command.stdout(File.create(stdout_file.unwrap_or(stream_path(project, "stdout")).0).map_err((error) => str(error))?)
-    command.stderr(File.create(stream_path(project, "stderr").0).map_err((error) => str(error))?)
+    command.stdout(File.create(stdout_file.unwrap_or(stream_path(project, "stdout", capture)).0).map_err((error) => str(error))?)
+    command.stderr(File.create(stream_path(project, "stderr", capture).0).map_err((error) => str(error))?)
     match selector:
         Some(value) =>
             command.env("INCAN_CONTRACT_CASE", value)
@@ -142,6 +143,7 @@ pub def finish(
     timed_out: bool,
     deadline_seconds: int = 0,
     stdout_file: Option[Path] = None,
+    capture: str = "",
 ) -> Result[Outcome, str]:
     """
     Collect strict UTF-8 streams after reaping, preserving signals and a deadline's partial output.
@@ -153,8 +155,8 @@ pub def finish(
     # 1. Collect ordinary captures; a file-backed response remains available to its streaming consumer.
     mut stdout_result: Result[str, str] = Ok("")
     if stdout_file is None:
-        stdout_result = read_stream(project, "stdout")
-    stderr_result = read_stream(project, "stderr")
+        stdout_result = read_stream(project, "stdout", capture)
+    stderr_result = read_stream(project, "stderr", capture)
     stdout = stdout_result?
     mut stderr = stderr_result?
     # 2. Include the effective deadline when it expired.
@@ -164,14 +166,14 @@ pub def finish(
     return Ok(Outcome(stdout=stdout, stderr=stderr, code=code))
 
 
-def stream_path(project: Path, stream: str) -> Path:
+def stream_path(project: Path, stream: str, capture: str = "") -> Path:
     """Keep captured bytes outside the fixture's working directory and out of its data namespace."""
-    return project.parent().joinpath(f".{project.name()}-{stream}")
+    return project.parent().joinpath(f".{project.name()}-{stream}{capture}")
 
 
-def read_stream(project: Path, stream: str) -> Result[str, str]:
+def read_stream(project: Path, stream: str, capture: str = "") -> Result[str, str]:
     """Read strict UTF-8 and remove the runner-owned capture file after collection."""
-    path = stream_path(project, stream)
+    path = stream_path(project, stream, capture)
     value = path.read_text("utf-8", "strict").map_err((error) => error.message())
     path.unlink().map_err((error) => error.message())?
     return value

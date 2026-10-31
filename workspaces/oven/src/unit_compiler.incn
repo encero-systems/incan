@@ -4,6 +4,7 @@ from rust::std::process import Command, Stdio
 from std.fs import Path
 from driver_command import driver_command
 from codegen import compiled_arguments
+from bakery import bakery
 from compiler_refusals import compile_or_replay
 from compiler_worker import compile_resident, served_resident
 from files import open_stream, read
@@ -45,7 +46,7 @@ pub def compile_prepared_unit(
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
-    return compile_or_replay(unit, toolchain, invocation, native, Path(f"{output.0}.oven-refusal"), key, reason)
+    return compile_or_replay(unit, toolchain, invocation, native, bakery()?, key, reason)
 
 
 pub def crate_name(unit: UnitDescription) -> str:

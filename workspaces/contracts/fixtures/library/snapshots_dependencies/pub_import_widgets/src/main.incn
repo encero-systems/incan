@@ -1,4 +1,4 @@
-# behavior: a generic FallibleIterator model from a compiled package is drained by a consumer function that inherits the implementation's bound on the type parameter (#1280), and a package's model, function and const import by name and through the package module, a package module alias calls the same function, and a package static list is shared through a live alias (RFC 031, RFC 052)
+# behavior: compiled packages preserve generic FallibleIterator bounds, named and module imports, shared static lists, and owned Result, Option and model returns from static receivers (#1280, #2481, RFC 031, RFC 052)
 # expect-stdout:
 #   2
 #   default
@@ -6,7 +6,7 @@
 #   default
 #   2
 
-from pub::widgets import Widget, make_widget, DEFAULT_NAME, SHARED_ITEMS, Stream
+from pub::widgets import Widget, make_widget, DEFAULT_NAME, SHARED_ITEMS, SHARED_WIDGET, Stream
 import pub::widgets
 import pub::widgets as w
 
@@ -35,6 +35,34 @@ def show_package_imports() -> None:
     println(len(SHARED_ITEMS))
 
 
+def show_static_results() -> None:
+    """Keep delegated owned results alive while later calls mutate the guarded receiver."""
+    optional = SHARED_WIDGET.optional(true)
+    snapshot = SHARED_WIDGET.snapshot()
+    match SHARED_WIDGET.optional(false):
+        None => pass
+        Some(_) =>
+            assert false
+    match SHARED_WIDGET.record(true):
+        Ok(_) => pass
+        Err(_) =>
+            assert false
+    error = SHARED_WIDGET.record(false)
+    match optional:
+        Some(value) =>
+            assert value.name == "initial"
+        None =>
+            assert false
+    assert snapshot.name == "initial"
+    assert SHARED_WIDGET.name == "recorded"
+    match error:
+        Ok(_) =>
+            assert false
+        Err(message) =>
+            assert message == "refused"
+
+
 def main() -> None:
     show_drained_stream()
     show_package_imports()
+    show_static_results()
