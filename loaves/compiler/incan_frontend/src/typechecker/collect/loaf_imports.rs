@@ -357,6 +357,18 @@ impl TypeChecker {
         span: Span,
     ) -> Option<std::sync::Arc<LibraryManifest>> {
         if let Some(entry) = self.loaves.entry(library) {
+            // Admission validated the format capability; imports need not rescan every API declaration.
+            if entry.artifact.manifest.manifest_format == crate::library_manifest::OWNERSHIP_MANIFEST_FORMAT {
+                self.errors.push(
+                    crate::diagnostics::CompileError::type_error(
+                        format!("Provider '{library}' publishes ownership contracts that cannot be proved here"),
+                        span,
+                    )
+                    .with_stable_code("INCAN-T0123")
+                    .with_note("Its contract metadata is preserved; no copy or weaker access is substituted"),
+                );
+                return None;
+            }
             return Some(std::sync::Arc::clone(&entry.artifact.manifest));
         }
         let known = self.loaves.keys().map(str::to_owned).collect::<Vec<_>>();

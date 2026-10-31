@@ -31,6 +31,7 @@ pub def canonical_record_controls() -> Result[None, str]:
     diagnostic_record_controls()?
     default_record_controls()?
     final_value_controls()?
+    ownership_record_controls()?
     return Ok(None)
 
 
@@ -138,4 +139,21 @@ def final_value_controls() -> Result[None, str]:
     assert encoded == encode_record(after).map_err((_) => "empty-list moved encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "empty-list decode")?
     verify_fixture(moved, "values", native_fields(decoded).map_err((_) => "empty-list fields")?).map_err((error) => "empty-list: " + error.to_string())?
+    return Ok(None)
+
+
+def ownership_record_controls() -> Result[None, str]:
+    """The Incan codec owns versioned access modes and explicit source slots, including refused source declarations."""
+    source = "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n"
+    moved = "# source moved\n" + source
+    for declaration in [true, false]:
+        rows = fixture_projection(source, "view", declaration).map_err((error) => error.to_string())?
+        record = from_native_fields(rows).map_err((_) => "ownership fields")?
+        encoded = encode_record(record).map_err((_) => "ownership encode")?
+        decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err((_) => "ownership decode")?
+        verify_fixture(moved, "view", native_fields(decoded).map_err((_) => "ownership native fields")?).map_err((error) => error.to_string())?
+        obsolete = CheckedRecord(profile="incan.checker-free-functions/1", owner=record.owner, root=record.root, family=record.family, fields=record.fields)
+        match encode_record(obsolete):
+            Err(CodecFault.ProfileMismatch) => pass
+            _ => return Err("old ownership profile accepted")
     return Ok(None)

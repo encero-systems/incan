@@ -570,6 +570,7 @@ fn params(values: &[ParamExport]) -> Vec<CallableParam> {
 /// Recover the exact callable signature and separately materializable defaults.
 fn function(value: &FunctionExport) -> Result<CheckedFunctionExport, LibraryManifestError> {
     Ok(CheckedFunctionExport {
+        ownership: value.ownership.as_ref().map(super::ownership::hydrate).transpose()?,
         name: value.name.clone(),
         emitted_name: value.emitted_name.clone(),
         type_params: type_params(&value.type_params),
@@ -670,6 +671,7 @@ fn methods(values: &[MethodExport]) -> Result<Vec<CheckedMethod>, LibraryManifes
         .iter()
         .map(|value| {
             Ok(CheckedMethod {
+                ownership: value.ownership.as_ref().map(super::ownership::hydrate).transpose()?,
                 name: value.name.clone(),
                 canonical: value.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate),
                 alias_of: value.alias_of.clone(),

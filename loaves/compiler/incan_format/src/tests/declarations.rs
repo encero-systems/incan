@@ -756,3 +756,22 @@ trait Named:
     assert_eq!(format_source(&formatted)?, expected);
     Ok(())
 }
+
+/// Ownership sources survive both wrapped headers and abstract methods without changing their field path.
+#[test]
+fn explicit_result_sources_round_trip() -> Result<(), FormatError> {
+    let source = "def read(value: Borrowed[str]) -> Result[Borrowed[str], str] from value:\n    return Ok(value)\n\ntrait View:\n    def view(self) -> Borrowed[str] from self.name: ...\n";
+    let formatted = assert_format_round_trip_lex_parse(source)?;
+    assert!(formatted.contains("from value:"));
+    assert!(formatted.contains("from self.name\n"));
+    assert_eq!(format_source(&formatted)?, formatted);
+    let config = FormatConfig {
+        line_length: 45,
+        ..FormatConfig::default()
+    };
+    let wrapped = format_source_with_config(source, config.clone())?;
+    program_from_source(&wrapped)?;
+    assert!(wrapped.contains(") -> Result[Borrowed[str], str] from value:"));
+    assert_eq!(format_source_with_config(&wrapped, config)?, wrapped);
+    Ok(())
+}

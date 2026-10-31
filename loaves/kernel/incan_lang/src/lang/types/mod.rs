@@ -15,6 +15,7 @@
 
 pub mod collections;
 pub mod numerics;
+pub mod ownership;
 pub mod stringlike;
 
 /// Canonical semantic constructor name for anonymous union types.
@@ -42,6 +43,8 @@ pub enum BuiltinTypeName {
     Numeric(NumericTypeId),
     StringLike(StringLikeId),
     Collection(CollectionTypeId),
+    /// Explicit access-mode annotation from the ownership prelude.
+    Ownership(ownership::OwnershipMode),
 }
 
 impl BuiltinTypeName {
@@ -51,6 +54,7 @@ impl BuiltinTypeName {
             BuiltinTypeName::Numeric(id) => numerics::as_str(id),
             BuiltinTypeName::StringLike(id) => stringlike::as_str(id),
             BuiltinTypeName::Collection(id) => collections::as_str(id),
+            BuiltinTypeName::Ownership(mode) => mode.as_str(),
         }
     }
 
@@ -60,6 +64,7 @@ impl BuiltinTypeName {
             BuiltinTypeName::Numeric(id) => numerics::descriptor(id),
             BuiltinTypeName::StringLike(id) => stringlike::descriptor(id),
             BuiltinTypeName::Collection(id) => collections::descriptor(id),
+            BuiltinTypeName::Ownership(mode) => mode.as_str(),
         }
     }
 }
@@ -70,4 +75,5 @@ pub fn builtin_type_name(spelling: &str) -> Option<BuiltinTypeName> {
         .map(BuiltinTypeName::Numeric)
         .or_else(|| stringlike::from_str(spelling).map(BuiltinTypeName::StringLike))
         .or_else(|| collections::from_str(spelling).map(BuiltinTypeName::Collection))
+        .or_else(|| ownership::from_str(spelling).map(BuiltinTypeName::Ownership))
 }
