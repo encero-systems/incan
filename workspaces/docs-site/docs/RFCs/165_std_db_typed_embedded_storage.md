@@ -8,6 +8,7 @@
     - RFC 024 (extensible derive protocol)
     - RFC 047 (lightweight directed graph types)
     - RFC 086 (schema descriptors and adapters)
+    - RFC 094 (context managers)
     - RFC 112 (crash-safe publication and file coordination)
     - RFC 114 (compiled providers and package features)
     - RFC 117 (Loaf project model)
@@ -23,6 +24,16 @@
 ## Summary
 
 Introduce `std.db`, an Incan-native embedded, typed, transactional database with persistent disk, temporary spooled-memory and strictly in-memory modes. Incan models define stored values; explicit identities, immutable revisions, indexed relationships and snapshot-bound reads define how those values are retained and connected. The public standard-library API uses one shared platform storage substrate rather than creating a second engine. Compiler tooling, document publishers, interactive applications and higher-level query libraries can share that substrate without sharing domain policy, requiring a server, or importing a query engine. RFC 166 defines the graph-reading interface over these records and ordinary in-memory graphs.
+
+## Delivery boundary
+
+The primitive storage layer is targeted for the 0.6 dev.9 line. This does not move every public `std.db` convenience, RFC 166 graph surface or remaining design question into that delivery commitment. This RFC remains Draft until its outstanding contracts are settled; the target is not evidence of an implementation or a completed lifecycle transition.
+
+The primitive must expose explicit resource acquisition/release, transaction commit/abort and cursor operations independently of RFC 094. A future `with` adaptation composes those operations: it closes a cursor, aborts an unfinished transaction and releases its resources, while never implicitly committing. Successful explicit commit remains publication; leaving an unfinished transaction cannot publish its writes. The absence of context-manager syntax is therefore not a prerequisite blocker for the primitive.
+
+Explicit lifecycle operations do not excuse unsafe cleanup on an early return, propagated error or supported unwinding path. The primitive implementation must establish its ownership and cleanup mechanism using available language/runtime facilities and verify failure paths. Fallible finalization must be observable when explicitly requested; destructor fallback must not be used to claim successful commit, confirmed rollback or durable publication. Any unsupported cleanup or borrowing requirement must be tracked as a concrete compiler/runtime gap rather than hidden behind a future `with` example.
+
+The public API remains Incan-native and duckborrowed. Explicit ownership and lifetime brands belong at the primitive boundary where they are needed to express resource dependencies. Scoped examples describe the eventual RFC 094 integration, not syntax that must already be implemented to begin primitive storage work.
 
 ## Core model
 
