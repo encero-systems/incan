@@ -136,6 +136,8 @@ def write_silence(data: &mut list[f32], info: &OutputCallbackInfo) -> None:
 
 Here `OutputCallbackInfo` is imported from the callback's crate. The call's checked Rust signature supplies the slice ABI. A closure expression can receive the same contextual parameter types. This applies at that callback boundary; it does not change the representation of ordinary Incan lists.
 
+A numeric or Boolean result from a native callback must be owned. A callback that returns its borrowed numeric or Boolean parameter has no retained output-lifetime contract and is refused while checking.
+
 ## Name a Rust-backed type
 
 Use `rusttype` for an Incan-facing name backed by a Rust type:
