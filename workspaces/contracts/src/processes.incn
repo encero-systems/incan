@@ -72,9 +72,11 @@ pub def launch(
 
     `environment` holds `NAME=value` settings added to the inherited environment, as a case's `environment:` block
     declares them. When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
+    The runner prepares its trace destination before requesting early observations, including after target removal.
     """
     mut command = Command.new(incan)
     trace = trace_file(project)
+    trace.parent().mkdir(true, true).map_err((error) => error.message())?
     command.env("OVEN_TRACE", trace.0)
     for setting in environment:
         name, value = environment_setting(setting)?

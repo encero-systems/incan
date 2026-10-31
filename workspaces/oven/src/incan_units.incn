@@ -12,8 +12,8 @@ same identity. A normal repeat replays them; crashes, signals, resource failures
 retryable.
 """
 
-from rust::std::os::unix::process import CommandExt
-from pub::incan_platform.trace import flush as flush_trace
+from rust::std::os::unix::process import CommandExt, ExitStatusExt
+from trace_adapter import flush as flush_trace
 from rust::std::process import Command
 from std.fs import Path
 from std.fs.locking import FileLock
@@ -315,7 +315,9 @@ pub def run_program(
     Execute the compiled program with the caller's arguments, standard streams and working directory.
 
     By default this process is replaced by the program. A scoped engine execution sets `wait` to keep its execution
-    interest alive until the child exits; a signal-terminated child returns status one.
+    interest alive until the child exits. A failed requested trace also waits, so command completion can report it
+    after the program's output, retaining the shell's `128 + signal` status. A scoped execution otherwise keeps its
+    existing signal-termination status one.
     """
     preparing = begin_work()
     program = f"{binary.0}"
@@ -327,12 +329,16 @@ pub def run_program(
         command.arg(argument)
     trace_launch(program)
     record_work(Operation.ProgramPrepare, program, preparing)
-    _ = flush_trace()
-    if wait:
+    trace_failed = flush_trace()
+    if wait or trace_failed:
         status = command.status().map_err((error) => f"cannot run {program}: {error}")?
         match status.code():
             Some(code) => return Ok(code)
-            None => return Ok(1)
+            None =>
+                if trace_failed:
+                    if let Some(signal) = status.signal():
+                        return Ok(128i32 + signal)
+                return Ok(1)
     failure = command.exec()
     return Err(f"cannot run {program}: {failure}")
 

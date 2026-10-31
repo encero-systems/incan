@@ -161,6 +161,10 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 | `INCAN_SYSROOT` | Explicit local Rust sysroot for installation. Otherwise installation probes Rustup `1.98.0`, then `rustc`. Identity verification is required. |
 | `OVEN_OWNER` | `off` disables resident owner use. |
 | `OVEN_TRACE` | `-` writes invocation traces to stderr; another nonempty value names a trace output file. |
+| `INCAN_ENGINE_TRACE` | Existing directory for per-process engine JSONL traces. |
+| `INCAN_JEC_TRACE` | Existing directory for per-process JEC compatibility traces. |
+
+A requested trace that cannot be written produces one `incan: trace incomplete: REASON` warning on stderr after command or program output. Write, text-bound, record-bound and invalid-span failures are reported without changing the command's exit status. Successful or disabled file tracing leaves program stdout and stderr bytes unchanged. A program terminated by a signal while Oven waits to report a failed trace returns the shell status `128 + signal`.
 
 ## Exit codes
 
