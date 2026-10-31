@@ -157,6 +157,11 @@ impl TypeChecker {
         if let Some(result) = self.check_imported_module_direct_call(&call) {
             return result;
         }
+        if let Some(result) =
+            self.check_source_reexport_overload_call(callee, type_args, args, span, expected_return_ty)
+        {
+            return result;
+        }
         self.check_remaining_direct_call(&call)
     }
 
