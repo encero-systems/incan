@@ -6,7 +6,6 @@ Each case connects its callers and sends their frames before the host reads them
 
 from rust::std::env import temp_dir
 from rust::std::fs import File, metadata, remove_file
-from rust::std::io import Write
 from rust::std::os::unix::fs import MetadataExt
 from rust::std::process import id
 from rust::std::string import String as RustString
@@ -89,9 +88,8 @@ def raw_caller(socket: str, sent: bytes) -> Result[Connection, str]:
     """A caller that wrote exactly these bytes, as a broken client does."""
     mut connected = dial(socket)?
     connected.wait_at_most(5)
-    match connected.stream.borrow_mut().write_all(sent):
-        Ok(_) => return Ok(connected)
-        Err(error) => return Err(f"cannot write: {error}")
+    connected.write_part(sent, "raw bytes")?
+    return Ok(connected)
 
 
 def reply(mut connected: Connection) -> Result[JsonValue, str]:
