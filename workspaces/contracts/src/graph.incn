@@ -420,6 +420,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
         return Err(f"published dependency graph was rechecked from source: {published.stderr}")
     write(source, before)?
     # 3. Views are restored automatically; stored damage requires explicit verified re-admission.
+    bodies = library_artifacts(project)?
     stored = stored_payload(publications[0])?
     for graph in publications:
         write_bytes(graph, b"\x7f\x00\x00\x00")?
@@ -428,6 +429,8 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
         return Err(f"a corrupt view in target/ reached the published graph: {restored.stderr}")
     if read_bytes(publications[0])? == b"\x7f\x00\x00\x00":
         return Err("a corrupt view in target/ was not restored from the published graph")
+    if library_artifacts(project)? != bodies:
+        return Err("graph-view repair changed an unaffected compiled body")
     replacement = project.joinpath("verified-graph-replacement")
     write_bytes(replacement, read_bytes(stored)?)?
     corrupt_fact(stored)?
@@ -444,6 +447,8 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     for graph in publications:
         remove(graph)?
     legacy = invoke(incan, arguments, project)?
+    if library_artifacts(project)? != bodies:
+        return Err("missing graph-view repair changed an unaffected compiled body")
     repeated = invoke(incan, arguments, project)?
     stable = legacy.stdout == repeated.stdout and legacy.code == repeated.code
     if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
