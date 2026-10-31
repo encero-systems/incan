@@ -17,3 +17,4 @@ math = ["dep:foreign_math"]
 
 [dependencies]
 serde_json = { loaf = "crates-io/serde_json", version = "1.0", features = ["raw_value", "unbounded_depth"] }
+libc = { loaf = "crates-io/libc", version = "0.2", default-features = true }

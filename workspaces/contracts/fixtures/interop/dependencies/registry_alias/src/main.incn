@@ -1,13 +1,15 @@
-# behavior: a declared registry crate is callable through its authored alias, including a feature-selected optional crate and a crate called with a byte-string argument, and a Rust type keeps its identity across public reexports, Arc and fallible decoding, while a concrete Rust type alias shares its constructor's native storage in a model field (#705, #2215, #1530)
+# behavior: a declared registry crate is callable through its authored alias, including a feature-selected optional crate and a crate called with a byte-string argument, a safe free function of a crate whose other functions are unsafe returns its value, and a Rust type keeps its identity across public reexports, Arc and fallible decoding, while a concrete Rust type alias shares its constructor's native storage in a model field (#705, #2215, #1530, #2481)
 # expect-stdout:
 #   3.5
 #   0
+#   3
 #   true
 #   value
 #   public
 
 from rust::checksum import hash
 from rust::foreign_math import fabs
+from rust::libc import WEXITSTATUS
 from rust::serde_json import Value as PublicValue
 from rust::serde_json::value import Value as ModuleValue, RawValue
 from rust::serde_json::de import from_slice
@@ -43,10 +45,12 @@ def retain_digest_state() -> None:
 
 
 def main() -> None:
-    """Call the registry dependency selected by the package's compact features, read an empty byte string's checksum,
-    keep a registry type in a model field and pass an Arc through equivalent public type paths."""
+    """Call the registry dependency selected by the package's compact features, read an empty byte string's checksum
+    and a wait status's exit code, keep a registry type in a model field and pass an Arc through equivalent public type
+    paths."""
     println(fabs(-3.5))
     println(hash(b""))
+    println(WEXITSTATUS(768i32))
     retain_digest_state()
     value = Arc.new(PublicValue.Null)
     println(registry_value(value))
