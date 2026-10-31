@@ -25,7 +25,7 @@ from engine_messages import (
 from engine_state import Identity, ServiceState
 from engine_epochs import capture_submit
 from engine_actions import Pending, ExecutionLease, finish_request
-from engine_programs import read_program
+from engine_programs import read_program, program_handle
 from engine_messages import Resolve, Resolution
 from engine_messages import Submit
 from engine_wire import Refusal, RefusalKind, zero_id
@@ -240,14 +240,10 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
                     view=submit.view,
                     proofs=submit.observation_policy == "proofs",
                     counters=captured.counters,
-                    producer=state.identity.compiler_generation,
+                    handle=program_handle(captured.identity, state.identity.compiler_generation).map_err(transport)?,
                 ),
             )
-            return send(
-                client.channel,
-                request,
-                Message.Captured(Captured(epoch=captured.epoch.identity().map_err(transport)?, snapshot=selected)),
-            )
+            return send(client.channel, request, Message.Captured(Captured(epoch=captured.identity, snapshot=selected)))
 
 
 def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:

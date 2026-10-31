@@ -332,11 +332,13 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
             return run_program(Path(reply.binary), passed, options.argv0)
         None => pass
     # 2. Otherwise this process describes and compiles the unit, keeping the stored executable while its inputs hold.
+    preparing = begin_work()
     mut unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
     unit.program_entries = options.program_entries
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
     compiled = compile_unit(unit, toolchain, binary, true)?
+    record_work("legacy_prepare", options.path, preparing)
     if compiled != 0:
         return Ok(compiled)
     # 3. The process becomes the program, so its exit status is the run's.

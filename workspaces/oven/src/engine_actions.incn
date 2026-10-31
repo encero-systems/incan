@@ -5,9 +5,8 @@ from std.fs.locking import FileLock
 from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_capture import CaptureCounters
-from engine_epochs import load_epoch
 from engine_messages import BindingOutcome, Complete, CompletionStatus
-from engine_programs import obtain, program_handle, select_program
+from engine_programs import obtain, select_program
 from engine_proofs import retain
 from segment_store import lease
 from jec import begin, record
@@ -22,7 +21,7 @@ pub model Pending:
     pub view: str
     pub proofs: bool
     pub counters: CaptureCounters
-    pub producer: str
+    pub handle: str
 
 
 pub model ExecutionLease:
@@ -46,19 +45,16 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     """
     Settle one request without executing user code in the engine.
 
-    1. Activate its captured epoch and ask for the unit record.
+    1. Ask for the captured unit record, activating its epoch only on a miss.
     2. Retain counters only when this caller explicitly requested a proof report.
     3. Select successful results in the caller's virtual view and hold an execution lease before replying.
     """
     # 1. The compiler owns whole-unit production; the engine holds no semantic closure after this activation.
-    opening = begin()
-    epoch = load_epoch(store, pending.revision)?
-    record("engine_epoch", pending.revision, opening)
     run = hexlify(pending.request)
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => error.message())?
     producing = begin()
-    produced = obtain(store, epoch, directory.joinpath(run).0, pending.producer)?
+    produced = obtain(store, pending.revision, pending.handle, directory.joinpath(run).0)?
     record("engine_unit", pending.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
@@ -82,12 +78,13 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(unit) =>
             # 3. A completed native descriptor is selected independently for each caller.
             selecting = begin()
-            selected = select_program(store, pending.view, unit)?
+            selection = select_program(store, pending.view, unit)?
+            selected = selection.snapshot
             record("engine_select", pending.view, selecting)
             pinning = begin()
             held = lease(selected).map_err((error) => error.message())?
             record("engine_lease", pending.view, pinning)
-            handle = program_handle(epoch, pending.producer)?
+            handle = pending.handle
             pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=Rc.new(held))
             return Ok(
                 Ready(
