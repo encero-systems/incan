@@ -701,16 +701,22 @@ pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
     Register a lease on `view`'s generation and view for as long as the returned lock is held.
 
     The lease file names the generation, its manifest digest and the view's index root it pins; its lock proves the
-    holder is alive. Collection, once it exists, keeps every root a live lease names, and only those of the leased
-    view: other views' entries in shared pages are not reachability roots for it.
+    holder is alive. Equal snapshot/view descriptors share one durable lease file and independent shared locks;
+    an unchanged pin writes nothing. Collection must take the descriptor's exclusive lock before removing it and
+    keeps every root a live lease names, and only those of the leased view.
     """
     leases = view.root.joinpath("leases")
     ensure_directory(leases)?
-    serial = counted.get("leases", 0) + 1
-    counted["leases"] = serial
-    path = leases.joinpath(f"{id()}-{serial}")
-    place_synced(path, f"{view.generation} {view.digest} {view.view} {view.index}\n".encode("utf-8"))?
-    return path.lock_exclusive().map_err((error) => io_failure(path, error))
+    name = hexlify(sha256.digest(view.view.encode("utf-8")))
+    path = leases.joinpath(f"{view.generation}-{view.digest}-{name}")
+    held = path.lock_shared().map_err((error) => io_failure(path, error))?
+    descriptor = f"{view.generation} {view.digest} {view.view} {view.index}\n".encode("utf-8")
+    if path.exists():
+        if path.read_bytes().map_err((error) => io_failure(path, error))? != descriptor:
+            return Err(failure("integrity", path.0, "lease disagrees with its snapshot"))
+    else:
+        place_synced(path, descriptor)?
+    return Ok(held)
 
 
 # ---- Compaction ----
