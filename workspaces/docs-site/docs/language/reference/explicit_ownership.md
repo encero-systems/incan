@@ -1,10 +1,10 @@
 # Explicit ownership annotations
 
-Explicit ownership declarations are being introduced in stages. This compiler recognizes the annotation names and result-source syntax below, but refuses their execution with `INCAN-T0123`. Recognition does not enable copying, borrowing or transfer behavior. Existing unannotated functions retain their current semantics.
+Ownership annotation syntax is recognized, but executing a declaration containing an explicit ownership annotation is refused with `INCAN-T0123`. Unannotated functions retain their ordinary parameter and return behavior.
 
 ## Annotation names
 
-| Annotation | Intended contract | Current support |
+| Annotation | Requested access | Execution |
 | --- | --- | --- |
 | `Borrowed[T]` | Shared access to existing storage | Recognized; execution refused |
 | `BorrowedMut[T]` | Exclusive borrowed access; `mut` separately permits writes | Recognized; execution refused |
@@ -20,20 +20,20 @@ Explicit ownership inside a tuple, outcome, field or callable annotation is also
 A function or method can state a result source after its return annotation:
 
 ```incan
-# Parsed and formatted, but not executable in this stage.
+# refused: INCAN-T0123
 def view(value: Borrowed[str]) -> Borrowed[str] from value:
     return value
 ```
 
-The grammar is `from parameter` followed by zero or more `.field` projections. Methods may use their receiver, and abstract trait methods retain the same clause. The parser preserves each source token for diagnostics and formatting. Calls, indexing, namespace separators and multiple source expressions are not accepted in the clause.
+The grammar is `from parameter` followed by zero or more `.field` projections. Methods may use their receiver, and abstract trait methods accept the same clause. Calls, indexing, namespace separators and multiple source expressions are not accepted in the clause.
 
-An explicit borrowed result needs a source even if there is only one parameter. This also applies to an explicit borrowed component inside an outcome or tuple. Missing sources and source roots outside the callable's parameters or receiver produce `INCAN-T0124`. Static field paths are resolved through checked model and class declarations, including generic field substitution. Naming a valid path does not prove the returned value originates there: execution remains refused until ownership behavior is checked.
+An explicit borrowed result requires a source even if there is only one parameter. This also applies to an explicit borrowed component inside an outcome or tuple. Missing sources and roots outside the callable's parameters or receiver produce `INCAN-T0124`. Every projected field must be a stored model or class field; generic fields use their declared type arguments. Computed properties are not valid source fields. A declaration with a result-source clause is refused for execution with `INCAN-T0123`.
 
-An owned wrapper may retain a borrowed dependency; its result-source syntax is preserved but remains unavailable in this stage. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage.
+An `Owned` result can declare a source relationship. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage.
 
 ## Place-binding migration warning
 
-A mutable local initialized directly from a stored string field currently receives an independent value:
+A mutable local initialized directly from a stored string field receives an independent value. Assigning to `title` in this example leaves `page.title` unchanged:
 
 ```incan
 model Page:
@@ -46,10 +46,8 @@ def main() -> None:
     title = "new"
 ```
 
-The compiler emits `INCAN-T0125` for a new local initialized from an existing local, parameter, stored field or known list/dictionary element. A mutable declaration will become a write-through borrow; bare and `let` declarations will borrow read-only. Compatible annotations do not request a copy. Calls, constructor results, computed properties and explicit clone results do not receive this place-binding warning. Runtime behavior is unchanged; use an explicit clone when an independent snapshot is intended. The warning release must be available before a subsequent release changes ordinary binding semantics.
+`INCAN-T0125` is emitted for a new local initialized from an existing local, parameter, stored field or known list/dictionary element. Bare, `let` and `mut` declarations are included. Compatible type annotations do not suppress the warning. Calls, constructor results, computed properties and explicit clone results do not receive this warning. The warning does not alter runtime behavior.
 
-## Metadata and tooling
+## Related explanation
 
-Checked contracts retain parameter slots, access modes, underlying types and canonical stored-field identities. Parameter renaming does not change which input a result depends on. Provider metadata, aliases and editor signatures preserve this relationship; imported signatures render `from` using the currently exported parameter name. Incomplete or unsupported ownership metadata is refused. Providers carrying these contracts use manifest format 7 so older compilers cannot silently ignore a source-only relationship; ordinary providers retain format 6. A provider containing explicit ownership contracts cannot be admitted for execution by this stage.
-
-The free-function checker-record profile is version 2. Its Incan-owned codec records access modes and source relationships in structured fields; old profiles cannot silently omit them. The profile remains limited to its supported scalar, list and callable type grammar with explicit ownership wrappers. Nominal, generic-owner and other unsupported record shapes are refused; provider metadata preserves those richer declaration contracts separately.
+[Why ownership declarations are introduced in stages](../explanation/ownership_declarations.md) explains the migration warning, provider compatibility and editor metadata.

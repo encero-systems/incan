@@ -688,7 +688,8 @@ pub fn collect_checked_api_metadata(
 ) -> CheckedApiMetadata {
     let checked_exports = collect_checked_public_exports(program, checker);
     let checked_by_name: HashMap<String, CheckedNamedExport> = checked_exports
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|export| (export.name.clone(), export))
         .collect();
 
@@ -700,7 +701,7 @@ pub fn collect_checked_api_metadata(
         }
         match &decl.node {
             Declaration::Function(function) if public(function.visibility) => {
-                if let Some(CheckedExportKind::Function(export)) = checked_kind(&checked_by_name, &function.name) {
+                if let Some(export) = checked_source_function(&checked_exports, checker, decl.span) {
                     declarations.push(ApiDeclaration::Function(api_function(
                         function,
                         decl.span,
@@ -774,6 +775,31 @@ pub fn collect_checked_api_metadata(
         },
         &checker.checked_nominal_type_origins(),
     )
+}
+
+/// Select a source overload by its checked declaration identity, including any expansion ancestry. Name lookup
+/// selects an overload set and cannot supply one declaration's defaults or ownership contract.
+fn checked_source_function<'a>(
+    exports: &'a [CheckedNamedExport],
+    checker: &TypeChecker,
+    span: Span,
+) -> Option<&'a CheckedFunctionExport> {
+    let identity = checker
+        .type_info()
+        .declarations
+        .function_bindings_by_span
+        .get(&span)?
+        .identity
+        .as_ref()?;
+    exports.iter().find_map(|export| {
+        if export.identity.canonical.as_ref() != Some(identity) {
+            return None;
+        }
+        match &export.kind {
+            CheckedExportKind::Function(function) => Some(function),
+            _ => None,
+        }
+    })
 }
 
 /// Project a public nominal declaration only when the checked export inventory retains its matching kind. Source

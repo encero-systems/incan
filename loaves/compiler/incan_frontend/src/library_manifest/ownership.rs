@@ -400,6 +400,43 @@ mod tests {
         Ok(())
     }
 
+    /// Same-name source overloads retain their own parameter and result-source contracts in API metadata.
+    #[test]
+    fn source_overloads_keep_their_canonical_ownership_contracts() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\npub def view(prefix: str, value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("provider".into()));
+        assert!(checker.check_program(&program).is_err());
+        let api = crate::api_metadata::collect_checked_api_metadata(&program, &checker, Vec::new());
+        assert_eq!(api.declarations.len(), 2);
+        for (index, declaration) in api.declarations.iter().enumerate() {
+            let crate::api_metadata::ApiDeclaration::Function(function) = declaration else {
+                return Err("expected source function metadata".into());
+            };
+            let Some(OwnershipExport::Checked(contract)) = &function.ownership else {
+                return Err("missing checked ownership".into());
+            };
+            assert_eq!(function.params.len(), index + 1);
+            assert_eq!(
+                contract.result_source.as_ref().ok_or("missing source")?.slot,
+                crate::ownership_metadata::SourceSlot::Parameter(index)
+            );
+            assert_eq!(contract.modes[0].component.parameter, Some(index));
+        }
+        let exports = collect_checked_public_exports(&program, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("provider", "1.0.0", &exports);
+        manifest.contract_metadata.api = Some(crate::api_metadata::CheckedApiMetadataPackage {
+            schema_version: crate::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![api],
+            public_namespaces: Vec::new(),
+        });
+        LibraryManifest::from_json_str(&manifest.to_json_string()?)?;
+        Ok(())
+    }
+
     /// An older reader must refuse even a source-only contract with no explicit wrapper in its result type.
     #[test]
     fn source_only_contract_requires_new_provider_format() -> Result<(), Box<dyn std::error::Error>> {
