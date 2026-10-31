@@ -51,7 +51,7 @@ from segment_store import (
     payload_intact,
     payload_path,
     put,
-    put_payloads,
+    prepare_payloads,
     snapshot,
 )
 from unit import UnitDescription
@@ -236,7 +236,7 @@ pub def seal(
 
 
 pub model PreparedFact:
-    """Durable immutable payloads and an unpublished record transaction; the producer still holds its claim."""
+    """Ordered immutable payloads and an unpublished record transaction; the producer retains its claim until commit."""
 
     pub fact: Fact
     pub transaction: Transaction
@@ -253,7 +253,7 @@ pub def prepare_seal(
 ) -> Result[PreparedFact, str]:
     """Store immutable payloads before preparing their records; only the caller's commit makes the unit visible."""
     relatives = staged_files(staged, "")?
-    digests = put_payloads(store, [staged.joinpath(relative) for relative in relatives]).map_err(store_failure)?
+    digests = prepare_payloads(store, [staged.joinpath(relative) for relative in relatives]).map_err(store_failure)?
     mut files: list[FactFile] = []
     for index in range(len(relatives)):
         files.append(stored_file(staged, relatives[index], digests[index])?)

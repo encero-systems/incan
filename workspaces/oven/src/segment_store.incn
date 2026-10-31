@@ -43,6 +43,7 @@ from std.fs import MappedView, Path
 from std.fs.locking import FileLock
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError, _BytesIO
+from pub::incan_platform.durability import sync_ordered
 from store_index import Entry, IndexError, Location, build, entries as index_entries, find as index_find, insert
 from store_index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
 
@@ -708,6 +709,7 @@ def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreE
         found = file_digest(target, "sha256").map_err((error) => failure("integrity", target.0, error.message()))?
         if hexlify(found) != name:
             return Err(failure("integrity", target.0, "an installed segment does not match its name"))
+        sync_directory(target.parent())?
         return Ok(name)
     source.replace(target).map_err((error) => io_failure(target, error))?
     sync_directory(target.parent())?
@@ -770,6 +772,11 @@ def publish_switch(
     marker = root.joinpath("FORMAT")
     if not marker.is_file():
         place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
+    # Order every referenced object and name before one drive flush, before CURRENT can name the graph.
+    sync_directory(root)?
+    sync_directory(root.parent())?
+    sync_durable(manifest)?
+    publication_boundary("objects-durable")
     # The manifest is the pin's durable descriptor; its live OS lock precedes visibility.
     mut returned_view = latest.view
     if execution_view != "":
@@ -790,6 +797,8 @@ def publish_switch(
     pinned = pinned_publication(selected, execution_view)?
     place_synced(root.joinpath("CURRENT"), f"{following} {digest}\n".encode("utf-8"))?
     sync_directory(root)?
+    sync_durable(root.joinpath("CURRENT"))?
+    publication_boundary("current-durable")
     publication_boundary("root-synced")
     counted["durable_commits"] = counted.get("durable_commits", 0) + 1
     return Ok(pinned)
@@ -946,6 +955,16 @@ pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[str], Store
     Each new file is synced before it is renamed into place, and each payload directory that received one is synced
     once after all of them, before the caller's commit names them.
     """
+    return store_payloads(root, sources, true)
+
+
+pub def prepare_payloads(root: Path, sources: list[Path]) -> Result[list[str], StoreError]:
+    """Stage ordered immutable payloads for a transaction that flushes their complete graph before publication."""
+    return store_payloads(root, sources, false)
+
+
+def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[list[str], StoreError]:
+    """Install each immutable payload once; optionally finish an independent durable insertion."""
     mut digests: list[str] = []
     mut touched: set[str] = set()
     for source in sources:
@@ -956,10 +975,17 @@ pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[str], Store
                 return Err(failure("integrity", target.0, "a stored payload does not match its name"))
         else:
             install_payload(source, target)?
-            touched.add(target.parent().0)
+        # An intact existing name may belong to a writer that died before ordering its directory entry.
+        touched.add(target.parent().0)
         digests.append(digest)
     for directory in sorted([name for name in touched]):
-        Path(directory).sync_directory().map_err((error) => io_failure(Path(directory), error))?
+        sync_directory(Path(directory))?
+    if len(touched) > 0:
+        sync_directory(root.joinpath("payloads"))?
+        sync_directory(root)?
+        sync_directory(root.parent())?
+        if durable:
+            sync_durable(root)?
     return Ok(digests)
 
 
@@ -968,8 +994,8 @@ def install_payload(source: Path, target: Path) -> Result[None, StoreError]:
     ensure_directory(target.parent())?
     temporary = Path(f"{target.0}.{id()}.tmp")
     source.copy(temporary, true, true).map_err((error) => io_failure(temporary, error))?
-    sync_file(temporary)?
     temporary.chmod(true).map_err((error) => io_failure(temporary, error))?
+    sync_file(temporary)?
     temporary.replace(target).map_err((error) => io_failure(target, error))?
     return Ok(None)
 
@@ -1035,10 +1061,9 @@ def ensure_directory(path: Path) -> Result[None, StoreError]:
 
 
 def sync_file(path: Path) -> Result[None, StoreError]:
-    """Sync one file's contents to storage."""
+    """Order one staged file's contents; the publication barriers perform the full durable drive flush."""
     clock = begin_work()
-    handle = path.open("rb").map_err((error) => io_failure(path, error))?
-    result = handle.sync().map_err((error) => io_failure(path, error))
+    result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
     record_work("store_file_sync", path.0, clock)
     return result
 
@@ -1107,6 +1132,7 @@ pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
     pointer = root.joinpath("CURRENT")
     place_synced(pointer, f"{candidate.generation} {candidate.digest}\n".encode("utf-8"))?
     sync_directory(root)?
+    sync_durable(pointer)?
     return snapshot(root, committed.view)
 
 
@@ -1142,6 +1168,8 @@ pub def quarantine_record(view: Snapshot, key: str, codec_damage: bool = false) 
                     .map_err((error) => io_failure(target, error))?
             sync_file(target)?
             sync_directory(target.parent())?
+            sync_directory(view.root)?
+            sync_durable(target)?
     return Ok(None)
 
 
@@ -1167,6 +1195,8 @@ pub def quarantine_payload(root: Path, digest: str) -> Result[None, StoreError]:
     source.replace(target).map_err((error) => io_failure(source, error))?
     sync_directory(source.parent())?
     sync_directory(target.parent())?
+    sync_directory(root)?
+    sync_durable(target)?
     return Ok(None)
 
 
@@ -1203,6 +1233,21 @@ pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[None,
 def sync_directory(path: Path) -> Result[None, StoreError]:
     """Synchronize directory entries, measuring OS durability separately from record encoding and locks."""
     clock = begin_work()
-    result = path.sync_directory().map_err((error) => io_failure(path, error))
+    result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
     record_work("store_directory_sync", path.0, clock)
     return result
+
+
+def sync_durable(path: Path) -> Result[None, StoreError]:
+    """Flush the ordered graph or selected pointer to durable storage; Apple uses F_FULLFSYNC through Rust."""
+    clock = begin_work()
+    handle = path.open("rb").map_err((error) => io_failure(path, error))?
+    handle.sync().map_err((error) => io_failure(path, error))?
+    counted["durable_syncs"] = counted.get("durable_syncs", 0) + 1
+    record_work("store_durable_sync", path.0, clock)
+    return Ok(None)
+
+
+pub def durable_syncs() -> int:
+    """Completed strong storage barriers in this process, independent of ordinary file and directory ordering."""
+    return counted.get("durable_syncs", 0)

@@ -5,3 +5,6 @@ description = "The OS-facing layer below std: thin wrappers over OS and Rust fac
 
 [build]
 rust-edition = "2024"
+
+[dependencies]
+rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }

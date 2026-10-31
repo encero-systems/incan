@@ -11,6 +11,7 @@ from std.hash import file_digest, sha256
 from std.io import BytesIO
 from store_index import Entry, Location, build, entries as index_entries
 from std.fs import Path
+from pub::incan_platform.durability import sync_ordered
 from scratch import scratch_directory
 from segment_store import (
     EXPECT_ABSENT,
@@ -36,6 +37,7 @@ from segment_store import (
     fork,
     read_counts,
     lease,
+    durable_syncs,
     repair_current,
     quarantine_record,
 )
@@ -137,10 +139,12 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     println("S1 unchanged commit: 0 added files, 0 changed bytes, 0 manifest writes")
     # A transaction retains only its final index pages, never intermediate roots from inserting its entries.
     page_store = scratch.path().joinpath("page-store")
+    barriers = durable_syncs()
     mut batch = begin(snapshot(page_store).map_err((error) => error.message())?)
     for key in ["a", "b", "c", "d"]:
         batch = put(batch, key, b"value")
     _ = commit(batch).map_err((error) => error.message())?
+    assert durable_syncs() - barriers == 2, "a request did not use exactly the graph and acknowledgment barriers"
     assert count_files(page_store.joinpath("indexes")) == 1, "publication retained intermediate index pages"
     # One request updates independent views under one CURRENT switch; a conflict changes neither view.
     other = snapshot(root, "project").map_err((error) => error.message())?
@@ -165,6 +169,10 @@ pub def test_damage_is_an_error_never_absence_or_an_older_value() -> Result[None
     """
     scratch = scratch_directory()?
     root = scratch.path().joinpath("store")
+    match sync_ordered(root.joinpath("missing").0):
+        Ok(_) => return Err("a missing synchronization target was reported as durable")
+        Err(message) =>
+            assert message != ""
     assert write_one(root, "a", "old").map_err((error) => error.message())?.generation > 0
     newer = write_one(root, "a", "newer").map_err((error) => error.message())?
     damage_last_byte(root.joinpath("segments").joinpath(f"{newer.segments[1]}.seg"))?
@@ -508,10 +516,12 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
         "manifest-synced",
         "manifest-replaced",
         "manifest-directory-synced",
+        "objects-durable",
         "pin-acquired",
         "current-written",
         "current-synced",
         "current-replaced",
+        "current-durable",
         "root-synced",
     ]
     for boundary in boundaries:
