@@ -1,0 +1,40 @@
+# behavior: local and imported source traits named Clone, Copy or Default never grant primitive builtin support through their spelling (RFC 168)
+# expect-exit: 1
+# expect-stderr-contains:
+#   Call to 'require_local' violates generic bound
+#   Call to 'require_clone' violates generic bound
+#   Call to 'require_copy' violates generic bound
+#   Call to 'require_default' violates generic bound
+
+from lookalikes import Clone as ForeignClone, Copy as ForeignCopy, Default as ForeignDefault
+
+
+trait Clone:
+    def tag(self) -> int
+
+
+def require_local[T with Clone](value: T) -> int:
+    """A builtin cloneable value does not adopt this local source trait."""
+    return 1
+
+
+def require_clone[T with ForeignClone](value: T) -> int:
+    """An imported source Clone remains distinct under an alias."""
+    return 1
+
+
+def require_copy[T with ForeignCopy](value: T) -> int:
+    """An imported source Copy does not become the compiler's marker."""
+    return 1
+
+
+def require_default[T with ForeignDefault](value: T) -> int:
+    """An imported source Default does not acquire a builtin constructor."""
+    return 1
+
+
+def main() -> None:
+    println(require_local(7))
+    println(require_clone(7))
+    println(require_copy(7))
+    println(require_default(7))
