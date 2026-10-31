@@ -273,8 +273,8 @@ pub def test_compaction_preserves_contents_and_gives_a_byte_identical_base() -> 
     source = scratch.path().joinpath("artifact")
     source.write_bytes(b"program").map_err((error) => error.message())?
     digest = put_payload(two, source).map_err((error) => error.message())?
-    assert payload_intact(two, digest)
-    stored = payload_path(two, digest)
+    assert payload_intact(two, digest.digest)
+    stored = payload_path(two, digest.digest)
     stored.chmod(false).map_err((error) => error.message())?
     stored.write_bytes(b"damaged").map_err((error) => error.message())?
     match put_payload(two, source):

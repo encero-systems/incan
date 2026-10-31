@@ -101,11 +101,11 @@ Stops resident project owners belonging to the selected Incan home. `OVEN_OWNER=
 
 ## `incan bakery gc`
 
-Removes superseded manifests, index pages and record segments that no current view or live snapshot lease reaches. A leased old snapshot remains readable, including unopened values. Once collection expires an unleased historical view, a later attempt to lease that descriptor fails. Payload files, root history and producer staging remain retained conservatively. `--keep-days N` accepts one through six decimal digits, from `0` through `999999`; omitting it retains all root history. The option does not expire roots. `INCAN_BAKERY` selects the physical bakery directory.
+Removes superseded manifests, index pages and record segments that no current view or live snapshot lease reaches. A leased old snapshot remains readable, including unopened values. Once collection expires an unleased historical view, a later attempt to lease that descriptor fails. Unreferenced unit and sealed-set payloads are removed unless a live preparation guard protects their digest. Unit staging is removed only when its producer claim is free; other staging and root history remain retained. `--keep-days N` accepts one through six decimal digits, from `0` through `999999`; omitting it retains all root history. The option does not expire roots. `INCAN_BAKERY` selects the physical bakery directory.
 
-Success exits `0` and reports retained and removed unit counts, dropped roots, cleared staging directories, removed layout files and reclaimed bytes. A corrupt reachable layout or live lease descriptor, an I/O failure, or continuous arrival of new snapshot leases returns nonzero. A deferred collection removes no layout files. Publication waits during collection; reads through registered snapshots remain available.
+Success exits `0` and reports retained and removed unit counts, dropped roots, cleared staging directories, removed layout and payload files, and reclaimed immutable bytes. A corrupt reachable layout or live lease descriptor, an I/O failure, or continuous arrival of new snapshot leases returns nonzero. A deferred collection removes no layout files. Publication waits during collection; reads through registered snapshots remain available.
 
-The byte count sums the logical lengths of removed files. It excludes replacement manifests and filesystem allocation or shared-extent accounting.
+The byte count sums the logical lengths of removed immutable files; staging bytes are excluded. It excludes replacement manifests and filesystem allocation or shared-extent accounting.
 
 
 ## `incan bakery verify`
