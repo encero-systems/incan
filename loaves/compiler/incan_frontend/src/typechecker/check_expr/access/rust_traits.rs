@@ -1450,6 +1450,8 @@ impl TypeChecker {
 
     /// Match native value and reference impl templates before adding an automatic receiver borrow. A consuming
     /// method on an exclusive reference takes that reference; a borrowing method may directly reborrow its referent.
+    /// A referent reached through a shared reference is never lent exclusively, so its `&mut self` methods are no
+    /// candidates there: `Read for &UnixStream` serves a shared socket, `Read for UnixStream` does not.
     /// Iteration filters callable bounds before selecting its item; ordinary native calls leave full obligations to
     /// rustc, including source collection views whose native implementations are not nominal checker owners.
     fn retained_rust_trait_candidates(
@@ -1464,6 +1466,7 @@ impl TypeChecker {
         let selected = trait_path.map(|path| self.rust_trait_identity(path));
         let imported = self.rust_imported_trait_templates(info, trait_path);
         let mut current = source;
+        let mut behind_shared_reference = false;
         loop {
             let owner = self.rust_trait_owner(current, info, call.rust_path);
             for (implementation, external) in info
@@ -1490,6 +1493,9 @@ impl TypeChecker {
                     else {
                         continue;
                     };
+                    if behind_shared_reference && matches!(receiver.ty, ResolvedType::RefMut(_)) {
+                        continue;
+                    }
                     if !self.rust_trait_carriers_match(&receiver.ty, source) {
                         candidate.borrow_cost += 1;
                     }
@@ -1497,7 +1503,11 @@ impl TypeChecker {
                 candidates.push(candidate);
             }
             match current {
-                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => current = inner,
+                ResolvedType::Ref(inner) => {
+                    behind_shared_reference = true;
+                    current = inner;
+                }
+                ResolvedType::RefMut(inner) => current = inner,
                 _ => break,
             }
         }
