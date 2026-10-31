@@ -1,4 +1,4 @@
-# behavior: graph readers agree on identity, context, freshness, git evidence and feedback with shared preparation
+# behavior: graph readers agree on identity, context, freshness, git evidence and feedback with shared preparation and body-preserving graph repair
 # graph-commands:
 #   src/main.incn --query defs helper
 #   src/main.incn --query callers helper

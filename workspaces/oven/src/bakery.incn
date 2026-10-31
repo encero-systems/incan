@@ -557,7 +557,7 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     """
     The current view of the unit a directory was viewed from, for readers of a library's artifacts.
 
-    A view whose files were changed or removed is cloned again. A view whose unit is no longer baked, or is damaged, is
+    Only changed or missing view members are cloned again; intact members keep their file generations. A view whose unit is no longer baked, or is damaged, is
     refused with a named integrity error; normal lookup never repairs frozen bytes.
     """
     record = directory.joinpath(VIEW_RECORD)
@@ -568,8 +568,24 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     match find(store, identity)?:
         None => return Ok(None)
         Some(fact) =>
-            view_directory(store, fact, directory)?
+            repair_view(store, fact, directory)?
             return Ok(Some(directory))
+
+
+def repair_view(store: Path, fact: Fact, directory: Path) -> Result[None, str]:
+    """
+    Repair members of a verified unit view independently, preserving every intact member's file generation.
+
+    Build publication still swaps a complete directory. Readers already selected this unit through its fact marker;
+    each damaged member is atomically replaced from its verified canonical payload instead of replacing its siblings.
+    Producer records already bound to intact views stay bound to them.
+    """
+    for file in fact.files:
+        target = directory.joinpath(file.path)
+        if is_record(file) and target.is_file():
+            continue
+        view_file(store, file, target)?
+    return admit_views(fact.files, directory, "")
 
 
 pub def forget_verified() -> None:
