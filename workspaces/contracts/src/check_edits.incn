@@ -1,15 +1,16 @@
 """
-A check case's replay contract: an unchanged check shows exactly what the first one showed without checking again,
-and an edit of each file the case lists, its entry or a path dependency, checks the unit again.
+A check case's replay contract: unchanged content replays the same report, a copy of the project at another path
+replays it in the copy's own paths, and a new content identity checks again before its own unchanged repeat replays,
+whether the bakery was already populated or not.
 """
 
 from std.fs import Path
+from std.tempfile import TemporaryDirectory
 from compare import compare
+from fixture import Fixture, fixture_files, materialize_files
 from header import Header
 from run import Outcome, clear_trace, invoke, trace_file, unit_notes
 
-# A comment keeps the program's meaning, so an edited check must report what the first check reported.
-const EDIT: str = "\n# edited by the check-edits contract\n"
 const REPLAYED: str = " check: replayed"
 const CHECKED: str = " check: checked"
 
@@ -21,13 +22,20 @@ model Traced:
     notes: list[str]
 
 
-pub def compare_check_edits(incan: str, project: Path, header: Header, command: list[str]) -> Result[list[str], str]:
+pub def compare_check_edits(
+    incan: str,
+    project: Path,
+    header: Header,
+    command: list[str],
+    fixture: Fixture,
+) -> Result[list[str], str]:
     """
-    Return the expectations broken by a check, its unchanged repeat and its repeat after each listed edit.
+    Return the expectations broken by a check, its unchanged repeat, a copy at another path and each listed edit.
 
     1. Check once and compare the report with the case's expectations.
     2. Check again unchanged: the same streams and status, replayed rather than checked.
-    3. Edit each listed file in turn: the same report, checked again; the file is then restored.
+    3. Check a copy of the project at another path: replayed, and byte for byte a fresh check of the copy.
+    4. Give each edit a new identity: the same report, checked once then replayed; restore the original file.
     """
     # 1. The first check is the case's ordinary comparison.
     first = traced(incan, command, project)?
@@ -37,31 +45,64 @@ pub def compare_check_edits(incan: str, project: Path, header: Header, command: 
     failures = failures + differences("the unchanged repeat", first.outcome, repeat.outcome)
     if not noted(repeat.notes, REPLAYED):
         failures.append(f"the unchanged repeat was not replayed; Oven noted: {listing(repeat.notes)}")
-    # 3. An edit that keeps the program's meaning still checks the unit again.
+    # 3. The record is keyed by content and rendered in the requesting project's paths.
+    failures = failures + relocated_check(incan, command, fixture_files(fixture)?)?
+    # 4. A fresh directory name makes edited content new even in a bakery populated by earlier contract runs.
+    nonce = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    edit = f"\n# check-edits {nonce.path().0}\n"
     for item in header.items("check-edits"):
-        failures = failures + edited_check(incan, command, project, item, first.outcome)?
+        failures = failures + edited_check(incan, command, project, item, first.outcome, edit)?
     return Ok(failures)
 
 
-def traced(incan: str, command: list[str], project: Path) -> Result[Traced, str]:
+def traced(incan: str, command: list[str], project: Path, environment: list[str] = []) -> Result[Traced, str]:
     """Run the check with a fresh trace, so its notes are this invocation's alone."""
     clear_trace(project)?
-    outcome = invoke(incan, command, project)?
+    outcome = invoke(incan, command, project, environment)?
     return Ok(Traced(outcome=outcome, notes=unit_notes(trace_file(project))))
 
 
-def edited_check(incan: str, command: list[str], project: Path, item: str, first: Outcome) -> Result[list[str], str]:
-    """Append a comment to one listed file, check the unit again, and put the file's original text back."""
+def relocated_check(incan: str, command: list[str], files: Dict[str, bytes]) -> Result[list[str], str]:
+    """
+    Check a copy of the case project in a new directory: it replays the case's stored report, and shows exactly what
+    a fresh check of the copy shows when the copy has a bakery of its own.
+    """
+    location = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    copy = materialize_files(location.path().joinpath("relocated"), files)?
+    replayed = traced(incan, command, copy)?
+    alone = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    fresh = traced(incan, command, copy, [f"INCAN_BAKERY={alone.path().0}"])?
+    label = "the check of a copy at another path"
+    mut failures = differences(label, fresh.outcome, replayed.outcome)
+    if not noted(replayed.notes, REPLAYED):
+        failures.append(f"{label} was not replayed; Oven noted: {listing(replayed.notes)}")
+    if not noted(fresh.notes, CHECKED):
+        failures.append(f"the copy's check with its own bakery was not checked; Oven noted: {listing(fresh.notes)}")
+    return Ok(failures)
+def edited_check(
+    incan: str,
+    command: list[str],
+    project: Path,
+    item: str,
+    first: Outcome,
+    edit: str,
+) -> Result[list[str], str]:
+    """Check and replay a new content identity, restoring the original file even when either invocation fails."""
     path = project.joinpath(item)
     original = path.read_text("utf-8", "strict").map_err((error) => f"{item}: {error.message()}")?
-    path.write_text(original + EDIT, "utf-8", "strict", None).map_err((error) => f"{item}: {error.message()}")?
+    path.write_text(original + edit, "utf-8", "strict", None).map_err((error) => f"{item}: {error.message()}")?
     checked = traced(incan, command, project)
+    replayed = traced(incan, command, project)
     path.write_text(original, "utf-8", "strict", None).map_err((error) => f"{item}: {error.message()}")?
     result = checked?
     label = f"the check after editing {item}"
     mut failures = differences(label, first, result.outcome)
     if noted(result.notes, REPLAYED) or not noted(result.notes, CHECKED):
         failures.append(f"{label} did not check the unit again; Oven noted: {listing(result.notes)}")
+    repeat = replayed?
+    failures = failures + differences(f"{label}'s unchanged repeat", result.outcome, repeat.outcome)
+    if not noted(repeat.notes, REPLAYED):
+        failures.append(f"{label}'s unchanged repeat was not replayed; Oven noted: {listing(repeat.notes)}")
     return Ok(failures)
 
 

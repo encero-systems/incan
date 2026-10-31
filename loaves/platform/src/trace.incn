@@ -1,0 +1,394 @@
+"""Bounded engine observations over a separate append-only channel, with process-monotonic span clocks."""
+
+from rust::std::env import var_os
+from rust::std::fs import File, OpenOptions
+from rust::std::io import BufWriter, Cursor, Write
+from rust::std::sync import Arc, Mutex
+from rust::std::ops import DerefMut
+from rust::serde_json import Error as JsonError, to_writer
+from rust::std::vec import Vec
+from rust::serde import Serialize as RustSerialize
+from rust::std::string import String as RustString
+from rust::std::process import id
+from rust::std::thread import current
+from rust::std::time import Instant, SystemTime, UNIX_EPOCH
+
+pub const SCHEMA: str = "incan.engine.trace/1"
+pub const MAX_TEXT: int = 4096
+pub const MAX_RECORD: int = 65536
+pub const BUFFER_BYTES: usize = 65536
+const MAX_CHANNELS: int = 8
+
+
+pub enum TraceError:
+    """A trace is incomplete when a field, record or output channel is refused."""
+
+    # A text field exceeds MAX_TEXT UTF-8 bytes.
+    FieldBound
+    # The encoded observation exceeds MAX_RECORD UTF-8 bytes.
+    RecordBound
+    # A duration, counter or string cannot represent a valid schema value.
+    InvalidSpan
+    # The file destination is unavailable or selects a console stream.
+    Channel
+
+
+pub model Clock:
+    """An enabled operation's identity and start on this process's monotonic origin."""
+
+    pub span: int
+    pub start_ns: int
+    pub origin: str
+
+
+model Origin:
+    """One clock origin and sequence, protected by the language's static guard."""
+
+    clock: Option[Instant] = None
+    sequence: int = 0
+    identity: str = ""
+
+    def begin(mut self) -> Clock:
+        """Allocate a span identity only for an enabled observer."""
+        self.sequence += 1
+        started = self.now()
+        return Clock(span=self.sequence, start_ns=started, origin=self.identity)
+
+    def now(mut self) -> int:
+        """Nanoseconds since the first enabled observation; wall time never enters durations."""
+        match self.clock:
+            Some(origin) => return int(origin.elapsed().as_nanos())
+            None =>
+                self.clock = Some(Instant.now())
+                match SystemTime.now().duration_since(UNIX_EPOCH):
+                    Ok(epoch) => self.identity = f"{id()}-{epoch.as_nanos()}"
+                    Err(_) => self.identity = f"{id()}-{self.clock:?}"
+                return 0
+
+
+static ORIGIN: Origin = Origin()
+
+
+pub model Writer:
+    """A retained, bounded native writer; copies share the channel and its serialization lock."""
+
+    output: Arc[Mutex[BufWriter[File]]]
+    scratch: Arc[Mutex[Vec[u8]]]
+
+    @staticmethod
+    def open(destination: str) -> Result[Writer, TraceError]:
+        """Open a bounded native buffer once; ownership stays behind the typed writer API."""
+        if destination == "" or destination == "-":
+            return Err(TraceError.Channel)
+        mut options = OpenOptions.new()
+        options.create(true).append(true)
+        output = options.open(destination).map_err((_) => TraceError.Channel)?
+        return Ok(
+            Writer(
+                output=Arc.new(Mutex.new(BufWriter.with_capacity(BUFFER_BYTES, output))),
+                scratch=Arc.new(Mutex.new(encoding_buffer())),
+            ),
+        )
+
+    def record(self, span: &EngineSpan) -> Result[None, TraceError]:
+        """Encode into the retained fixed slice; only a complete, bounded record reaches the file buffer."""
+        row = wire_record(span)?
+        mut scratch = self.scratch.lock().map_err((_) => TraceError.Channel)?
+        used = fill(scratch.deref_mut(), row)?
+        mut output = self.output.lock().map_err((_) => TraceError.Channel)?
+        output.write_all(scratch.as_slice().split_at(used).0).map_err((_) => TraceError.Channel)?
+        return Ok(None)
+
+    def append(self, text: &str) -> Result[None, TraceError]:
+        """Queue one bounded record; the native buffer drains with back-pressure at its size bound."""
+        payload = RustString.from(text).into_bytes()
+        return self.write_bytes(payload)
+
+    def write_bytes(self, payload: Vec[u8]) -> Result[None, TraceError]:
+        """Write already encoded bytes without allocating another text or byte representation."""
+        if len(payload) > MAX_RECORD:
+            return Err(TraceError.RecordBound)
+        mut output = self.output.lock().map_err((_) => TraceError.Channel)?
+        output.write_all(payload).map_err((_) => TraceError.Channel)?
+        return Ok(None)
+
+    def flush(self) -> Result[None, TraceError]:
+        """Drain the channel, reporting an incomplete observation if its write fails."""
+        mut output = self.output.lock().map_err((_) => TraceError.Channel)?
+        output.flush().map_err((_) => TraceError.Channel)?
+        return Ok(None)
+
+
+model Channels:
+    """The process's small channel inventory; the bound limits open writers, never trace storage."""
+
+    writers: Dict[str, Writer] = {}
+
+    def append(mut self, destination: str, text: &str) -> Result[None, TraceError]:
+        """Open each channel once, reporting failed opens instead of silently dropping records."""
+        return self.writer(destination)?.append(text)
+
+    def record(mut self, destination: str, span: &EngineSpan) -> Result[None, TraceError]:
+        """Encode into native bytes and send them directly to the retained writer."""
+        return self.writer(destination)?.record(span)
+
+    def writer(mut self, destination: str) -> Result[Writer, TraceError]:
+        """Find the process's one writer for this channel, opening only its first record."""
+        if destination not in self.writers:
+            if len(self.writers) >= MAX_CHANNELS:
+                return Err(TraceError.Channel)
+            self.writers[destination] = open_writer(destination)?
+        return Ok(self.writers[destination])
+
+    def flush(self) -> Result[None, TraceError]:
+        """Try every writer even if one failed; any failure marks the observation incomplete."""
+        mut failed = false
+        for writer in self.writers.values():
+            match writer.flush():
+                Ok(_) => pass
+                Err(_) => failed = true
+        if failed:
+            return Err(TraceError.Channel)
+        return Ok(None)
+
+
+static CHANNELS: Channels = Channels()
+
+
+pub model Counters:
+    """Aggregated work inside one span; scalar reads increment these rather than emitting events."""
+
+    pub bytes: int = 0
+    pub records: int = 0
+    pub calls: int = 0
+
+
+pub model EngineSpan:
+    """A completed operation; ids and redacted locators carry correlation, never source or environment values."""
+
+    pub run: str
+    pub request: str
+    pub work: str
+    pub span: int
+    pub parent: int
+    pub producer: str
+    pub operation: str
+    pub key: str
+    pub snapshot: str
+    pub start_ns: int
+    pub end_ns: int
+    pub process: int
+    pub thread: str
+    pub outcome: str
+    pub counters: Counters = Counters()
+    # An unavailable CPU clock is null on the wire, never an invented zero.
+    pub cpu_ns: Option[int] = None
+    # Distinguishes monotonic origins even when a process id is reused.
+    pub clock_id: str = ""
+
+
+pub def enabled(variable: str) -> bool:
+    """Whether a switch names a nonempty destination; absence creates no clock, event, buffer or sink."""
+    match var_os(variable):
+        Some(value) => return not value.is_empty()
+        None => return false
+
+
+pub def begin(observing: bool) -> Option[Clock]:
+    """Start only an enabled operation; the disabled branch does not touch the clock or static state."""
+    if not observing:
+        return None
+    return Some(ORIGIN.begin())
+
+
+pub def complete(
+    clock: Clock,
+    producer: str,
+    operation: str,
+    key: str,
+    counters: Counters = Counters(),
+    run: str = "",
+    request: str = "",
+    work: str = "",
+    parent: int = 0,
+    snapshot: str = "",
+    outcome: str = "done",
+) -> EngineSpan:
+    """Complete a caller-correlated operation on the same monotonic origin as its start."""
+    mut run_id = run
+    if run_id == "":
+        run_id = clock.origin
+    return EngineSpan(
+        run=run_id,
+        request=request,
+        work=work,
+        span=clock.span,
+        parent=parent,
+        producer=producer,
+        operation=operation,
+        key=key,
+        snapshot=snapshot,
+        start_ns=clock.start_ns,
+        end_ns=ORIGIN.now(),
+        process=int(id()),
+        thread=f"{current().id():?}",
+        outcome=outcome,
+        counters=counters,
+        clock_id=clock.origin,
+    )
+
+
+@rust.derive(RustSerialize)
+model TraceRecord:
+    """The flat wire projection of a completed span; native serde owns the entire encoding pass."""
+
+    schema: str
+    kind: str
+    run: str
+    request: str
+    work: str
+    producer: str
+    operation: str
+    key: str
+    snapshot: str
+    thread: str
+    outcome: str
+    clock: str
+    clock_id: str
+    span: int
+    parent: int
+    process: int
+    start_ns: int
+    end_ns: int
+    bytes: int
+    records: int
+    calls: int
+    cpu_ns: Option[int]
+
+
+pub def encode(span: &EngineSpan) -> Result[str, TraceError]:
+    """Expose the same bounded native wire encoding as text for schema readers and compatibility tools."""
+    mut scratch = encoding_buffer()
+    used = fill(scratch, wire_record(span)?)?
+    # Native JSON serialization guarantees UTF-8; this converts only the initialized prefix to owned text.
+    return Ok(str(RustString.from_utf8_lossy(scratch.as_slice().split_at(used).0)))
+
+
+def wire_record(span: &EngineSpan) -> Result[TraceRecord, TraceError]:
+    """
+    Validate a completed span and project its fields into the flat wire schema.
+
+    1. Validate numeric invariants.
+    2. Bound every source text field before serialization.
+    """
+    # 1. Durations and aggregate counters cannot be negative.
+    if span.span <= 0 or span.parent < 0 or span.process < 0 or span.start_ns < 0 or span.end_ns < span.start_ns:
+        return Err(TraceError.InvalidSpan)
+    if span.counters.bytes < 0 or span.counters.records < 0 or span.counters.calls < 0:
+        return Err(TraceError.InvalidSpan)
+    match span.cpu_ns:
+        Some(value) =>
+            if value < 0:
+                return Err(TraceError.InvalidSpan)
+        None => pass
+    # 2. Bound source fields before the native serializer can expand their escapes.
+    if not fields_bounded(span):
+        return Err(TraceError.FieldBound)
+    row = TraceRecord(
+        schema=SCHEMA,
+        kind="span",
+        run=span.run,
+        request=span.request,
+        work=span.work,
+        producer=span.producer,
+        operation=span.operation,
+        key=span.key,
+        snapshot=span.snapshot,
+        thread=span.thread,
+        outcome=span.outcome,
+        clock="process-monotonic",
+        clock_id=span.clock_id,
+        span=span.span,
+        parent=span.parent,
+        process=span.process,
+        start_ns=span.start_ns,
+        end_ns=span.end_ns,
+        bytes=span.counters.bytes,
+        records=span.counters.records,
+        calls=span.counters.calls,
+        cpu_ns=span.cpu_ns,
+    )
+    return Ok(row)
+
+
+def encoding_buffer() -> Vec[u8]:
+    """Allocate exactly the fixed encoding capacity, with every byte initialized before lending its slice."""
+    mut buffer: Vec[u8] = Vec.new()
+    buffer.resize(BUFFER_BYTES, 0u8)
+    return buffer
+
+
+def fill(mut buffer: &mut Vec[u8], row: &TraceRecord) -> Result[usize, TraceError]:
+    """Lend fixed storage to native serde; the cursor refuses overflow without growing or publishing a prefix."""
+    mut cursor = Cursor.new(buffer.as_mut_slice())
+    to_writer(Write.by_ref(cursor), row).map_err(encoding_error)?
+    cursor.write_all(b"\x0a").map_err((_) => TraceError.RecordBound)?
+    match cursor.position().try_resize[usize]():
+        Some(used) => return Ok(used)
+        None => return Err(TraceError.RecordBound)
+
+
+def encoding_error(error: JsonError) -> TraceError:
+    """A fixed cursor's exhausted capacity is a record bound; other serialization failures are invalid values."""
+    if error.is_io():
+        return TraceError.RecordBound
+    return TraceError.InvalidSpan
+
+
+def fields_bounded(span: &EngineSpan) -> bool:
+    """Check borrowed fields without allocating an inventory of copied strings for each event."""
+    return (
+        bounded(span.run)
+        and bounded(span.request)
+        and bounded(span.work)
+        and bounded(span.producer)
+        and bounded(span.operation)
+        and bounded(span.key)
+        and bounded(span.snapshot)
+        and bounded(span.thread)
+        and bounded(span.outcome)
+        and bounded(span.clock_id)
+    )
+
+
+def bounded(value: &str) -> bool:
+    """Whether a source string fits its UTF-8 wire bound before native JSON escaping."""
+    return int(value.len()) <= MAX_TEXT
+
+
+pub def record(destination: str, span: &EngineSpan) -> Result[None, TraceError]:
+    """Append one complete schema record to a file; no schema output can select a console stream."""
+    if destination == "":
+        return Ok(None)
+    if destination == "-":
+        return Err(TraceError.Channel)
+    return CHANNELS.record(destination, span)
+
+
+pub def append(destination: str, text: &str) -> Result[None, TraceError]:
+    """Queue one bounded record on a retained channel; callers flush at their process lifecycle boundary."""
+    if destination == "" or destination == "-":
+        return Err(TraceError.Channel)
+    if len(text) > MAX_RECORD:
+        return Err(TraceError.RecordBound)
+    return CHANNELS.append(destination, text)
+
+
+pub def flush() -> Result[None, TraceError]:
+    """Drain all process channels before normal return or explicit exit; this never writes console diagnostics."""
+    return CHANNELS.flush()
+
+
+pub def open_writer(destination: str) -> Result[Writer, TraceError]:
+    """Open an independently owned bounded file channel; its owner must flush before explicit process exit."""
+    return Writer.open(destination)

@@ -38,6 +38,7 @@ impl TypeChecker {
             result: result.clone(),
             bindings: bindings.clone(),
             invalidated: false,
+            settled: false,
         });
         self.type_info
             .expressions
@@ -181,14 +182,24 @@ impl TypeChecker {
     /// Apply retained adaptation destinations and publish each complete lexical inference group.
     pub(in crate::typechecker) fn settle_open_value_destinations(&mut self) {
         self.check_work.open_value_settlements += 1;
+        self.settle_body_open_values();
+    }
+
+    /// Settle one complete lexical owner from its checked destinations; no other body's state is consulted.
+    pub(in crate::typechecker) fn settle_body_open_values(&mut self) {
         let destinations = self.type_info.expressions.value_destination_types.clone();
         for (span, actual) in destinations {
             if let Some(value) = self.type_info.expressions.body_ir_open_values.get(&span).cloned() {
-                self.constrain_open_value(value.group, &value.ty, &actual, span);
+                if !self.type_info.expressions.body_ir_open_calls[value.group].settled {
+                    self.constrain_open_value(value.group, &value.ty, &actual, span);
+                }
             }
         }
         for group in 0..self.type_info.expressions.body_ir_open_calls.len() {
-            self.publish_open_value_group(group);
+            if !self.type_info.expressions.body_ir_open_calls[group].settled {
+                self.publish_open_value_group(group);
+                self.type_info.expressions.body_ir_open_calls[group].settled = true;
+            }
         }
     }
 

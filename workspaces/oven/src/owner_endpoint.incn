@@ -166,6 +166,9 @@ def generation_of(root: str) -> Result[str, str]:
         inherited_setting("INCAN_NATIVE_TIMING"),
         inherited_setting("INCAN_TRACE_DIR"),
         inherited_setting("INCAN_JEC_TRACE"),
+        inherited_setting("INCAN_ENGINE_TRACE"),
+        inherited_setting("INCAN_ENGINE_RUN"),
+        inherited_setting("INCAN_ENGINE_REQUEST"),
     ]
     # An inherited deployment selection keeps the owner distinct before it can prepare native inputs for a caller.
     configuration.extend(inherited_deployment_configuration()?)

@@ -19,7 +19,7 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     Exercise the real Rust test producer and reporter, including a test-only local dependency.
 
     1. Create a Rust library with a passing test and a failing test using a test-only helper.
-    2. Compile and run both tests, requiring a failing command outcome.
+    2. Compile and run both tests, requiring a failing command outcome; rediscover an unavailable old witness.
     3. Repair the failing assertion and require the same harness path to rebuild and pass.
     4. Compile procedural macro unit and integration harnesses in their producer's host domain.
     5. Require optimized qualification and iteration to preserve the same edit/revert behavior.
@@ -71,6 +71,9 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     assert run_rust_harness(Path(programs[0]), project)? == 1
     for program in programs[1:]:
         assert run_rust_harness(Path(program), project)? == 0
+    # An older target view's unlocatable dependency witness is rediscovered, never mistaken for current inputs.
+    write(Path(programs[0] + ".d"), "old: /unavailable/checkout/src/lib.rs\n")?
+    assert build_rust_tests(request)? == programs
     # 3. Source edits invalidate the ordinary executable proof.
     write(source, rust_tests(7))?
     rebuilt = build_rust_tests(request)?

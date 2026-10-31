@@ -14,7 +14,7 @@ from home import TOOLCHAIN, dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
 from unit import describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
-from incan_units import check_unit, compile_unit, program_binary, run_program
+from incan_units import check_unit, compile_unit, make_unit, program_binary, run_program
 from unit_compiler import crate_name
 from rust_units import RustBuild, build_rust, read_registry_units, rust_facet
 from rust_testing import build_rust_tests
@@ -31,6 +31,7 @@ from graph_mcp import serve_graph, parse_path
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
+from pub::incan_platform.trace import flush as flush_trace
 
 
 pub model Options:
@@ -48,6 +49,12 @@ pub model Options:
 
 
 def main() -> None:
+    """Dispatch the CLI and drain observations on normal return; explicit exits drain at their own boundary."""
+    command_line()
+    _ = flush_trace()
+
+
+def command_line() -> None:
     """
     Dispatch the public CLI with syntax errors reported as exit status two.
 
@@ -96,7 +103,6 @@ def dispatch(command: str, rest: list[str]) -> None:
                 Ok(_) => pass
                 Err(reason) => fail(f"incan {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
     if command == "run":
-
         run(rest)
         return
     if command == "_run-built":
@@ -182,6 +188,7 @@ def fail(message: str, code: i32) -> None:
     if code == 2:
         text += f"{HELP_HINT}\n"
     _ = err.write_all(RustString.from(text).into_bytes())
+    _ = flush_trace()
     exit(code)
 
 
@@ -296,11 +303,11 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     unit.program_entries = options.program_entries
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
-    compiled = compile_unit(unit, toolchain, binary, true)?
-    if compiled != 0:
-        return Ok(compiled)
-    # 3. The process becomes the program, so its exit status is the run's.
-    return run_program(binary, passed, options.argv0)
+    made = make_unit(unit, toolchain, binary, true)?
+    if made.code != 0:
+        return Ok(made.code)
+    # 3. The process becomes the program, so its exit status is the run's; it keeps the view's name as its own.
+    return run_program(made.launch, passed, Some(options.argv0.unwrap_or(binary.0)))
 
 
 def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
@@ -385,7 +392,9 @@ def finish(command: str, result: Result[i32, str]) -> None:
     """Exit with a command's exit code, or report why it could not run."""
     match result:
         Err(reason) => fail(f"incan {command}: {reason}", 1)
-        Ok(code) => exit(code)
+        Ok(code) =>
+            _ = flush_trace()
+            exit(code)
 
 
 def validated(command: str, options: Options) -> Options:

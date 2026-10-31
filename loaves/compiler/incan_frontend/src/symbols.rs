@@ -292,6 +292,11 @@ fn stable_fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// An existing lexical scope suspended between declaration preparation and statement checking. The owning symbol
+/// table retains its bindings and canonical identities; consuming the handle never creates or rebinds a symbol.
+#[must_use]
+pub(crate) struct PreparedScope(usize);
+
 /// Symbol table managing all named entities
 #[derive(Debug)]
 pub struct SymbolTable {
@@ -410,7 +415,7 @@ impl SymbolTable {
     }
 
     /// Return the origin that owns declarations in the currently checked module.
-    fn declaration_origin(&self) -> SymbolOrigin {
+    pub(crate) fn declaration_origin(&self) -> SymbolOrigin {
         self.package_identity
             .as_ref()
             .map(|library| SymbolOrigin::Package {
@@ -640,14 +645,36 @@ impl SymbolTable {
     /// Exit the current scope, invalidating nominal facts when a module type's lexical shadow disappears.
     pub fn exit_scope(&mut self) {
         if let Some(parent) = self.scopes[self.current_scope].parent {
-            if self.scopes[self.current_scope]
-                .symbols
-                .keys()
-                .any(|name| self.nominal_binding_names.contains(name))
-            {
-                self.nominal_revision = InventoryRevision::default();
-            }
+            self.invalidate_nominal_shadows();
             self.current_scope = parent;
+        }
+    }
+
+    /// Leave the prepared lexical scope while retaining its exact bindings for a later statement producer. This
+    /// invalidates nominal shadows through the same exit rule as ordinary lexical checking.
+    pub(crate) fn suspend_scope(&mut self) -> PreparedScope {
+        let prepared = PreparedScope(self.current_scope);
+        self.exit_scope();
+        prepared
+    }
+
+    /// Resume a prepared scope under the parent that created it. Re-entering a shadowing scope changes nominal
+    /// visibility just as leaving it does, while every declaration identity remains unchanged.
+    pub(crate) fn resume_scope(&mut self, prepared: PreparedScope) {
+        debug_assert_eq!(self.scopes[prepared.0].parent, Some(self.current_scope));
+        self.current_scope = prepared.0;
+        self.invalidate_nominal_shadows();
+    }
+
+    /// Mark nominal visibility changed when entering or leaving a scope that shadows a module type. Scope transfer
+    /// and ordinary lexical exit share this rule so a prepared frame cannot retain an obsolete nominal snapshot.
+    fn invalidate_nominal_shadows(&mut self) {
+        if self.scopes[self.current_scope]
+            .symbols
+            .keys()
+            .any(|name| self.nominal_binding_names.contains(name))
+        {
+            self.nominal_revision = InventoryRevision::default();
         }
     }
 
@@ -1121,7 +1148,16 @@ impl SymbolTable {
     /// already closed. Requiring the symbol site to equal the identity's declaration site excludes aliases and
     /// compiler-generated refinements, which carry another declaration's identity at a different binding site.
     pub fn nested_declaration_identities(&self) -> impl Iterator<Item = (Span, &CanonicalSymbolId)> + '_ {
-        self.symbols.iter().enumerate().filter_map(|(id, symbol)| {
+        self.nested_declaration_identities_from(0)
+    }
+
+    /// Export only lexical declarations registered since a body scope's symbol cursor. The cursor is invocation-local,
+    /// never a semantic identity; the same ownership/origin rules govern full and local export.
+    pub(crate) fn nested_declaration_identities_from(
+        &self,
+        start: usize,
+    ) -> impl Iterator<Item = (Span, &CanonicalSymbolId)> + '_ {
+        self.symbols.iter().enumerate().skip(start).filter_map(|(id, symbol)| {
             if symbol.scope == 0 || symbol.span == Span::default() || self.dependency_interface_symbol_ids.contains(&id)
             {
                 return None;
@@ -2639,7 +2675,9 @@ where
                 qualify_structured_rust_arg(arg);
                 if !rust_generic_preserves_nominal_ir(info) {
                     *arg = crate::resolved_type_subst::map_resolved_type_leaves(arg, &|leaf| {
-                        let ResolvedType::Named(name) = leaf else { return None };
+                        let ResolvedType::Named(name) = leaf else {
+                            return None;
+                        };
                         symbols
                             .module_type_identity(name)
                             .and_then(incan_semantics_core::body_ir::nominal_carrier_key)

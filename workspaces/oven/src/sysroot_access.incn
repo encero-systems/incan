@@ -1,0 +1,94 @@
+"""
+Admit a declaration of rustc-internal access against the pinned toolchain and find the libraries it declares.
+
+Each declared component must be installed in the pinned toolchain, and each declared sysroot dependency must name
+exactly one library of it, in `lib/rustlib/<host>/lib`. Such a library is part of the pinned compiler, which the
+compiler fingerprint identifies, so it has no producer record of its own; a unit's identity names it by its
+declaration.
+"""
+
+from std.fs import Path
+from files import read
+from registry_units import is_dynamic_library
+from rust_target import host_triple
+from toolchain import NativeCrate, Toolchain, rust_compiler
+from toolchain_access import ToolchainAccess
+
+
+pub def declared_libraries(access: ToolchainAccess, toolchain: Toolchain) -> Result[list[NativeCrate], str]:
+    """
+    The toolchain libraries a declaration links, each under its crate name; none for an undeclared unit.
+
+    1. Every declared component is installed in the pinned toolchain.
+    2. Every declared sysroot dependency is exactly one library of it.
+    """
+    if not access.declared():
+        return Ok([])
+    # 1. A missing component is named here, rather than reported later as a missing library or feature.
+    host = toolchain_host(toolchain)?
+    sysroot = Path(toolchain.sysroot)
+    installed = installed_components(sysroot)?
+    for component in access.toolchain_components:
+        if component not in installed and f"{component}-{host}" not in installed:
+            return Err(f"the pinned toolchain has no `{component}` component for {host}: {sysroot.0}")
+    # 2. Each library is found by its crate name; two candidates, or none, leave it unsaid which one is linked.
+    return Ok(
+        [NativeCrate(name=name, path=sysroot_library(sysroot, host, name)?.0) for name in access.sysroot_dependencies],
+    )
+
+
+pub def runtime_sysroot(toolchain: Toolchain) -> Result[str, str]:
+    """The resolved sysroot an executable that links the toolchain's libraries loads them from at run time."""
+    sysroot = Path(toolchain.sysroot)
+    return Ok(sysroot.resolve().map_err((error) => f"{sysroot.0}: {error.message()}")?.0)
+
+
+def toolchain_host(toolchain: Toolchain) -> Result[str, str]:
+    """The host whose libraries the pinned toolchain ships: its explicit target, else what its rustc reports."""
+    if toolchain.target != "":
+        return Ok(toolchain.target)
+    return host_triple(rust_compiler(toolchain))
+
+
+def installed_components(sysroot: Path) -> Result[list[str], str]:
+    """The components the pinned toolchain lists as installed, one per line of `lib/rustlib/components`."""
+    listing = sysroot.joinpath("lib/rustlib/components")
+    if not listing.is_file():
+        return Err(f"the pinned toolchain lists no installed components: {listing.0} does not exist")
+    return Ok([line.strip() for line in read(listing)?.split("\n") if line.strip() != ""])
+
+
+def sysroot_library(sysroot: Path, host: str, name: str) -> Result[Path, str]:
+    """
+    The one library of the pinned toolchain that `name` declares: its shared library when the toolchain ships one,
+    else its archive, else its metadata, whose code a shared library of the toolchain contains.
+    """
+    directory = sysroot.joinpath("lib/rustlib").joinpath(host).joinpath("lib")
+    prefix = f"lib{name}-"
+    mut found: list[Path] = []
+    mut stems: list[str] = []
+    for candidate in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        file = candidate.name()
+        stem = file.split(".")[0]
+        if file.startswith(prefix) and "-" not in stem[len(prefix):] and library_kind(file) != "":
+            found.append(candidate)
+            if stem not in stems:
+                stems.append(stem)
+    if len(stems) != 1:
+        return Err(f"sysroot dependency `{name}` names {len(stems)} libraries of the pinned toolchain in {directory.0}")
+    for kind in ["dynamic", "rlib", "rmeta"]:
+        for candidate in found:
+            if library_kind(candidate.name()) == kind:
+                return Ok(candidate)
+    return Err(f"sysroot dependency `{name}` has no library in {directory.0}")
+
+
+def library_kind(file: str) -> str:
+    """Which kind of Rust library a file name is: `dynamic`, `rlib` or `rmeta`; empty for anything else."""
+    if is_dynamic_library(file):
+        return "dynamic"
+    if file.endswith(".rlib"):
+        return "rlib"
+    if file.endswith(".rmeta"):
+        return "rmeta"
+    return ""

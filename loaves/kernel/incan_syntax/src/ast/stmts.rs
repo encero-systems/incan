@@ -8,7 +8,7 @@ use super::{BinaryOp, Decorator, Expr, Ident, Param, Pattern, Span, Spanned, Typ
 // Statements
 // ============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Statement {
     /// `x = value` or `let x = value` or `mut x = value`
     Assignment(AssignmentStmt),
@@ -54,7 +54,7 @@ pub enum Statement {
     VocabBlock(VocabBlockStmt),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AssignmentStmt {
     pub binding: BindingKind,
     pub name: Ident,
@@ -64,7 +64,7 @@ pub struct AssignmentStmt {
     pub value: Spanned<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct FieldAssignmentStmt {
     /// Span of the assignment target (e.g. `self.field`).
     pub target_span: Span,
@@ -75,7 +75,7 @@ pub struct FieldAssignmentStmt {
     pub value: Spanned<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct IndexAssignmentStmt {
     pub object: Spanned<Expr>,
     pub index: Spanned<Expr>,
@@ -84,7 +84,7 @@ pub struct IndexAssignmentStmt {
     pub value: Spanned<Expr>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum BindingKind {
     /// Plain `x = value` - first assignment (becomes `let` in Rust)
     Inferred,
@@ -96,7 +96,7 @@ pub enum BindingKind {
     Reassign,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CompoundAssignmentStmt {
     pub name: Ident,
     /// Exact source span of `name`.
@@ -105,7 +105,7 @@ pub struct CompoundAssignmentStmt {
     pub value: Spanned<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ChainedAssignmentStmt {
     pub binding: BindingKind,
     pub targets: Vec<Ident>,
@@ -114,7 +114,7 @@ pub struct ChainedAssignmentStmt {
     pub value: Spanned<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TupleUnpackStmt {
     pub binding: BindingKind,
     pub names: Vec<Ident>,
@@ -125,7 +125,7 @@ pub struct TupleUnpackStmt {
 
 /// Tuple assignment to lvalue expressions: `arr[i], arr[j] = arr[j], arr[i]` Used for swaps and multi-target
 /// assignments where targets are not new bindings.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TupleAssignStmt {
     /// Left-hand side lvalue expressions (index, field, or identifier references)
     pub targets: Vec<Spanned<Expr>>,
@@ -133,7 +133,7 @@ pub struct TupleAssignStmt {
     pub value: Spanned<Expr>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum CompoundOp {
     Add,      // +=
     Sub,      // -=
@@ -189,7 +189,7 @@ impl CompoundOp {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Condition {
     /// Ordinary boolean condition: `if expr:` / `while expr:`
     Expr(Spanned<Expr>),
@@ -214,7 +214,7 @@ impl Condition {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct IfStmt {
     pub condition: Condition,
     pub then_body: Vec<Spanned<Statement>>,
@@ -222,18 +222,18 @@ pub struct IfStmt {
     pub else_body: Option<Vec<Spanned<Statement>>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct WhileStmt {
     pub condition: Condition,
     pub body: Vec<Spanned<Statement>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct LoopStmt {
     pub body: Vec<Spanned<Statement>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ForStmt {
     pub pattern: Spanned<Pattern>,
     pub iter: Spanned<Expr>,
@@ -243,12 +243,12 @@ pub struct ForStmt {
 /// A scoped acknowledgment region for operations that require explicit authorization.
 ///
 /// The block does not introduce a separate Incan scope; it records only the acknowledgment boundary.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct UnsafeStmt {
     pub body: Vec<Spanned<Statement>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AssertStmt {
     /// Structured assertion form selected by the parser.
     pub kind: AssertKind,
@@ -257,7 +257,7 @@ pub struct AssertStmt {
 }
 
 /// Parser-owned shape of RFC 018 assertion syntax.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum AssertKind {
     /// Ordinary boolean assertion: `assert expr`.
     Condition(Spanned<Expr>),
@@ -278,14 +278,15 @@ pub enum AssertKind {
 }
 
 /// Generic surface statement node emitted by parser handoff.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SurfaceStmt {
+    #[serde(serialize_with = "super::serialize_debug")]
     pub key: SurfaceFeatureKey,
     pub payload: SurfaceStmtPayload,
 }
 
 /// Parser metadata describing how a raw vocab block keyword was resolved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct VocabKeywordBinding {
     /// Whether the rich imported DSL metadata declares this nested block as a clause owned by its parent declaration.
     ///
@@ -294,20 +295,23 @@ pub struct VocabKeywordBinding {
     pub is_declaration_owned_clause: bool,
     pub dependency_key: String,
     pub activation_namespace: String,
+    #[serde(serialize_with = "super::serialize_debug")]
     pub surface_kind: incan_vocab::KeywordSurfaceKind,
     pub compound_tokens: Vec<String>,
+    #[serde(serialize_with = "super::serialize_debug")]
     pub placement: incan_vocab::KeywordPlacement,
+    #[serde(serialize_with = "super::serialize_debug")]
     pub clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct VocabExpressionItemStmt {
     pub expr: Spanned<Expr>,
     pub alias: Option<Ident>,
     pub modifiers: Vec<VocabExpressionItemModifierStmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct VocabExpressionItemModifierStmt {
     pub keyword: String,
     pub value: Spanned<Expr>,
@@ -315,7 +319,7 @@ pub struct VocabExpressionItemModifierStmt {
 }
 
 /// Raw vocab block statement captured before desugaring.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct VocabBlockStmt {
     pub keyword: String,
     pub keyword_binding: VocabKeywordBinding,
@@ -328,7 +332,7 @@ pub struct VocabBlockStmt {
 }
 
 /// Generic function-like vocabulary declaration head.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct VocabSignatureHead {
     pub name: Ident,
     pub parameters: Vec<Spanned<Param>>,
@@ -336,7 +340,7 @@ pub struct VocabSignatureHead {
 }
 
 /// Surface statement payload variants.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum SurfaceStmtPayload {
     /// Generic keyword statement args: `kw expr[, expr]`.
     KeywordArgs(Vec<Spanned<Expr>>),

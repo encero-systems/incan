@@ -11,8 +11,12 @@ const SCHEMA: str = "incan.native-shared/1"
 
 
 pub def development_link(unit: UnitDescription, requested: bool) -> bool:
-    """Only debug run and test requests select shared linkage; libraries and build requests retain static linkage."""
-    return requested and unit.profile == "debug" and unit.kind != "library"
+    """
+    Only debug run and test requests select shared linkage; libraries and build requests retain static linkage. A unit
+    that links the toolchain's own libraries uses the standard library they were built with, so it shares no carriers.
+    """
+    sysroot = len(unit.toolchain_access.sysroot_dependencies) > 0
+    return requested and unit.profile == "debug" and unit.kind != "library" and not sysroot
 
 
 pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:

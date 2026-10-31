@@ -8,6 +8,9 @@ inputs that changed while the compiler ran are never retained.
 
 Both are facts of the home bakery (see `bakery`): a refusal or check report is baked once under its identity, and a
 crash or an I/O failure publishes nothing.
+
+A retained stream names the producing project's locations relative to its root, and a replay renders them under the
+requesting project's root, so the same identity replays at any path exactly as a fresh compiler run there prints.
 """
 
 from rust::std::io import Write, stderr, stdout
@@ -16,10 +19,11 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from std.io import BytesIO
+from std.json import JsonValue
 from bakery import claim, fact_file, find, lookup, seal, staging, unit_name
 from driver_command import driver_command
 from compiler_worker import Completion, captured_resident
-from files import open_stream
+from files import json_text, open_stream
 from observation import trace
 from owner_client import status_code
 from publication import publish_binary
@@ -28,12 +32,14 @@ from unit import UnitDescription
 from unit_freshness import Key, artifact_files, fingerprint, unit_key
 from jec import begin, record, invocation_key
 
-const RECORD_SCHEMA: str = "incan.oven.outcome/1"
+const RECORD_SCHEMA: str = "incan.oven.outcome/2"
 const REFUSAL_RECEIPT: str = "incan.compiler-refusal/1\n"
 const CHECK_RECEIPT: str = "incan.compiler-check/1\n"
-const CHECK_DOMAIN: str = "incan.oven.check/1"
-const REFUSAL_DOMAIN: str = "incan.oven.refusal/1"
+const CHECK_DOMAIN: str = "incan.oven.check/2"
+const REFUSAL_DOMAIN: str = "incan.oven.refusal/2"
 const OUTCOME: str = "outcome"
+# Stands for the producing project's root in a retained stream; a replay writes the requesting project's root there.
+const PROJECT_ROOT: str = "{incan.oven:project-root}"
 const MAX_STATUS: int = 255
 
 
@@ -60,7 +66,7 @@ pub def compile_or_replay(
     refused = refusal_identity(key)?
     cacheable = key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
-        if let Some(refusal) = load_outcome(store, refused)?:
+        if let Some(refusal) = load_outcome(store, refused, unit.project_root)?:
             trace(f"unit {unit.package} {unit.kind}: replayed refusal")
             return show(refusal, toolchain.console)
     # 2. The worker and a single process capture the same streams; only the compiler's receipt certifies a refusal.
@@ -70,7 +76,7 @@ pub def compile_or_replay(
     # 3. Publish a certified refusal only if the complete input identity is still unchanged.
     if cacheable and refusal.exited and refusal.code == 1 and certified(certificate, REFUSAL_RECEIPT):
         if still_keyed(unit, toolchain, key):
-            _ = retain_outcome(store, refused, "refusal", outcome_name(unit, []), refusal)
+            _ = retain_outcome(store, refused, "refusal", outcome_name(unit, ""), refusal, unit.project_root)
     withdraw(certificate)
     return show(refusal, toolchain.console)
 
@@ -78,35 +84,39 @@ pub def compile_or_replay(
 pub def check_or_replay(
     unit: UnitDescription,
     toolchain: Toolchain,
-    arguments: list[str],
+    description: Path,
+    format: str,
     store: Path,
     key: Key,
 ) -> Result[i32, str]:
     """
     Replay the report of an unchanged check, or check and retain a certified report under the same identity rules.
 
-    The record's identity is the unit's key and the complete check invocation, which names the report format.
+    The record's identity is content alone: the unit's key, which covers its inputs, their project-relative names, the
+    toolchain and the configuration, and the report format. No location enters it, so a copy of the project at another
+    path, in the same home, replays the report in its own paths.
 
     1. Replay a complete record of this identity unless a caller requested compiler side channels.
     2. Check through the resident worker, or one compiler process, with a fresh certification path.
     3. Retain a certified, normally completed report only while the unit's inputs are still those of the key.
     """
     label = f"unit {unit.package} check"
-    identity = fingerprint([CHECK_DOMAIN, key.digest] + arguments)?
-    # 1. A stored report of this identity is shown exactly as the compiler printed it.
+    identity = fingerprint([CHECK_DOMAIN, key.digest, format])?
+    arguments = ["--check", description.0, toolchain.sysroot, "--format", format]
+    # 1. A stored report of this identity is shown as the compiler printed it, in this project's paths.
     cacheable = key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
-        if let Some(report) = load_outcome(store, identity)?:
+        if let Some(report) = load_outcome(store, identity, unit.project_root)?:
             trace(f"{label}: replayed")
             return show(report, toolchain.console)
     # 2. The compiler certifies only a pass or a refusal by source diagnostics.
-    trace(f"{label}: checked ({check_reason(store, outcome_name(unit, arguments))})")
+    trace(f"{label}: checked ({check_reason(store, outcome_name(unit, format))})")
     certificate = fresh_certificate(store, identity)?
     report = completed(toolchain, arguments + ["--certify", certificate.0])?
     # 3. A crash, a signal, an uncertified failure or an edit made meanwhile is checked again next time.
     if cacheable and reported(report) and certified(certificate, CHECK_RECEIPT):
         if still_keyed(unit, toolchain, key):
-            _ = retain_outcome(store, identity, "check", outcome_name(unit, arguments), report)
+            _ = retain_outcome(store, identity, "check", outcome_name(unit, format), report, unit.project_root)
     withdraw(certificate)
     return show(report, toolchain.console)
 
@@ -136,11 +146,11 @@ def check_reason(store: Path, name: str) -> str:
     return "no stored report"
 
 
-def outcome_name(unit: UnitDescription, arguments: list[str]) -> str:
+def outcome_name(unit: UnitDescription, format: str) -> str:
     """The name a retained outcome is indexed under: the unit, and for a check its report format."""
     mut name = unit_name(unit)
-    if len(arguments) > 0:
-        name += f"\tcheck {arguments[len(arguments) - 1]}"
+    if format != "":
+        name += f"\tcheck {format}"
     return name
 
 
@@ -233,14 +243,96 @@ def show(outcome: Completion, console: str) -> Result[i32, str]:
     return Ok(outcome.code)
 
 
-def retain_outcome(store: Path, identity: str, kind: str, name: str, outcome: Completion) -> Result[None, str]:
-    """Bake a certified outcome as the fact of `identity`, once: a concurrent retention of the same outcome waits."""
-    held = claim(store, identity)?
-    if find(store, identity)? is None:
-        staged = staging(store, identity)?
-        save_outcome(staged.joinpath(OUTCOME), identity, outcome)?
-        _ = seal(store, identity, staged, kind, name, [], "certified compiler outcome")?
-    return Ok(None)
+def retain_outcome(
+    store: Path,
+    identity: str,
+    kind: str,
+    name: str,
+    outcome: Completion,
+    root: str,
+) -> Result[None, str]:
+    """
+    Bake a certified outcome as the fact of `identity`, once: a concurrent retention of the same outcome waits.
+
+    The fact names the locations under the project's `root` relative to it; an outcome that cannot be stated that way
+    is not retained, so it is produced again rather than replayed with another project's locations.
+    """
+    match relative_outcome(outcome, root):
+        None => return Ok(None)
+        Some(relative) =>
+            held = claim(store, identity)?
+            if find(store, identity)? is None:
+                staged = staging(store, identity)?
+                save_outcome(staged.joinpath(OUTCOME), identity, relative)?
+                _ = seal(store, identity, staged, kind, name, [], "certified compiler outcome")?
+            return Ok(None)
+
+
+def relative_outcome(outcome: Completion, root: str) -> Option[Completion]:
+    """The outcome with both streams relative to the project's `root`, or None when either cannot be."""
+    if not relocatable_root(root):
+        return None
+    match relative_stream(outcome.output, root):
+        None => return None
+        Some(output) =>
+            match relative_stream(outcome.error, root):
+                None => return None
+                Some(error) => return Some(Completion(code=outcome.code, exited=outcome.exited, output=output, error=error))
+
+
+def relocatable_root(root: str) -> bool:
+    """Whether every report spells `root` as it is: an absolute path a JSON report does not escape."""
+    if not root.startswith("/"):
+        return false
+    match json_text(JsonValue.string(root)):
+        Ok(text) => return text == f"\"{root}\""
+        Err(_) => return false
+
+
+def relative_stream(stream: bytes, root: str) -> Option[bytes]:
+    """
+    A stream with each location under `root` named from the placeholder, or None when that would not replay exactly.
+
+    A stream that already holds the placeholder, or still names the root after relocation (alone, or as the start of
+    another directory's name), is refused. Bytes that are not text are kept as printed only when they name no root.
+    """
+    match stream.decode("utf-8", "strict"):
+        Ok(text) =>
+            if PROJECT_ROOT in text:
+                return None
+            if root not in text:
+                return Some(stream)
+            relative = text.replace(f"{root}/", f"{PROJECT_ROOT}/")
+            if root in relative:
+                return None
+            return Some(relative.encode("utf-8"))
+        Err(_) =>
+            match stream.decode("utf-8", "replace"):
+                Ok(lossy) =>
+                    if PROJECT_ROOT in lossy or root in lossy:
+                        return None
+                    return Some(stream)
+                Err(_) => return None
+
+
+def rendered(outcome: Completion, root: str) -> Completion:
+    """A retained outcome with its locations under the requesting project's `root`; only the record is read."""
+    return Completion(
+        code=outcome.code,
+        exited=outcome.exited,
+        output=rendered_stream(outcome.output, root),
+        error=rendered_stream(outcome.error, root),
+    )
+
+
+def rendered_stream(stream: bytes, root: str) -> bytes:
+    """A retained stream with the placeholder replaced by `root`; a stream without it is shown as stored."""
+    match stream.decode("utf-8", "strict"):
+        Ok(text) =>
+            if PROJECT_ROOT in text:
+                return text.replace(PROJECT_ROOT, root).encode("utf-8")
+        Err(_) => pass
+    return stream
 
 
 pub def outcome_record(store: Path, identity: str) -> Result[Option[Path], str]:
@@ -265,14 +357,17 @@ def save_outcome(path: Path, identity: str, outcome: Completion) -> Result[None,
     return publish_binary(path, content.getvalue())
 
 
-def load_outcome(store: Path, identity: str) -> Result[Option[Completion], str]:
-    """A retained outcome; a missing, malformed or damaged record is a miss (see `find`)."""
+def load_outcome(store: Path, identity: str, root: str) -> Result[Option[Completion], str]:
+    """A retained outcome rendered under the project's `root`; a missing, malformed or damaged record is a miss."""
     match outcome_record(store, identity)?:
         None => return Ok(None)
         Some(record) =>
             match read_outcome(record, identity):
                 Err(_) => return Ok(None)
-                Ok(outcome) => return Ok(outcome)
+                Ok(found) =>
+                    match found:
+                        None => return Ok(None)
+                        Some(outcome) => return Ok(Some(rendered(outcome, root)))
 
 
 def read_outcome(path: Path, identity: str) -> Result[Option[Completion], str]:
