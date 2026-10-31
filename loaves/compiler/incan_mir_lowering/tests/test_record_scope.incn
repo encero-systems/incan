@@ -1,5 +1,7 @@
 """Scoped read evidence binds exact facts and fails closed without publishing a partial result."""
 
+from canonical_record_controls import canonical_record_controls
+
 from records import (
     AbsentFact, RecordKey, RecordRead, RecordReads, RecordRequest, RecordSelection, RecordSource,
     ReadFault, ReadScope, RevisionEvidence, SelectedFact, ReadReceipt, ReadWitness,
@@ -22,6 +24,11 @@ class Source with RecordSource:
 
 pub def test_scoped_record_evidence() -> None:
     """Retain found, empty-member and absent witnesses; reject stale, substituted, unfinished and damaged reads."""
+    match canonical_record_controls():
+        Ok(_) => pass
+        Err(message) =>
+            println(message)
+            assert false
     scope = ReadScope(snapshot="snapshot", profile="profile")
     key = RecordKey(
         family="body", identity_profile="identity/1", origin="package", identity="main", facet="ir", context="",
