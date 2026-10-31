@@ -8,6 +8,7 @@ from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
 from pub::incan_platform.trace import flush as flush_trace
+from installation_check import verify_runtime
 from files import json_text, make_directory, read, read_json, remove, write as write_file
 from json_fields import required_items, required_text
 from registry_metadata import completion_selection
@@ -1592,6 +1593,7 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
     read_toolchain(directory)?
     verify_renamed_admission(scratch, original)?
     verify_published_installation(scratch, original)?
+    verify_installation_check(scratch)?
     assert published_identity(copied)? == "runtime producer"
     assert published_identity(standard)? == "runtime producer"
     assert published_identity(registry)? == "registry producer"
@@ -1658,6 +1660,33 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     assert installed.driver == target.joinpath("driver").0
     assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
     _ = flush_trace()
+    return Ok(None)
+
+
+def verify_installation_check(scratch: Path) -> Result[None, str]:
+    """Installation uses one ordinary run, validates its output and removes the temporary project on either outcome."""
+    directory = scratch.joinpath("checked-installation")
+    make_directory(directory)?
+    oven = scratch.joinpath("installation-oven")
+    calls = scratch.joinpath("installation-calls")
+    mut script = "#!/bin/sh\n" + f"printf 'x' >> '{calls.0}'\n"
+    script += "[ \"$1\" = run ] && [ -f \"$2\" ] || exit 1\n"
+    script += "[ -z \"${INCAN_STDLIB:-}\" ] || exit 1\n"
+    script += "printf 'incan installation verified\\n'\n"
+    write(oven, script)?
+    make_executable(oven)?
+    verify_runtime(oven.0, directory)?
+    assert read(calls)? == "x"
+    # A refused runtime is reported after removing the check's project too.
+    write(oven, script + "exit 1\n")?
+    make_executable(oven)?
+    match verify_runtime(oven.0, directory):
+        Ok(_) =>
+            assert false, "installation accepted a failed runtime"
+        Err(_) => pass
+    assert read(calls)? == "xx"
+    for path in scratch.iterdir().map_err((error) => error.message())?:
+        assert not path.name().startswith(".installation-check-")
     return Ok(None)
 
 
