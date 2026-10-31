@@ -4189,6 +4189,33 @@ pub struct MethodTarget {
 }
 
 impl MethodTarget {
+    /// Authenticate generic metadata against its checked binder without treating a method spelling as authority.
+    /// Publication additionally proves that the binder belongs to its enclosing callable before rebasing either
+    /// identity; native lowering checks the concrete receiver's retained reflection capability.
+    pub fn has_valid_generic_metadata(&self) -> bool {
+        let Some(ReflectionOperation::GenericMetadata(owner)) = &self.reflection else {
+            return false;
+        };
+        let Some(member) = &self.canonical else {
+            return false;
+        };
+        owner.kind == crate::SemanticSourceTargetKind::GenericBinder
+            && owner.namespace == crate::SymbolNamespace::OrdinaryLexical
+            && owner.scope_discriminant.is_some()
+            && owner.declaration_span.start < owner.declaration_span.end
+            && member.kind == crate::SemanticSourceTargetKind::Method
+            && member.namespace == crate::SymbolNamespace::Member
+            && member.declaration_name == "__fields__"
+            && member.origin == owner.origin
+            && member.scope_discriminant == owner.scope_discriminant
+            && member.declaration_span == owner.declaration_span
+            && self.type_args.is_empty()
+            && self.intrinsic_carrier.is_none()
+            && self.loaf_trait.is_none()
+            && self.trait_arguments.is_none()
+            && self.native_trait_delegation.is_none()
+    }
+
     /// Validate the selected SDK signature's relation to this call without granting native execution. The driver
     /// still authenticates the item, receiver implementation and fully instantiated signature against SDK metadata.
     pub fn has_valid_native_trait_selection(&self) -> bool {
@@ -4264,6 +4291,8 @@ pub enum ReflectionOperation {
     StringValue,
     /// Items through a type parameter stringify eligible scalar fields in declaration order.
     StringItems,
+    /// Return immutable metadata after substituting this checked generic binder with its reflectable declaration.
+    GenericMetadata(CanonicalSymbolId),
 }
 
 impl PartialEq<str> for MethodTarget {
