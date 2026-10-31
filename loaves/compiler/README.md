@@ -14,5 +14,6 @@ The checked source pipeline, native lowering and runtime. Compiler units depend 
 | `incan_semantics_stdlib/` | Standard-library semantics packs used by the compiler. |
 | `incan_driver/` | Compilation sessions, module graphs, library publication and inspection. |
 | `incan_worker_host/` | Incan-authored host of one compiler worker process: the `incan.compiler-worker/1` protocol and the worker lifecycle. |
+| `internal_models/` | Incan-authored compiler record contracts: canonical checker records, scoped record reads and the producer interface. |
 
 The rustc adapter lives in `loaves/toolchain/incan-rustc-driver/`. Layer boundaries are documented in `workspaces/docs-site/docs/contributing/explanation/layering.md`.
