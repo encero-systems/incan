@@ -502,7 +502,7 @@ from closures import (
 # =====================================================================================================================
 from attributes import native_attributes
 from externs import delegated_function
-from mutable_parameters import mutable_argument
+from mutable_parameters import exclusive_referent, mutable_argument
 from partial_callables import (
     default_flags,
     with_supplied_flags,
@@ -13270,6 +13270,8 @@ def enum_payload_read(
 
 def enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
     """Classify the retained value type without reading an index; enum comparison materializes the value only once."""
+        (PlanType.ModelMutRef(_, _) | PlanType.EnumMutRef(_, _) | PlanType.StringMutRef | PlanType.TupleMutRef(_)) =>
+            return reborrowed_payload(builder, place, payload_type, span)
     match value:
         RustOperand.Place(read) =>
             # Retained static cells are scalar-only; the ordinary read validates their canonical storage identity.
@@ -13287,6 +13289,22 @@ def enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) ->
                 _ => pass
         _ => pass
     return Ok(false)
+def reborrowed_payload(
+    mut builder: Builder,
+    place: Place,
+    reference: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Lend an exclusive reference payload's referent again, as `Option.as_mut()` hands it out. An exclusive reference can
+    be neither copied nor cloned; reborrowing leaves the carrier whole for any later reader.
+    """
+    referent = dereferenced_place(place, exclusive_referent(reference)?, span)?
+    reborrow = temporary(builder, reference, span)
+    builder.emit(plan_assign(reborrow, RvalueKind.MutBorrow(referent), span))
+    return Ok(read_place(reborrow, true, span))
+
+
 
 
 def read_generic_decorator(
