@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, and take a local's open owner arguments from its first use, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place (#2256, #2432, #2481)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, contextually type native range literals, and take a local's open owner arguments from its first use, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place (#2256, #2432, #2481)
 # expect-stdout:
 #   7
 #   leaf
@@ -218,6 +218,9 @@ def show_projected_binders() -> None:
     println(command.get_envs().len())
     mut values: Vec[int] = Vec.new()
     values.extend([1, 2, 3])
+    removed = values.drain(0..1)
+    assert removed.count() == 1usize
+    values.push(1)
     println(values.len())
 
 
