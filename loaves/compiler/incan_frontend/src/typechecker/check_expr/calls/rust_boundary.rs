@@ -1286,6 +1286,19 @@ impl TypeChecker {
         true
     }
 
+    /// Require write access to the receiver of a Rust method that takes `&mut self`.
+    ///
+    /// A receiver that already is an exclusive reference, such as the payload `Option.as_mut()` binds, lends its
+    /// referent again: the method changes the referent, never the binding, so the binding needs no `mut`. Any other
+    /// receiver is borrowed exclusively, which a binding declared without `mut` does not allow.
+    pub(in crate::typechecker) fn validate_exclusive_rust_receiver(&mut self, receiver: &Spanned<Expr>, span: Span) {
+        if matches!(self.type_info.expr_type(receiver.span), Some(ResolvedType::RefMut(_))) {
+            return;
+        }
+        self.refuse_write_through_read_only_binding(receiver, span);
+        self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, receiver);
+    }
+
     /// Validate one expression used at a Rust value boundary and record the exact coercion lowering must preserve.
     ///
     /// This is the shared Rust-boundary argument plan for free functions, methods, and named-field Rust constructors.

@@ -6,7 +6,7 @@ use super::{RustPathMethodCall, RustTraitMethodCall, RustTraitQualifiedCall, Typ
 use crate::diagnostics::errors;
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
-use crate::typechecker::{IdentKind, OpenRustGenericCall, RustArgCoercionKind};
+use crate::typechecker::{IdentKind, OpenRustGenericCall};
 use incan_lang::interop::{
     RustCollectionFamily, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustTypeInfo,
 };
@@ -331,8 +331,7 @@ impl TypeChecker {
                 Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
             })
         {
-            self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
-            self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+            self.validate_exclusive_rust_receiver(call.receiver_expr, call.span);
         }
         let Some(specialized) = self.specialize_native_method(&call, owner, signature, receiver_is_type) else {
             return Some(ResolvedType::Unknown);
