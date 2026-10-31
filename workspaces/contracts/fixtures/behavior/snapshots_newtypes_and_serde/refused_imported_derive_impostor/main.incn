@@ -1,0 +1,17 @@
+# behavior: a derive bundle's imported same-named local trait does not grant the standard Deserialize protocol
+# expect-diagnostic: INCAN-T0001
+
+from std.serde.json import Deserialize
+import bundle
+
+@derive(bundle)
+model Row:
+    value: int
+
+def restore[T with Deserialize](source: str) -> Result[T, str]:
+    return T.from_json(source)
+
+def main() -> None:
+    match restore[Row]("{}"):
+        Ok(row) => println(row.value)
+        Err(error) => println(error)
