@@ -29,6 +29,7 @@ pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
             parts=key.parts + [f"linkage {SCHEMA}"],
             provenance=key.provenance,
             descriptor=key.descriptor,
+            compiler=key.compiler,
         ),
     )
 

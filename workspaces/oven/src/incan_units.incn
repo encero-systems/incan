@@ -182,7 +182,7 @@ pub def obtain_executable(
     if code != 0:
         _ = staged.remove_tree()
         return Ok(Made(code=code, launch=output, evaluations=1))
-    if unit_key(unit, toolchain)?.digest != key.digest:
+    if key.compiler != "" and unit_key(unit, toolchain, key.compiler)?.digest != key.digest:
         _ = staged.remove_tree()
         return Err("unit inputs changed while the native producer ran; no unit record was published")
     # 5. Only a sealed fact is viewed.
