@@ -79,6 +79,7 @@ fn run(command: &WorkerCommand, arguments: &[String]) -> Result<i32, Box<dyn std
         WorkerCommand::Unit => crate::frontend::compile_resident(arguments).map(|()| 0),
         WorkerCommand::Check => crate::check(arguments),
         WorkerCommand::Format => crate::format(arguments),
+        WorkerCommand::SourceFiles => crate::source_files(arguments),
     }
 }
 
