@@ -1,0 +1,3 @@
+"""A second source bridge keeps the provider's complete overload set."""
+
+pub from facade import relayed_scalar as scalar_again

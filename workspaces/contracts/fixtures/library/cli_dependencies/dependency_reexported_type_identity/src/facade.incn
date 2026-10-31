@@ -1,1 +1,3 @@
 pub from pub::facades import facade_calculate as b_calculate
+pub from pub::facades import format_scalar as relayed_scalar
+pub from pub::facades import measure, echo

@@ -1,0 +1,18 @@
+# behavior: a source bridge retains the complete published overload set, refusing both a call that matches no overload and a call that matches more than one rather than selecting the first declaration or leaving an unknown result (#2514)
+# expect-exit: 1
+# expect-stderr-contains:
+#   Call to 'convert' matches none of its 2 overloads
+#   Call to overloaded function 'choose' is ambiguous
+#   expected 'pub::converters::Parcel', found 'Parcel'
+
+from bridge import convert, choose, unwrap_value
+
+
+model Parcel:
+    pub value: int
+
+
+def main() -> None:
+    println(convert(true))
+    println(choose(1))
+    println(unwrap_value(Parcel(value=7)))
