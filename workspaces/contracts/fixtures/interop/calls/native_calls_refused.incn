@@ -1,4 +1,4 @@
-# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, a later use that conflicts with the owner arguments a local's first use fixed, and an exclusive borrow of an immutable binding that holds a shared socket reference are refused (#2256, #2481)
+# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, numeric arguments that violate a parameterized Rust bound, a later use that conflicts with the owner arguments a local's first use fixed, and an exclusive borrow of an immutable binding that holds a shared socket reference are refused (#2256, #2481)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
@@ -29,6 +29,7 @@
 #   Type mismatch: expected 'String', found 'Int'
 #   Type mismatch: expected 'i64', found 'Str'
 #   Rust parameter requires a mutable borrow of 'shared_socket'
+#   does not satisfy bound `std::convert::AsRef<std::ffi::OsStr>`
 # expect-exit: 1
 
 """A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
@@ -176,6 +177,7 @@ def unselected_callees() -> None:
     path.as_ref()
     mut command = Command.new("true")
     command.args(("one", "two"))
+    command.args(range(3))
     unfixed = HashMap.new()
     println(len(unfixed))
 
