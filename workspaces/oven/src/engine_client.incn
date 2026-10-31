@@ -44,6 +44,12 @@ pub def execute(
     3. Hold the selected execution pin until the program exits, then release it.
     """
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
+    request = session_id()?
+    absolute = source.absolute().map_err((error) => error.message())?
+    view = f"project-{fingerprint([home()?.0, absolute.0, profile])?}"
+    mut policy = ""
+    if proofs:
+        policy = "proofs"
     connecting = begin_work()
     store = bakery()?
     store.mkdir(true, true).map_err((error) => error.message())?
@@ -51,12 +57,6 @@ pub def execute(
     mut channel = connect(store, identity).map_err(detail)?
     record_work("engine_connect", source.0, connecting)
     channel.transport.wait_at_most(600)
-    request = session_id()?
-    absolute = source.absolute().map_err((error) => error.message())?
-    view = f"project-{fingerprint([home()?.0, absolute.0, profile])?}"
-    mut policy = ""
-    if proofs:
-        policy = "proofs"
     submitted = begin_work()
     send(
         channel,
