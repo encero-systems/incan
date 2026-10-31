@@ -50,6 +50,7 @@ pub(super) struct InputCall {
     pub owner: Option<incan_semantics_core::CanonicalSymbolId>,
     pub callee: incan_semantics_core::CanonicalSymbolId,
     pub parameters: Vec<crate::symbols::CallableParam>,
+    pub receiver: Option<crate::ast::Receiver>,
 }
 
 impl TypeChecker {
@@ -75,7 +76,7 @@ impl TypeChecker {
         {
             return;
         }
-        let output = match source::build(self, callable, span) {
+        let output = match source::build(self, callable, span, &identity) {
             Ok(graph) => match flow::analyze(&graph) {
                 Ok(analysis) => {
                     self.errors.extend(report::conflicts(&graph, &analysis));
@@ -234,7 +235,6 @@ mod tests {
         let crate::ast::Declaration::Function(function) = &declaration.node else {
             return Err("expected function".into());
         };
-        let projected = super::source::build(&checker, CallableSource::Function(function), declaration.span);
         let identity = checker
             .type_info
             .declarations
@@ -242,12 +242,14 @@ mod tests {
             .get(&declaration.span)
             .and_then(|binding| binding.identity.as_ref())
             .ok_or("missing selected source declaration")?;
+        let projected = super::source::build(&checker, CallableSource::Function(function), declaration.span, identity);
         let recorded = checker
             .type_info
             .protocols
             .explicit_input_flow
             .get(identity)
-            .ok_or("source analysis was not retained with its checked body")?;
+            .ok_or_else(|| format!("source analysis was not retained with its checked body\n{source}\nerrors: {:?}\ncalls: {:?}\ncontracts: {:?}",
+                checker.errors, checker.type_info.protocols.explicit_input_calls, checker.type_info.declarations.ownership_contracts))?;
         match (recorded, &projected) {
             (InputFlow::Checked { graph, analysis }, Ok(rebuilt)) => {
                 assert_eq!(graph.nodes.len(), rebuilt.nodes.len());
@@ -815,6 +817,80 @@ mod tests {
                 .protocols
                 .explicit_input_calls
                 .contains_key(&empty_span)
+        );
+        Ok(())
+    }
+
+    /// Explicit method parameters retain the exact selected overload, and their receiver contributes a loan in
+    /// source evaluation order rather than gaining access from the method's observed implementation.
+    #[test]
+    fn explicit_method_calls_retain_receiver_access() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, conflict) in [
+            (
+                "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(self, value: Borrowed[str]) -> None:\n        pass\n",
+                false,
+            ),
+            (
+                "def use(mut reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+                false,
+            ),
+            (
+                "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+                true,
+            ),
+            (
+                "def use(mut reader: Reader) -> None:\n    reader.read(reader.value)\nclass Reader:\n    pub value: str\n    def read(mut self, value: Borrowed[str]) -> None:\n        pass\n",
+                true,
+            ),
+            (
+                "def use(reader: Reader, value: str) -> str:\n    reader.read(1, value)\n    return value\nclass Reader:\n    def read(self, value: Borrowed[int]) -> None:\n        pass\n    def read(self, prefix: int, value: Owned[str]) -> None:\n        pass\n",
+                true,
+            ),
+        ] {
+            let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
+            let analysis = flow::analyze(&graph).map_err(|error| format!("{error:?}"))?;
+            assert_eq!(!analysis.conflicts.is_empty(), conflict, "{source}\n{analysis:?}");
+        }
+        Ok(())
+    }
+
+    /// The body owner is a canonical input, not a span-table lookup. A dependency module with an equal source range
+    /// cannot turn the current callable's borrowed parameter into an ordinary transferable one.
+    #[test]
+    fn flow_owner_is_independent_of_shared_span_tables() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def read(value: Borrowed[int]) -> int:\n    return value\n";
+        let mut checker = checked(source)?;
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let declaration = program.declarations.first().ok_or("missing declaration")?;
+        let crate::ast::Declaration::Function(function) = &declaration.node else {
+            return Err("expected function".into());
+        };
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .next()
+            .cloned()
+            .ok_or("missing owner")?;
+        let binding = checker
+            .type_info
+            .declarations
+            .function_bindings_by_span
+            .get_mut(&declaration.span)
+            .ok_or("missing binding")?;
+        let mut other = owner.clone();
+        other.origin = incan_semantics_core::SymbolOrigin::Module(vec!["other".into()]);
+        binding.identity = Some(other);
+        let graph = super::source::build(&checker, CallableSource::Function(function), declaration.span, &owner)
+            .map_err(|error| format!("{error:?}"))?;
+        assert_eq!(graph.permissions.len(), 1);
+        assert!(
+            graph
+                .permissions
+                .values()
+                .all(|permission| !permission.transferable && !permission.exclusive)
         );
         Ok(())
     }

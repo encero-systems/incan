@@ -3,7 +3,7 @@
 //! this profile until their own facts are available.
 
 use super::{Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, ResolvedType, Unavailable};
-use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned};
+use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
 
@@ -16,7 +16,7 @@ impl Builder<'_> {
         callee: &Spanned<Expr>,
         arguments: &[CallArg],
         span: Span,
-        mut incoming: Vec<usize>,
+        incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
         if !matches!(callee.node, Expr::Ident(_)) {
             return Err(Unavailable {
@@ -24,6 +24,19 @@ impl Builder<'_> {
                 reason: "callee evaluation needs checked access facts",
             });
         }
+        self.apply_call(None, arguments, span, incoming)
+    }
+
+    /// Apply one canonical call, evaluating its receiver before written arguments. The receiver's declared access
+    /// remains live through invocation; no method-body analysis is needed to strengthen or weaken that contract.
+    pub(super) fn apply_call(
+        &mut self,
+        receiver: Option<&Spanned<Expr>>,
+        arguments: &[CallArg],
+        span: Span,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        // ---- Selected declaration and supported dependency shape ----
         let call = self
             .checker
             .type_info
@@ -48,6 +61,12 @@ impl Builder<'_> {
             return Err(Unavailable {
                 span,
                 reason: "call facts belong to a different callable",
+            });
+        }
+        if call.receiver.is_some() != receiver.is_some() {
+            return Err(Unavailable {
+                span,
+                reason: "selected receiver contract does not match call syntax",
             });
         }
         if contract.result_source.is_some()
@@ -84,7 +103,16 @@ impl Builder<'_> {
                 reason: "unpacked call requires checked argument expansion",
             });
         }
+        // ---- Receiver and arguments in written evaluation order ----
         let mut loans = Vec::new();
+        if let Some(receiver) = receiver {
+            let source = self.place(receiver)?;
+            incoming = self.evaluate_place(receiver, incoming)?;
+            let mutable = call.receiver == Some(Receiver::Mutable);
+            let loan = self.call_loan(source, mutable, mutable, receiver.span);
+            incoming = self.event(incoming, Event::Borrow(loan), receiver.span);
+            loans.push(loan);
+        }
         for (expression, slot) in paired {
             let slot = slot.ok_or(Unavailable {
                 span: expression.span,
@@ -101,7 +129,7 @@ impl Builder<'_> {
                 loans.push(loan);
             }
         }
-        // Invocation observes every borrowed argument, even when the callee implementation does not use it.
+        // ---- Invocation retains every loan, independently of callee body use ----
         for id in loans {
             let loan = &self.graph.loans[id.0];
             incoming = self.event(
@@ -134,7 +162,7 @@ impl Builder<'_> {
                 let loan = self.call_loan(
                     source,
                     mode == Some(OwnershipMode::BorrowedMut),
-                    parameter,
+                    parameter.is_mut,
                     expression.span,
                 );
                 Ok((self.event(incoming, Event::Borrow(loan), expression.span), Some(loan)))
@@ -158,7 +186,7 @@ impl Builder<'_> {
 
     /// A borrowed argument derives its permissions from the evaluated source. Exclusive access and permission to
     /// write remain separate, and reborrowing preserves the parent's dependency rather than upgrading the owner.
-    fn call_loan(&mut self, source: Path, exclusive: bool, parameter: &CallableParam, span: Span) -> LoanId {
+    fn call_loan(&mut self, source: Path, exclusive: bool, writable: bool, span: Span) -> LoanId {
         let id = LoanId(self.graph.loans.len());
         self.graph.loans.push(Loan {
             source: source.place,
@@ -167,7 +195,7 @@ impl Builder<'_> {
             } else {
                 LoanKind::Shared
             },
-            writable: exclusive && parameter.is_mut,
+            writable: exclusive && writable,
             parent: source.through,
             span,
         });

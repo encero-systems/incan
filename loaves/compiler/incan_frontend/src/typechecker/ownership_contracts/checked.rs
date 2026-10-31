@@ -1,13 +1,13 @@
 //! Resolve explicit declarations into canonical slots and stored-field identities before refusing execution.
 
 use super::TypeChecker;
-use crate::ast::{Declaration, FunctionDecl, MethodDecl, Param, Program, ResultSource, Span, Spanned, Type};
+use crate::ast::{Declaration, FunctionDecl, MethodDecl, Param, Program, Receiver, ResultSource, Span, Spanned, Type};
 use crate::diagnostics::CompileError;
 use crate::ownership_metadata::{
     AccessMode, CheckedOwnershipContract, OwnershipContract, ResultDependency, SourceSlot, TypeComponent,
 };
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
-use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
+use crate::symbols::{CallableParam, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::types::ownership;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 use std::collections::BTreeMap;
@@ -29,23 +29,51 @@ impl TypeChecker {
         &mut self,
         identity: Option<&CanonicalSymbolId>,
         parameters: &[CallableParam],
+        receiver: Option<Receiver>,
         span: Span,
     ) {
-        let Some(callee) = identity else { return };
-        let Some(contract) = self.type_info.declarations.ownership_contracts.get(callee) else {
-            return;
-        };
-        if !contract.modes.iter().any(|mode| mode.component.parameter.is_some()) {
-            return;
+        if let Some(call) = self.explicit_input_call_fact(identity, parameters, receiver) {
+            self.type_info.protocols.explicit_input_calls.insert(span, call);
         }
-        self.type_info.protocols.explicit_input_calls.insert(
-            span,
-            super::InputCall {
+    }
+
+    /// Retain a method only after dispatch selected it, using the completed parameter inventory. Diagnostic
+    /// fallback validation can inspect a candidate but must not publish it as the source call's ownership target.
+    pub(in crate::typechecker) fn record_selected_method_input_call(
+        &mut self,
+        identity: Option<&CanonicalSymbolId>,
+        receiver: Option<Receiver>,
+        span: Span,
+    ) {
+        let call = self
+            .type_info
+            .call_site_callable_params(span)
+            .and_then(|parameters| self.explicit_input_call_fact(identity, parameters, receiver));
+        if let Some(call) = call {
+            self.type_info.protocols.explicit_input_calls.insert(span, call);
+        }
+    }
+
+    /// Construct one caller-owned fact from a canonical explicit input declaration, without changing declaration
+    /// modes or duplicating parameter inventories for ordinary unannotated calls.
+    fn explicit_input_call_fact(
+        &self,
+        identity: Option<&CanonicalSymbolId>,
+        parameters: &[CallableParam],
+        receiver: Option<Receiver>,
+    ) -> Option<super::InputCall> {
+        let callee = identity?;
+        let contract = self.type_info.declarations.ownership_contracts.get(callee)?;
+        contract
+            .modes
+            .iter()
+            .any(|mode| mode.component.parameter.is_some())
+            .then(|| super::InputCall {
                 owner: self.current_body_identity().cloned(),
                 callee: callee.clone(),
                 parameters: parameters.to_vec(),
-            },
-        );
+                receiver,
+            })
     }
 
     /// Project only the direct input modes owned by the selected declaration into call-local value types.
@@ -156,10 +184,11 @@ impl TypeChecker {
             })
     }
 
-    /// Complete valid free-function contracts from settled headers before any caller body is checked. Failed
+    /// Prepare method contracts and complete valid free-function contracts before any caller body is checked. Failed
     /// signatures remain unavailable; their declaration-owned check reports the error at its normal source anchor.
     /// This uses the same canonical inventory as publication, including distinct overload declaration spans.
     pub(in crate::typechecker) fn collect_function_ownership_headers(&mut self, program: &Program) {
+        self.collect_method_ownership_headers(program);
         for declaration in &program.declarations {
             let Declaration::Function(function) = &declaration.node else {
                 continue;
@@ -191,6 +220,86 @@ impl TypeChecker {
                     .insert(identity, contract);
             }
         }
+    }
+
+    /// Prepare nominal and trait method contracts before checking callers that precede their owner declaration.
+    /// The collected method's canonical identity and full declaration span select the header, including overloads
+    /// and generated expansions. Failed signatures remain owned by the normal declaration diagnostic path.
+    fn collect_method_ownership_headers(&mut self, program: &Program) {
+        for declaration in &program.declarations {
+            let (owner, methods) = match &declaration.node {
+                Declaration::Model(owner) => (&owner.name, &owner.methods),
+                Declaration::Class(owner) => (&owner.name, &owner.methods),
+                Declaration::Enum(owner) => (&owner.name, &owner.methods),
+                Declaration::Newtype(owner) => (&owner.name, &owner.methods),
+                Declaration::Trait(owner) => (&owner.name, &owner.methods),
+                _ => continue,
+            };
+            for method in methods {
+                let Some((header, receiver_type)) = self.collected_ownership_method(owner, method) else {
+                    continue;
+                };
+                let Some(identity) = header.identity else { continue };
+                let parameters: Vec<_> = header.params.iter().map(|parameter| parameter.ty.clone()).collect();
+                let signature = Signature {
+                    parameters: &method.node.params,
+                    parameter_types: &parameters,
+                    result: &method.node.return_type,
+                    result_type: &header.return_type,
+                    source: method.node.result_source.as_ref(),
+                    receiver: method
+                        .node
+                        .receiver_binding
+                        .as_ref()
+                        .map(|binding| (binding.node.as_str(), &receiver_type)),
+                };
+                if let Ok(Some(contract)) = self.checked_ownership_signature(&signature) {
+                    self.type_info
+                        .declarations
+                        .ownership_contracts
+                        .insert(identity, contract);
+                }
+            }
+        }
+    }
+
+    /// Borrow the collected owner's inventories, then copy only the exact source method header needed by the
+    /// signature checker. Inherited, aliased and same-spelled methods cannot replace the authored declaration.
+    fn collected_ownership_method(
+        &self,
+        owner: &str,
+        source: &Spanned<MethodDecl>,
+    ) -> Option<(MethodInfo, ResolvedType)> {
+        let (parameters, methods, overloads) = match self.lookup_semantic_type_info(owner) {
+            Some(TypeInfo::Model(info)) => (&info.type_params, &info.methods, Some(&info.method_overloads)),
+            Some(TypeInfo::Class(info)) => (&info.type_params, &info.methods, Some(&info.method_overloads)),
+            Some(TypeInfo::Enum(info)) => (&info.type_params, &info.methods, Some(&info.method_overloads)),
+            Some(TypeInfo::Newtype(info)) => (&info.type_params, &info.methods, Some(&info.method_overloads)),
+            _ => {
+                let info = self.lookup_semantic_trait_info(owner)?;
+                (&info.type_params, &info.methods, None)
+            }
+        };
+        let exact = |method: &&MethodInfo| {
+            method.identity.as_ref().is_some_and(|identity| {
+                identity.kind == SemanticSourceTargetKind::Method
+                    && identity.declaration_name == source.node.name
+                    && identity.declaration_span == source.span
+            })
+        };
+        let header = overloads
+            .and_then(|inventory| inventory.get(&source.node.name))
+            .and_then(|methods| methods.iter().find(exact))
+            .or_else(|| methods.get(&source.node.name).filter(exact))?;
+        let receiver = if parameters.is_empty() {
+            ResolvedType::Named(owner.into())
+        } else {
+            ResolvedType::Generic(
+                owner.into(),
+                parameters.iter().cloned().map(ResolvedType::TypeVar).collect(),
+            )
+        };
+        Some((header.clone(), receiver))
     }
 
     /// Capture the function's checked explicit contract under the same identity its callable binding owns.

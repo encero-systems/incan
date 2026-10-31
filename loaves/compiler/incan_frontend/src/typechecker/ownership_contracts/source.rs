@@ -56,15 +56,22 @@ struct Builder<'a> {
 }
 
 /// Project a checked callable body against its declaration and local contracts. Calls without selected access
-/// facts, escaping dependencies and other incomplete shapes remain explicit unavailable results.
-pub(super) fn build(checker: &TypeChecker, callable: CallableSource<'_>, span: Span) -> Result<Graph, Unavailable> {
-    let (parameters, body, is_async, receiver, bindings) = match callable {
+/// facts, escaping dependencies and other incomplete shapes remain explicit unavailable results. The caller supplies
+/// its checked owner directly; span-keyed inventories shared by multiple modules cannot select another owner.
+pub(super) fn build(
+    checker: &TypeChecker,
+    callable: CallableSource<'_>,
+    span: Span,
+    identity: &CanonicalSymbolId,
+) -> Result<Graph, Unavailable> {
+    let (parameters, body, is_async, receiver, name, kind) = match callable {
         CallableSource::Function(function) => (
             &function.params,
             &function.body,
             function.is_async(),
             None,
-            &checker.type_info.declarations.function_bindings_by_span,
+            &function.name,
+            SemanticSourceTargetKind::Function,
         ),
         CallableSource::Method(method) => (
             &method.params,
@@ -74,17 +81,16 @@ pub(super) fn build(checker: &TypeChecker, callable: CallableSource<'_>, span: S
             })?,
             method.is_async(),
             method.receiver_binding.as_ref().zip(method.receiver),
-            &checker.type_info.declarations.method_bindings_by_span,
+            &method.name,
+            SemanticSourceTargetKind::Method,
         ),
     };
-    let binding = bindings.get(&span).ok_or(Unavailable {
-        span,
-        reason: "missing checked callable header",
-    })?;
-    let identity = binding.identity.as_ref().ok_or(Unavailable {
-        span,
-        reason: "missing selected declaration identity",
-    })?;
+    if identity.declaration_span != span || identity.declaration_name != *name || identity.kind != kind {
+        return Err(Unavailable {
+            span,
+            reason: "checked owner does not match the callable declaration",
+        });
+    }
     let contract = checker.type_info.declarations.ownership_contracts.get(identity);
     if is_async
         || contract.is_some_and(|contract| {
@@ -373,6 +379,9 @@ impl Builder<'_> {
             }
             Expr::Literal(_) => Ok(incoming),
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
+            Expr::MethodCall(receiver, _, _, arguments) => {
+                self.apply_call(Some(receiver), arguments, expression.span, incoming)
+            }
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
             Expr::Binary(left, operation, right) => {
                 let incoming = self.expression(left, incoming, false)?;

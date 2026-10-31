@@ -5096,7 +5096,14 @@ impl TypeChecker {
         receiver_ty: &ResolvedType,
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<usize> {
-        let (params, return_type) = self.method_types_substituting_call_site_self(candidate, receiver_ty);
+        let (mut params, return_type) = self.method_types_substituting_call_site_self(candidate, receiver_ty);
+        if let Some(identity) = &candidate.identity
+            && let Some(values) = self
+                .ownership_call_value_parameters(Some(identity), &params, identity.declaration_span)
+                .ok()?
+        {
+            params = values;
+        }
         let mut score = 0usize;
         if let Some(expected) = expected_return_ty
             && !self.types_compatible(&return_type, expected)
