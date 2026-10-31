@@ -13,6 +13,7 @@ from segment_store import Transaction, commit_pinned
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
+from installation_page import begin_command, end_command
 
 
 pub model Pending:
@@ -45,6 +46,14 @@ pub model Ready:
 
 
 pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
+    """Capture installed facts once for this activation and resume reconciliation before the next request."""
+    begin_command()
+    ready = settled_request(store, pending)
+    end_command()
+    return ready
+
+
+def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     """
     Settle one request without executing user code in the engine.
 

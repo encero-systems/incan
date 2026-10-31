@@ -9,7 +9,7 @@ from std.fs.locking import FileLock
 from std.hash import sha256
 from std.tempfile import TemporaryDirectory
 from pub::incan_platform.trace import Clock
-from home_paths import bakery
+from home_paths import installation_catalog
 from intake import ManifestReader, load_project
 from installation_codec import PROFILE, Installation, StandardManifest, decode, encode
 from jec import begin as begin_work, record as record_work
@@ -32,6 +32,7 @@ model ReadScope:
     held: Option[Arc[FileLock]] = None
     command: bool = false
     validated: str = ""
+    directory: str = ""
 
     def pin(mut self, view: Snapshot) -> Result[Arc[FileLock], str]:
         """Share one lease across readers of the same immutable view; a different view replaces its guard."""
@@ -47,14 +48,30 @@ model ReadScope:
         """Select one capture for a short ordinary command; servers and direct library callers reconcile each ask."""
         self.command = true
         self.validated = ""
+        self.directory = ""
+
+    def captured(self, directory: Path) -> bool:
+        """A short command borrows its already checked page under the retained snapshot lease."""
+        return self.command and self.validated != "" and self.directory == directory.0
+
+    def end_command(mut self) -> None:
+        """Return a resident process to generation reconciliation between requests."""
+        self.command = false
+        self.forget()
 
     def reconciled(self, key: str) -> bool:
         """Whether this command already reconciled the exact selected page generation."""
         return self.command and self.validated == key
 
-    def remember(mut self, key: str) -> None:
+    def remember(mut self, key: str, directory: Path) -> None:
         """Record completion only after all input generations have been checked."""
         self.validated = key
+        self.directory = directory.0
+
+    def forget(mut self) -> None:
+        """End a capture before an absent or changed selection clears its decoded input projection."""
+        self.validated = ""
+        self.directory = ""
 
 
 static SCOPE: ReadScope = ReadScope()
@@ -65,6 +82,11 @@ pub def begin_command() -> None:
     SCOPE.begin_command()
 
 
+pub def end_command() -> None:
+    """End a resident request's frozen-input capture, including after a failed preparation."""
+    SCOPE.end_command()
+
+
 pub def recall(directory: Path) -> Result[Option[Installation], str]:
     """
     Read the selected admitted page; changed inputs are a miss and damaged selected bytes are a refusal.
@@ -73,13 +95,16 @@ pub def recall(directory: Path) -> Result[Option[Installation], str]:
     2. Decode its exact typed revision through an integrity-checked mapping.
     3. Reconcile every recorded generation before returning any admitted facts.
     """
+    if SCOPE.captured(directory) and "current" in pages:
+        return Ok(Some(pages["current"]))
     # 1. Only an absent selection is an unadmitted installation.
     clock = begin_work()
-    view = snapshot(bakery()?).map_err((error) => error.message())?
+    view = snapshot(installation_catalog()?).map_err((error) => error.message())?
     held = SCOPE.pin(view)?
     key = question(directory)
     match get(view, binding(key)).map_err((error) => error.message())?:
         None =>
+            SCOPE.forget()
             clear_documents()
             return Ok(None)
         Some(value) =>
@@ -96,9 +121,10 @@ pub def recall(directory: Path) -> Result[Option[Installation], str]:
             # 3. In-place edits and replacements cannot retain admission through a directory timestamp alone.
             reading = f"{cache_key}\n{generation}"
             if not SCOPE.reconciled(reading) and not current(page):
+                SCOPE.forget()
                 clear_documents()
                 return Ok(None)
-            SCOPE.remember(reading)
+            SCOPE.remember(reading, directory)
             select_documents(page.documents, page.payloads)
             return Ok(Some(page))
 
@@ -150,7 +176,7 @@ pub def retain(
     3. Recheck the inputs and atomically select that exact revision.
     """
     # 1. Concurrent first admissions recheck under the same installation claim.
-    store = bakery()?
+    store = installation_catalog()?
     key = question(directory)
     held = claim(store, key).map_err((error) => error.message())?
     if let Some(page) = recall(directory)?:

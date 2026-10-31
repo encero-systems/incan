@@ -14,6 +14,10 @@ Packed registry closures carry the native identities and exact dependency entrie
 
 The installation also admits one versioned typed bakery page containing the compiler description, normalized standard-package intent, manifest identities, producer records and native linking descriptions. Ordinary commands decode that selected page once per process instead of reading and parsing those original documents repeatedly. Filesystem generations guard the installation's membership and each admitted input, including in-place rewrites; changed inputs are re-admitted, while damage to the selected bakery revision refuses. An explicit standard-library source override remains editable input. These generation checks still perform metadata queries and do not establish the build engine's zero-stat capture target.
 
+The installation page and admitted compiler identity share the home catalog. An explicit work-bakery override does not rebuild, copy or re-admit those installed facts. Both routes read the same selected installation revision, with its integrity and filesystem generation checks, independently of which store holds the project's compiled units.
+
+A short command or resident preparation captures that checked page once under its snapshot lease. Its callbacks borrow the captured facts without repeating selection or rebuilding the document projection. A resident process ends the capture after successful or failed preparation, so the next request reconciles installation generations again; direct library readers continue to reconcile each selection.
+
 Installation compiles and executes a built-in qualification program through the ordinary run command to verify the installed compiler, runtime and loader. Its temporary project is removed, while the shared development runtime and installed manifest facts remain available to the first user project.
 
 Project-generated output belongs under the project's `target/incan/`; standard-package output belongs under the toolchain home. Reuse is an optimization over these explicit inputs, not another semantic route.
