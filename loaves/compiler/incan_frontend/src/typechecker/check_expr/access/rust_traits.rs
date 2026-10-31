@@ -590,8 +590,8 @@ impl TypeChecker {
         matches!(metadata.kind, RustItemKind::Type(_)).then(|| metadata.canonical_path.clone())
     }
 
-    /// Read a native value's retained item from its public field, call or canonical local binding, never from a method
-    /// spelling.
+    /// Read a native value's retained item from its field, call, propagated success payload or canonical binding,
+    /// never from a method spelling. Propagation selects the payload's owner rather than the Result container.
     pub(in crate::typechecker::check_expr) fn rust_value_item_path(
         &self,
         expression: &Spanned<Expr>,
@@ -601,6 +601,16 @@ impl TypeChecker {
         }
         if let Expr::Paren(inner) = &expression.node {
             return self.rust_value_item_path(inner);
+        }
+        if let Expr::Try(inner) = &expression.node {
+            if !self.type_info.rust.checked_calls.contains_key(&inner.span)
+                && self.rust_value_item_path(inner).is_none()
+            {
+                return None;
+            }
+            return self
+                .rust_native_value_type(expression)
+                .and_then(|native| self.rust_adjusted_owner_path(&native));
         }
         if let Expr::Ident(name) = &expression.node {
             let symbol = self.symbols.lookup(name)?;
@@ -659,8 +669,8 @@ impl TypeChecker {
     }
 
     /// Recover the exact native carrier of a public Rust field, selected call, checked source view, or local alias for
-    /// generic inference. A source view's flattened public type must not replace its already retained executable
-    /// borrow.
+    /// generic inference, including the success edge of a Result. A source view's flattened public type must not
+    /// replace its already retained executable borrow.
     pub(in crate::typechecker::check_expr) fn rust_native_value_type(
         &self,
         expression: &Spanned<Expr>,
@@ -673,6 +683,11 @@ impl TypeChecker {
         }
         if let Expr::Paren(inner) = &expression.node {
             return self.rust_native_value_type(inner);
+        }
+        if let Expr::Try(inner) = &expression.node {
+            return self
+                .rust_native_value_type(inner)
+                .and_then(|result| result.result_ok_type().cloned());
         }
         if let Expr::Ident(name) = &expression.node {
             let symbol = self.symbols.lookup(name)?;
