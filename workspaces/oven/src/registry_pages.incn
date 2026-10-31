@@ -1,0 +1,136 @@
+"""Completed registry closures are immutable typed pages in the home bakery, selected by observed input generation."""
+
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.tempfile import TemporaryDirectory
+from bakery import bakery
+from jec import begin as begin_work, record as record_work
+from observation import Observation, SETTLE_SECONDS, now_seconds, observe
+from registry_codec import Catalog, decode, encode
+from registry_units import RegistryUnit, sole_library
+from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value
+from segment_store import begin, commit, get, lease, put, snapshot
+from unit_freshness import fingerprint
+
+const PROFILE: str = "incan.registry-page/1"
+
+
+pub def question(path: Path, observed: Observation, compiler: str) -> Result[str, str]:
+    """Name an observed closure and compiler generation; locators are observations, never native unit identity."""
+    return fingerprint([PROFILE, path.0, observed.stamp, compiler])
+
+
+pub def recall_catalog(key: str) -> Result[Option[Catalog], str]:
+    """
+    Read the currently selected completed page, preserving all store and codec integrity errors.
+
+    1. Open and lease the bakery snapshot and read this question's selected revision.
+    2. Map and decode its exact admitted typed page.
+    3. Return the typed table for the caller to reconcile against its input observations.
+    """
+    # 1. A missing binding is a miss; damage to any selected object is an error.
+    clock = begin_work()
+    view = snapshot(bakery()?).map_err((error) => error.message())?
+    held = lease(view).map_err((error) => error.message())?
+    match get(view, binding(key)).map_err((error) => error.message())?:
+        None => return Ok(None)
+        Some(value) =>
+            digest = RustString.from_utf8(value).map((value) => str(value)).map_err((_) => "invalid registry binding")?
+            # 2. The selected digest is both the exact page revision and its value identity.
+            spec = specification(key, digest)
+            mapped = mapped_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?
+            catalog = decode(mapped).map_err((detail) => f"registry page {digest}: {detail}")?
+            # 3. The caller validates observations within its separately measured completion boundary.
+            record_work("registry_page", key, clock, mapped.len())
+            return Ok(Some(catalog))
+
+
+pub def retain_catalog(
+    key: str,
+    path: Path,
+    observed: Observation,
+    units: list[RegistryUnit],
+    listings: list[str],
+    artifacts: list[str],
+) -> Result[None, str]:
+    """
+    Admit a complete page only while the closure and producer observations still describe the inputs read.
+
+    The caller holds the question's claim and supplies observations captured before reading producer metadata.
+
+    1. Require a settled, unchanged closure and capture the completed artifact generations.
+    2. Seal the typed bytes through the same export and admission path as any other record set.
+    3. Atomically bind this question to the admitted revision; equal repeated work writes nothing.
+    """
+    # 1. Directory observations bracket metadata completion; artifacts vouch for their own generations.
+    if now_seconds() < observed.newest + SETTLE_SECONDS or observe(path)?.stamp != observed.stamp:
+        return Ok(None)
+    catalog = Catalog(units=units, listings=listings, artifacts=artifacts)
+    if not current(catalog):
+        return Ok(None)
+    data = encode(catalog)?
+    digest = hexlify(sha256.digest(data))
+    store = bakery()?
+    # 2. Temporary transport state is private; only admitted immutable bytes enter the physical bakery.
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    source = temporary.path().joinpath("source")
+    view = snapshot(source).map_err((error) => error.message())?
+    staged = commit(put(begin(view), key, data)).map_err((error) => error.message())?
+    spec = specification(key, digest)
+    transport = temporary.path().joinpath("set")
+    root = export_set(staged, spec, transport).map_err((error) => error.message())?
+    admitted = admit(store, transport, root, spec.profile).map_err((error) => error.message())?
+    # 3. A changed generation never overwrites the immutable page that earlier readers selected.
+    commit(put(begin(admitted), binding(key), digest.encode("utf-8"))).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def directory_stamps(units: list[RegistryUnit]) -> list[str]:
+    """The directory generations that must bracket completion, in exact closure row order."""
+    return [stamp(unit.directory) for unit in units]
+
+
+pub def artifact_stamps(units: list[RegistryUnit]) -> list[str]:
+    """Capture artifact generations before completion as well as after it, including legacy implicit artifacts."""
+    return [artifact_stamp(unit) for unit in units]
+
+
+pub def current(catalog: Catalog) -> bool:
+    """Every directory and artifact still has its recorded generation; missing inputs invalidate the completion."""
+    for index in range(len(catalog.units)):
+        unit = catalog.units[index]
+        if stamp(unit.directory) != catalog.listings[index] or artifact_stamp(unit) != catalog.artifacts[index]:
+            return false
+    return true
+
+
+def artifact_stamp(unit: RegistryUnit) -> str:
+    """A completed artifact's generation, or empty for a producer with no available artifact."""
+    if unit.artifact == "":
+        match sole_library(unit):
+            Ok(path) => return stamp(path)
+            Err(_) => return ""
+    return stamp(unit.artifact)
+
+
+def stamp(path: str) -> str:
+    """An input observation; missing inputs retain no positive generation witness."""
+    match observe(Path(path)):
+        Ok(found) => return found.stamp
+        Err(_) => return ""
+
+
+def binding(key: str) -> str:
+    """The single mutable selection for this completed-registry question."""
+    return f"registry/catalog/{key}"
+
+
+def specification(key: str, digest: str) -> SetSpec:
+    """The exact adapter-owned schema and revision contract used for local production and mapped reads."""
+    record = Record(key=key, revision=digest, payloads=[], references=[])
+    return SetSpec(
+        profile=Profile(identity=PROFILE, schema=PROFILE, codec="little-endian/1"),
+        origin="oven.registry", producer=PROFILE, receipt=key, records=[record], namespaces=[], dependencies=[],
+    )
