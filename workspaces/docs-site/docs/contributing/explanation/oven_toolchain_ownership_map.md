@@ -12,6 +12,8 @@ The selected home contains the compiler closure and standard-package artifacts. 
 
 Packed registry closures carry the native identities and exact dependency entries already established by their producer. Consumers read those facts rather than rediscovering them through rustc. Installation prepares the retained native metadata for legacy bundles that do not carry it.
 
+Installation compiles and executes a built-in qualification program through the ordinary run command to verify the installed compiler, runtime and loader. Its temporary project is removed, while the shared development runtime and installed manifest facts remain available to the first user project.
+
 Project-generated output belongs under the project's `target/incan/`; standard-package output belongs under the toolchain home. Reuse is an optimization over these explicit inputs, not another semantic route.
 
 See [Architecture](architecture.md) and [Layer boundaries](layering.md).
