@@ -47,6 +47,7 @@ from unit_freshness import Key, unit_key
 from unit_rust import compile_library_unit, prepare_native
 from shared_link import development_link, library_witness, linkage_key, witness_current
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
@@ -336,7 +337,7 @@ pub def run_program(
     for argument in arguments:
         command.arg(argument)
     trace_launch(program)
-    record_work("program_prepare", program, preparing)
+    record_work(Operation.ProgramPrepare, program, preparing)
     _ = flush_trace()
     if wait:
         status = command.status().map_err((error) => f"cannot run {program}: {error}")?

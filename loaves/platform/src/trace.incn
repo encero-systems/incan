@@ -69,6 +69,155 @@ model Origin:
 static ORIGIN: Origin = Origin()
 
 
+pub enum Operation:
+    """Fixed operation keys checked at call sites; dynamic locators remain bounded data."""
+
+    FileRead
+    JsonRead
+    JsonDecode
+    FileHash
+    ManifestParse
+    ArtifactIdentity
+    FeatureResolution
+    GraphResolution
+    UnitDescription
+    RegistryIndex
+    RegistryCompletion
+    WorkerReady
+    WorkerConnect
+    DriverRequest
+    DriverSpawn
+    OwnerRequest
+    BakeryFind
+    BakeryClaim
+    BakerySeal
+    BakeryView
+    ProgramPrepare
+    GraphExport
+    EngineCapture
+    StoreLock
+    StoreFileSync
+    StoreFileWrite
+    StoreFileRename
+    StoreDirectorySync
+    StoreDurableSync
+    EngineUnit
+    EngineSelect
+    EngineLease
+    EngineEpoch
+    EnginePrepare
+    CliStart
+    LegacyRequest
+    LegacyPrepare
+    EngineCaptureInputs
+    EngineCaptureEncode
+    EngineConnect
+    EngineRequest
+    EngineChild
+    EngineAdmission
+    RegistryPage
+    Reason
+
+    def key(self) -> str:
+        """The stable schema spelling of this operation, with exhaustive compile-time coverage."""
+        match self:
+            Operation.FileRead => return "file_read"
+            Operation.JsonRead => return "json_read"
+            Operation.JsonDecode => return "json_decode"
+            Operation.FileHash => return "file_hash"
+            Operation.ManifestParse => return "manifest_parse"
+            Operation.ArtifactIdentity => return "artifact_identity"
+            Operation.FeatureResolution => return "feature_resolution"
+            Operation.GraphResolution => return "graph_resolution"
+            Operation.UnitDescription => return "unit_description"
+            Operation.RegistryIndex => return "registry_index"
+            Operation.RegistryCompletion => return "registry_completion"
+            Operation.WorkerReady => return "worker_ready"
+            Operation.WorkerConnect => return "worker_connect"
+            Operation.DriverRequest => return "driver_request"
+            Operation.DriverSpawn => return "driver_spawn"
+            Operation.OwnerRequest => return "owner_request"
+            Operation.BakeryFind => return "bakery_find"
+            Operation.BakeryClaim => return "bakery_claim"
+            Operation.BakerySeal => return "bakery_seal"
+            Operation.BakeryView => return "bakery_view"
+            Operation.ProgramPrepare => return "program_prepare"
+            Operation.GraphExport => return "graph_export"
+            Operation.EngineCapture => return "engine_capture"
+            Operation.StoreLock => return "store_lock"
+            Operation.StoreFileSync => return "store_file_sync"
+            Operation.StoreFileWrite => return "store_file_write"
+            Operation.StoreFileRename => return "store_file_rename"
+            Operation.StoreDirectorySync => return "store_directory_sync"
+            Operation.StoreDurableSync => return "store_durable_sync"
+            Operation.EngineUnit => return "engine_unit"
+            Operation.EngineSelect => return "engine_select"
+            Operation.EngineLease => return "engine_lease"
+            Operation.EngineEpoch => return "engine_epoch"
+            Operation.EnginePrepare => return "engine_prepare"
+            Operation.CliStart => return "cli_start"
+            Operation.LegacyRequest => return "legacy_request"
+            Operation.LegacyPrepare => return "legacy_prepare"
+            Operation.EngineCaptureInputs => return "engine_capture_inputs"
+            Operation.EngineCaptureEncode => return "engine_capture_encode"
+            Operation.EngineConnect => return "engine_connect"
+            Operation.EngineRequest => return "engine_request"
+            Operation.EngineChild => return "engine_child"
+            Operation.EngineAdmission => return "engine_admission"
+            Operation.RegistryPage => return "registry_page"
+            Operation.Reason => return "reason"
+
+
+
+pub model Emitter:
+    """A fixed producer and channel validated once; each event goes straight to its wire record."""
+
+    writer: Writer
+    producer: str
+    run: str
+    request: str
+    process: int
+
+    @staticmethod
+    def open(destination: str, producer: str, run: str = "", request: str = "") -> Result[Emitter, TraceError]:
+        """Retain a writer and invariant fields once; a refused configuration never changes console output."""
+        if not bounded(producer) or not bounded(run) or not bounded(request):
+            return Err(TraceError.FieldBound)
+        return Ok(Emitter(
+            writer=CHANNELS.writer(destination)?,
+            producer=producer,
+            run=run,
+            request=request,
+            process=int(id()),
+        ))
+
+    def emit(self, clock: Clock, operation: Operation, key: str, bytes: int = 0) -> Result[None, TraceError]:
+        """
+        Complete a typed operation directly into the bounded native serializer.
+
+        Only dynamic data is validated per event. Configuration was bounded at open and operation keys are an enum.
+        No intermediate EngineSpan or JSON value is allocated, and the writer is already retained.
+        """
+        if not bounded(key):
+            return Err(TraceError.FieldBound)
+        ended = ORIGIN.now()
+        if bytes < 0 or clock.span <= 0 or clock.start_ns < 0 or ended < clock.start_ns:
+            return Err(TraceError.InvalidSpan)
+        mut run = self.run
+        if run == "":
+            run = clock.origin
+        if not bounded(clock.origin):
+            return Err(TraceError.FieldBound)
+        row = TraceRecord(
+            schema=SCHEMA, kind="span", run=run, request=self.request,
+            work=f"{self.process}:{clock.span}", producer=self.producer, operation=operation.key(), key=key,
+            snapshot="", thread=f"{current().id():?}", outcome="done", clock="process-monotonic", clock_id=clock.origin,
+            span=clock.span, parent=0, process=self.process, start_ns=clock.start_ns, end_ns=ended,
+            bytes=bytes, records=0, calls=1, cpu_ns=None,
+        )
+        return self.writer.write_record(row)
+
+
 pub model Writer:
     """A retained, bounded native writer; copies share the channel and its serialization lock."""
 
@@ -93,6 +242,10 @@ pub model Writer:
     def record(self, span: &EngineSpan) -> Result[None, TraceError]:
         """Encode into the retained fixed slice; only a complete, bounded record reaches the file buffer."""
         row = wire_record(span)?
+        return self.write_record(row)
+
+    def write_record(self, row: &TraceRecord) -> Result[None, TraceError]:
+        """Encode an admitted typed record into fixed scratch before publishing any of its bytes."""
         mut scratch = self.scratch.lock().map_err((_) => TraceError.Channel)?
         used = fill(scratch.deref_mut(), row)?
         mut output = self.output.lock().map_err((_) => TraceError.Channel)?

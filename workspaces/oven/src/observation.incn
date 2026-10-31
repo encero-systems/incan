@@ -27,6 +27,7 @@ from std.hash import sha256
 from std.json import JsonValue, parse
 from json_fields import array, strings, text_field
 from publication import publish
+from pub::incan_platform.trace import Operation
 from jec import begin, record
 from trace_adapter import reason, relay as relay_observations
 
@@ -299,7 +300,7 @@ pub def file_digest(path: Path) -> Result[str, str]:
     content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
     clock = begin()
     result = hexlify(sha256.digest(content))
-    record("file_hash", path.0, clock, len(content))
+    record(Operation.FileHash, path.0, clock, len(content))
     return Ok(result)
 
 

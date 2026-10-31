@@ -4,6 +4,7 @@ from rust::std::process import id
 from std.fs import Path
 from features import FeatureRequest
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 from files import make_directory, read, remove
 from graph_cache import content_facts, interface_inputs, is_unchecked, publish_unchecked
 from graph_exports import claim_export, export_file, exported, pending_export, publish_export as admit_export
@@ -88,7 +89,7 @@ pub def inspect_incan(
         arguments.append(pending.0)
     clock = begin_work()
     status = run_compiler(toolchain, arguments)?
-    record_work("graph_export", entry.parent().name(), clock)
+    record_work(Operation.GraphExport, entry.parent().name(), clock)
     if status != 0:
         return Err(f"Incan graph export failed for {unit.package}")
     # 4. The graph, the interface and any note are published whole, a note before the entry it describes.
