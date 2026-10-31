@@ -388,7 +388,7 @@ Incan stays Rust-like in borrowing, exclusive access, and lifetime safety. Pytho
 
 ### Relationship to RFC 164
 
-RFC 164 separately proposes optional explicit ownership modes and result-source relationships. This RFC remains the authority for ordinary inferred bindings and its `mut` contract. Bare `T` annotations continue to follow the rules here; the proposed `Owned[T]` form would be an explicit transfer request, not an ordinary annotation or an implicit copy. RFC 164 must define that extension and its interaction with writable parameters before adoption. Its syntax is still Draft and does not silently change the settled defaults in this document.
+RFC 164 separately proposes optional explicit ownership modes and result-source relationships. This RFC remains the authority for ordinary inferred bindings and its `mut` contract. Bare `T` annotations continue to follow the rules here; the proposed `Owned[T]` form would be an explicit transfer request, not an ordinary annotation or an implicit copy. RFC 164 must define that extension and its interaction with writable parameters before adoption. RFC 164 targets 0.6 and preserves the settled defaults here. Its `Reference[T] from source` form describes returned exclusive access, including fluent chains and static field projections; retained writable references still require `mut`. Its explicit `BorrowedMut[T]` contract must not be treated as synonymous with every ordinary `mut T` parameter, because scalar and imported-type behavior remains distinct.
 
 ### Relationship to RFC 023
 

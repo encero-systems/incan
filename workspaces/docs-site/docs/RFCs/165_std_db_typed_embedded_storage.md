@@ -245,7 +245,7 @@ Point reads, graph access and projected batches must agree on the same snapshot'
 
 ### Ownership of projected access
 
-RFC 164 owns the proposed explicit borrowing language contract. A projection borrowing a batch or snapshot must retain its checked source dependency. An independently retained batch or cursor may instead own buffer handles and a lease over its immutable selection; ownership of the handle does not require a complete decoded model per row or exclusive allocation of every page. A view into that batch remains bounded by the buffer owner it actually borrows. The compiler must not silently acquire a lease or materialize records to repair an escaping borrow. Concrete projection signatures must be reviewed against RFC 164 before either draft is treated as a complete implementation contract.
+RFC 164 owns explicit borrowing and returned reference contracts, targeted for 0.6. Read-only projected views use `Borrowed[T]`; `Reference[T]` denotes exclusive access, not an independently retained snapshot or lease. A projection borrowing a batch or snapshot must retain its checked source dependency. An independently retained batch or cursor may instead own buffer handles and a lease over its immutable selection; ownership of the handle does not require a complete decoded model per row or exclusive allocation of every page. A view into that batch remains bounded by the buffer owner it actually borrows. The compiler must not silently acquire a lease or materialize records to repair an escaping borrow. Concrete projection signatures must be reviewed against RFC 164 before this storage draft is treated as a complete implementation contract.
 
 ### Read traces, changes and invalidation
 
