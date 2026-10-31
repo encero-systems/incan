@@ -3526,7 +3526,8 @@ impl TypeChecker {
     /// The selecting caller supplies written method binders; associated owner arguments never occupy those slots.
     /// A callee that cannot be retained returns the call's refusal, which the caller reports unless the call is already
     /// refused: no accepted call leaves checking without a callee. Argument validation refuses an unsafe method, and
-    /// the enclosing statement refuses an associated call whose owner arguments it watches (#1720).
+    /// an associated call whose owner arguments the enclosing statement watches is retained again once its binding's
+    /// first use fixes them, or refused (#1720, #2481).
     #[allow(clippy::too_many_arguments)]
     fn retain_checked_rust_method(
         &mut self,
@@ -3568,17 +3569,16 @@ impl TypeChecker {
         let type_arguments = match self.rust_method_type_arguments(&native_parameters, owner, &bindings) {
             Ok(type_arguments) => type_arguments,
             Err(open) => {
-                if crate::trace_flags::trace_rust_facts() {
-                    eprintln!(
-                        "rust method unresolved: {path}.{} parameters {native_parameters:?}, receiver {receiver:?}, template {:?}, bindings {bindings:?}",
-                        method.name, method.impl_self_type
-                    );
-                }
-                if self.open_rust_generic_calls.contains_key(&span) {
-                    return Ok(());
-                }
-                let gap = errors::NativeCalleeGap::OpenTypeParameters(&open);
-                return Err(errors::rust_callee_not_selected(&callee, gap, span));
+                return self.refuse_open_rust_method(
+                    method,
+                    path,
+                    &native_parameters,
+                    &bindings,
+                    receiver,
+                    result,
+                    &open,
+                    span,
+                );
             }
         };
         if crate::trace_flags::trace_rust_facts() {
@@ -3644,6 +3644,43 @@ impl TypeChecker {
             },
         );
         Ok(())
+    }
+
+    /// Refuse a native call whose binders stay open, unless it is an associated call whose owner arguments the
+    /// enclosing statement watches. That call keeps its open native result, so a local bound to it dispatches its
+    /// methods to the native owner, and its first use can fix the arguments (#1720, #2481).
+    #[allow(clippy::too_many_arguments)]
+    fn refuse_open_rust_method(
+        &mut self,
+        method: &incan_lang::interop::RustMethodSig,
+        path: &str,
+        native_parameters: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+        receiver: Option<&ResolvedType>,
+        result: &ResolvedType,
+        open: &[String],
+        span: Span,
+    ) -> Result<(), CompileError> {
+        if crate::trace_flags::trace_rust_facts() {
+            eprintln!(
+                "rust method unresolved: {path}.{} parameters {native_parameters:?}, receiver {receiver:?}, template {:?}, bindings {bindings:?}",
+                method.name, method.impl_self_type
+            );
+        }
+        if self.open_rust_generic_calls.contains_key(&span) {
+            let native = self.native_method_result(method, path, native_parameters, bindings, receiver, result);
+            let native_item = self
+                .rust_result_item_path(&render_resolved_type_as_rust_arg(&native), path)
+                .or_else(|| self.rust_result_item_path(&method.signature.return_type, path));
+            if let Some(call) = self.open_rust_generic_calls.get_mut(&span) {
+                call.native = Some(native);
+                call.native_item = native_item;
+            }
+            return Ok(());
+        }
+        let callee = format!("rust::{path}.{}", method.name);
+        let gap = errors::NativeCalleeGap::OpenTypeParameters(open);
+        Err(errors::rust_callee_not_selected(&callee, gap, span))
     }
 
     /// Apply an inherent method's declared receiver mode to its instantiated impl Self, or to the receiver's storage
@@ -3904,7 +3941,10 @@ impl TypeChecker {
     }
 
     /// Return whether `ty` names a type variable that is not one of the enclosing source type parameters.
-    fn mentions_foreign_type_variable(ty: &ResolvedType, source_parameters: &[String]) -> bool {
+    pub(in crate::typechecker) fn mentions_foreign_type_variable(
+        ty: &ResolvedType,
+        source_parameters: &[String],
+    ) -> bool {
         let foreign = std::cell::Cell::new(false);
         map_resolved_type_leaves(ty, &|leaf| {
             if matches!(leaf, ResolvedType::TypeVar(name) if !source_parameters.contains(name)) {

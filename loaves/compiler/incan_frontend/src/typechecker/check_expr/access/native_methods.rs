@@ -397,10 +397,13 @@ impl TypeChecker {
             &result,
             call.span,
         );
-        if let Err(refusal) = retained
-            && self.errors.len() == errors_before
-        {
-            self.errors.push(refusal);
+        match retained {
+            // The retained receiver can fix a watched local's open owner arguments (#2481).
+            Ok(()) if !receiver_is_type => {
+                self.fix_open_rust_binding_by_receiver(call.receiver_expr, owner, call.rust_path, call.span)
+            }
+            Err(refusal) if self.errors.len() == errors_before => self.errors.push(refusal),
+            _ => {}
         }
         let result = self
             .type_info
@@ -591,6 +594,8 @@ impl TypeChecker {
                 owner,
                 method: call.method.to_owned(),
                 type_params: parameters,
+                native: None,
+                native_item: None,
             },
         );
     }
