@@ -33,6 +33,7 @@ pub mod loaf_index;
 pub mod module;
 mod nominal_inventory;
 pub mod numeric_adapters;
+pub mod ownership_metadata;
 pub mod parsed_module;
 pub mod partial_projection;
 pub mod registry_metadata;

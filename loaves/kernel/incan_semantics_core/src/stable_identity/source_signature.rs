@@ -104,6 +104,7 @@ impl SourceSignatureContext<'_> {
         }
         // Builtin structural constructors have no source declaration. Arbitrary unknown names fail closed.
         if incan_lang::lang::types::collections::from_str(name).is_some()
+            || incan_lang::lang::types::ownership::from_str(name).is_some()
             || name == incan_lang::lang::types::UNION_TYPE_NAME
         {
             return Some(SourceType::Atom(IncanType::Named(name.to_string())));

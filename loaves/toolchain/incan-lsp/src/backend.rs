@@ -339,6 +339,14 @@ fn format_function_signature(func: &incan_frontend::ast::FunctionDecl, source: &
 
     sig.push_str(" -> ");
     sig.push_str(&format_type(&func.return_type.node));
+    if let Some(source) = &func.result_source {
+        sig.push_str(" from ");
+        sig.push_str(&source.node.binding.node);
+        for field in &source.node.fields {
+            sig.push('.');
+            sig.push_str(&field.node);
+        }
+    }
 
     sig
 }
@@ -1558,11 +1566,12 @@ fn push_list_fact(facts: &mut Vec<String>, label: &str, values: &[String]) {
 fn format_api_function_signature(function: &ApiFunction) -> String {
     let prefix = if function.is_async { "async def" } else { "def" };
     format!(
-        "{prefix} {}{}({}) -> {}",
+        "{prefix} {}{}({}) -> {}{}",
         function.name,
         format_type_params(&function.type_params),
         format_params(&function.params),
-        format_type_ref(&function.return_type)
+        format_type_ref(&function.return_type),
+        format_result_source(function.ownership.as_ref(), &function.params)
     )
 }
 
@@ -1578,12 +1587,41 @@ fn format_api_method_signature(owner: &str, method: &ApiMethod) -> String {
     }
     params.extend(method.params.iter().map(format_param));
     format!(
-        "{prefix} {owner}.{}{}({}) -> {}",
+        "{prefix} {owner}.{}{}({}) -> {}{}",
         method.name,
         format_type_params(&method.type_params),
         params.join(", "),
-        format_type_ref(&method.return_type)
+        format_type_ref(&method.return_type),
+        format_result_source(method.ownership.as_ref(), &method.params)
     )
+}
+
+/// Render a retained source from checked slots and field identities, never from stale parameter spelling.
+fn format_result_source(
+    ownership: Option<&incan_frontend::library_manifest::OwnershipExport>,
+    params: &[ParamExport],
+) -> String {
+    use incan_frontend::library_manifest::OwnershipExport;
+    use incan_frontend::ownership_metadata::SourceSlot;
+    let Some(OwnershipExport::Checked(contract)) = ownership else {
+        return String::new();
+    };
+    let Some(source) = &contract.result_source else {
+        return String::new();
+    };
+    let root = match source.slot {
+        SourceSlot::Receiver => "self",
+        SourceSlot::Parameter(slot) => match params.get(slot) {
+            Some(parameter) => &parameter.name,
+            None => return String::new(),
+        },
+    };
+    let mut text = format!(" from {root}");
+    for field in &source.fields {
+        text.push('.');
+        text.push_str(&field.declaration_name);
+    }
+    text
 }
 
 /// Format checked API type parameters in Incan source-like syntax.
@@ -1682,6 +1720,7 @@ fn format_type_ref(ty: &TypeRef) -> String {
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("ref {}", format_type_ref(inner)),
         TypeRef::MutParam { inner } => format!("mut {}", format_type_ref(inner)),
+        TypeRef::Ownership { mode, inner } => format!("{}[{}]", mode.as_str(), format_type_ref(inner)),
         TypeRef::RustPath { path } => format!("rust::{path}"),
         TypeRef::NativeUnion(native) => native
             .members
@@ -4205,6 +4244,16 @@ fn push_builtin_completions(items: &mut Vec<CompletionItem>, seen: &mut HashSet<
     for info in collections::COLLECTION_TYPES {
         push_registry_completion_names(info.canonical, info.aliases, CompletionItemKind::CLASS, items, seen);
     }
+    for mode in incan_lang::lang::types::ownership::OWNERSHIP_MODES {
+        push_completion(
+            items,
+            seen,
+            mode.as_str(),
+            CompletionItemKind::CLASS,
+            Some("Explicit ownership annotation; execution is not available yet".to_string()),
+            None,
+        );
+    }
 }
 
 /// Describe one source declaration's ordinary completion without cloning its syntax. Feature admission belongs to
@@ -4995,4 +5044,39 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
     }
 
     Some(items)
+}
+
+#[cfg(test)]
+mod ownership_signature_tests {
+    use super::format_api_function_signature;
+    use incan_frontend::api_metadata::{ApiDeclaration, collect_checked_api_metadata};
+    use incan_frontend::typechecker::TypeChecker;
+
+    /// Imported signatures render the renamed parameter slot and canonical stored fields, not stale source text.
+    #[test]
+    fn checked_source_signature_survives_parameter_rename() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "model Page:\n    title: str\npub def view(page: Borrowed[Page]) -> Borrowed[str] from page.title:\n    return page.title\n";
+        let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("provider".into()));
+        assert!(checker.check_program(&program).is_err());
+        let api = collect_checked_api_metadata(&program, &checker, vec!["provider".into()]);
+        let mut function = api
+            .declarations
+            .into_iter()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .ok_or("missing checked public function")?;
+        function.params.first_mut().ok_or("missing parameter")?.name = "document".into();
+        let signature = format_api_function_signature(&function);
+        assert!(signature.contains("document: Borrowed[Page]"), "{signature}");
+        assert!(
+            signature.ends_with("-> Borrowed[str] from document.title"),
+            "{signature}"
+        );
+        Ok(())
+    }
 }

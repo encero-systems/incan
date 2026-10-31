@@ -149,6 +149,9 @@ pub enum ApiDeclaration {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiFunction {
+    /// Explicit checked ownership and result-source metadata, retained through API projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<crate::library_manifest::ownership::OwnershipExport>,
     pub name: String,
     pub anchor: SourceAnchor,
     pub docstring: Option<String>,
@@ -349,6 +352,9 @@ pub struct ApiPartial {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiMethod {
+    /// Explicit checked ownership and result-source metadata, retained through API projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<crate::library_manifest::ownership::OwnershipExport>,
     pub name: String,
     /// Canonical member declaration identity, distinct for same-name overloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -390,6 +396,9 @@ pub struct ApiProjectedFunction {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiCallableMetadata {
+    /// Explicit checked ownership and result-source metadata, retained through API projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<crate::library_manifest::ownership::OwnershipExport>,
     pub name: String,
     pub anchor: SourceAnchor,
     pub type_params: Vec<TypeParamExport>,
@@ -403,6 +412,7 @@ pub struct ApiCallableMetadata {
 /// Convert a checked API function into manifest-style callable metadata.
 pub fn function_export_from_api(function: &ApiFunction) -> FunctionExport {
     FunctionExport {
+        ownership: function.ownership.clone(),
         name: function.name.clone(),
         emitted_name: None,
         type_params: function.type_params.clone(),
@@ -415,6 +425,7 @@ pub fn function_export_from_api(function: &ApiFunction) -> FunctionExport {
 /// Convert a projected alias callable into manifest-style callable metadata while preserving source callable identity.
 pub fn function_export_from_api_projected(function: &ApiProjectedFunction) -> FunctionExport {
     FunctionExport {
+        ownership: function.callable.ownership.clone(),
         name: function.callable.name.clone(),
         emitted_name: None,
         type_params: function.callable.type_params.clone(),
@@ -441,6 +452,7 @@ pub fn partial_export_from_api(partial: &ApiPartial) -> PartialExport {
 /// Convert a checked API method into manifest-style method metadata.
 pub fn method_export_from_api(method: &ApiMethod) -> MethodExport {
     MethodExport {
+        ownership: method.ownership.clone(),
         name: method.name.clone(),
         canonical: method.canonical.clone(),
         alias_of: method.alias_of.clone(),
@@ -676,7 +688,8 @@ pub fn collect_checked_api_metadata(
 ) -> CheckedApiMetadata {
     let checked_exports = collect_checked_public_exports(program, checker);
     let checked_by_name: HashMap<String, CheckedNamedExport> = checked_exports
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|export| (export.name.clone(), export))
         .collect();
 
@@ -688,7 +701,7 @@ pub fn collect_checked_api_metadata(
         }
         match &decl.node {
             Declaration::Function(function) if public(function.visibility) => {
-                if let Some(CheckedExportKind::Function(export)) = checked_kind(&checked_by_name, &function.name) {
+                if let Some(export) = checked_source_function(&checked_exports, checker, decl.span) {
                     declarations.push(ApiDeclaration::Function(api_function(
                         function,
                         decl.span,
@@ -764,6 +777,31 @@ pub fn collect_checked_api_metadata(
         },
         &checker.checked_nominal_type_origins(),
     )
+}
+
+/// Select a source overload by its checked declaration identity, including any expansion ancestry. Name lookup
+/// selects an overload set and cannot supply one declaration's defaults or ownership contract.
+fn checked_source_function<'a>(
+    exports: &'a [CheckedNamedExport],
+    checker: &TypeChecker,
+    span: Span,
+) -> Option<&'a CheckedFunctionExport> {
+    let identity = checker
+        .type_info()
+        .declarations
+        .function_bindings_by_span
+        .get(&span)?
+        .identity
+        .as_ref()?;
+    exports.iter().find_map(|export| {
+        if export.identity.canonical.as_ref() != Some(identity) {
+            return None;
+        }
+        match &export.kind {
+            CheckedExportKind::Function(function) => Some(function),
+            _ => None,
+        }
+    })
 }
 
 /// Project a public nominal declaration only when the checked export inventory retains its matching kind. Source
@@ -1238,6 +1276,7 @@ pub(crate) fn resolve_api_alias_target(owning_module: &[String], target_path: &[
 /// Build callable metadata from a checked API function export.
 fn callable_from_function(function: &ApiFunction) -> ApiCallableMetadata {
     ApiCallableMetadata {
+        ownership: function.ownership.clone(),
         name: function.name.clone(),
         anchor: function.anchor.clone(),
         type_params: function.type_params.clone(),
@@ -1351,6 +1390,7 @@ fn api_function(
     let docstring = function_docstring(&function.body);
     let callable = api_callable_for_function(function, span, export, checker, module_path);
     ApiFunction {
+        ownership: callable.ownership.clone(),
         name: callable.name.clone(),
         anchor: callable.anchor.clone(),
         docstring_sections: parse_docstring(docstring.as_deref()),
@@ -1377,7 +1417,8 @@ fn api_callable_for_function(
     checker: &TypeChecker,
     module_path: &[String],
 ) -> ApiCallableMetadata {
-    ApiCallableMetadata {
+    let mut callable = ApiCallableMetadata {
+        ownership: checked_api_ownership(export.ownership.as_ref(), checker),
         name: export.name.clone(),
         anchor: anchor(module_path, &export.name, span),
         type_params: type_params(&export.type_params),
@@ -1385,7 +1426,13 @@ fn api_callable_for_function(
         params: params_from_checked(&source_function_params(function, checker), &export.param_defaults),
         return_type: source_function_return_type(function, checker),
         is_async: function.is_async(),
-    }
+    };
+    crate::library_manifest::ownership::mark_types(
+        callable.ownership.as_ref(),
+        &mut callable.params,
+        &mut callable.return_type,
+    );
+    callable
 }
 
 /// Resolve the source return type used by function API metadata.
@@ -1751,7 +1798,8 @@ fn methods(
             continue;
         };
         let docstring = method.node.body.as_ref().and_then(|body| function_docstring(body));
-        let callable = ApiCallableMetadata {
+        let mut callable = ApiCallableMetadata {
+            ownership: checked_api_ownership(checked.ownership.as_ref(), checker),
             name: checked.name.clone(),
             anchor: anchor(module_path, &format!("{owner}.{}", checked.name), method.span),
             type_params: type_params(&checked.type_params),
@@ -1763,7 +1811,13 @@ fn methods(
             return_type: type_ref_from_resolved(&checked.return_type),
             is_async: checked.is_async,
         };
+        crate::library_manifest::ownership::mark_types(
+            callable.ownership.as_ref(),
+            &mut callable.params,
+            &mut callable.return_type,
+        );
         out.push(ApiMethod {
+            ownership: callable.ownership.clone(),
             name: callable.name.clone(),
             canonical: canonical_identity_export(checked.canonical.as_ref()),
             alias_of: checked.alias_of.clone(),
@@ -1787,7 +1841,12 @@ fn methods(
             if checked.alias_of.as_deref() != Some(alias.node.target.as_str()) {
                 continue;
             }
+            let ownership = checked_api_ownership(checked.ownership.as_ref(), checker);
+            let mut params = params_from_checked(&checked.params, &checked.param_defaults);
+            let mut return_type = type_ref_from_resolved(&checked.return_type);
+            crate::library_manifest::ownership::mark_types(ownership.as_ref(), &mut params, &mut return_type);
             out.push(ApiMethod {
+                ownership,
                 name: checked.name.clone(),
                 canonical: canonical_identity_export(checked.canonical.as_ref()),
                 alias_of: checked.alias_of.clone(),
@@ -1800,8 +1859,8 @@ fn methods(
                     crate::ast::Receiver::Immutable => ReceiverExport::Immutable,
                     crate::ast::Receiver::Mutable => ReceiverExport::Mutable,
                 }),
-                params: params_from_checked(&checked.params, &checked.param_defaults),
-                return_type: type_ref_from_resolved(&checked.return_type),
+                params,
+                return_type,
                 is_async: checked.is_async,
                 has_body: checked.has_body,
             });
@@ -2875,6 +2934,7 @@ fn type_ref_doc_name(ty: &TypeRef) -> String {
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("&{}", type_ref_doc_name(inner)),
         TypeRef::MutParam { inner } => format!("mut {}", type_ref_doc_name(inner)),
+        TypeRef::Ownership { mode, inner } => format!("{}[{}]", mode.as_str(), type_ref_doc_name(inner)),
         TypeRef::RustPath { path } => path.clone(),
         TypeRef::NativeUnion(native) => native
             .members
@@ -3414,6 +3474,7 @@ pub class Writer:
             .ok_or_else(|| "expected class declaration".to_string())?;
         let checked_methods = vec![
             CheckedMethod {
+                ownership: None,
                 name: "write".to_string(),
                 canonical: None,
                 alias_of: None,
@@ -3437,6 +3498,7 @@ pub class Writer:
                 has_body: true,
             },
             CheckedMethod {
+                ownership: None,
                 name: "write".to_string(),
                 canonical: None,
                 alias_of: None,
@@ -3510,6 +3572,7 @@ pub class Parser:
             .ok_or_else(|| "expected class declaration".to_string())?;
         let checked_methods = vec![
             CheckedMethod {
+                ownership: None,
                 name: "parse".to_string(),
                 canonical: None,
                 alias_of: None,
@@ -3526,6 +3589,7 @@ pub class Parser:
                 has_body: true,
             },
             CheckedMethod {
+                ownership: None,
                 name: "parse".to_string(),
                 canonical: None,
                 alias_of: None,
@@ -3850,4 +3914,26 @@ pub get = partial route(method="GET")
         );
         Ok(())
     }
+}
+
+/// Project ownership into API metadata only when the current package can name its source field declarations.
+fn checked_api_ownership(
+    contract: Option<&crate::ownership_metadata::CheckedOwnershipContract>,
+    checker: &TypeChecker,
+) -> Option<crate::library_manifest::ownership::OwnershipExport> {
+    let contract = contract?;
+    if checker.symbols.package_identity().is_none()
+        && contract.result_source.as_ref().is_some_and(|source| {
+            source
+                .fields
+                .iter()
+                .any(|field| matches!(field.origin, SymbolOrigin::Module(_)))
+        })
+    {
+        return Some(crate::library_manifest::ownership::OwnershipExport::Unsupported);
+    }
+    Some(crate::library_manifest::ownership::project(
+        checker.symbols.package_identity().unwrap_or_default(),
+        contract,
+    ))
 }

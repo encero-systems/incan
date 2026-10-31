@@ -97,6 +97,10 @@ fn published_nominal_name(name: &str) -> String {
 /// mapping contract.
 pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
     match ty {
+        TypeRef::Ownership { mode, inner } => ResolvedType::Generic(
+            mode.as_str().to_owned(),
+            vec![resolved_type_from_manifest_type_ref(inner)],
+        ),
         TypeRef::Named { name, origin } => origin.as_ref().map_or_else(
             || ResolvedType::builtin_simple(name).unwrap_or_else(|| ResolvedType::Named(name.clone())),
             |origin| ResolvedType::Named(origin.binding_key()),

@@ -1,0 +1,13 @@
+# behavior: Canonical explicit ownership contracts are recognized but refused until executable loan/transfer checking exists.
+# expect-diagnostic: INCAN-T0123
+
+def consume(value: Owned[str]) -> None:
+    pass
+
+
+def inspect(value: Borrowed[str]) -> None:
+    pass
+
+
+def update(mut value: BorrowedMut[str]) -> None:
+    pass

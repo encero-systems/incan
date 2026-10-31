@@ -326,7 +326,20 @@ pub struct EnumVariantAliasDecl {
 // Functions and Methods
 // ============================================================================
 
+/// A written borrowed-result source: one parameter or receiver and static field projections.
+///
+/// Syntax retains source tokens; the checker resolves the binding and fields. This is not an expression and cannot
+/// evaluate a call, index or arbitrary lookup when a result is returned.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ResultSource {
+    /// Parameter or receiver token at the root of the declared place.
+    pub binding: Spanned<Ident>,
+    /// Ordered field projections after the root, each retaining its own diagnostic span.
+    pub fields: Vec<Spanned<Ident>>,
+}
+
 /// A top-level function declaration (`def`).
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct FunctionDecl {
     pub visibility: Visibility,
@@ -336,6 +349,8 @@ pub struct FunctionDecl {
     pub type_params: Vec<TypeParam>,
     pub params: Vec<Spanned<Param>>,
     pub return_type: Spanned<Type>,
+    /// Optional explicit source relationship for a borrowed result.
+    pub result_source: Option<Spanned<ResultSource>>,
     pub body: Vec<Spanned<Statement>>,
 }
 
@@ -366,6 +381,8 @@ pub struct MethodDecl {
     /// Optional trait implementation target, written before the return arrow: `for Display`.
     pub trait_target: Option<Spanned<TraitBound>>,
     pub return_type: Spanned<Type>,
+    /// Optional explicit source relationship, including on abstract methods.
+    pub result_source: Option<Spanned<ResultSource>>,
     pub body: Option<Vec<Spanned<Statement>>>, // None for abstract methods (...)
 }
 

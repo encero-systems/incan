@@ -31,6 +31,8 @@ pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), Libr
     validate_manifest_version(raw)?;
     validate_field_visibilities(raw)?;
     validate_callable_param_exports(&raw.exports)?;
+    validate_ownership_exports(&raw.exports, raw.manifest_format)?;
+    super::ownership::validate_api(raw.contract_metadata.api.as_ref(), raw.manifest_format)?;
     validate_value_enum_exports(&raw.exports)?;
     validate_identity_graph(raw)?;
     validate_contract_metadata(raw)?;
@@ -1723,7 +1725,10 @@ fn validate_rest_param_has_no_default(owner: &str, param: &ParamExport) -> Resul
 /// This is the first gate because downstream validation rules only make sense once the compiler knows it understands
 /// the payload shape and that the manifest does not require a newer Incan version than the current binary provides.
 fn validate_manifest_version(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
-    if raw.manifest_format != LIBRARY_MANIFEST_FORMAT {
+    if !matches!(
+        raw.manifest_format,
+        LIBRARY_MANIFEST_FORMAT | super::OWNERSHIP_MANIFEST_FORMAT
+    ) {
         return Err(LibraryManifestError::Invalid(format!(
             "unsupported manifest_format {} (expected {})",
             raw.manifest_format, LIBRARY_MANIFEST_FORMAT
@@ -2497,6 +2502,42 @@ fn validate_relative_artifact_path(relative_path: &str) -> Result<(), LibraryMan
         return Err(LibraryManifestError::Invalid(format!(
             "vocab desugarer_artifact.relative_path `{relative_path}` must be a normalized relative path"
         )));
+    }
+    Ok(())
+}
+
+/// Validate explicit contracts before a consumer can hydrate any callable shape.
+fn validate_ownership_exports(exports: &RawLibraryExports, format: u32) -> Result<(), LibraryManifestError> {
+    for function in exports.functions.iter().chain(
+        exports
+            .aliases
+            .iter()
+            .filter_map(|alias| alias.projected_function.as_ref()),
+    ) {
+        super::ownership::validate_format(format, function.ownership.as_ref())?;
+        super::ownership::validate(
+            function.ownership.as_ref(),
+            &function.params,
+            &function.return_type,
+            false,
+        )?;
+    }
+    let methods = exports
+        .models
+        .iter()
+        .flat_map(|owner| &owner.methods)
+        .chain(exports.classes.iter().flat_map(|owner| &owner.methods))
+        .chain(exports.traits.iter().flat_map(|owner| &owner.methods))
+        .chain(exports.enums.iter().flat_map(|owner| &owner.methods))
+        .chain(exports.newtypes.iter().flat_map(|owner| &owner.methods));
+    for method in methods {
+        super::ownership::validate_format(format, method.ownership.as_ref())?;
+        super::ownership::validate(
+            method.ownership.as_ref(),
+            &method.params,
+            &method.return_type,
+            method.receiver.is_some(),
+        )?;
     }
     Ok(())
 }

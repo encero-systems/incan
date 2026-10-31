@@ -1115,6 +1115,8 @@ pub struct RustIterationHooks {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Explicit callable contracts keyed by the checked declaring identity, including refused executable declarations.
+    pub ownership_contracts: BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
     /// Checked source-signature identities published before body checks or native representation selection.
     pub source_identities: BTreeMap<CanonicalSymbolId, incan_semantics_core::stable_identity::StableDeclarationId>,
     /// Body IR-only canonical trait adoptions, retaining marker protocols and ordered checked arguments.
