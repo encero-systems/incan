@@ -4,6 +4,7 @@
 """RFC 064: Public behavior checks for std.encoding."""
 
 from std.encoding import base32, base58, base64, base85, bech32, hex, EncodingError
+from std.primitives import hexlify
 from std.fs import Path
 from std.io import BytesIO
 
@@ -15,6 +16,9 @@ def fs_error(detail: str) -> EncodingError:
 def exercise() -> Result[None, EncodingError]:
     payload = b"hello?"
 
+    assert hexlify(payload) == hex.hexlify(payload)
+    assert hexlify(b"") == ""
+    assert hexlify(b"\x00\x0f\x10\x7f\x80\xff") == "000f107f80ff"
     assert hex.hexlify(payload) == "68656c6c6f3f"
     assert hex.unhexlify("68656c6c6f3f")? == payload
     assert hex.decode_lenient("68 65 6c 6c 6f 3f")? == payload
