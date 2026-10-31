@@ -1,0 +1,19 @@
+"""Verified payload identity and generation, shared by publication and frozen installation readings."""
+
+
+pub model PayloadAdmission:
+    """Verified bytes and their producer, transferable only to the same filesystem generation after a rename."""
+
+    pub identity: str
+    pub payload: str
+    pub observation: str
+    pub provenance: list[str]
+
+
+pub model InstalledPayload:
+    """An exact installed payload and the transported producer-record generation admitted with it."""
+
+    pub path: str
+    pub record: str
+    pub record_stamp: str
+    pub admission: PayloadAdmission

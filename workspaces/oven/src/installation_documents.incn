@@ -1,0 +1,81 @@
+"""Capture installed producer records and native linking descriptions for the installation's single typed page."""
+
+from std.fs import Path
+from files import read_json
+from frozen_inputs import Document
+from observation import observe
+from toolchain_types import Toolchain
+from payload_types import InstalledPayload
+from unit_publication import verified_payload
+
+
+pub model Captured:
+    """The parsed records and the directory generations that fixed their membership."""
+
+    pub documents: list[Document]
+    pub paths: list[str]
+    pub stamps: list[str]
+    pub payloads: list[InstalledPayload]
+
+
+pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
+    """
+    Capture only the installation's standard and ambient linking metadata, excluding graphs and registry payloads.
+
+    1. Observe standard artifact membership and each ambient native producer directory.
+    2. Read each selected publication or linking record once, bracketing it with generation observations.
+    """
+    # 1. Profiles and producers are fixed by directory generations; unrelated registry records are not activated.
+    mut directories: Dict[str, str] = {}
+    loaves = directory.joinpath("loaves")
+    if loaves.is_dir():
+        directories[loaves.0] = observe(loaves)?.stamp
+        for package in loaves.iterdir().map_err((error) => error.message())?:
+            if package.is_dir():
+                directories[package.0] = observe(package)?.stamp
+                for profile in package.iterdir().map_err((error) => error.message())?:
+                    if profile.is_dir():
+                        directories[profile.0] = observe(profile)?.stamp
+    for native in toolchain.externs:
+        parent = Path(native.path).parent()
+        directories[parent.0] = observe(parent)?.stamp
+    mut documents: Dict[str, Document] = {}
+    mut payloads: Dict[str, InstalledPayload] = {}
+    # 2. Each record is parsed at admission, and its original generation remains an explicit witness.
+    for path in sorted([path for path in directories.keys()]):
+        for entry in Path(path).iterdir().map_err((error) => error.message())?:
+            if not selected(entry.name()) or not entry.is_file():
+                continue
+            before = observe(entry)?.stamp
+            if entry.name().endswith(".oven-unit"):
+                payload = Path(entry.0[:-10])
+                admission = verified_payload(payload)?
+                payloads[payload.0] = InstalledPayload(
+                    path=payload.0,
+                    record=entry.0,
+                    record_stamp=before,
+                    admission=admission,
+                )
+            else:
+                value = read_json(entry)?
+                documents[entry.0] = Document(path=entry.0, stamp=before, value=value)
+            if observe(entry)?.stamp != before:
+                return Err(f"{entry.0}: installed record changed during admission")
+    paths = sorted([path for path in directories.keys()])
+    return Ok(
+        Captured(
+            documents=[documents[path] for path in sorted([path for path in documents.keys()])],
+            paths=paths,
+            stamps=[directories[path] for path in paths],
+            payloads=[payloads[path] for path in sorted([path for path in payloads.keys()])],
+        ),
+    )
+
+
+def selected(name: str) -> bool:
+    """Only native linking projections and producer identities consumed by ordinary commands enter this page."""
+    if name.endswith(".native.json"):
+        return true
+    if not name.endswith(".oven-unit"):
+        return false
+    return ".rlib." in name or ".dylib." in name or ".so." in name or ".incnlib." in name or name == "vocab-worker.oven-unit"

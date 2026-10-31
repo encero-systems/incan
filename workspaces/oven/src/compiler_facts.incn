@@ -5,7 +5,7 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from files import json_text, read_json
-from home import home
+from home_paths import home
 from json_fields import required_text
 from observation import file_digest, observe
 from publication import publish

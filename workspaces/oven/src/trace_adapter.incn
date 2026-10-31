@@ -10,6 +10,17 @@ from std.json import JsonValue
 from pub::incan_platform.trace import Clock, Counters, EngineSpan, append, begin, complete, record
 
 
+pub model WorkCounts:
+    """Measured input operations in one contract scope, projected from the ordinary work producer."""
+
+    pub reads: int
+    pub hashes: int
+    pub parses: int
+    pub decodes: int
+    pub stats: int
+    pub pages: int
+
+
 model ObservationChannels:
     """One invocation's immutable environment choices and resolved per-process destinations."""
 
@@ -20,6 +31,9 @@ model ObservationChannels:
     run: str = ""
     request: str = ""
     process: int = 0
+    # A scoped contract observer uses this same producer boundary without opening an output channel.
+    counting_prefix: str = ""
+    counts: Dict[str, int] = {}
 
     def load(mut self) -> None:
         """Read observation configuration once, before the invocation's first enabled operation."""
@@ -40,7 +54,7 @@ model ObservationChannels:
     def work_clock(mut self) -> Option[Clock]:
         """Start only a requested JEC or canonical engine observation."""
         self.load()
-        return begin(self.canonical != "" or self.legacy_work != "")
+        return begin(self.canonical != "" or self.legacy_work != "" or self.counting_prefix != "")
 
     def work(mut self, category: str, key: str, clock: Option[Clock], bytes: int) -> None:
         """Publish a completed operation and its requested compatibility projection."""
@@ -48,10 +62,31 @@ model ObservationChannels:
             None => return
             Some(started) =>
                 self.load()
+                if self.counting_prefix != "" and key.startswith(self.counting_prefix):
+                    self.counts[category] = self.counts.get(category, 0) + 1
                 span = self.completed(started, category, key, Counters(bytes=bytes))
                 self.publish(span)
                 if self.legacy_work != "":
                     compatibility_work(self.legacy_work, span)
+
+    def count_work(mut self, prefix: str) -> None:
+        """Start a bounded contract observation of operations whose input lies under this prefix."""
+        self.counting_prefix = prefix
+        self.counts = {}
+
+    def finish_counting(mut self) -> WorkCounts:
+        """End the contract scope and return only its operation counts, releasing the prefix and retained table."""
+        counts = WorkCounts(
+            reads=self.counts.get("file_read", 0),
+            hashes=self.counts.get("file_hash", 0),
+            parses=self.counts.get("manifest_parse", 0),
+            decodes=self.counts.get("json_decode", 0),
+            stats=self.counts.get("file_stat", 0),
+            pages=self.counts.get("installation_page", 0),
+        )
+        self.counting_prefix = ""
+        self.counts = {}
+        return counts
 
     def reason(mut self, message: str) -> None:
         """Record reasoning once at its producer and export the requested legacy line."""
@@ -93,6 +128,16 @@ model ObservationChannels:
 
 
 static CHANNELS: ObservationChannels = ObservationChannels()
+
+
+pub def count_work(prefix: str) -> None:
+    """Observe work for a contract through the ordinary producer boundary; no extra trace channel is created."""
+    CHANNELS.count_work(prefix)
+
+
+pub def finish_counting() -> WorkCounts:
+    """Release the scoped observer and return its measured operation counts."""
+    return CHANNELS.finish_counting()
 
 
 pub def work_clock() -> Option[Clock]:
