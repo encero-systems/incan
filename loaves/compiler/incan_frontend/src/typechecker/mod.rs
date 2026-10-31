@@ -435,8 +435,9 @@ pub struct CAbiRawCallResult {
 /// A Rust associated call whose owner type arguments the call itself left open (#1720).
 ///
 /// `HashMap.new()` on `rust::std::collections::HashMap` names neither `K` nor `V`, and nothing at the call fixes
-/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. Rust would still fill them
-/// from a later reader of the value; the checker keeps this record only long enough to learn whether one exists.
+/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. A later reader of the value does
+/// not fix them either; the checker keeps this record only long enough to learn whether one exists, which decides how
+/// the call is refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenRustGenericCall {
     /// The receiver as the source spells it (`HashMap`), for the diagnostic.
@@ -449,8 +450,8 @@ pub struct OpenRustGenericCall {
 
 /// A local bound to an [`OpenRustGenericCall`] that no later statement has read yet (#1720).
 ///
-/// Dropped on the first read of the name; whatever is left when the declaring block ends is refused, because a
-/// binding nothing reads gives Rust nothing to infer the arguments from and the build would stop on the call.
+/// Dropped on the first read of the name, which refuses a call without a retained callee for its open parameters;
+/// whatever is left when the declaring block ends is refused with the binding to annotate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenRustGenericBinding {
     /// The local's name.
@@ -605,11 +606,14 @@ pub struct TypeChecker {
     /// Raw C result bindings whose enum outcome may establish branch-local output validity.
     pub c_abi_raw_call_results: Vec<CAbiRawCallResult>,
     /// Rust associated calls in the current statement whose owner type arguments were left open, keyed by call
-    /// span, waiting for the statement to say whether a local receives the value (#1720). Cleared when the
-    /// statement ends: a value nested somewhere else may still be fixed by its context.
+    /// span, waiting for the statement to say whether a local receives the value (#1720). When the statement ends,
+    /// one left nested somewhere else is refused unless its callee was retained.
     open_rust_generic_calls: HashMap<crate::ast::Span, OpenRustGenericCall>,
     /// Locals bound to open Rust associated calls that nothing has read yet (#1720).
     open_rust_generic_bindings: Vec<OpenRustGenericBinding>,
+    /// Equally ranked trait callees of a native method call, by call span, kept for that call's refusal when no later
+    /// selection step chooses a callee (#2481).
+    tied_rust_trait_callees: HashMap<crate::ast::Span, Vec<String>>,
     /// Statement-block identities used to scope pending generic-call bindings.
     statement_blocks: StatementBlockState,
     /// Slot identities currently readable in the active control-flow path.
@@ -1024,6 +1028,7 @@ impl TypeChecker {
             unbound_c_abi_raw_call_results: HashMap::new(),
             open_rust_generic_calls: HashMap::new(),
             open_rust_generic_bindings: Vec::new(),
+            tied_rust_trait_callees: HashMap::new(),
             statement_blocks: StatementBlockState::default(),
             c_abi_raw_call_results: Vec::new(),
             available_c_abi_output_slots: HashSet::new(),
