@@ -192,11 +192,18 @@ pub def test_literal_alias_diagnostic_retains_segments_and_location() -> None:
 
 
 pub def test_absent_build_options_stay_absent() -> None:
-    """Apply the default edition, prefer rust.edition, and continue validating non-executed build intent."""
+    """
+    Apply the default edition, prefer rust.edition, continue validating non-executed build intent, and read declared
+    rustc-internal access with one validator.
+    """
     match parse_intent("[project]\nname='app'\nversion='0.1.0'\n", "loaf.toml"):
         Err(error) => fail(error.message())
         Ok(project) =>
             assert project.rust_edition == "2024"
+            assert not project.toolchain_access.declared()
+    match verify_toolchain_access():
+        Err(error) => fail(error.message())
+        Ok(_) => pass
     source = "[project]\nname='app'\nversion='0.1.0'\n[build]\nrust-edition='2015'\n[rust]\nedition='2024'\n"
     match parse_intent(source, "loaf.toml"):
         Err(error) => fail(error.message())
@@ -207,6 +214,48 @@ pub def test_absent_build_options_stay_absent() -> None:
         match parse_intent(invalid, "loaf.toml"):
             Ok(_) => fail(f"non-string build.{field} was accepted")
             Err(_) => pass
+
+
+def verify_toolchain_access() -> Result[None, IntakeError]:
+    """
+    `[build]` and each `[[rust.bin]]` declare rustc-internal access through one validator, each in its own spelling.
+
+    1. `[build]` reads the kebab-case keys into the Loaf's declaration.
+    2. A `[[rust.bin]]` declares its snake_case keys for itself, not for the Loaf.
+    3. The other spelling, a value that is not a list, a name of the wrong shape and a repeated name are refused.
+    """
+    # 1. The Loaf's Incan units follow `[build]`.
+    mut declared = "[build]\nunstable-features=['rustc_private']\ntoolchain-components=['rustc-dev']\n"
+    declared += "sysroot-dependencies=['rustc_driver', 'rustc_interface']\n"
+    access = parse_intent(project_manifest(declared), "loaf.toml")?.toolchain_access
+    assert access.unstable_features == ["rustc_private"]
+    assert access.toolchain_components == ["rustc-dev"]
+    assert access.sysroot_dependencies == ["rustc_driver", "rustc_interface"]
+    # 2. A binary's declaration is its own.
+    mut binary = "[[rust.bin]]\nname='tool'\npath='main.rs'\nunstable_features=['rustc_private']\n"
+    binary += "toolchain_components=['rustc-dev']\nsysroot_dependencies=['rustc_driver']\n"
+    assert not parse_intent(project_manifest(binary), "loaf.toml")?.toolchain_access.declared()
+    # 3. Each refusal names the literal key, or the listed entry, that is wrong.
+    tool = "[[rust.bin]]\nname='tool'\npath='main.rs'\n"
+    build = ["build"]
+    first_binary = ["rust", "bin", "0"]
+    unsupported = IntakeErrorKind.Unsupported
+    invalid = IntakeErrorKind.Invalid
+    refusals = [
+        ("[build]\nunstable_features=['rustc_private']\n", unsupported, build + ["unstable_features"]),
+        (tool + "unstable-features=['rustc_private']\n", unsupported, first_binary + ["unstable-features"]),
+        ("[build]\nsysroot-dependencies='rustc_driver'\n", invalid, build + ["sysroot-dependencies"]),
+        ("[build]\nunstable-features=['rustc private']\n", invalid, build + ["unstable-features", "0"]),
+        ("[build]\ntoolchain-components=['rustc/dev']\n", invalid, build + ["toolchain-components", "0"]),
+        (tool + "sysroot_dependencies=['a', 'a']\n", invalid, first_binary + ["sysroot_dependencies", "1"]),
+    ]
+    for extra, kind, field in refusals:
+        match parse_intent(project_manifest(extra), "loaf.toml"):
+            Ok(_) => fail(f"malformed access was accepted: {extra}")
+            Err(error) =>
+                assert error.kind == kind, error.message()
+                assert error.field == field, error.message()
+    return Ok(None)
 
 
 pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:

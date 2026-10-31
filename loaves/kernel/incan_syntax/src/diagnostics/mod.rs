@@ -12,7 +12,10 @@ mod catalog;
 mod miette;
 mod stable;
 
-pub use base::{CompileError, ErrorKind, RelatedDeclaration, RelatedSpan, format_error, print_error};
+pub use base::{
+    CompileError, DiagnosticRanges, DiagnosticRecipe, ErrorKind, RelatedDeclaration, RelatedSpan, format_error,
+    print_error,
+};
 pub use catalog::{errors, lints};
 pub use miette::IncanDiagnostic;
 pub use stable::{

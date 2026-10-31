@@ -35,6 +35,7 @@ from rust_units import (
     target_configuration,
 )
 from search_index import search_index
+from sysroot_access import declared_libraries, runtime_sysroot
 from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
 from standalone_rust import bind_published, standalone_crates
 from registry_metadata import bound_entries
@@ -238,7 +239,7 @@ pub def prepare_linked(
     and those their native closures add. A closure published before the index existed also lists the toolchain's own
     directories, which are left out here.
 
-    1. Name the search index and bind the toolchain's ABI caches, crates and available Loaves.
+    1. Name the search index and bind the toolchain's ABI caches, crates, declared libraries and available Loaves.
     2. Link each Loaf, collecting the directories beyond the toolchain's that its closure searches.
     3. Keep each such directory once and register a producer vocabulary.
     """
@@ -247,6 +248,7 @@ pub def prepare_linked(
     unit.search_index = Some(search_index(toolchain)?)
     unit.rust_abi = toolchain.rust_abi
     unit = with_toolchain_crates(unit, toolchain)
+    unit = with_declared_libraries(unit, toolchain)?
     unit.loaves = [loaf for loaf in unit.loaves if standard_available(loaf)]
     # 2. Only what lies beyond the toolchain's own directories is collected, so the list stays the size of the unit's.
     indexed = members(toolchain.search)
@@ -304,6 +306,22 @@ def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> U
                     UnitLoaf(key=native.name, name=native.name, dir=directory.0, standard=false, toolchain_provided=true),
                 )
     return unit
+
+
+def with_declared_libraries(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    The unit with the toolchain libraries its Loaf declares (`[build] sysroot-dependencies`) bound under their crate
+    names, which its `rust::` imports may then name. A unit that links them also records the resolved sysroot its
+    executables load them from.
+    """
+    mut unit = described
+    for library in declared_libraries(unit.toolchain_access, toolchain)?:
+        unit = add_extern(unit, library)?
+        if library.name not in unit.rust_crates:
+            unit.rust_crates = sorted(unit.rust_crates + [library.name])
+    if len(unit.toolchain_access.sysroot_dependencies) > 0:
+        unit.runtime_sysroot = runtime_sysroot(toolchain)?
+    return Ok(unit)
 
 
 def link_loaf(

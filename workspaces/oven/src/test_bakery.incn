@@ -7,6 +7,7 @@ from std.fs import Path
 from std.fs.locking import FileLock
 from bakery import (
     Fact,
+    canonical_payload,
     claim,
     claim_file,
     collect,
@@ -104,8 +105,9 @@ pub def test_two_projects_with_the_same_unit_compile_it_once_and_target_holds_on
     """
     Two projects asking for one identity compile it once; deleting `target/` or editing a view costs only views.
 
-    1. The first project bakes; the second views the same fact without starting a compiler.
-    2. An edited view leaves the fact intact.
+    1. The first project bakes; the second views the same fact without starting a compiler, and its unchanged view
+       can be started from the stored payload.
+    2. An edited view leaves the fact intact, and it is the edited view that starts.
     3. Deleting a project's `target/` recreates its view and compiles nothing.
     """
     scratch = scratch_directory()?
@@ -134,9 +136,12 @@ pub def test_two_projects_with_the_same_unit_compile_it_once_and_target_holds_on
     assert compile_executable(second, toolchain, second_output, key, false, Some(store))? == 0
     assert attempts(root) == "x"
     assert read(second_output)? == "compiled program"
-    # 2. A view is the user's to change; the unit is not.
+    fact = baked(store, key.digest)?
+    assert launched(store, fact, second_output) == stored_payload(store, key.digest, "app")?.0
+    # 2. A view is the user's to change; the unit is not, and the changed view is what starts.
     write_file(first_output, "stripped by the user")?
     assert payload_text(store, key.digest, "app")? == "compiled program"
+    assert launched(store, fact, first_output) == ""
     # 3. A deleted target directory is only views.
     root.joinpath("two").joinpath("target").remove_tree().map_err((error) => error.message())?
     assert compile_executable(second, toolchain, second_output, key, false, Some(store))? == 0
@@ -274,6 +279,20 @@ def stored_payload(store: Path, identity: str, relative: str) -> Result[Path, st
             match fact_file(store, fact, relative):
                 Some(path) => return Ok(path)
                 None => return Err(f"{identity[:12]} has no {relative}")
+
+
+def baked(store: Path, identity: str) -> Result[Fact, str]:
+    """The baked unit of `identity`."""
+    match find(store, identity)?:
+        None => return Err(f"{identity[:12]} is not baked")
+        Some(fact) => return Ok(fact)
+
+
+def launched(store: Path, fact: Fact, view: Path) -> str:
+    """The stored payload that starts in place of `view`, or empty when the view itself starts."""
+    match canonical_payload(store, fact, view.name(), view):
+        Some(payload) => return payload.0
+        None => return ""
 
 
 def payload_text(store: Path, identity: str, relative: str) -> Result[str, str]:

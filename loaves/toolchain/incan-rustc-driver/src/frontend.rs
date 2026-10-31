@@ -1064,6 +1064,10 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     if shared_native.is_some() && (unit.profile != "debug" || unit.kind == UnitKind::Library || library) {
         return Err("shared native linking requires a debug executable".into());
     }
+    // Toolchain libraries carry the standard library they were built with; shared carriers would link another copy.
+    if shared_native.is_some() && unit.toolchain_access.links_sysroot() {
+        return Err("shared native linking cannot link the toolchain's own libraries".into());
+    }
     Ok(Dependencies {
         externs,
         directories: unit.search.clone(),
@@ -1173,6 +1177,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let published_search = unit.own_search.clone();
     let loaf_links: std::collections::BTreeSet<String> =
         unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
+    // The grant comes only from the description, read after the identity check and the bootstrap refusal.
+    let access = unit.toolchain_access.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
     let mut program = check_compilation_source(unit, rust, resident, receipt.clone())?;
     if census_complete(&program, kind, overflow_checks)? {
@@ -1200,6 +1206,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &native_externs,
         &dependencies.directories,
         &dependencies.rustc_args,
+        &access,
         dependencies.shared_native.as_deref(),
         kind,
         overflow_checks,

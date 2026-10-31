@@ -9,6 +9,7 @@ from std.hash import sha256
 from std.graph import Dag, NodeId
 from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
+from toolchain_access import BINARY_SEPARATOR, BUILD_SEPARATOR, ToolchainAccess, access_keys, read_access
 from jec import begin, record, text_size
 from observation import observe
 from rust::std::rc import Rc
@@ -115,6 +116,8 @@ pub model ProjectIntent:
     pub c_headers: list[str] = []
     # The Incan module registering this Loaf's vocabulary, project-relative.
     pub vocab_entry: Option[str] = None
+    # The rustc-internal access `[build]` declares for the Loaf's Incan units.
+    pub toolchain_access: ToolchainAccess = ToolchainAccess()
 
 
 pub model LocalProject:
@@ -307,9 +310,12 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
     validate_environments(root, manifest)?
     mut edition = "2024"
     mut source_root: Option[str] = None
+    mut access = ToolchainAccess()
     if "build" in root:
         build = table(root["build"], manifest, ["build"])?
-        allowed(build, ["target", "profile", "rust-edition", "source-root", "registry-lock"], manifest, ["build"])?
+        keys = ["target", "profile", "rust-edition", "source-root", "registry-lock"] + access_keys(BUILD_SEPARATOR)
+        allowed(build, keys, manifest, ["build"])?
+        access = read_access(build, BUILD_SEPARATOR, manifest, ["build"])?
         if "target" in build:
             required(build, "target", manifest, ["build", "target"])?
         if "profile" in build:
@@ -337,6 +343,7 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             contract_models=parse_contract_models(root, manifest)?,
             c_headers=parse_c_headers(root, manifest)?,
             vocab_entry=parse_vocab_entry(root, manifest)?,
+            toolchain_access=access,
         ),
     )
 
@@ -675,6 +682,8 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
             source = table(rust_facet["source"], manifest, ["rust", "source"])?
             allowed(source, ["root"], manifest, ["rust", "source"])?
             required(source, "root", manifest, ["rust", "source", "root"])?
+        if "bin" in rust_facet:
+            validate_binaries(rust_facet["bin"], manifest)?
     if "vocab" in root:
         vocab = table(root["vocab"], manifest, ["vocab"])?
         if "crate" in vocab:
@@ -688,6 +697,19 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
             )
         allowed(vocab, ["entry"], manifest, ["vocab"])?
         required(vocab, "entry", manifest, ["vocab", "entry"])?
+    return Ok(None)
+
+
+def validate_binaries(value: TomlValue, manifest: str) -> Result[None, IntakeError]:
+    """Each `[[rust.bin]]` is a table of known keys, and the access it declares passes `[build]`'s validator."""
+    binaries = value
+        .as_array()
+        .map_err((error) => refusal(manifest, ["rust", "bin"], IntakeErrorKind.Invalid, error.message()))?
+    for index in range(len(binaries)):
+        field = ["rust", "bin", str(index)]
+        binary = table(binaries[index], manifest, field)?
+        allowed(binary, ["name", "path"] + access_keys(BINARY_SEPARATOR), manifest, field)?
+        read_access(binary, BINARY_SEPARATOR, manifest, field)?
     return Ok(None)
 
 

@@ -42,6 +42,25 @@ impl TypeChecker {
         self.rust_associated_type_at_depth(ty, trait_path, &[], member, 0)
     }
 
+    /// Resolve an associated type of a native binder's inferred binding. Native inference spells a native collection
+    /// as its source carrier (`Vec<String>` as `list[str]`), which has no metadata owner of its own; the carrier
+    /// answers through the native owner it is stored as. Ordinary associated-type queries keep source collections
+    /// out of native method and dereference priority.
+    pub(in crate::typechecker::check_expr) fn rust_binding_associated_type(
+        &self,
+        binding: &ResolvedType,
+        trait_path: &str,
+        member: &str,
+    ) -> Option<ResolvedType> {
+        let owner = match self.rust_bound_owner_item_path(binding) {
+            Some(_) => None,
+            None => self
+                .rust_adjusted_owner_path(binding)
+                .and_then(|path| self.rust_inference_owner_for_template(&path, binding)),
+        };
+        self.rust_associated_type(owner.as_ref().unwrap_or(binding), trait_path, member)
+    }
+
     /// Bound recursive projection normalization and refuse competing equally specific associated values.
     /// Scalar carriers select their native primitive cache entry. Conflicting values require retained predicate
     /// evidence; a unique value still leaves complete native obligations to rustc.

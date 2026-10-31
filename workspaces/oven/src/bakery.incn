@@ -281,6 +281,20 @@ pub def fact_file(store: Path, fact: Fact, relative: str) -> Option[Path]:
     return None
 
 
+pub def canonical_payload(store: Path, fact: Fact, relative: str, view: Path) -> Option[Path]:
+    """
+    The stored payload of one file of `fact` while `view` is still an unchanged clone of it, so a caller can start the
+    canonical file, which the platform has already assessed, in place of a new view of it. `None` once the user
+    changed the view: the view is theirs, and what they made of it is what runs.
+    """
+    match fact_file(store, fact, relative):
+        None => return None
+        Some(payload) =>
+            if same_file(payload, view):
+                return Some(payload)
+            return None
+
+
 pub def has_files_under(fact: Fact, prefix: str) -> bool:
     """Whether a unit has payload files below the directory `prefix`, such as a debug bundle."""
     for file in fact.files:

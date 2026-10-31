@@ -1,0 +1,137 @@
+"""Adapt Oven's observation switches and compatibility formats to the platform's single span and channel home."""
+
+from rust::std::io import Write, stderr
+from rust::std::process import id
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from pub::incan_platform.trace import Clock, Counters, EngineSpan, append, begin, complete, record
+
+
+model ObservationChannels:
+    """One invocation's immutable environment choices and resolved per-process destinations."""
+
+    loaded: bool = false
+    canonical: str = ""
+    legacy_work: str = ""
+    legacy_reason: str = ""
+    run: str = ""
+    request: str = ""
+    process: int = 0
+
+    def load(mut self) -> None:
+        """Read observation configuration once, before the invocation's first enabled operation."""
+        if self.loaded:
+            return
+        self.loaded = true
+        directory = get_or("INCAN_ENGINE_TRACE", "")
+        self.legacy_work = get_or("INCAN_JEC_TRACE", "")
+        self.legacy_reason = get_or("OVEN_TRACE", "")
+        if directory == "" and self.legacy_work == "" and self.legacy_reason == "":
+            return
+        self.process = int(id())
+        if directory != "":
+            self.canonical = Path(directory).joinpath(f"engine-oven-{self.process}.jsonl").0
+        self.run = get_or("INCAN_ENGINE_RUN", "")
+        self.request = get_or("INCAN_ENGINE_REQUEST", f"oven-{self.process}")
+
+    def work_clock(mut self) -> Option[Clock]:
+        """Start only a requested JEC or canonical engine observation."""
+        self.load()
+        return begin(self.canonical != "" or self.legacy_work != "")
+
+    def work(mut self, category: str, key: str, clock: Option[Clock], bytes: int) -> None:
+        """Publish a completed operation and its requested compatibility projection."""
+        match clock:
+            None => return
+            Some(started) =>
+                self.load()
+                span = self.completed(started, category, key, Counters(bytes=bytes))
+                self.publish(span)
+                if self.legacy_work != "":
+                    compatibility_work(self.legacy_work, span)
+
+    def reason(mut self, message: str) -> None:
+        """Record reasoning once at its producer and export the requested legacy line."""
+        self.load()
+        if self.canonical == "" and self.legacy_reason == "":
+            return
+        line = f"oven: {message}"
+        if self.canonical != "":
+            match begin(true):
+                Some(clock) => self.publish(self.completed(clock, "reason", line, Counters()))
+                None => pass
+        self.relay([line])
+
+    def relay(mut self, lines: list[str]) -> None:
+        """Export owner observations without recording a duplicate canonical operation."""
+        self.load()
+        if self.legacy_reason == "":
+            return
+        for line in lines:
+            compatibility_line(self.legacy_reason, line + "\n")
+
+    def publish(self, span: &EngineSpan) -> None:
+        """An unavailable observer cannot change build results or write program streams."""
+        if self.canonical != "":
+            _ = record(self.canonical, span)
+
+    def completed(self, clock: Clock, operation: str, key: str, counters: Counters) -> EngineSpan:
+        """Keep caller correlation separate from the process's monotonic clock identity."""
+        return complete(
+            clock,
+            "oven",
+            operation,
+            key,
+            counters,
+            run=self.run,
+            request=self.request,
+            work=f"{self.process}:{clock.span}",
+        )
+
+
+static CHANNELS: ObservationChannels = ObservationChannels()
+
+
+pub def work_clock() -> Option[Clock]:
+    """Start work only when its canonical channel or existing JEC export was requested at process start."""
+    return CHANNELS.work_clock()
+
+
+pub def work(category: str, key: str, clock: Option[Clock], bytes: int) -> None:
+    """Publish one completed platform span and its requested legacy JEC projection."""
+    CHANNELS.work(category, key, clock, bytes)
+
+
+pub def reason(message: str) -> None:
+    """Record a local reasoning event and export the requested legacy text representation."""
+    CHANNELS.reason(message)
+
+
+pub def relay(lines: list[str]) -> None:
+    """Relay owner reasoning through the same observation adapter as local events."""
+    CHANNELS.relay(lines)
+
+
+def compatibility_work(directory: str, span: &EngineSpan) -> None:
+    """Export the old JEC keys from the same completed span for existing measurement scripts."""
+    fields = JsonValue.object(
+        {"schema": JsonValue.string("incan.jec/1"), "process": JsonValue.int(span.process), "category": JsonValue.string(
+            span.operation,
+        ), "input": JsonValue.string(span.key), "nanoseconds": JsonValue.int(span.end_ns - span.start_ns), "bytes": JsonValue.int(
+            span.counters.bytes,
+        ), "allocations": JsonValue.null()},
+    )
+    match fields.to_json():
+        Err(_) => return
+        Ok(text) => _ = append(Path(directory).joinpath(f"oven-{span.process}.jsonl").0, text + "\n")
+
+
+def compatibility_line(destination: str, text: str) -> None:
+    """Export a legacy text line; only the explicit legacy `-` request selects stderr."""
+    if destination == "-":
+        mut output = stderr()
+        _ = output.write_all(RustString.from(text).into_bytes())
+        return
+    _ = append(destination, text)

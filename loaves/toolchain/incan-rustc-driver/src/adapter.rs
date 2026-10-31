@@ -6,7 +6,7 @@ use crate::native_crates::native_roots;
 use crate::plan::{CalleeKind, Plan, PlanType, TerminatorKind};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
-use incan_driver::unit::UnitKind;
+use incan_driver::unit::{ToolchainAccess, UnitKind};
 use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
@@ -284,6 +284,8 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
 
 /// Inject the prevalidated declarations after parsing an empty Incan crate root.
 struct Callbacks<'manifest> {
+    /// The unstable features the unit's description declares; this session enables them and no others.
+    features: Vec<String>,
     plan: Arc<Plan>,
     manifest: Option<&'manifest incan_frontend::library_manifest::LibraryManifest>,
     search: Vec<rustc_session::search_paths::SearchPath>,
@@ -399,6 +401,10 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             .retain(|path| !search.iter().any(|held| held.kind == path.kind && held.dir == path.dir));
         search.append(&mut config.opts.search_paths);
         config.opts.search_paths = search;
+        if !self.features.is_empty() {
+            // Only a unit whose description declares unstable features may enable them, and only the declared ones.
+            config.opts.unstable_features = rustc_feature::UnstableFeatures::Allow;
+        }
         self.timing.configure(config);
         config.input = Input::Str {
             name: FileName::Custom(self.plan.span.file.as_str().to_owned()),
@@ -420,6 +426,18 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
     ) -> rustc_driver::Compilation {
         self.timing.mark("rustc_session");
         let sources = Sources::new(compiler.sess.source_map());
+
+        // ---- Declared unstable features ----
+        for feature in &self.features {
+            krate.attrs.push(ast::attr::mk_attr_nested_word(
+                &compiler.sess.psess.attr_id_generator,
+                ast::AttrStyle::Inner,
+                ast::Safety::Default,
+                rustc_span::sym::feature,
+                rustc_span::Symbol::intern(feature),
+                krate.spans.inner_span,
+            ));
+        }
 
         // ---- Source-backed native declarations ----
         if let Err(error) =
@@ -864,7 +882,7 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 ///
 /// The caller supplies the exact toolchain/library identity already verified before checking. External crates are
 /// explicit rlib paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant
-/// is used.
+/// is used: the unstable features and toolchain libraries a unit uses are the ones its description declares (`access`).
 /// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
 /// validation. A library manifest lends its already checked public facade names for aliases of the canonical native
 /// items. Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
@@ -880,6 +898,7 @@ pub fn compile(
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
     rustc_args: &[String],
+    access: &ToolchainAccess,
     shared_store: Option<&Path>,
     kind: UnitKind,
     overflow_checks: bool,
@@ -887,6 +906,7 @@ pub fn compile(
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
+    let features = declared_features(access)?;
 
     // ---- Validated source plan ----
     if let Some(path) = std::env::var_os("INCAN_DIRECT_VALIDATION_REPORT") {
@@ -945,9 +965,13 @@ pub fn compile(
         // through absolute search paths, which do not depend on where the copy lives.
         args.extend(absolute_rpaths(&all, identity, darwin));
     }
+    if access.links_sysroot() && kind != UnitKind::Library {
+        args.extend(sysroot_linkage(identity));
+    }
     args.extend_from_slice(rustc_args);
     timing.mark("native_arguments");
     let mut callbacks = Callbacks {
+        features,
         plan,
         manifest,
         search,
@@ -1014,6 +1038,46 @@ fn compilation_arguments(
     }
     if kind != UnitKind::Library {
         args.push("-Csplit-debuginfo=unpacked".into());
+    }
+    args
+}
+
+/// The unstable features a unit's description declares, each a Rust identifier the crate root enables.
+fn declared_features(access: &ToolchainAccess) -> Result<Vec<String>, DriverError> {
+    let identifier = |name: &str| {
+        name.chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    access
+        .unstable_features
+        .iter()
+        .map(|name| {
+            if identifier(name) {
+                Ok(name.clone())
+            } else {
+                Err(DriverError::Invocation(format!(
+                    "unit declares unstable feature `{name}`, which is not a Rust identifier"
+                )))
+            }
+        })
+        .collect()
+}
+
+/// An executable that links declared toolchain libraries loads them from the verified sysroot at run time, with the
+/// standard library they were built with. Rustc links every crate it has as a shared library dynamically, and the
+/// runtime search path names the sysroot's `lib` before its target libraries, so a toolchain library loaded from `lib`
+/// finds the libraries it loads itself.
+fn sysroot_linkage(identity: &DriverIdentity) -> Vec<String> {
+    let libraries = identity.sysroot.join("lib");
+    let target = identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib");
+    let mut args = vec![
+        "-Cprefer-dynamic".to_owned(),
+        format!("-Lnative={}", libraries.display()),
+    ];
+    for directory in [&libraries, &target] {
+        args.push(format!("-Clink-arg=-Wl,-rpath,{}", directory.display()));
     }
     args
 }
