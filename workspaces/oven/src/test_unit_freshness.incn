@@ -1024,6 +1024,36 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     settled(closure)?
     first = read_registry_units(closure)?.units[0]
     assert first.name != "" and first.crate_hash != ""
+    # A baked closure carries native identity, so a fresh home need not ask rustc for it again.
+    mut published: Dict[str, JsonValue] = {}
+    for key in item.keys():
+        published[key] = item.require(key).map_err((error) => error.message())?
+    published["name"] = JsonValue.string("baked_native_name")
+    published["crate_hash"] = JsonValue.string(first.crate_hash)
+    published["artifact"] = artifact
+    published["kind"] = JsonValue.string(first.kind)
+    published["dependencies"] = JsonValue.array(
+        [JsonValue.object({"entry": JsonValue.string(entry)}) for entry in first.dependencies],
+    )
+    mut unavailable: Dict[str, JsonValue] = {}
+    for key in published.keys():
+        if key != "dependencies":
+            unavailable[key] = published[key]
+    unavailable["entry"] = JsonValue.string("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    unavailable["refusal"] = JsonValue.string("producer recorded an unavailable alternative")
+    baked_closure = directory.joinpath("baked.json")
+    write(
+        baked_closure,
+        json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string("incan.oven.closure/1"), "externs": externs, "units": JsonValue.array(
+                    [JsonValue.object(published), JsonValue.object(unavailable)],
+                )},
+            ),
+        )?,
+    )?
+    assert read_registry_units(baked_closure)?.units[0].name == "baked_native_name"
+    assert read_registry_units(baked_closure)?.units[1].refusal == "producer recorded an unavailable alternative"
     # 2. The exact typed page answers without a closure or completion JSON document.
     selection = completion_selection(rust_compiler(toolchain))?
     observed = observe(closure)?
@@ -1606,7 +1636,9 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
     write(registry, read(original)?)?
     write(
         directory.joinpath("registry/closure.json"),
-        "{\"externs\":{\"registry producer\":{\"path\":\"libregistry.rlib\"}}}",
+        "{\"externs\":{\"registry producer\":{\"path\":\"libregistry.rlib\",\"payload_digest\":\"" + file_digest(
+            original,
+        )? + "\"}}}",
     )?
     document = JsonValue.object(
         {"schema": JsonValue.string("incan.toolchain/1"), "driver": JsonValue.string(toolchain.driver), "sysroot": JsonValue.string(
@@ -1616,6 +1648,12 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
         ), "search": JsonValue.array([]), "registry_units": JsonValue.string("registry/closure.json")},
     )
     write(directory.joinpath("toolchain.json"), json_text(document)?)?
+    write(registry, "damaged during transport")?
+    match read_toolchain(directory):
+        Ok(_) =>
+            assert false, "a damaged transported registry payload was admitted"
+        Err(_) => pass
+    write(registry, read(original)?)?
     read_toolchain(directory)?
     verify_renamed_admission(scratch, original)?
     verify_published_installation(scratch, original)?
