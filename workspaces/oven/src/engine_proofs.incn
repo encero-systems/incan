@@ -20,9 +20,9 @@ pub def retain(store: Path, run: str, capture: CaptureCounters, produced: Progra
             editable.stats,
         ), "source_reads": JsonValue.int(editable.reads), "source_hashes": JsonValue.int(editable.hashes), "source_listings": JsonValue.int(
             editable.listings,
-        ), "frozen_stats": JsonValue.int(frozen.stats), "frozen_reads": JsonValue.int(frozen.reads), "frozen_hashes": JsonValue.int(
-            frozen.hashes,
-        )},
+        ), "epoch_reads": JsonValue.int(produced.epoch_reads), "frozen_stats": JsonValue.int(frozen.stats), "frozen_reads": JsonValue.int(
+            frozen.reads,
+        ), "frozen_hashes": JsonValue.int(frozen.hashes)},
     )
     selected = snapshot(store).map_err((error) => error.message())?
     _ = commit(put(begin(selected), report_key(run), json_text(document)?.encode("utf-8"))).map_err(

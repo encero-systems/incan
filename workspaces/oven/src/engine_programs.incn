@@ -3,8 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue, parse
 from bakery import Fact, find
-from engine_capture import BuildEpoch
-from engine_epochs import record_text
+from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
 from incan_units import obtain_executable, program_binary, view_executable
@@ -15,10 +14,12 @@ from unit import describe
 from unit_rust import prepare_native
 from unit_freshness import fingerprint, unit_key
 from observation import FileMetadata, file_metadata
+from jec import begin as begin_work, record as record_work
 
 const SCHEMA: str = "incan.engine.native-unit/1"
 
 
+@derive(Eq)
 pub model NativeUnit:
     """An exact unit record and executable payload; output location is selection provenance, never unit identity."""
 
@@ -45,20 +46,26 @@ pub model ProgramOutcome:
     pub evaluations: int = 0
     pub native_bakes: int = 0
     pub console: str = ""
+    pub epoch_reads: int = 0
 
 
-pub def obtain(store: Path, epoch: BuildEpoch, console: str, producer: str) -> Result[ProgramOutcome, str]:
+pub model NativeSelection:
+    """The exact selected view and the encoding and publication work needed to select it."""
+
+    pub snapshot: Snapshot
+    pub encodings: int = 1
+    pub commits: int = 1
+
+
+pub def obtain(store: Path, revision: str, handle: str, console: str) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
 
     1. Read a previously finalized native descriptor without preparing frozen inputs again.
-    2. Otherwise describe and prepare today's standard-only program and finalize its RFC 124 identity.
+    2. Otherwise read the captured epoch, describe the program and finalize its RFC 124 identity.
     3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
     4. Record the epoch's descriptor after verifying capture still matches the producer's editable inputs.
     """
-    if len(epoch.roots) != 1:
-        return Err("unit records require exactly one program root")
-    handle = program_handle(epoch, producer)?
     # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
     match read_program(store, handle)?:
         Some(unit) =>
@@ -67,6 +74,12 @@ pub def obtain(store: Path, epoch: BuildEpoch, console: str, producer: str) -> R
             return Ok(ProgramOutcome(code=0, unit=Some(unit)))
         None => pass
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
+    opening = begin_work()
+    epoch = load_epoch(store, revision)?
+    record_work("engine_epoch", revision, opening)
+    if len(epoch.roots) != 1:
+        return Err("unit records require exactly one program root")
+    preparing = begin_work()
     mut toolchain = load_toolchain()?
     toolchain.console = console
     toolchain.retire_worker = true
@@ -91,20 +104,23 @@ pub def obtain(store: Path, epoch: BuildEpoch, console: str, producer: str) -> R
     if key.refusal != "":
         return Err(key.refusal)
     binary = program_binary(ready)
+    record_work("engine_prepare", epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit.
     produced = obtain_executable(ready, toolchain, binary, key, selected_store=Some(store))?
     if produced.code != 0:
-        return Ok(ProgramOutcome(code=produced.code, evaluations=produced.evaluations, console=console))
+        return Ok(ProgramOutcome(code=produced.code, evaluations=produced.evaluations, console=console, epoch_reads=1))
     # 4. Source edits cannot certify a native unit for a different captured epoch.
     for input in epoch.inputs:
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
     fact = required_unit(store, key.digest)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    publishing = begin_work()
     before = snapshot(store).map_err((error) => error.message())?
     _ = commit(put(begin(before), program_key(handle), unit.encoded()?.encode("utf-8"))).map_err(
         (error) => error.message(),
     )?
+    record_work("engine_descriptor", epoch.roots[0], publishing)
     return Ok(
         ProgramOutcome(
             code=0,
@@ -112,21 +128,26 @@ pub def obtain(store: Path, epoch: BuildEpoch, console: str, producer: str) -> R
             evaluations=produced.evaluations,
             native_bakes=produced.native_bakes,
             console=console,
+            epoch_reads=1,
         ),
     )
 
 
-pub def select_program(store: Path, view: str, unit: NativeUnit) -> Result[Snapshot, str]:
+pub def select_program(store: Path, view: str, unit: NativeUnit) -> Result[NativeSelection, str]:
     """Select one exact native descriptor in a virtual project view; equal selections write nothing."""
     selected = snapshot(store, view).map_err((error) => error.message())?
-    return commit(put(begin(selected), "incan.engine.selected-native-unit", unit.encoded()?.encode("utf-8"))).map_err(
+    if let Some(text) = record_text(selected, "incan.engine.selected-native-unit")?:
+        if decoded_program(text)? == unit:
+            return Ok(NativeSelection(snapshot=selected, encodings=0, commits=0))
+    published = commit(put(begin(selected), "incan.engine.selected-native-unit", unit.encoded()?.encode("utf-8"))).map_err(
         (error) => error.message(),
-    )
+    )?
+    return Ok(NativeSelection(snapshot=published))
 
 
-pub def program_handle(epoch: BuildEpoch, producer: str) -> Result[str, str]:
+pub def program_handle(epoch: str, producer: str) -> Result[str, str]:
     """The opaque handle of a captured program's native descriptor, kept apart from its RFC 124 unit identity."""
-    return Ok(f"program:{fingerprint([epoch.identity()?, producer])?}")
+    return Ok(f"program:{fingerprint([epoch, producer])?}")
 
 
 pub def read_program(store: Path, handle: str) -> Result[Option[NativeUnit], str]:
@@ -135,19 +156,21 @@ pub def read_program(store: Path, handle: str) -> Result[Option[NativeUnit], str
         return Err("invalid native program handle")
     match record_text(snapshot(store).map_err((error) => error.message())?, program_key(handle))?:
         None => return Ok(None)
-        Some(text) =>
-            value = parse(text).map_err((error) => error.message())?
-            if required_text(value, "schema")? != SCHEMA:
-                return Err("unsupported native unit descriptor")
-            return Ok(
-                Some(
-                    NativeUnit(
-                        identity=required_text(value, "unit")?,
-                        payload=required_text(value, "payload")?,
-                        binary=required_text(value, "binary")?,
-                    ),
-                ),
-            )
+        Some(text) => return Ok(Some(decoded_program(text)?))
+
+
+def decoded_program(text: str) -> Result[NativeUnit, str]:
+    """Validate the single native descriptor schema for both immutable records and selected view bindings."""
+    value = parse(text).map_err((error) => error.message())?
+    if required_text(value, "schema")? != SCHEMA:
+        return Err("unsupported native unit descriptor")
+    return Ok(
+        NativeUnit(
+            identity=required_text(value, "unit")?,
+            payload=required_text(value, "payload")?,
+            binary=required_text(value, "binary")?,
+        ),
+    )
 
 
 def unit_record(store: Path, unit: NativeUnit) -> Result[Fact, str]:

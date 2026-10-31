@@ -6,7 +6,7 @@ from rust::std::time import Duration
 from std.environ import get_or
 from std.fs import Path
 from files import write
-from engine_programs import read_program
+from engine_programs import read_program, select_program, NativeUnit
 from engine_client import service_identity
 from segment_store import snapshot
 from engine_proofs import report
@@ -142,6 +142,12 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert snapshot(store).map_err((error) => error.message())?.generation == 1
     assert service_identity(store)?.compiler_generation == installed.compiler_generation
     assert snapshot(store).map_err((error) => error.message())?.generation == 1
+    native = NativeUnit(identity="unit", payload="payload", binary="program")
+    first_selection = select_program(store, "selection", native)?
+    repeat_selection = select_program(store, "selection", native)?
+    assert first_selection.encodings == 1 and first_selection.commits == 1
+    assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
+    assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
     process_lifecycle()?
     identity = Identity(
         store_id="store",
@@ -446,7 +452,7 @@ def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: in
                 assert value.binding_outcome == BindingOutcome.Selected
                 assert value.status == CompletionStatus.Success
                 proof = parse(report(root, value.observation_handle)?).map_err((error) => error.message())?
-                mut counters = ["unit_evaluations", "native_bakes"]
+                mut counters = ["unit_evaluations", "native_bakes", "epoch_reads"]
                 if turn > 0:
                     counters.extend(["source_reads", "source_hashes"])
                 for name in counters:
