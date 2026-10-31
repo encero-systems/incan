@@ -36,6 +36,8 @@ pub model CompileRequest:
     pub stdout: str
     pub stderr: str
     pub cwd: str
+    # Require process teardown after this activation when the producer cannot release its retained compiler state.
+    pub retire_after: bool = false
 
 
 pub enum Fault:
@@ -113,8 +115,16 @@ def request_of(document: JsonValue) -> Result[CompileRequest, str]:
             stdout=absolute_field(document, "stdout")?,
             stderr=absolute_field(document, "stderr")?,
             cwd=absolute_field(document, "cwd")?,
+            retire_after=retirement_requested(document)?,
         ),
     )
+
+
+def retirement_requested(document: JsonValue) -> Result[bool, str]:
+    """Read the optional activation-lifetime contract; older callers keep the reusable-worker policy."""
+    match document.get("retire_after"):
+        None => return Ok(false)
+        Some(value) => return value.expect_bool().map_err((_) => "retire_after must be Boolean")
 
 
 def command_of(arguments: list[str]) -> Result[WorkerCommand, str]:

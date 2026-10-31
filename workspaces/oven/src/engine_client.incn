@@ -24,6 +24,7 @@ from segment_store import begin, claim, commit, put, snapshot
 from toolchain import load_toolchain, toolchain_file
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
+from home import home
 
 
 pub def execute(
@@ -49,7 +50,7 @@ pub def execute(
     channel.transport.wait_at_most(600)
     request = session_id()?
     absolute = source.absolute().map_err((error) => error.message())?
-    view = f"project-{fingerprint([absolute.0, profile])?}"
+    view = f"project-{fingerprint([home()?.0, absolute.0, profile])?}"
     mut policy = ""
     if proofs:
         policy = "proofs"

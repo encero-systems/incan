@@ -69,6 +69,7 @@ pub def obtain(store: Path, epoch: BuildEpoch, console: str, producer: str) -> R
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
     mut toolchain = load_toolchain()?
     toolchain.console = console
+    toolchain.retire_worker = true
     described = describe(
         Path(epoch.roots[0]),
         epoch.selection.profile,

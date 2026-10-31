@@ -186,6 +186,8 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
             if retired(reply):
                 trace("compiler worker: retired after its request")
+            elif toolchain.retire_worker:
+                return Err("compiler worker did not honor the requested activation lifetime")
             return completion(reply)
 
 
@@ -403,6 +405,7 @@ def request(toolchain: Toolchain, arguments: list[str], generation: str) -> Resu
     fields["cwd"] = JsonValue.string(directory.to_string_lossy().into_owned())
     fields["stdout"] = JsonValue.string(f"{toolchain.console}.out")
     fields["stderr"] = JsonValue.string(f"{toolchain.console}.err")
+    fields["retire_after"] = JsonValue.bool(toolchain.retire_worker)
     return Ok(JsonValue.object(fields))
 
 
