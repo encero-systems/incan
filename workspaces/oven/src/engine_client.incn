@@ -43,7 +43,6 @@ pub def execute(
     3. Hold the selected execution pin until the program exits, then release it.
     """
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
-    request = session_id()?
     absolute = source.absolute().map_err((error) => error.message())?
     view = f"project-{fingerprint([home()?.0, absolute.0, profile])?}"
     mut policy = ""
@@ -52,10 +51,12 @@ pub def execute(
     connecting = begin_work()
     store = bakery()?
     store.mkdir(true, true).map_err((error) => error.message())?
-    identity = service_identity(store)?
+    compiler = installed_compiler()?
     if not proofs:
-        if let Some(code) = execute_local(store, identity, command, absolute, view, profile, arguments, argv0)?:
+        if let Some(code) = execute_local(store, compiler, command, absolute, view, profile, arguments, argv0)?:
             return Ok(code)
+    request = session_id()?
+    identity = identity_for(store, compiler)?
     mut channel = connect(store, identity).map_err(detail)?
     record_work("engine_connect", source.0, connecting)
     channel.transport.wait_at_most(600)
@@ -102,7 +103,7 @@ pub def execute(
 
 def execute_local(
     store: Path,
-    identity: Identity,
+    compiler: str,
     command: str,
     source: Path,
     view: str,
@@ -114,6 +115,7 @@ def execute_local(
     selected = snapshot(store, view).map_err((error) => error.message())?
     if selected.index == "":
         return Ok(None)
+    capturing = begin_work()
     captured = prepare_submit(
         store,
         Submit(
@@ -125,36 +127,55 @@ def execute_local(
             observation_policy="",
         ),
     )?
+    record_work("engine_capture", source.0, capturing)
     if captured.commits != 0:
         return Ok(None)
-    handle = program_handle(captured.identity, identity.compiler_generation, view)?
+    handle = program_handle(captured.identity, compiler, view)?
+    selecting = begin_work()
     exact = view_snapshot(captured.snapshot, view).map_err((error) => error.message())?
     match selected_program(exact, handle)?:
         None => return Ok(None)
 
         Some(unit) =>
+            pinning = begin_work()
             held = lease(exact).map_err((error) => error.message())?
+            record_work("engine_lease", view, pinning)
+            restoring = begin_work()
             restore_program(store, unit)?
+            record_work("engine_unit", unit.identity, restoring)
+            record_work("engine_select", view, selecting)
             trace(
                 f"engine local: encodings={captured.encodings} publications={captured.commits} reads={captured.counters.in_reach.reads} hashes={captured.counters.in_reach.hashes}",
             )
             if command == "run":
-                return Ok(Some(run_program(Path(unit.binary), arguments, argv0, true)?))
+                executing = begin_work()
+                code = run_program(Path(unit.binary), arguments, argv0, true)?
+                record_work("engine_child", source.0, executing)
+                return Ok(Some(code))
             return Ok(Some(0))
 
 
 pub def service_identity(store: Path) -> Result[Identity, str]:
     """Bind one persistent physical-store id to exact service and admitted compiler generations."""
+    return identity_for(store, installed_compiler()?)
+
+
+def installed_compiler() -> Result[str, str]:
+    """Read this home's installation admission once, before deciding whether a service is needed."""
+    admitting = begin_work()
+    catalog = home()?.joinpath("bakery")
+    compiler = installation_compiler(catalog)?
+    record_work("engine_admission", catalog.0, admitting)
+    return Ok(compiler)
+
+
+def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
+    """Prepare service negotiation only for a request that cannot be answered by a local record read."""
     binary = executable()?
     generation = fingerprint([binary, observe(Path(binary))?.stamp])?
-    admitting = begin_work()
-    admission_store = home()?.joinpath("bakery")
-    compiler = installation_compiler(admission_store)?
-    store_id = physical_store_identity(store)?
-    record_work("engine_admission", store.0, admitting)
     return Ok(
         Identity(
-            store_id=store_id,
+            store_id=physical_store_identity(store)?,
             profile="incan.engine.unit-records/1",
             service_generation=generation,
             compiler_generation=compiler,

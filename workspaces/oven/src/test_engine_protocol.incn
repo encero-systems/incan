@@ -9,7 +9,7 @@ from files import write
 from engine_programs import read_program, select_program, program_handle, NativeUnit
 from engine_epochs import prepare_submit
 from engine_client import service_identity
-from segment_store import snapshot
+from segment_store import snapshot, durable_commits
 from engine_proofs import report
 from std.json import parse
 from rust::std::process import Command
@@ -145,6 +145,12 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert snapshot(store).map_err((error) => error.message())?.generation == 0
     assert service_identity(store)?.compiler_generation == installed.compiler_generation
     assert snapshot(store).map_err((error) => error.message())?.generation == 0
+    admissions = durable_commits()
+    other = admission.path().joinpath("another-store")
+    other.mkdir(true, true).map_err((error) => error.message())?
+    assert service_identity(other)?.compiler_generation == installed.compiler_generation
+    assert durable_commits() == admissions, "a fresh store repeated installation admission in the same home"
+    assert service_identity(Path(f"{store.0}/."))?.store_id == installed.store_id
     native = NativeUnit(identity="unit", payload="payload", binary="program")
     handle = program_handle("epoch", "compiler", "selection")?
     first_selection = select_program(store, "selection", native, handle)?
@@ -466,8 +472,13 @@ def process_lifecycle() -> Result[None, str]:
     mut idle = launch_service(binary, root, identity)?
     mut idle_channel = await_service(root, identity)?
     check_unchanged_request(idle_channel, root, source)?
+    another = root.joinpath("another-project")
+    another.mkdir(true, true).map_err((error) => error.message())?
+    copied_source = another.joinpath("hello.incn")
+    write(copied_source, source.read_text("utf-8", "strict").map_err((error) => error.message())?)?
     for turn in range(2):
-        check_service_reuse(idle_channel, root, source, turn)?
+        check_service_reuse(idle_channel, root, copied_source, turn)?
+    assert not another.joinpath("target/incan/observations").exists(), "a native hit repeated unit preparation"
     idle_channel.transport.close()?
     await_exit(idle, true)?
     return Ok(None)

@@ -102,6 +102,7 @@ pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_an
     held = lease(first).map_err((error) => error.message())?
     leases = root.joinpath("leases")
     before = len(leases.iterdir().map_err((error) => error.message())?)
+    assert before == 1, "an execution pin published a duplicate durable descriptor"
     another = lease(first).map_err((error) => error.message())?
     assert len(leases.iterdir().map_err((error) => error.message())?) == before
     return Ok(None)
@@ -134,6 +135,13 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     assert retained_inventory(root)? == retained
     assert retained_bytes(root)? == size_before
     println("S1 unchanged commit: 0 added files, 0 changed bytes, 0 manifest writes")
+    # A transaction retains only its final index pages, never intermediate roots from inserting its entries.
+    page_store = scratch.path().joinpath("page-store")
+    mut batch = begin(snapshot(page_store).map_err((error) => error.message())?)
+    for key in ["a", "b", "c", "d"]:
+        batch = put(batch, key, b"value")
+    _ = commit(batch).map_err((error) => error.message())?
+    assert count_files(page_store.joinpath("indexes")) == 1, "publication retained intermediate index pages"
     # One request updates independent views under one CURRENT switch; a conflict changes neither view.
     other = snapshot(root, "project").map_err((error) => error.message())?
     group = [put(begin(landed), "group", b"home"), put(begin(other), "group", b"project")]
@@ -500,9 +508,7 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
         "manifest-synced",
         "manifest-replaced",
         "manifest-directory-synced",
-        "object-written",
-        "object-synced",
-        "object-replaced",
+        "pin-acquired",
         "current-written",
         "current-synced",
         "current-replaced",

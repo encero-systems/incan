@@ -354,5 +354,9 @@ pub def program_binary(unit: UnitDescription) -> Path:
 
 pub def stored_executable(unit: UnitDescription, directory: str) -> Path:
     """Where an executable of a unit is stored: `target/incan/<profile>/<directory>/<crate>` in its project."""
-    profile = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile)
-    return profile.joinpath(directory).joinpath(crate_name(unit))
+    return executable_view(Path(unit.project_root), unit.profile, directory, crate_name(unit))
+
+
+pub def executable_view(project: Path, profile: str, directory: str, name: str) -> Path:
+    """The ordinary derived output location of a named executable, independent of how its unit was obtained."""
+    return project.joinpath("target/incan").joinpath(profile).joinpath(directory).joinpath(name)

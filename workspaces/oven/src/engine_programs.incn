@@ -1,17 +1,18 @@
 """The E1a unit-record producer: obtain today's whole native unit and select its exact payload in a project view."""
 
 from std.fs import Path
+from std.environ import get_or
 from std.fs.locking import FileLock
 from rust::std::rc import Rc
-from engine_capture import BuildEpoch
+from engine_capture import BuildEpoch, InputRole
 from std.json import JsonValue, parse
-from bakery import Fact, find, fact_file
+from bakery import Fact, find, fact_file, register_root
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
-from incan_units import obtain_executable, program_binary, view_executable
+from incan_units import obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
-from segment_store import Snapshot, Transaction, begin, commit, put, snapshot
+from segment_store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put, snapshot
 from toolchain import load_toolchain
 from unit import describe
 from unit_rust import prepare_native
@@ -70,6 +71,7 @@ pub def obtain(
     handle: str,
     console: str,
     captured: Option[BuildEpoch] = None,
+    producer: str = "",
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -90,11 +92,16 @@ pub def obtain(
     mut epoch_reads = 0
     if captured is None:
         epoch_reads = 1
-    epoch = request_epoch(store, revision, captured)?
+    epoch = request_epoch(store, revision, captured, handle)?
     record_work("engine_epoch", revision, opening)
     if len(epoch.roots) != 1:
         return Err("unit records require exactly one program root")
+    selector = standalone_selector(epoch, producer)?
+    if let Some(unit) = indexed_program(store, epoch, selector)?:
+        restore_program(store, unit)?
+        return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
     preparing = begin_work()
+
     mut toolchain = load_toolchain()?
     toolchain.console = console
     toolchain.retire_worker = true
@@ -147,7 +154,7 @@ pub def obtain(
             native_bakes=produced.native_bakes,
             console=console,
             epoch_reads=epoch_reads,
-            transaction=produced.transaction,
+            transaction=index_program(store, selector, unit, produced.transaction)?,
             claim=produced.claim,
         ),
     )
@@ -272,11 +279,11 @@ def captured_file_current(path: Path, recorded: FileMetadata) -> bool:
         _ => return false
 
 
-def request_epoch(store: Path, revision: str, captured: Option[BuildEpoch]) -> Result[BuildEpoch, str]:
+def request_epoch(store: Path, revision: str, captured: Option[BuildEpoch], handle: str) -> Result[BuildEpoch, str]:
     """Use this activation's captured inputs, or open a previously committed capture."""
     match captured:
         Some(epoch) => return Ok(epoch)
-        None => return load_epoch(store, revision)
+        None => return load_epoch(store, revision, program_view(handle)?)
 
 
 def produced_fact(found: Option[Fact]) -> Result[Fact, str]:
@@ -284,3 +291,69 @@ def produced_fact(found: Option[Fact]) -> Result[Fact, str]:
     match found:
         Some(fact) => return Ok(fact)
         None => return Err("producer completed without a native fact")
+
+
+def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str], str]:
+    """
+    Index an exact standalone input selection without redefining its native unit identity.
+
+    Only manifest-free units wholly inside their file's directory qualify. Logical names, exact input bytes, the
+    installed pin, profile and admitted compiler select an already finalized RFC 124 record. Any broader input shape
+    takes the existing producer path. Metadata, projection paths and absent ancestor manifests do not affect a unit.
+    """
+    if producer == "" or len(epoch.roots) != 1 or get_or("INCAN_STDLIB", "") != "":
+        return Ok(None)
+    source = Path(epoch.roots[0])
+    prefix = source.parent().0 + "/"
+    mut inputs = ["incan.engine.standalone-inputs/1", producer, source.name(), epoch.selection.profile]
+    mut bindings: list[str] = []
+    for input in epoch.inputs:
+        if input.role == InputRole.ToolchainPin:
+            bindings.append(f"toolchain-pin:{input.path}:{input.digest}")
+        elif input.path.startswith(prefix) and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
+            bindings.append(f"{input.role.value()}:{input.path[len(prefix):]}:{input.digest}")
+        else:
+            return Ok(None)
+    for absent in epoch.absent:
+        if Path(absent.path).name() != "loaf.toml":
+            return Ok(None)
+    for listing in epoch.listings:
+        if not (listing.path == source.parent().0 or listing.path.startswith(prefix)):
+            return Ok(None)
+        names = [listing.path[len(source.parent().0):]]
+        contents = names + [f"file:{name}" for name in listing.files] + [f"directory:{name}" for name in listing.directories]
+        bindings.append(f"listing:{fingerprint(contents)?}")
+    return Ok(Some(f"incan.engine.standalone-program\t{fingerprint(inputs + sorted(bindings))?}"))
+
+
+def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Result[Option[NativeUnit], str]:
+    """Resolve a finalized unit index and give its executable the requesting project's ordinary projection path."""
+    match selector:
+        None => return Ok(None)
+        Some(key) =>
+            match record_text(snapshot(store).map_err((error) => error.message())?, key)?:
+                None => return Ok(None)
+                Some(encoded) =>
+                    unit = decoded_program(encoded)?
+                    if unit.binary in ["", ".", ".."] or Path(unit.binary).name() != unit.binary:
+                        return Err("standalone native index contains an invalid executable name")
+                    register_root(store, Path(epoch.roots[0]).parent().0, unit.identity)?
+                    binary = executable_view(Path(epoch.roots[0]).parent(), epoch.selection.profile, "bin", unit.binary)
+                    return Ok(Some(NativeUnit(identity=unit.identity, payload=unit.payload, binary=binary.0)))
+
+
+def index_program(
+    store: Path,
+    selector: Option[str],
+    unit: NativeUnit,
+    native: Option[Transaction],
+) -> Result[Option[Transaction], str]:
+    """Add a path-independent finalized-unit index to the same atomic request, never a second publication."""
+    match selector:
+        None => return Ok(native)
+        Some(key) =>
+            mut transaction = begin(snapshot(store).map_err((error) => error.message())?)
+            if let Some(prepared) = native:
+                transaction = prepared
+            descriptor = NativeUnit(identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name())
+            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_ABSENT)))

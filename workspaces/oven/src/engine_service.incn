@@ -217,7 +217,7 @@ def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Resu
 
 
 def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: Submit) -> Result[None, Refusal]:
-    """Accept bounded work before capture, then return the actual committed epoch and snapshot handles."""
+    """Accept work before capture and name its initial store generation; completion publishes the whole request."""
     if len(client.pending) == 4 or client.channel.pending.held() > 4:
         return Err(Refusal(kind=RefusalKind.Busy, detail="client admission window is full"))
     token = f"{hexlify(client.channel.session)}:{hexlify(request)}"
@@ -231,16 +231,15 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
             state.detach(request, token)?
             return Err(transport(reason))
         Ok(captured) =>
-            selected = captured.revision
+            selected = f"snapshot:{captured.snapshot.generation}:{captured.snapshot.digest}"
             client.pending.append(
                 Pending(
                     request=request,
                     token=token,
-                    revision=captured.revision,
                     capture=captured,
+                    producer=state.identity.compiler_generation,
                     view=submit.view,
                     proofs=submit.observation_policy == "proofs",
-                    counters=captured.counters,
                     handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
                         transport,
                     )?,
