@@ -5,7 +5,7 @@ use super::{
     BodyIrContext, ProviderOperationCatalog, bir, legacy_opaque_returns, legacy_union_layouts, opaque_returns,
     union_layouts,
 };
-use crate::typechecker::{TypeCheckInfo, TypeChecker};
+use crate::typechecker::{CheckedBodyInputError, TypeCheckInfo, TypeChecker};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Compare complete serialized bodies and ordered union layouts after independent local operations, including an
@@ -257,16 +257,7 @@ fn assert_settled_function_seeds() -> Result<(), Box<dyn std::error::Error>> {
         let declaration_owner = checker
             .checked_declaration(declaration.span)
             .ok_or("missing checked declaration owner")?;
-        let mut references = declaration_owner.references().clone();
-        references
-            .resolved_identities
-            .extend(checked.references().resolved_identities.clone());
-        references
-            .resolved_write_identities
-            .extend(checked.references().resolved_write_identities.clone());
-        references
-            .resolved_write_types
-            .extend(checked.references().resolved_write_types.clone());
+        let references = checked.reference_inputs(declaration_owner)?;
         let mut info = TypeCheckInfo {
             expressions: checked.expressions().clone(),
             references,
@@ -314,6 +305,21 @@ fn assert_settled_function_seeds() -> Result<(), Box<dyn std::error::Error>> {
         super::representation_facts::retain(&mut body);
         actual.bodies.push(body);
     }
+    let first = program.declarations.first().ok_or("missing first owner")?;
+    let second = program.declarations.get(1).ok_or("missing second owner")?;
+    let body = checker.checked_body(first.span).ok_or("missing first body")?;
+    let other = checker
+        .checked_declaration(second.span)
+        .ok_or("missing second declaration")?;
+    assert!(matches!(
+        body.reference_inputs(other),
+        Err(CheckedBodyInputError::DifferentOwner)
+    ));
+    assert!(matches!(
+        body.reference_inputs(body),
+        Err(CheckedBodyInputError::WrongOwnerRole)
+    ));
+    assert_refused_reference_inputs()?;
     assert_eq!(actual.bodies.len(), 2);
     assert_same_module(&expected, &actual)?;
     eprintln!(
@@ -349,5 +355,25 @@ fn capture_module_oracle(
         directory.join(format!("{sequence:04}-actual.publication.bin")),
         postcard::to_stdvec(actual)?,
     )?;
+    Ok(())
+}
+
+/// A refused body remains a semantic predecessor refusal; the native read adapter cannot turn it into executable
+/// inputs even when its own declaration's signature and default checks succeeded.
+fn assert_refused_reference_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def invalid(value: int) -> int:\n    return \"wrong\"\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    assert!(checker.check_program(&program).is_err());
+    let declaration = program.declarations.first().ok_or("missing refused owner")?;
+    let body = checker.checked_body(declaration.span).ok_or("missing refused body")?;
+    let owner = checker
+        .checked_declaration(declaration.span)
+        .ok_or("missing refused declaration")?;
+    assert!(matches!(
+        body.reference_inputs(owner),
+        Err(CheckedBodyInputError::RefusedOwner)
+    ));
     Ok(())
 }

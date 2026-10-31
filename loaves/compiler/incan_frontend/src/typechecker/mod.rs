@@ -47,7 +47,7 @@ mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
-pub(crate) use body_check::CheckedBodyView;
+pub(crate) use body_check::{CheckedBodyInputError, CheckedBodyView};
 pub use check_work::CheckWork;
 mod check_expr;
 mod check_stmt;

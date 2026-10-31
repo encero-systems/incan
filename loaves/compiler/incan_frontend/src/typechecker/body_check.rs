@@ -1119,3 +1119,38 @@ impl CheckedBodyView {
             || !self.open.is_empty()
     }
 }
+
+/// Invalid use of the native read adapter, rather than a new source-language diagnostic. The record scope separately
+/// binds both revision-local handles to the same checked source revision and producer profile.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub(crate) enum CheckedBodyInputError {
+    /// A statement view and a declaration/default view must keep their different ownership roles.
+    #[error("native body inputs require statement and declaration owners")]
+    WrongOwnerRole,
+    /// The supplied declaration belongs to another revision-local lexical owner.
+    #[error("native body inputs belong to different declaration owners")]
+    DifferentOwner,
+    /// Refused predecessor values cannot supply executable Body IR inputs.
+    #[error("native body inputs require accepted settled predecessors")]
+    RefusedOwner,
+}
+
+impl CheckedBodyView {
+    /// Read the references a body builder needs from its two settled owners. Parameter writes belong to declaration
+    /// preparation, while statement references belong to the body. Reuse the existing reference join in its original
+    /// declaration-before-statement order; no checker, settlement, diagnostics or other body's facts are consulted.
+    pub(crate) fn reference_inputs(&self, declaration: &Self) -> Result<ReferenceArtifacts, CheckedBodyInputError> {
+        if self.local.kind == LocalOwnerKind::Declaration || declaration.local.kind != LocalOwnerKind::Declaration {
+            return Err(CheckedBodyInputError::WrongOwnerRole);
+        }
+        if self.owner() != declaration.owner() {
+            return Err(CheckedBodyInputError::DifferentOwner);
+        }
+        if self.is_refused() || declaration.is_refused() {
+            return Err(CheckedBodyInputError::RefusedOwner);
+        }
+        let mut references = declaration.references().clone();
+        append_references(&mut references, self.references().clone());
+        Ok(references)
+    }
+}
