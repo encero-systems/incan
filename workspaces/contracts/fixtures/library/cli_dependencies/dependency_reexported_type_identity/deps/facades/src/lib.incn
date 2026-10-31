@@ -31,3 +31,5 @@ pub from compose import compose
 pub from std.math import sqrt as square_root
 pub from std.io import IoError as BinaryError
 pub from standard import relayed_root, RelayedError
+
+pub from std.environ import EnvironError, get_as as read_value
