@@ -1972,6 +1972,7 @@ impl TypeChecker {
             // ---- Context: pattern-driven `while let` loop ----
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                self.note_loan_free_scrutinee(&value_ty, value.span);
                 let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
@@ -2260,6 +2261,7 @@ impl TypeChecker {
             Condition::Expr(expr) => self.check_expr_condition_body(expr, body, incoming_refinements),
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                self.note_loan_free_scrutinee(&value_ty, value.span);
                 let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.apply_branch_refinements(incoming_refinements);

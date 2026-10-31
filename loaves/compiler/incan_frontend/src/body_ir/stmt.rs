@@ -31,7 +31,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         for (index, stmt) in stmts.iter().enumerate() {
             let first_temporary = self.locals.len();
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
-            self.insert_statement_temporary_drops(out, scope, first_temporary, hir_span(stmt.span));
+            self.insert_statement_temporary_drops(out, scope, first_temporary, None, hir_span(stmt.span));
         }
         if terminal {
             self.terminal_paths.pop();
@@ -56,11 +56,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// End fresh compiler-owned expression storage after its source statement, in reverse construction order.
     /// Named bindings keep their lexical lifetime. Nested blocks handle their own locals, and moved temporaries
     /// carry no drop obligation; recording these ends prevents a second lexical-scope drop for the same storage.
-    fn insert_statement_temporary_drops(
+    /// `kept` stays live past this point: a scrutinee's value, which its arms still read.
+    pub(super) fn insert_statement_temporary_drops(
         &mut self,
         out: &mut Vec<bir::Statement>,
         scope: bir::ScopeId,
         first: usize,
+        kept: Option<bir::LocalId>,
         span: HirSourceSpan,
     ) {
         let candidates = self.locals[first..]
@@ -68,7 +70,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .rev()
             .filter(|local| local.scope == scope && local.origin == bir::LocalOrigin::Temporary)
             .filter(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
-            .filter(|local| !self.moved_out.contains(&local.id))
+            .filter(|local| !self.moved_out.contains(&local.id) && Some(local.id) != kept)
             .map(|local| local.id)
             .collect::<Vec<_>>();
         for local in candidates {
