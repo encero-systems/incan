@@ -17,7 +17,7 @@ use incan_lang::interop::{
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics;
 
-/// A closed trait reference and the signature it contributes to one method call.
+/// A selected trait reference and signature, with closed impl binders and any still-open method result parameters.
 struct TraitCandidate {
     path: String,
     signature: RustFunctionSig,
@@ -26,6 +26,8 @@ struct TraitCandidate {
     borrow_cost: usize,
     /// Whether the trait declares its result as `Self`, which a rusttype receiver keeps as the rusttype.
     returns_self: bool,
+    /// Method binders still requiring a typed use, distinct from equally named enclosing source binders.
+    open_parameters: Vec<String>,
 }
 
 impl TypeChecker {
@@ -282,6 +284,7 @@ impl TypeChecker {
             self_type: owner,
             borrow_cost: 0,
             returns_self: false,
+            open_parameters: Vec::new(),
         };
         let errors_before = self.errors.len();
         let result = self.validate_rust_method_call(
@@ -562,6 +565,7 @@ impl TypeChecker {
                 self_type: source,
                 borrow_cost: 0,
                 returns_self: false,
+                open_parameters: Vec::new(),
             },
         )?;
         self.type_info.rust.checked_calls.get_mut(&call.span)?.has_receiver = false;
@@ -1079,7 +1083,9 @@ impl TypeChecker {
         Some(scoped)
     }
 
-    /// Resolve one trait method only when its self template, inputs, and expected output close every native binder.
+    /// Resolve one trait method only when its self template, inputs, and expected output close every impl binder.
+    /// A method's own result parameters may stay open for the local's first typed use, recorded explicitly so an
+    /// equally named source binder cannot supply an accidental binding.
     /// Impl predicates remain native obligations: this selects an exact trait reference, and the adapter verifies
     /// that rustc can satisfy it before emitting MIR. A method bound whose closed associated equality contradicts the
     /// value its subject supplies excludes the reference; other competing equally ranked references remain ambiguous.
@@ -1175,12 +1181,18 @@ impl TypeChecker {
             arguments.push(self.instantiate_rust_signature_type(&template, &variables, &bindings));
         }
         for parameter in &original.type_params {
-            arguments.push(bindings.get(parameter)?.clone());
+            arguments.push(
+                bindings
+                    .get(parameter)
+                    .cloned()
+                    .unwrap_or_else(|| ResolvedType::TypeVar(parameter.clone())),
+            );
         }
         if variables.iter().any(|name| {
-            bindings
-                .get(name)
-                .is_none_or(|ty| matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+            !original.type_params.contains(name)
+                && bindings
+                    .get(name)
+                    .is_none_or(|ty| matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
         }) {
             return None;
         }
@@ -1191,7 +1203,27 @@ impl TypeChecker {
             self_type: storage,
             borrow_cost,
             returns_self: original.return_type.trim() == "Self",
+            open_parameters: self.open_rust_trait_method_parameters(&original.type_params, &bindings),
         })
+    }
+
+    /// Keep unresolved method binders explicit, so an unbound `S` never resolves by matching a source binder's name.
+    fn open_rust_trait_method_parameters(
+        &self,
+        parameters: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Vec<String> {
+        let source = self.native_call_type_parameters();
+        parameters
+            .iter()
+            .filter(|name| {
+                bindings.get(*name).is_none_or(|argument| {
+                    matches!(argument, ResolvedType::Unknown | ResolvedType::CallSiteInfer)
+                        || Self::mentions_foreign_type_variable(argument, &source)
+                })
+            })
+            .cloned()
+            .collect()
     }
 
     /// Whether each associated equality a candidate's method bounds state agrees with the value its bound subject
@@ -1389,6 +1421,9 @@ impl TypeChecker {
         if has_receiver != value_receiver {
             return None;
         }
+        if let Some(result) = self.watch_open_rust_trait_result(&call, &selected) {
+            return Some(result);
+        }
         if has_receiver
             && selected.signature.params.first().is_some_and(|parameter| {
                 Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
@@ -1413,6 +1448,45 @@ impl TypeChecker {
         if returns_self && let Some(rusttype) = self.rusttype_associated_receiver(&call) {
             return Some(rusttype);
         }
+        Some(result)
+    }
+
+    /// Watch a uniquely selected method's own open result parameters using the associated-call first-use rule.
+    /// Impl binders are already fixed by candidate selection. No executable callee is retained until a typed use
+    /// rechecks this initializer with a closed destination; an unused or unconstrained result is refused normally.
+    fn watch_open_rust_trait_result(
+        &mut self,
+        call: &RustPathMethodCall<'_>,
+        selected: &TraitCandidate,
+    ) -> Option<ResolvedType> {
+        let parameters = &selected.signature.type_params;
+        let open = &selected.open_parameters;
+        if open.is_empty() {
+            return None;
+        }
+        let result = self.rust_inference_type(
+            &self.native_rust_signature_type(&selected.signature.return_type, call.rust_path),
+            parameters,
+        );
+        if !Self::native_result_carries_parameters(&result, open) {
+            self.errors.push(crate::diagnostics::errors::rust_callee_not_selected(
+                &format!("rust::{}.{}", call.rust_path, call.method),
+                crate::diagnostics::errors::NativeCalleeGap::OpenTypeParameters(open),
+                call.span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        self.open_rust_generic_calls.insert(
+            call.span,
+            crate::typechecker::OpenRustGenericCall {
+                owner: call.rust_path.to_owned(),
+                method: call.method.to_owned(),
+                type_params: open.clone(),
+                owner_parameters: false,
+                native: Some(result.clone()),
+                native_item: None,
+            },
+        );
         Some(result)
     }
 

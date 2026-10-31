@@ -1360,7 +1360,7 @@ impl TypeChecker {
         self.c_abi_raw_call_results.push(result);
     }
 
-    /// Attach the open Rust associated call a new binding received to that binding, or refuse it at once when
+    /// Attach the open native call result a new binding received to that binding, or refuse it at once when
     /// the binding is the discard `_` (#1720).
     ///
     /// The call was recorded by its span when the method call resolved. A direct `name = call()` binding is watched
@@ -1372,6 +1372,10 @@ impl TypeChecker {
             return;
         };
         if assign.name == "_" {
+            if !call.owner_parameters {
+                self.refuse_unselected_open_rust_generic_call(&call, value_span);
+                return;
+            }
             self.errors.push(errors::rust_owner_type_args_not_inferred(
                 &call.owner,
                 &call.method,
@@ -1413,7 +1417,7 @@ impl TypeChecker {
         });
     }
 
-    /// Refuse an open Rust associated call whose value a bare expression statement throws away (#1720).
+    /// Refuse an open native call whose value a bare expression statement throws away (#1720, #2481).
     ///
     /// `HashMap.new()` on its own line binds nothing, so no later statement can supply the type arguments Rust
     /// would need; the call is refused where it stands.
@@ -1421,6 +1425,10 @@ impl TypeChecker {
         let Some(call) = self.open_rust_generic_calls.remove(&expr_span) else {
             return;
         };
+        if !call.owner_parameters {
+            self.refuse_unselected_open_rust_generic_call(&call, expr_span);
+            return;
+        }
         self.errors.push(errors::rust_owner_type_args_not_inferred(
             &call.owner,
             &call.method,
@@ -1460,7 +1468,7 @@ impl TypeChecker {
         ));
     }
 
-    /// Refuse every open Rust generic binding that the statement block `block` declared and nothing read (#1720).
+    /// Refuse every open native generic binding that block `block` declared and no fixing use settled (#1720).
     ///
     /// Called when that block ends, after settling a read the block's last statement did not. Bindings of enclosing
     /// blocks stay watched: one after this block can still read them.
@@ -1475,6 +1483,10 @@ impl TypeChecker {
             self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
         }
         for binding in left_unread {
+            if !binding.call.owner_parameters {
+                self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
+                continue;
+            }
             self.errors.push(errors::rust_owner_type_args_not_inferred(
                 &binding.call.owner,
                 &binding.call.method,

@@ -593,6 +593,7 @@ impl TypeChecker {
                 owner,
                 method: call.method.to_owned(),
                 type_params: parameters,
+                owner_parameters: true,
                 native: None,
                 native_item: None,
             },

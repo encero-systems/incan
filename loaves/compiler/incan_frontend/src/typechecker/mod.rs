@@ -433,7 +433,7 @@ pub struct CAbiRawCallResult {
     pub slots_by_parameter: HashMap<String, String>,
 }
 
-/// A Rust associated call whose owner type arguments the call itself left open (#1720).
+/// A native call whose result carries type arguments the call itself left open (#1720, #2481).
 ///
 /// `HashMap.new()` on `rust::std::collections::HashMap` names neither `K` nor `V`, and nothing at the call fixes
 /// them: no explicit `[str, int]`, no expected type, no argument that mentions them. A local bound to the value can
@@ -443,10 +443,12 @@ pub struct CAbiRawCallResult {
 pub struct OpenRustGenericCall {
     /// The receiver as the source spells it (`HashMap`), for the diagnostic.
     pub owner: String,
-    /// The associated function called (`new`).
+    /// The associated function or method called (`new`, `sum`).
     pub method: String,
-    /// The owner's type parameters the call left open, in declaration order (`K`, `V`).
+    /// The owner or method parameters the call left open, in declaration order (`K`, `V`, or `S`).
     pub type_params: Vec<String>,
+    /// Whether these are the associated constructor's owner parameters; method-result parameters use T0122.
+    pub owner_parameters: bool,
     /// The call's native result with those parameters open, once callee retention has computed it. A local bound to
     /// the call holds it as its native carrier until a use fixes the parameters.
     pub native: Option<ResolvedType>,

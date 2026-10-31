@@ -69,6 +69,22 @@ def main() -> Result[None, JsonError]:
     return Ok(None)
 ```
 
+## Let a typed use fix a native result
+
+An unannotated local can take a native method's result type from its first use in a typed return, parameter, or annotated assignment:
+
+```incan
+from rust::std::iter import Iterator as NativeIterator
+from rust::std::vec import Vec
+
+
+def total_of(values: Vec[int]) -> int:
+    total = values.into_iter().sum()
+    return total
+```
+
+If no use fixes the arguments, annotate the binding or supply the call's type arguments explicitly.
+
 ## Select standalone versions and features
 
 A source file outside a project can state its Rust dependency requirement inline:
