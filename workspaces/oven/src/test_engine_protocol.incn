@@ -13,7 +13,9 @@ from engine_proofs import report
 from std.json import parse
 from rust::std::process import Command
 from pub::incan_platform.ipc import dial, listen
-from engine_endpoint import endpoint, handshake, owner_uid
+from engine_endpoint import endpoint, handshake, owner_uid, connect_with
+from observation import observe
+from unit_freshness import fingerprint
 from engine_channel import Channel, SendOutcome
 from engine_codec import decode, encode
 from engine_messages import (
@@ -150,6 +152,7 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
     assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
     process_lifecycle()?
+    check_worker_retirement()?
     identity = Identity(
         store_id="store",
         profile="profile",
@@ -213,6 +216,47 @@ def handshake_refused(state: ServiceState, hello: Hello, uid: u32) -> bool:
     match state.negotiate(hello, uid):
         Ok(_) => return false
         Err(_) => return true
+
+
+def check_worker_retirement() -> Result[None, str]:
+    """A one-activation compiler retires without joining its caller monitor's polling timeout."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    trace = root.joinpath("worker.trace")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", root.joinpath("store").0)
+        .env("INCAN_NATIVE_TIMING", "1")
+        .env("OVEN_TRACE", trace.0)
+        .output()
+        .map_err((error) => str(error))?
+    assert outcome.status.success() and outcome.stdout == b"hello\x0a" and outcome.stderr == b""
+    lines = trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
+    waits = len([line for line in lines if "worker_observer_joined" in line])
+    detached = len([line for line in lines if "worker_observer_detached" in line])
+    releases = len([line for line in lines if "worker_heap_released" in line])
+    assert waits == 0 and detached == 1 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # Stop this test's disposable engine before the temporary directory leaves scope.
+    store = root.joinpath("store")
+    mut identity = service_identity(store)?
+    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    mut channel = connect_with(store, identity, binary).map_err(detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="retirement proof completed"))).map_err(detail)?
+    stopped = channel.receive().map_err(detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("retirement proof did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
 
 
 def check_bodies() -> Result[None, str]:
