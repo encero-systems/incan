@@ -14,7 +14,7 @@ from registry_pages import question, recall_catalog, current as catalog_current
 from registry_codec import Catalog, decode as decode_catalog, encode as encode_catalog
 from retained_readings import INSTALLED_DIGEST, installed_digest, recall, retain
 from segment_store import readmit_payload
-from bakery import fact_file, find, forget_verified, seal, staging
+from bakery import bakery, fact_file, find, forget_verified, library_directory, seal, staging
 from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
 from incan_units import executable_outputs, test_report, view_executable
 from intake import ManifestReader
@@ -864,6 +864,12 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     # 3. A missing cache or an incomplete stamp cannot pass by recompiling silently.
     assert read(attempts)? == "x"
     assert output.parent().joinpath("app.rustabi").is_file()
+    # An unbaked replacement must not inherit a previous portable view's fact selection.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert not output.parent().joinpath("fact.json").is_file()
+    assert library_directory(bakery()?, output.parent())?.0 == output.parent().0
+    assert read(attempts)? == "xx"
     return Ok(None)
 
 

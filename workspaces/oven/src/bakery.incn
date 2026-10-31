@@ -554,6 +554,103 @@ pub def reached(store: Path, directories: list[str]) -> Result[list[str], str]:
     return Ok(identities)
 
 
+pub def forget_view(directory: Path) -> Result[None, str]:
+    """Remove only a directory's fact selection before an unbaked producer replaces its local outputs."""
+    marker = directory.joinpath(VIEW_RECORD)
+    if marker.is_file():
+        marker.unlink().map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def library_directory(store: Path, directory: Path) -> Result[Path, str]:
+    """
+    Name a baked library through store-owned filename bindings, independently of any project's disposable views.
+
+    Native libraries require their original filenames and sibling metadata. Each layout names the exact payload set,
+    so a later fact repair cannot retarget an existing native closure. Data bindings link canonical payloads;
+    executable workers are materialized inside the layout to preserve the compiler's artifact-root confinement.
+    Producer records describe these bindings' generations.
+    An unbaked or installed directory retains its existing location.
+
+    1. Read the view's exact unit identity and require its complete fact.
+    2. Under a layout claim, bind every member to its canonical payload and admit its producer records.
+    """
+    # 1. A view selects an exact fact; the name index never substitutes another revision.
+    marker = directory.joinpath(VIEW_RECORD)
+    if not marker.is_file():
+        return Ok(directory)
+    canonical = store.resolve().map_err((error) => error.message())?
+    fact = library_fact(canonical, read_json(marker)?)?
+    return bind_library(canonical, fact)
+
+
+def library_fact(store: Path, marker: JsonValue) -> Result[Fact, str]:
+    """Read a layout's exact payload snapshot, or a project's current unit selection, refusing damaged payloads."""
+    if marker.get("layout") != None:
+        document = required_text(marker, "fact")?
+        match decode_fact(document.encode("utf-8")):
+            None => return Err("invalid library layout fact")
+            Some(fact) =>
+                if (
+                    required_text(marker, "identity")? != fact.identity
+                    or required_text(marker, "layout")? != library_layout(fact)?
+                ):
+                    return Err("library layout names another payload set")
+                for file in fact.files:
+                    if not payload_current(store, file):
+                        return Err(f"{file.path}: library payload is damaged")
+                return Ok(fact)
+    identity = required_text(marker, "identity")?
+    match find(store, identity)?:
+        None => return Err(f"library's baked unit is absent: {identity}")
+        Some(fact) => return Ok(fact)
+
+
+def library_layout(fact: Fact) -> Result[str, str]:
+    """Name the exact member payloads, keeping earlier layouts valid after a unit-record repair."""
+    return fingerprint(["incan.bakery.library-layout/1", encode_fact(fact, "library bindings")?])
+
+
+def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
+    """Complete immutable filename bindings under a claim before returning the library to any consumer."""
+    # 2. A crashed first binder is completed by the next caller before any consumer gets the directory.
+    layout = library_layout(fact)?
+    held = claim(store, f"library-layout/{layout}")?
+    selected = store.joinpath("libraries").joinpath(layout)
+    make_directory(selected)?
+    for file in fact.files:
+        if file.path == "" or file.path.startswith("/") or ".." in file.path.split("/"):
+            return Err("library member is not a relative filename")
+        source = payload_path(store, file.digest)
+        target = selected.joinpath(file.path)
+        make_directory(target.parent())?
+        if is_record(file):
+            if not target.is_file():
+                clone(source, target, false)?
+        elif file.program:
+            # A worker's resolved executable must remain inside the library's verified artifact root.
+            if target.is_symlink():
+                target.unlink().map_err((error) => error.message())?
+            view_file(store, file, target)?
+        elif target.is_symlink():
+            resolved = target.resolve().map_err((error) => error.message())?
+            if resolved.0 != source.0:
+                return Err(f"{target.0}: library binding names another payload")
+        elif target.exists():
+            return Err(f"{target.0}: library binding is not a payload link")
+        else:
+            target.symlink_to(source).map_err((error) => error.message())?
+    if not selected.joinpath(VIEW_RECORD).is_file():
+        marker = JsonValue.object({
+            "identity": JsonValue.string(fact.identity),
+            "layout": JsonValue.string(layout),
+            "fact": JsonValue.string(encode_fact(fact, "library bindings")?),
+        })
+        publish(selected.joinpath(VIEW_RECORD), json_text(marker)?)?
+    admit_views(fact.files, selected, "")?
+    return Ok(selected)
+
+
 pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     """
     The current view of the unit a directory was viewed from, for readers of a library's artifacts.
@@ -564,8 +661,11 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     record = directory.joinpath(VIEW_RECORD)
     if not record.is_file():
         return Ok(None)
-    identity = required_text(read_json(record)?, "identity")?
+    marker = read_json(record)?
     store = bakery()?
+    if marker.get("layout") != None:
+        return Ok(Some(library_directory(store, directory)?))
+    identity = required_text(marker, "identity")?
     match find(store, identity)?:
         None => return Ok(None)
         Some(fact) =>
