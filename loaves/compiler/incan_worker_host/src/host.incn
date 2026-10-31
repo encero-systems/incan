@@ -3,8 +3,8 @@ The compiler worker host: it listens on the worker's private socket, admits one 
 compiler entry, answers it with the entry's outcome and applies the worker's lifecycle.
 
 A retiring worker withdraws its socket before it sends its last reply, so no later request dials it; it then answers
-every request that connected before the withdrawal, each reply marked retired, unless the process is unsafe to serve
-another request.
+every request that connected before the withdrawal, each reply marked retired, unless the process is unsafe or its
+caller required teardown after one activation.
 """
 
 from rust::std::env import set_current_dir
@@ -67,6 +67,7 @@ pub class WorkerHost:
     owner: u32
     policy: Lifecycle
     active: Option[Connection] = None
+    retire_after: bool = false
 
     def next(mut self) -> Option[CompileRequest]:
         """
@@ -105,6 +106,8 @@ pub class WorkerHost:
         match settled.retirement:
             Some(reason) => self.retire(reason)
             None => pass
+        if self.retire_after:
+            self.retire(Retirement.ActivationComplete)
         match self.active:
             Some(caller) => self.answer(caller, settled.reply)
             None => pass
@@ -166,6 +169,7 @@ pub class WorkerHost:
                     Admission.Admitted(request) =>
                         # 4. The caller stays connected until its activation is answered.
                         self.active = Some(caller)
+                        self.retire_after = request.retire_after
                         return Some(request)
 
     def served_peer(self, caller: Connection) -> bool:
@@ -181,10 +185,10 @@ pub class WorkerHost:
         hang_up(answered)
 
     def retire(mut self, reason: Retirement) -> None:
-        """Withdraw the socket; an unsafe process ends at once, any other drains the requests already queued."""
+        """Withdraw the socket; unsafe and one-activation workers end, while other retirements drain queued requests."""
         if self.phase == Phase.Serving:
             withdraw(self.socket)
-        if reason == Retirement.Unsafe:
+        if reason == Retirement.Unsafe or reason == Retirement.ActivationComplete:
             self.phase = Phase.Ended
             return
         self.phase = Phase.Draining

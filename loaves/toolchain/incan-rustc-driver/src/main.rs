@@ -94,7 +94,16 @@ const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT 
 /// `--rust-compile-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// A command that fails prints its error as [`report`] does and exits with that status.
+fn main() -> std::process::ExitCode {
+    match command() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => std::process::ExitCode::from(report(error.as_ref())),
+    }
+}
+
+/// Dispatch the command the first argument names.
+fn command() -> Result<(), Box<dyn std::error::Error>> {
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -148,11 +157,23 @@ fn status_of<T>(result: incan_driver::error::CliResult<T>) -> i32 {
     match result {
         Ok(_) => 0,
         Err(error) => {
-            if !error.message.is_empty() {
-                eprintln!("{}", error.message);
-            }
+            print_failure(&error.message);
             error.exit_code.0
         }
+    }
+}
+
+/// Print an error a command returned and give the status it exits with. A refusal reads exactly as `--check` prints
+/// it, never as a quoted, escaped debug string; the short-lived command and the resident worker share this.
+pub(crate) fn report(error: &dyn std::error::Error) -> u8 {
+    print_failure(&error.to_string());
+    1
+}
+
+/// Print a failure's message to stderr as it reads, with a final newline; an empty message prints nothing.
+fn print_failure(message: &str) {
+    if !message.is_empty() {
+        eprintln!("{message}");
     }
 }
 

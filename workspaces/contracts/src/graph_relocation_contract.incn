@@ -1,0 +1,156 @@
+"""Relocated inspections reuse checked facts without mixing entries, diagnostics or observed Rust inputs."""
+
+from std.fs import Path
+from rust::std::os::unix::fs import symlink
+from files import make_directory, read, remove, write
+from run import invoke
+
+
+pub def check_relocation(incan: str, project: Path) -> Result[None, str]:
+    """
+    Extend the relationship cases with home-wide reuse and input discrimination.
+
+    1. Identical Incan projects at two roots reuse their checked export.
+    2. Different entries and changed contents at the same relative entry never share an answer.
+    3. Unchecked diagnostics belong to the requesting project.
+    4. Rust observes included files and environment before reusing its checked facts.
+    """
+    if project.joinpath("src/lib.rs").is_file():
+        return check_rust_inputs(incan, project)
+    directory = project.joinpath("target/relocation-contract")
+    first = incan_project(directory.joinpath("first"), "first_helper")?
+    second = incan_project(directory.joinpath("second"), "first_helper")?
+    # 1. Relocation must not create another private graph export.
+    original = inspect(incan, first, "src/main.incn", "first_helper")?
+    relocated = inspect(incan, second, "src/main.incn", "first_helper")?
+    if original != relocated:
+        return Err("relocation changed an identical Incan graph answer")
+    if len(second.rglob("*.incngraph").map_err((error) => error.message())?) != 0:
+        return Err("relocated inspection wrote a second private graph instead of reusing its home fact")
+    check_query_reuse(incan, directory, first, second)?
+    # 2. Both entries are present in the same tree, so tree content alone cannot discriminate them.
+    other = inspect(incan, first, "src/other.incn", "second_helper")?
+    if "second_helper" not in other or "first_helper" in other:
+        return Err("two selected entries shared an Incan graph answer")
+    write(second.joinpath("src/main.incn"), incan_source("changed_helper"))?
+    changed = inspect(incan, second, "src/main.incn", "changed_helper")?
+    if "changed_helper" not in changed or "first_helper" in changed:
+        return Err("different source at the same relative entry reused an Incan graph answer")
+    check_source_aliases(incan, directory, first, second)?
+    # 3. A refused export must never replay another producer's absolute diagnostic locations.
+    for root in [first, second]:
+        write(root.joinpath("src/main.incn"), "def main() -> None:\n    missing_function()\n")?
+        refused = invoke(incan, ["inspect", "codegraph", "src/main.incn", "--strict"], root)?
+        if refused.code == Some(0) or "unchecked" not in refused.stderr:
+            return Err("invalid source acquired a checked relocated graph")
+        mut other_root = first
+        if root.0 == first.0:
+            other_root = second
+        if other_root.0 in refused.stderr:
+            return Err("an unchecked diagnostic retained another project's location")
+    return Ok(None)
+
+
+def check_query_reuse(incan: str, directory: Path, first: Path, second: Path) -> Result[None, str]:
+    """Identical projects reuse a relative plain-query answer without decoding the same graphs again."""
+    for root in [first, second]:
+        make_directory(root.joinpath(".git"))?
+    arguments = ["inspect", "codegraph", "src/main.incn", "--query", "refs", "first_helper"]
+    original = invoke(incan, arguments, first)?
+    trace = directory.joinpath("query-reuse.trace")
+    if trace.is_file():
+        remove(trace)?
+    relocated = invoke(incan, arguments, second, [f"OVEN_TRACE={trace.0}"])?
+    work = read(trace)?
+    remove(trace)?
+    if original.code != Some(0) or relocated.code != Some(0) or original.stdout != relocated.stdout:
+        return Err("a relocated relative query changed its answer")
+    if "graph answer lookup:" not in work or "graph answer evaluation:" in work:
+        return Err("a relocated relative query decoded graphs instead of finding its prepared answer")
+    return Ok(None)
+
+
+def check_source_aliases(incan: str, directory: Path, first: Path, second: Path) -> Result[None, str]:
+    """Equal bytes keep the requesting source alias's location, including aliases that escape the project."""
+    source = "pub def linked_helper() -> int:\n    return 7\n"
+    main = "from provider import linked_helper\n\ndef main() -> None:\n    println(linked_helper())\n"
+    for root in [first, second]:
+        write(root.joinpath("src/main.incn"), main)?
+        write(root.joinpath("src/one.incn"), source)?
+        write(root.joinpath("src/two.incn"), source)?
+    # A retargeted alias inside the same unchanged source inventory must expire its old source anchor.
+    alias = first.joinpath("src/provider.incn")
+    if alias.is_file() or alias.is_symlink():
+        remove(alias)?
+    for name in ["one", "two"]:
+        symlink(first.joinpath(f"src/{name}.incn").0, alias.0).map_err((error) => str(error))?
+        answer = inspect(incan, first, "src/main.incn", "linked_helper")?
+        remove(alias)?
+        if f"src/{name}.incn" not in answer:
+            return Err("a retargeted Incan source alias reused its old definition location")
+    # External anchors cannot be rendered from another project's root and must remain unretained.
+    for name, root in [("first", first), ("second", second)]:
+        external = directory.joinpath(f"external-{name}.incn")
+        write(external, source)?
+        link = root.joinpath("src/provider.incn")
+        if link.is_file() or link.is_symlink():
+            remove(link)?
+        symlink(external.0, link.0).map_err((error) => str(error))?
+        answer = inspect(incan, root, "src/main.incn", "linked_helper")?
+        if f"external-{name}.incn" not in answer:
+            return Err("a relocated Incan source alias retained another project's definition location")
+    return Ok(None)
+
+
+def incan_project(root: Path, helper: str) -> Result[Path, str]:
+    """Create the same complete two-entry source inventory under a selected project root."""
+    make_directory(root.joinpath("src"))?
+    manifest = '[project]\nname = "graph_relocation"\nversion = "0.1.0"\n'
+    write(root.joinpath("loaf.toml"), manifest + '[project.scripts]\nmain = "src/main.incn"\n')?
+    write(root.joinpath("src/main.incn"), incan_source(helper))?
+    write(root.joinpath("src/other.incn"), incan_source("second_helper"))?
+    return Ok(root)
+
+
+def incan_source(helper: str) -> str:
+    """A selected entry's declarations differ even when another entry is present beside it."""
+    return f"def {helper}() -> int:\n    return 7\n\ndef main() -> None:\n    println({helper}())\n"
+
+
+def inspect(incan: str, root: Path, entry: str, term: str, environment: list[str] = []) -> Result[str, str]:
+    """Return a successful definition answer with the requester's root normalized for comparison."""
+    outcome = invoke(incan, ["inspect", "codegraph", entry, "--query", "defs", term], root, environment)?
+    if outcome.code != Some(0) or term not in outcome.stdout:
+        return Err(f"relocation inspection of {entry} for {term} failed: {outcome.stderr}\n{outcome.stdout}")
+    normalized = outcome.stdout.replace(root.0, "<project>")
+    return Ok(normalized.replace(f"target/relocation-contract/{root.name()}", "<project>"))
+
+
+def check_rust_inputs(incan: str, project: Path) -> Result[None, str]:
+    """
+    Changes outside the source tree and changes to rustc-observed environment invalidate checked Rust exports.
+
+    Both source inventories stay constant between environment selections; an external include is deliberately
+    outside that inventory, so neither input can be replaced by a project-tree digest.
+    """
+    directory = project.joinpath("target/relocation-contract")
+    root = directory.joinpath("rust")
+    make_directory(root.joinpath("src"))?
+    manifest = '[project]\nname = "graph_observed"\nversion = "0.1.0"\n'
+    write(root.joinpath("loaf.toml"), manifest + '[rust]\ntype = "lib"\nedition = "2024"\n')?
+    source = 'include!("../../external.rs");\n' + 'include!(env!("INCAN_GRAPH_CONTRACT_INPUT"));\n'
+    write(root.joinpath("src/lib.rs"), source)?
+    external = directory.joinpath("external.rs")
+    write(external, "pub fn external_first() {}\n")?
+    write(root.joinpath("src/first.rs"), "pub fn environment_first() {}\n")?
+    write(root.joinpath("src/second.rs"), "pub fn environment_second() {}\n")?
+    initial = ["INCAN_GRAPH_CONTRACT_INPUT=first.rs"]
+    inspect(incan, root, ".", "external_first", initial)?
+    inspect(incan, root, ".", "environment_first", initial)?
+    write(external, "pub fn external_second() {}\n")?
+    inspect(incan, root, ".", "external_second", initial)?
+    write(root.joinpath("src/lib.rs"), 'include!(env!("INCAN_GRAPH_CONTRACT_INPUT"));\n')?
+    inspect(incan, root, ".", "environment_first", initial)?
+    inspect(incan, root, ".", "environment_second", ["INCAN_GRAPH_CONTRACT_INPUT=second.rs"])?
+    inspect(incan, root, ".", "environment_first", initial)?
+    return Ok(None)

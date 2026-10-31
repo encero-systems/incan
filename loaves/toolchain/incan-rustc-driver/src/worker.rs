@@ -25,19 +25,29 @@ mod console;
 pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut host = incan_worker_host::start(&arguments.to_vec(), footprint())?;
     while let Some(request) = incan_worker_host::next_request(&mut host) {
-        let watch = incan_worker_host::caller_watch(&mut host).map(Abandonment::watch);
+        let mut timing = crate::native_timing::Timing::requested();
+        let watch =
+            incan_worker_host::caller_watch(&mut host).map(|watch| Abandonment::watch(watch, request.retire_after));
         let outcome = activate(&request);
-        // The watch ends before the host answers, so a caller that leaves after its reply ends nothing.
+        timing.mark("worker_compiled");
+        // Disarm before replying. A one-activation process has no next caller, so its observer can end with it.
         drop(watch);
-        release_free_memory();
+        if request.retire_after {
+            timing.mark("worker_observer_detached");
+        } else {
+            timing.mark("worker_observer_joined");
+            release_free_memory();
+            timing.mark("worker_heap_released");
+        }
         incan_worker_host::complete(&mut host, outcome, footprint());
+        timing.mark("worker_completed");
     }
     Ok(())
 }
 
 /// Run one admitted request with its caller's console files and working directory. The reported status is the one
-/// the short-lived command exits with: its own status, or one for a returned error (printed as `main` prints it). A
-/// panic is contained and reported as such once the adapter's state is usable again.
+/// the short-lived command exits with: its own status, or the status of a returned error, which [`crate::report`]
+/// prints as `main` does. A panic is contained and reported as such once the adapter's state is usable again.
 fn activate(request: &CompileRequest) -> ActivationOutcome {
     let console = match console::Capture::open(
         Path::new(&request.stdout),
@@ -52,10 +62,7 @@ fn activate(request: &CompileRequest) -> ActivationOutcome {
     }));
     let ended = match outcome {
         Ok(Ok(code)) => ActivationOutcome::Exited(code.into()),
-        Ok(Err(error)) => {
-            eprintln!("Error: {error:?}");
-            ActivationOutcome::Exited(1)
-        }
+        Ok(Err(error)) => ActivationOutcome::Exited(crate::report(error.as_ref()).into()),
         Err(_) => {
             crate::adapter::recover();
             ActivationOutcome::Panicked
@@ -149,11 +156,13 @@ fn release_free_memory() {}
 struct Abandonment {
     done: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// The host requires process teardown after this activation; no observer can outlive that process.
+    retiring: bool,
 }
 
 impl Abandonment {
-    /// Start observing the caller the host lent for this activation.
-    fn watch(watch: CallerWatch) -> Self {
+    /// Observe the activation's caller, ending with the process only when the host requires one-activation teardown.
+    fn watch(watch: CallerWatch, retiring: bool) -> Self {
         let done = Arc::new(AtomicBool::new(false));
         let watching = done.clone();
         let thread = std::thread::spawn(move || {
@@ -161,7 +170,7 @@ impl Abandonment {
                 return;
             };
             while !watching.load(Ordering::Acquire) {
-                if caller_left(descriptor) {
+                if caller_left(descriptor) && !watching.load(Ordering::Acquire) {
                     incan_worker_host::abandon(watch);
                     return;
                 }
@@ -170,15 +179,19 @@ impl Abandonment {
         Self {
             done,
             thread: Some(thread),
+            retiring,
         }
     }
 }
 
 impl Drop for Abandonment {
-    /// Stop observing once the activation has ended, before its reply is sent.
+    /// Disarm before the reply. Resident workers join before reusing descriptors; retiring workers end every thread
+    /// with their process, so waiting for the observer's polling timeout serves no purpose.
     fn drop(&mut self) {
         self.done.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take() {
+        if let Some(thread) = self.thread.take()
+            && !self.retiring
+        {
             let _ = thread.join();
         }
     }

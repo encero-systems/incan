@@ -1,6 +1,6 @@
 # CLI reference
 
-`incan` is Oven, the Incan command line. This page specifies `0.6.0-dev.8`.
+`incan` is Oven, the Incan command line.
 
 ## Usage
 
@@ -16,6 +16,7 @@ incan fmt [--check] PATH...
 incan owner stop
 incan bakery gc [--keep-days N] | verify | repair-payload SHA256 FILE
 incan inspect codegraph PATH [GRAPH OPTIONS]
+incan inspect run ID --proofs
 incan mcp PATH
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
@@ -44,6 +45,8 @@ Unknown features, invalid feature edges and unknown options fail the command. Fe
 
 `PATH` names an Incan entry source. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
+With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file, the profile must be `debug` or `release`, and editable path dependencies, vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
+
 ## `incan check`
 
 Checks the source at `PATH` without producing an executable. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
@@ -61,6 +64,8 @@ Collected test functions take no arguments and return `None` or `Result[None, E]
 An explicit source file selects that unit. For a directory, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
 A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `--lib` and `--report` are not accepted.
+
+With `INCAN_ENGINE=records`, only explicit program source files are accepted, with the same restrictions and `--engine-report` behavior as records-mode `run`. Build does not execute the selected program.
 
 ## `incan describe-unit`
 
@@ -116,6 +121,20 @@ Graph options, schemas, queries, context packs and snapshot checks are specified
 
 Serves the selected project's graph through newline-delimited JSON-RPC on stdin/stdout. Closing stdin ends the server. Protocol methods, tools, resources and errors are specified in the [MCP reference](agent_context_cli.md#mcp-transport).
 
+## `incan inspect run ID --proofs`
+
+Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal `run` field printed by a command with `--engine-report`. The command prints that retained report as one JSON object; an unknown or malformed id is an error. Reports are retained only when explicitly requested.
+
+| Field | JSON type | Contract |
+| --- | --- | --- |
+| `schema` | String | `incan.engine.proofs/1`. |
+| `run` | String | The run id. |
+| `granularity` | String | `unit-record`. |
+| `unit_evaluations` | Integer | Whole-unit producer evaluations performed for this request; a compiled-unit hit is zero. |
+| `native_bakes` | Integer | Successful native units published by this request. |
+| `source_stats`, `source_reads`, `source_hashes`, `source_listings` | Integers | Editable-input operations counted by request capture, including configuration and the toolchain pin. |
+| `frozen_stats`, `frozen_reads`, `frozen_hashes` | Integers | Frozen-input operations counted by request capture. These counters do not count compiler reads of admitted facts. |
+
 ## `incan toolchain pack` and `install`
 
 `pack OUT` archives the installed toolchain closure. Supported extensions are `.tar`, `.tar.gz` and `.tar.zst`. Paths in the packed toolchain manifest are relative; the local Rust sysroot is excluded.
@@ -127,7 +146,9 @@ Serves the selected project's graph through newline-delimited JSON-RPC on stdin/
 | Name | Contract |
 | --- | --- |
 | `INCAN_HOME` | Toolchain, cache and owner home. Default: `.incan` under `HOME`, or `USERPROFILE` when `HOME` is absent. |
-| `INCAN_STDLIB` | Required directory containing standard-package source directories with `loaf.toml`. Compiled artifacts belong to the installed toolchain and selected profile. |
+| `INCAN_STDLIB` | Optional directory containing standard-package source directories with `loaf.toml`; otherwise the installed toolchain's `stdlib` directory is selected. Compiled artifacts belong to the installed toolchain and selected profile. |
+| `INCAN_ENGINE` | `legacy` (default) or `records`. Records mode accepts the file-based `run` and `build` commands and `inspect run ID --proofs`; unsupported commands fail without falling back to legacy. |
+| `INCAN_BAKERY` | Optional physical bakery directory; otherwise `<INCAN_HOME>/bakery`. |
 | `INCAN_SYSROOT` | Explicit local Rust sysroot for installation. Otherwise installation probes Rustup `1.98.0`, then `rustc`. Identity verification is required. |
 | `OVEN_OWNER` | `off` disables resident owner use. |
 | `OVEN_TRACE` | `-` writes invocation traces to stderr; another nonempty value names a trace output file. |

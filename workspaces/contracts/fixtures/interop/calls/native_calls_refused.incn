@@ -1,4 +1,4 @@
-# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields and unsafe callback storage are refused (#2256, #2481)
+# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, and a later use that conflicts with the owner arguments a local's first use fixed are refused (#2256, #2481)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
@@ -22,17 +22,25 @@
 #   Owned binding 'indexed' of foreign tuple field type
 #   Owned binding 'annotated' of foreign tuple field type
 #   Owned binding 'through_reference' of foreign tuple field type
+#   Cannot select the Rust callee of `rust::alloc::string::String.flush`: no admitted implementation of the method applies to this receiver and these arguments
+#   Cannot select the Rust callee of `rust::std::path::PathBuf.as_ref`: `std::convert::AsRef<std::ffi::OsStr>::as_ref` and `std::convert::AsRef<std::path::Path>::as_ref` apply equally
+#   Cannot select the Rust callee of `rust::std::process::Command.args`: its type parameter `S` is not fixed by the call
+#   Cannot select the Rust callee of `HashMap.new`: its type parameters `K` and `V` are not fixed by the call
+#   Type mismatch: expected 'String', found 'Int'
+#   Type mismatch: expected 'i64', found 'Str'
 # expect-exit: 1
 
 """A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
 
 from rust::std::cell import RefCell
 from rust::std::cmp import Ordering
-from rust::std::convert import identity
+from rust::std::collections import HashMap
+from rust::std::convert import AsRef, identity
 from rust::std::env import VarError, set_var
+from rust::std::io import Write
 from rust::std::mem import MaybeUninit, size_of_val
 from rust::std::os::unix::process import CommandExt
-from rust::std::path import Path
+from rust::std::path import Path, PathBuf
 from rust::std::process import Command
 from rust::std::rc import Rc
 from rust::std::sync import Mutex
@@ -158,6 +166,25 @@ def oversized_process_group() -> None:
     command.process_group(2147483648)
 
 
+def unselected_callees() -> None:
+    """Refuse native calls whose arguments check but whose callee cannot be selected."""
+    mut text = RustString.from("a")
+    text.flush()
+    path = PathBuf.from("a")
+    path.as_ref()
+    mut command = Command.new("true")
+    command.args(("one", "two"))
+    unfixed = HashMap.new()
+    println(len(unfixed))
+
+
+def conflicting_first_use() -> None:
+    """Refuse a later use that conflicts with the owner arguments a local's first use fixed."""
+    mut table = HashMap.new()
+    table.insert("a", 1)
+    table.insert(2, "b")
+
+
 def main() -> None:
     """
     Request refused native calls before anything can execute.
@@ -166,6 +193,7 @@ def main() -> None:
     2. Check that C acknowledgment does not authorize unsafe Rust calls.
     3. Check captured callbacks against retained native storage bounds.
     4. Check that foreign tuple fields require a borrow or retained Clone evidence.
+    5. Check that a native call needs one selectable callee, and that later uses agree with a fixed local.
     """
     # 1. Check native owners, mutation, numeric boundaries, and unavailable constructors.
     println(classify(Ordering.Equal))
@@ -183,3 +211,6 @@ def main() -> None:
     # 4. Check that foreign tuple fields require a borrow or retained Clone evidence.
     owned_tuple_fields()
     borrowed_tuple_owner((Mutex.new(3), 7))
+    # 5. Check that a native call needs one selectable callee, and that later uses agree with a fixed local.
+    unselected_callees()
+    conflicting_first_use()

@@ -1,0 +1,56 @@
+"""Explicitly retained proof reports over capture and whole-unit producer counters."""
+
+from std.fs import Path
+from std.json import JsonValue
+from engine_capture import CaptureCounters
+from engine_epochs import record_text
+from engine_programs import ProgramOutcome
+from files import json_text
+from segment_store import Transaction, begin, commit, put, snapshot
+
+
+pub def retain(store: Path, run: str, capture: CaptureCounters, produced: ProgramOutcome) -> Result[str, str]:
+    """Retain one requested report; ordinary unchanged requests never write a report or grow the store."""
+    _ = commit(prepare_report(store, run, capture, produced)?).map_err((error) => error.message())?
+    return Ok(run)
+
+
+pub def prepare_report(
+    store: Path,
+    run: str,
+    capture: CaptureCounters,
+    produced: ProgramOutcome,
+) -> Result[Transaction, str]:
+    """Prepare an explicitly requested report for the same request publication boundary."""
+    editable = capture.in_reach
+    frozen = capture.frozen
+    document = JsonValue.object(
+        {"schema": JsonValue.string("incan.engine.proofs/1"), "run": JsonValue.string(run), "granularity": JsonValue.string(
+            "unit-record",
+        ), "unit_evaluations": JsonValue.int(produced.evaluations), "native_bakes": JsonValue.int(produced.native_bakes), "source_stats": JsonValue.int(
+            editable.stats,
+        ), "source_reads": JsonValue.int(editable.reads), "source_hashes": JsonValue.int(editable.hashes), "source_listings": JsonValue.int(
+            editable.listings,
+        ), "epoch_reads": JsonValue.int(produced.epoch_reads), "frozen_stats": JsonValue.int(frozen.stats), "frozen_reads": JsonValue.int(
+            frozen.reads,
+        ), "frozen_hashes": JsonValue.int(frozen.hashes)},
+    )
+    selected = snapshot(store).map_err((error) => error.message())?
+    return Ok(put(begin(selected), report_key(run), json_text(document)?.encode("utf-8")))
+
+
+pub def report(store: Path, run: str) -> Result[str, str]:
+    """Read exactly one explicitly retained proof report by its run id."""
+    if len(run) != 32:
+        return Err("a proof run id must contain 32 hexadecimal digits")
+    for character in run:
+        if character not in "0123456789abcdef":
+            return Err("invalid proof run id")
+    match record_text(snapshot(store).map_err((error) => error.message())?, report_key(run))?:
+        Some(text) => return Ok(text)
+        None => return Err("no retained proof report for this run")
+
+
+def report_key(run: str) -> str:
+    """The record family of proof reports explicitly retained by their caller."""
+    return f"incan.engine.proofs\t{run}"

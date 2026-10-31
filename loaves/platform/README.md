@@ -8,6 +8,7 @@
 | --- | --- |
 | `trace` | Versioned engine spans, monotonic clocks, aggregate counters and bounded file channels. |
 | `ipc` | Bounded, length-framed transport over Unix sockets, with every frame length checked before its buffer is allocated; per-direction data credits; OS peer identity; listeners, liveness probes, fresh session identities, and a connection's descriptor lent to native code that only observes it. |
+| `durability` | Ordinary filesystem synchronization through `sync_ordered(path: str) -> Result[None, str]`, for a regular file or directory. Publishers flush the ordered graph before selecting it and the selection before acknowledging it; ordinary synchronization alone is not a drive-cache flush. |
 
 ## Contract
 

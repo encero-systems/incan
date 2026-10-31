@@ -230,6 +230,8 @@ impl TypeChecker {
 
     /// Validate an imported extension signature or refuse the requested public item by name.
     /// A trait-qualified receiver without metadata cannot authorize an assumed receiver borrow mode.
+    /// The imported signature checks the arguments, but selection retained no implementation for this receiver, so a
+    /// call the arguments admit is refused with the reason selection recorded: tied candidates, or none.
     fn resolve_missing_native_method(
         &mut self,
         call: RustPathMethodCall<'_>,
@@ -240,7 +242,8 @@ impl TypeChecker {
             .and_then(|metadata| self.rust_extension_trait_import_for_call(metadata, call.method))
             .or_else(|| self.unique_rust_trait_import_for_method_call(call.method));
         if let Some(signature) = claimed.as_ref().and_then(|import| import.signature.as_ref()) {
-            return self.validate_rust_trait_method_call(RustTraitMethodCall {
+            let errors_before = self.errors.len();
+            let result = self.validate_rust_trait_method_call(RustTraitMethodCall {
                 rust_path: call.rust_path,
                 method: call.method,
                 sig: signature,
@@ -250,6 +253,17 @@ impl TypeChecker {
                 preserves_lookup_arg_shape: preserves_shape,
                 span: call.span,
             });
+            let tied = self.tied_rust_trait_callees.remove(&call.span);
+            if self.errors.len() == errors_before {
+                let gap = match tied.as_deref() {
+                    Some(candidates) => errors::NativeCalleeGap::Ambiguous(candidates),
+                    None => errors::NativeCalleeGap::NoCandidate,
+                };
+                let callee = format!("rust::{}.{}", call.rust_path, call.method);
+                self.errors
+                    .push(errors::rust_callee_not_selected(&callee, gap, call.span));
+            }
+            return result;
         }
         if metadata.is_none() && self.receiver_names_rust_trait_import(call.receiver_binding, call.method) {
             self.errors.push(errors::rust_trait_receiver_mode_unavailable(
@@ -309,6 +323,7 @@ impl TypeChecker {
         preserves_shape: bool,
     ) -> Option<ResolvedType> {
         // ---- Receiver contract ----
+        let errors_before = self.errors.len();
         let signature = &selected.signature;
         if !receiver_is_type
             && Self::rust_signature_has_receiver(signature)
@@ -367,7 +382,7 @@ impl TypeChecker {
             .map(|receiver| self.rusttype_native_target(&receiver).unwrap_or(receiver))
             .map(|receiver| self.rust_closed_owner(&receiver, owner, call.rust_path))
             .map(|receiver| self.primitive_receiver(receiver, owner));
-        self.retain_checked_rust_method(
+        let retained = self.retain_checked_rust_method(
             selected,
             if specialized.specializes_owner {
                 &[]
@@ -382,6 +397,14 @@ impl TypeChecker {
             &result,
             call.span,
         );
+        match retained {
+            // The retained receiver can fix a watched local's open owner arguments (#2481).
+            Ok(()) if !receiver_is_type => {
+                self.fix_open_rust_binding_by_receiver(call.receiver_expr, owner, call.rust_path, call.span)
+            }
+            Err(refusal) if self.errors.len() == errors_before => self.errors.push(refusal),
+            _ => {}
+        }
         let result = self
             .type_info
             .rust
@@ -571,6 +594,8 @@ impl TypeChecker {
                 owner,
                 method: call.method.to_owned(),
                 type_params: parameters,
+                native: None,
+                native_item: None,
             },
         );
     }

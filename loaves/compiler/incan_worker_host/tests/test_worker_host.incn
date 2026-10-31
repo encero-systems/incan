@@ -67,11 +67,14 @@ def settings(socket: str, idle_millis: int, margin: int, owner: Option[u32]) -> 
     )
 
 
-def request_text(generation: str, command: str) -> str:
+def request_text(generation: str, command: str, retire_after: bool = false) -> str:
     """A request document for a formatting run, as Oven sends it."""
     arguments = f"[\"{command}\",\"/p/unit.json\",\"src/main.incn\",\"--check\"]"
     sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
-    return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}}}"
+    mut policy = ""
+    if retire_after:
+        policy = ",\"retire_after\":true"
+    return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}{policy}}}"
 
 
 def caller(socket: str, payload: str) -> Result[Connection, str]:
@@ -204,6 +207,17 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
     )
     expected = f"{{\"arguments\":[\"--fmt\",\"/p/unit.json\",\"src/main.incn\",\"--check\"],\"cwd\":\"/p\",\"generation\":\"{GENERATION}\",\"schema\":\"{SCHEMA}\",\"stderr\":\"/p/r.err\",\"stdout\":\"/p/r.out\"}}"
     assert request.to_json().map_err((error) => error.message())? == expected
+    # Only a request that requires teardown after its activation names that lifetime.
+    retiring = request_document(
+        GENERATION,
+        ["--fmt", "/p/unit.json", "src/main.incn", "--check"],
+        "/p",
+        "/p/r.out",
+        "/p/r.err",
+        true,
+    )
+    retiring_text = expected.replace(",\"schema\"", ",\"retire_after\":true,\"schema\"")
+    assert retiring.to_json().map_err((error) => error.message())? == retiring_text
     return Ok(None)
 
 
@@ -224,12 +238,20 @@ pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Re
     mut over_bound = raw_caller(socket, "99999999".encode("utf-8"))?
     mut not_json = caller(socket, "{not json")?
     mut unserved = caller(socket, request_text(GENERATION, "--run"))?
+    invalid_policy = request_text(GENERATION, "--fmt").replace("\"cwd\"", "\"retire_after\":\"yes\",\"cwd\"")
+    mut invalid_lifetime = caller(socket, invalid_policy)?
     mut valid = caller(socket, request_text(GENERATION, "--fmt"))?
     request = served(host)?
     assert is_format(request)
     assert request.arguments == ["/p/unit.json", "src/main.incn", "--check"]
     assert request.cwd == "/p" and request.stdout == "/p/r.out" and request.stderr == "/p/r.err"
-    for refused in [reply(not_a_length)?, reply(over_bound)?, reply(not_json)?, reply(unserved)?]:
+    for refused in [
+        reply(not_a_length)?,
+        reply(over_bound)?,
+        reply(not_json)?,
+        reply(unserved)?,
+        reply(invalid_lifetime)?,
+    ]:
         assert exit_of(refused) == 1
         assert reason_of(refused) != ""
         assert not retired(refused)
@@ -333,6 +355,21 @@ pub def test_a_footprint_over_the_ceiling_retires_the_worker_at_once() -> Result
         Some(reason) =>
             assert reason == Retirement.Footprint
         None => return Err("a footprint over the ceiling did not retire the worker")
+    check_one_activation_retirement()?
+    return Ok(None)
+
+
+def check_one_activation_retirement() -> Result[None, str]:
+    """A caller can require process teardown after one successful activation, even with no measured footprint."""
+    socket = socket_path("one-activation")
+    mut host = host_for(settings(socket, 10000, FOOTPRINT_MARGIN, None))?
+    mut client = caller(socket, request_text(GENERATION, "--fmt", true))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), -1)
+    completed = reply(client)?
+    assert exit_of(completed) == 0 and retired(completed)
+    assert withdrawn(socket)
+    assert ended(host)
     return Ok(None)
 
 

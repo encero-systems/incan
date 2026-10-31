@@ -272,10 +272,40 @@ pub def insert(root: Path, top: str, staged: Path, additions: list[Entry]) -> Re
 
     Only the pages on changed paths are written, into `staged` for the caller to install; every other page is shared.
     """
+    ordered = sorted_entries(additions)
+    if top == "":
+        return build(staged, ordered)
     mut current = top
-    for addition in sorted_entries(additions):
+    for addition in ordered:
         current = insert_one(root, current, staged, addition)?
     return Ok(current)
+
+
+pub def staged_pages(staged: Path, roots: list[str]) -> Result[list[Path], IndexError]:
+    """
+    New pages reachable from the final roots, excluding intermediate insertion roots and reused installed subtrees.
+
+    A staged page can reference staged or installed children. An installed child is immutable and cannot reach a
+    newly staged page, so this walk stops at it instead of reading the unchanged tree.
+    """
+    mut pending = roots
+    mut seen: set[str] = set()
+    mut result: list[Path] = []
+    mut index = 0
+    while index < len(pending):
+        name = pending[index]
+        index += 1
+        if name == "" or name in seen:
+            continue
+        seen.add(name)
+        path = staged.joinpath(f"{name}.page")
+        if not path.is_file():
+            continue
+        page = decoded_page(path, name)?
+        result.append(path)
+        if page.level > 0:
+            pending.extend([entry.child for entry in page.entries])
+    return Ok(result)
 
 
 def insert_one(root: Path, top: str, staged: Path, addition: Entry) -> Result[str, IndexError]:

@@ -5,8 +5,8 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError
 from scratch import scratch_directory
-from segment_store import EXPECT_ABSENT, Snapshot, begin, commit, get, payload_path, put, put_payload, snapshot
-from sealed_set import ExternalReference, Profile, Record, SetSpec, admit, export_set, record_key, readmit, verify
+from segment_store import EXPECT_ABSENT, Snapshot, begin, commit, get, payload_path, put, put_payload, snapshot, read_counts
+from sealed_set import ExternalReference, Profile, Record, SetSpec, admit, export_set, mapped_value, record_key, readmit, verify
 
 
 pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result[None, str]:
@@ -54,6 +54,7 @@ pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result
     assert left_key != right_key
     assert get(both, left_key).map_err((error) => error.message())? != None
     assert get(both, right_key).map_err((error) => error.message())? != None
+    prove_mapped_value(both, spec, payload)?
     assert inventory(home.joinpath("payloads"))? == payloads_before
     bundle_spec = specification(profile, "toolchain-bundle", [payload])
     bundle = base.joinpath("bundle")
@@ -82,6 +83,21 @@ pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result
     # 4. Damage and invalid identities are errors before any publication.
     prove_refusals(base, source, first, spec, left, home, root, payload)?
     assert inventory(home)? == before
+    return Ok(None)
+
+
+def prove_mapped_value(view: Snapshot, spec: SetSpec, other_digest: str) -> Result[None, str]:
+    """Map an exact revision while copying only its envelope, and refuse a different selected value digest."""
+    key = record_key(spec, spec.records[0]).map_err((error) => error.message())?
+    envelope = get(view, key).map_err((error) => error.message())?.unwrap_or(b"")
+    value_digest = hexlify(sha256.digest(b"shared value"))
+    before = read_counts().decoded
+    mapped = mapped_value(view, spec, spec.records[0], value_digest).map_err((error) => error.message())?
+    assert read_counts().decoded - before == len(envelope)
+    assert mapped.to_bytes() == b"shared value"
+    match mapped_value(view, spec, spec.records[0], other_digest):
+        Ok(_) => assert false, "a different value digest was accepted for an admitted revision"
+        Err(_) => pass
     return Ok(None)
 
 
@@ -413,6 +429,15 @@ def prove_frozen_readmission(
     assert restored.digest == original.digest
     assert payload_bytes(home.joinpath("payloads"))? == 30
     assert home.joinpath("quarantine").is_dir()
+    spec = verify(directory, root, profile).map_err((error) => error.message())?
+    digest = hexlify(sha256.digest(b"shared value"))
+    value_file = payload_path(home, digest)
+    value_file.chmod(false).map_err((error) => error.message())?
+    value_file.write_bytes(b"damaged value").map_err((error) => error.message())?
+    match mapped_value(restored, spec, spec.records[0], digest):
+        Ok(_) => assert false, "a damaged mapped value was accepted"
+        Err(error) => assert error.kind == "integrity", error.message()
+    readmit(home, directory, root, profile).map_err((error) => error.message())?
     segment = home.joinpath("segments").joinpath(f"{restored.segments[len(restored.segments) - 1]}.seg")
     bytes = segment.read_bytes().map_err((error) => error.message())?
     segment.write_bytes(bytes[:len(bytes) - 1]).map_err((error) => error.message())?

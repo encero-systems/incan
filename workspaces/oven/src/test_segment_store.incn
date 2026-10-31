@@ -11,6 +11,7 @@ from std.hash import file_digest, sha256
 from std.io import BytesIO
 from store_index import Entry, Location, build, entries as index_entries
 from std.fs import Path
+from pub::incan_platform.durability import sync_ordered
 from scratch import scratch_directory
 from segment_store import (
     EXPECT_ABSENT,
@@ -20,6 +21,8 @@ from segment_store import (
     StoreError,
     begin,
     commit,
+    commit_group,
+    commit_pinned,
     compact,
     delete,
     get,
@@ -33,6 +36,8 @@ from segment_store import (
     snapshot,
     fork,
     read_counts,
+    lease,
+    durable_syncs,
     repair_current,
     quarantine_record,
 )
@@ -95,6 +100,13 @@ pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_an
     assert text(lookup(deleted, "a")) == "<deleted>"
     assert text(lookup(deleted, "b")) == "<absent>"
     assert keys(deleted).map_err((error) => error.message())? == []
+    # Repeated pins of one exact snapshot share one descriptor, without another file publication.
+    held = lease(first).map_err((error) => error.message())?
+    leases = root.joinpath("leases")
+    before = len(leases.iterdir().map_err((error) => error.message())?)
+    assert before == 1, "an execution pin published a duplicate durable descriptor"
+    another = lease(first).map_err((error) => error.message())?
+    assert len(leases.iterdir().map_err((error) => error.message())?) == before
     return Ok(None)
 
 
@@ -125,6 +137,27 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     assert retained_inventory(root)? == retained
     assert retained_bytes(root)? == size_before
     println("S1 unchanged commit: 0 added files, 0 changed bytes, 0 manifest writes")
+    # A transaction retains only its final index pages, never intermediate roots from inserting its entries.
+    page_store = scratch.path().joinpath("page-store")
+    barriers = durable_syncs()
+    mut batch = begin(snapshot(page_store).map_err((error) => error.message())?)
+    for key in ["a", "b", "c", "d"]:
+        batch = put(batch, key, b"value")
+    _ = commit(batch).map_err((error) => error.message())?
+    assert durable_syncs() - barriers == 2, "a request did not use exactly the graph and acknowledgment barriers"
+    assert count_files(page_store.joinpath("indexes")) == 1, "publication retained intermediate index pages"
+    # One request updates independent views under one CURRENT switch; a conflict changes neither view.
+    other = snapshot(root, "project").map_err((error) => error.message())?
+    group = [put(begin(landed), "group", b"home"), put(begin(other), "group", b"project")]
+    grouped = commit_group(group).map_err((error) => error.message())?
+    assert grouped.generation == landed.generation + 1
+    selected = snapshot(root, "project").map_err((error) => error.message())?
+    assert selected.generation == grouped.generation
+    assert text(lookup(grouped, "group")) == "home" and text(lookup(selected, "group")) == "project"
+    assert commit_group(group).map_err((error) => error.message())?.generation == grouped.generation
+    conflict = [put(begin(grouped), "new", b"hidden"), put(begin(selected), "group", b"wrong", EXPECT_ABSENT)]
+    assert error_kind(commit_group(conflict)) == "conflict"
+    assert text(lookup(snapshot(root).map_err((error) => error.message())?, "new")) == "<absent>"
     prove_concurrent_writers(scratch.path())?
     return Ok(None)
 
@@ -136,6 +169,10 @@ pub def test_damage_is_an_error_never_absence_or_an_older_value() -> Result[None
     """
     scratch = scratch_directory()?
     root = scratch.path().joinpath("store")
+    match sync_ordered(root.joinpath("missing").0):
+        Ok(_) => return Err("a missing synchronization target was reported as durable")
+        Err(message) =>
+            assert message != ""
     assert write_one(root, "a", "old").map_err((error) => error.message())?.generation > 0
     newer = write_one(root, "a", "newer").map_err((error) => error.message())?
     damage_last_byte(root.joinpath("segments").joinpath(f"{newer.segments[1]}.seg"))?
@@ -281,8 +318,9 @@ pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, 
     for size in [1, 65536, 4194304]:
         value = repeated(size)?
         root = scratch.path().joinpath(f"value-{size}")
-        commit(put(begin(snapshot(root).map_err((error) => error.message())?), "value", value))
-            .map_err((error) => error.message())?
+        commit(put(begin(snapshot(root).map_err((error) => error.message())?), "value", value)).map_err(
+            (error) => error.message(),
+        )?
         latest = snapshot(root).map_err((error) => error.message())?
         before = read_counts()
         found = lookup(latest, "value").map_err((error) => error.message())?
@@ -296,8 +334,10 @@ pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, 
                 decoded = owned(view)
                 assert read_counts().decoded - after.decoded == size
                 assert decoded == value
-            Lookup.Deleted => assert false, "the stored value reads as deleted"
-            Lookup.Absent => assert false, "the stored value reads as absent"
+            Lookup.Deleted =>
+                assert false, "the stored value reads as deleted"
+            Lookup.Absent =>
+                assert false, "the stored value reads as absent"
         println(
             f"S2 mapped view: value_bytes={size} frame_bytes_checked={after.bytes - before.bytes} lookup_copied_bytes={after.copied - before.copied} lookup_decoded_bytes={after.decoded - before.decoded} owned_decoded_bytes={size}",
         )
@@ -453,11 +493,12 @@ def proof_command(test: str) -> Result[Command, str]:
 
 
 def crash_child() -> Result[None, str]:
-    """Attempt one two-record transaction; the selected publication boundary terminates the process."""
+    """Attempt a pinned multi-view request; the selected publication boundary terminates the process."""
     root = Path(get_or("INCAN_STORE_PROOF_ROOT", ""))
     base = snapshot(root).map_err((error) => error.message())?
     transaction = put(put(begin(base), "b", b"two"), "c", b"three")
-    commit(transaction).map_err((error) => error.message())?
+    selected = put(begin(snapshot(root, "project").map_err((error) => error.message())?), "selected", b"unit")
+    commit_pinned([transaction, selected], "project").map_err((error) => error.message())?
     return Ok(None)
 
 
@@ -475,9 +516,12 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
         "manifest-synced",
         "manifest-replaced",
         "manifest-directory-synced",
+        "objects-durable",
+        "pin-acquired",
         "current-written",
         "current-synced",
         "current-replaced",
+        "current-durable",
         "root-synced",
     ]
     for boundary in boundaries:
@@ -490,11 +534,14 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
         stopped: i32 = 86
         assert status.code() == Some(stopped), f"boundary {boundary} did not terminate the writer"
         reopened = snapshot(root).map_err((error) => error.message())?
+        project = snapshot(root, "project").map_err((error) => error.message())?
         assert text(lookup(reopened, "a")) == "one"
         if reopened.generation == old.generation:
+            assert text(lookup(project, "selected")) == "<absent>"
             assert text(lookup(reopened, "b")) == "<absent>"
             assert text(lookup(reopened, "c")) == "<absent>"
         else:
+            assert text(lookup(project, "selected")) == "unit"
             assert reopened.generation == old.generation + 1
             assert text(lookup(reopened, "b")) == "two"
             assert text(lookup(reopened, "c")) == "three"

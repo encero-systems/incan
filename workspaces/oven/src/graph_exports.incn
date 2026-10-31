@@ -1,0 +1,50 @@
+"""Checked graph exports are claimed and published once through the home bakery."""
+
+from std.fs import Path
+from std.fs.locking import FileLock
+from bakery import bakery, claim, find, seal, staging, view_directory
+from home import home
+from unit_freshness import fingerprint
+
+
+pub def export_file(digest: str) -> Result[Path, str]:
+    """Locate a disposable view of one portable export, independently of the requesting project."""
+    return Ok(home()?.joinpath("cache/codegraph-exports").joinpath(digest).joinpath("unit.incngraph"))
+
+
+pub def exported(entry: Path) -> Result[bool, str]:
+    """Find and integrity-check the selected export, restoring its view only from its canonical bakery fact."""
+    store = bakery()?
+    match find(store, entry.parent().name())?:
+        None => return Ok(false)
+        Some(fact) =>
+            view_directory(store, fact, entry.parent())?
+            return Ok(true)
+
+
+pub def claim_export(entry: Path) -> Result[FileLock, str]:
+    """Claim this completed export identity; callers recheck after acquiring the claim."""
+    return claim(bakery()?, entry.parent().name())
+
+
+pub def pending_export(entry: Path, provenance: Path) -> Result[Path, str]:
+    """
+    Stage one producer's export privately; unchecked diagnostics are never admitted as a relocatable fact.
+
+    Staging provenance distinguishes equal source at different roots within one request. It is not an input to the
+    checked export identity and is never published in a graph record.
+    """
+    pending = fingerprint([entry.parent().name(), provenance.0])?
+    return Ok(staging(bakery()?, pending)?.joinpath("unit.incngraph"))
+
+
+pub def publish_export(entry: Path, pending: Path, name: str = "") -> Result[Path, str]:
+    """Admit a complete checked graph and its interface, then select a disposable view for this requester."""
+    store = bakery()?
+    identity = entry.parent().name()
+    mut binding = name
+    if binding == "":
+        binding = f"graph\t{identity}"
+    fact = seal(store, identity, pending.parent(), "graph", binding, [], "checked graph export")?
+    view_directory(store, fact, entry.parent())?
+    return Ok(entry)

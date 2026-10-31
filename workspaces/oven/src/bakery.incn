@@ -37,6 +37,7 @@ from segment_store import (
     Lookup,
     StoreError,
     Snapshot,
+    Transaction,
     begin,
     claim as claim_key,
     commit,
@@ -50,7 +51,7 @@ from segment_store import (
     payload_intact,
     payload_path,
     put,
-    put_payloads,
+    prepare_payloads,
     snapshot,
 )
 from unit import UnitDescription
@@ -227,27 +228,41 @@ pub def seal(
     3. Remove the staging directory.
     """
     clock = begin_work()
-    # 1. Payload files are stored before any record names them.
+    prepared = prepare_seal(store, identity, staged, kind, name, reaches, provenance)?
+    published = commit(prepared.transaction).map_err(store_failure)?
+    trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
+    record_work("bakery_seal", identity, clock)
+    return Ok(prepared.fact)
+
+
+pub model PreparedFact:
+    """Ordered immutable payloads and an unpublished record transaction; the producer retains its claim until commit."""
+
+    pub fact: Fact
+    pub transaction: Transaction
+
+
+pub def prepare_seal(
+    store: Path,
+    identity: str,
+    staged: Path,
+    kind: str,
+    name: str,
+    reaches: list[str],
+    provenance: str,
+) -> Result[PreparedFact, str]:
+    """Store immutable payloads before preparing their records; only the caller's commit makes the unit visible."""
     relatives = staged_files(staged, "")?
-    digests = put_payloads(store, [staged.joinpath(relative) for relative in relatives]).map_err(store_failure)?
+    digests = prepare_payloads(store, [staged.joinpath(relative) for relative in relatives]).map_err(store_failure)?
     mut files: list[FactFile] = []
     for index in range(len(relatives)):
         files.append(stored_file(staged, relatives[index], digests[index])?)
     fact = Fact(identity=identity, kind=kind, name=name, reaches=reaches, files=files)
-    # 2. A reader's snapshot holds either no record or the whole unit; a damaged older record is replaced.
-    base = snapshot(store).map_err(store_failure)?
-    mut transaction = begin(base)
-    record = encode_fact(fact, provenance)?.encode("utf-8")
-    # The caller holds the claim and bakes only after judging any existing record unusable: absent, damaged, or no
-    # longer current for its linked libraries. So this record may repair or replace it.
-    transaction = put(transaction, record_key(identity), record, EXPECT_REPAIR)
+    mut transaction = begin(snapshot(store).map_err(store_failure)?)
+    transaction = put(transaction, record_key(identity), encode_fact(fact, provenance)?.encode("utf-8"), EXPECT_REPAIR)
     transaction = put(transaction, name_key(name), identity.encode("utf-8"))
-    published = commit(transaction).map_err(store_failure)?
-    # 3. Staging belongs to this bake only.
     _ = staged.remove_tree()
-    trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
-    record_work("bakery_seal", identity, clock)
-    return Ok(fact)
+    return Ok(PreparedFact(fact=fact, transaction=transaction))
 
 
 def stored_file(staged: Path, relative: str, digest: str) -> Result[FactFile, str]:
@@ -557,7 +572,7 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     """
     The current view of the unit a directory was viewed from, for readers of a library's artifacts.
 
-    A view whose files were changed or removed is cloned again. A view whose unit is no longer baked, or is damaged, is
+    Only changed or missing view members are cloned again; intact members keep their file generations. A view whose unit is no longer baked, or is damaged, is
     refused with a named integrity error; normal lookup never repairs frozen bytes.
     """
     record = directory.joinpath(VIEW_RECORD)
@@ -568,8 +583,27 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     match find(store, identity)?:
         None => return Ok(None)
         Some(fact) =>
-            view_directory(store, fact, directory)?
+            repair_view(store, fact, directory)?
             return Ok(Some(directory))
+
+
+def repair_view(store: Path, fact: Fact, directory: Path) -> Result[None, str]:
+    """
+    Repair members of a verified unit view independently, preserving every intact member's file generation.
+
+    Build publication still swaps a complete directory. Readers already selected this unit through its fact marker;
+    each damaged member is atomically replaced from its verified canonical payload instead of replacing its siblings.
+    Producer records already bound to intact views stay bound to them. A linked directory is replaced without
+    modifying its referent.
+    """
+    if directory.is_symlink():
+        return view_directory(store, fact, directory)
+    for file in fact.files:
+        target = directory.joinpath(file.path)
+        if is_record(file) and target.is_file():
+            continue
+        view_file(store, file, target)?
+    return admit_views(fact.files, directory, "")
 
 
 pub def forget_verified() -> None:

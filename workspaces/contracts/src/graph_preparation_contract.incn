@@ -1,0 +1,122 @@
+"""Preparation work bounds carried by the existing graph cases."""
+
+from std.fs import Path
+from files import make_directory, parse_json, read, required_text, remove, write
+from run import invoke
+
+
+pub def check_registry_preparation(incan: str, project: Path) -> Result[None, str]:
+    """
+    A warm inspection reads the installed registry closure and its completion once for all source projects.
+
+    1. Trace a fresh inspection after the case's ordinary commands have prepared its graphs.
+    2. Count registry decodes across the command, including explicit codegraph sources.
+    3. Remove the observations after checking the bound.
+    """
+    # 1. Only this command writes into its observation directory.
+    directory = project.joinpath(".preparation-work")
+    make_directory(directory)?
+    outcome = invoke(incan, ["inspect", "codegraph", ".", "--query", "refs", "helper"], project,
+                     [f"INCAN_JEC_TRACE={directory.0}"])?
+    if outcome.code != Some(0):
+        return Err(f"preparation inspection failed: {outcome.stderr}")
+    # 2. Registry completion is part of the same reading, rather than a second source project's reading.
+    mut readings = 0
+    mut completions = 0
+    mut pages = 0
+    mut decoded: list[str] = []
+    mut closure = ""
+    for path in directory.iterdir().map_err((error) => error.message())?:
+        for line in read(path)?.split("\n"):
+            if line == "":
+                continue
+            record = parse_json(line)?
+            if required_text(record, "category")? == "registry_index":
+                readings += 1
+                closure = required_text(record, "input")?
+            if required_text(record, "category")? == "registry_completion":
+                completions += 1
+            if required_text(record, "category")? == "registry_page":
+                pages += 1
+            if required_text(record, "category")? == "json_decode":
+                decoded.append(required_text(record, "input")?)
+        remove(path)?
+    # 3. Observation files never become fixture inputs for a later command.
+    directory.rmdir().map_err((error) => error.message())?
+    if readings != 1:
+        return Err(f"one inspection read the registry closure {readings} times; expected once")
+    if completions != 1:
+        return Err(f"one inspection reported {completions} registry completions; expected once")
+    if pages != 1 or closure in decoded:
+        return Err(f"a warm inspection read {pages} typed registry pages; closure JSON decoded={closure in decoded}")
+    return Ok(None)
+
+
+pub def check_source_preparation(incan: str, project: Path) -> Result[None, str]:
+    """
+    Equivalent source selections prepare once, share source readings, and still refuse cycles.
+
+    1. Inspect the relationship case with two spellings of the same explicit source project.
+    2. Require one source preparation and one parse of each source manifest.
+    3. A source project selecting its ancestor is still refused.
+    """
+    context = project.joinpath("context")
+    if not context.joinpath("loaf.toml").is_file():
+        return Ok(None)
+    # 1. Restore the authored selection even when the inspection fails.
+    manifest = project.joinpath("loaf.toml")
+    original = read(manifest)?
+    arguments = ["inspect", "codegraph", ".", "--query", "refs", "helper"]
+    ordinary = invoke(incan, arguments, project)?
+    write(manifest, original.replace('["context"]', '["context", "./context"]'))?
+    directory = project.joinpath(".source-work")
+    make_directory(directory)?
+    trace = directory.joinpath("preparation.trace")
+    result = invoke(incan, ["inspect", "codegraph", ".", "--query", "refs", "helper"], project,
+                    [f"INCAN_JEC_TRACE={directory.0}", f"OVEN_TRACE={trace.0}"])
+    write(manifest, original)?
+    outcome = result?
+    if outcome.code != Some(0):
+        return Err(f"source preparation inspection failed: {outcome.stderr}")
+    if ordinary.code != outcome.code or ordinary.stdout != outcome.stdout:
+        return Err("equivalent source selections changed the graph answer")
+    # 2. Aliases of a canonical source root contribute its graph only once.
+    discoveries = [line for line in read(trace)?.split("\n")
+                   if line.startswith(f"oven: graph unit discovery {context.0}:")]
+    mut manifests: Dict[str, int] = {}
+    mut activations: Dict[str, int] = {}
+    for path in directory.iterdir().map_err((error) => error.message())?:
+        if path.name().endswith(".jsonl"):
+            for line in read(path)?.split("\n"):
+                if line == "":
+                    continue
+                record = parse_json(line)?
+                if required_text(record, "category")? == "manifest_parse":
+                    name = required_text(record, "input")?
+                    manifests[name] = manifests.get(name).unwrap_or(0) + 1
+                if required_text(record, "category")? == "graph_resolution":
+                    name = required_text(record, "input")?.split("|")[0]
+                    activations[name] = activations.get(name).unwrap_or(0) + 1
+        remove(path)?
+    directory.rmdir().map_err((error) => error.message())?
+    if len(discoveries) != 1:
+        return Err(f"one inspection prepared the same source project {len(discoveries)} times; expected once")
+    for name in [manifest.0, context.joinpath("loaf.toml").0]:
+        if manifests.get(name).unwrap_or(0) != 1:
+            return Err(f"source preparation did not report one parse of {name}")
+    for name in [project.0, context.0]:
+        if activations.get(name).unwrap_or(0) != 1:
+            return Err(f"source preparation did not activate {name} exactly once")
+    for name in manifests.keys():
+        if manifests[name] != 1:
+            return Err(f"one inspection parsed {name} {manifests[name]} times; expected once")
+    # 3. Completed-project reuse cannot hide an ancestor cycle.
+    source_manifest = context.joinpath("loaf.toml")
+    source_original = read(source_manifest)?
+    write(source_manifest, source_original + '\n[tool.incan.codegraph]\nsources = [".."]\n')?
+    cycle = invoke(incan, ["inspect", "codegraph", ".", "--query", "refs", "helper"], project)
+    write(source_manifest, source_original)?
+    refused = cycle?
+    if refused.code == Some(0) or "cyclic codegraph source selection" not in refused.stderr:
+        return Err("source preparation reuse hid an ancestor cycle")
+    return Ok(None)

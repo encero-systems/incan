@@ -19,6 +19,9 @@ from engine_capture import (
     capture_with,
     decoded_epoch,
 )
+from engine_epochs import capture_submit, prepare_submit, after_projection
+from segment_store import commit
+from engine_messages import Submit
 
 const PIN: str = """{"schema": "incan.toolchain/1", "driver": "bin/driver", "sysroot": "sysroot",
 "rust_abi": ["rust-abi/std.rustabi"], "externs": [{"name": "runtime", "path": "native/runtime-1/libruntime.rlib"}],
@@ -104,7 +107,8 @@ pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[Non
     assert len(epoch.inputs) == 5 and len(epoch.absent) == 2
     assert epoch.input(helper.0) is not None
     match epoch.input(app.joinpath("src/vocab.incn").0):
-        Some(vocabulary) => assert vocabulary.role == InputRole.Vocabulary
+        Some(vocabulary) =>
+            assert vocabulary.role == InputRole.Vocabulary
         None => return Err("the declared vocabulary was not captured")
     second = capture(request, Some(epoch), admitted, 0)?
     assert second.outcome == CaptureOutcome.Unchanged
@@ -115,6 +119,33 @@ pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[Non
     assert epoch_of(second)? == epoch
     # The test fixture beside the program is in nobody's reach.
     assert not touched(epoch, app.joinpath("tests/fixture.incn"))
+    # Persisted unchanged capture borrows its revision without encoding it or opening a publication transaction.
+    store = scratch.path().joinpath("engine-store")
+    mut submit = Submit(
+        command="run",
+        view="project",
+        input_selection="debug",
+        requested_roots=app.joinpath("src/main.incn").0,
+        options="",
+        observation_policy="",
+    )
+    persisted = capture_submit(store, submit)?
+    repeated = capture_submit(store, submit)?
+    assert persisted.encodings == 1 and persisted.commits == 1
+    assert repeated.encodings == 0 and repeated.commits == 0
+    assert repeated.identity_encodings == 0
+    assert repeated.revision == persisted.revision and repeated.epoch == persisted.epoch
+    # Projection's excluded target directory is captured before publication, so the first rerun writes nothing.
+    submit.view = "project-after-projection"
+    prepared = prepare_submit(store, submit)?
+    make_directory(app.joinpath("src/target/incan"))?
+    projected = after_projection(prepared)?
+    match projected.transaction:
+        Some(transaction) => _ = commit(transaction).map_err((error) => error.message())?
+        None => return Err("first capture did not prepare its records")
+    first_rerun = prepare_submit(store, submit)?
+    assert first_rerun.encodings == 0 and first_rerun.commits == 0
+    assert first_rerun.identity_encodings == 0
     return Ok(None)
 
 
@@ -227,7 +258,8 @@ pub def test_a_file_changing_during_its_read_is_retried_then_reported_unstable()
     epoch = epoch_of(once)?
     expected = epoch_of(capture(request, None, admitted, 0)?)?
     match expected.input(helper.0):
-        Some(input) => assert digest_of(epoch, helper) == input.digest
+        Some(input) =>
+            assert digest_of(epoch, helper) == input.digest
         None => return Err("the helper was not captured")
     always = capture_with(request, None, admitted, 0, (path) => disturbing(path, true))?
     assert always.outcome == CaptureOutcome.Unstable
@@ -322,6 +354,19 @@ pub def test_build_captures_the_package_membership_without_its_fixtures() -> Res
     third = capture(request, Some(epoch), admitted, 0)?
     assert third.outcome == CaptureOutcome.Changed
     assert third.counters.in_reach.listings == 1 and third.counters.in_reach.reads == 1
+    # A whole-unit producer captures the same conservative inventory for a file root, including future additions.
+    unit_request = CaptureRequest(
+        roots=[app.joinpath("src/main.incn").0],
+        selection=InputSelection(command="run"),
+        whole_unit=true,
+    )
+    unit_epoch = epoch_of(capture(unit_request, None, admitted, 0)?)?
+    assert touched(unit_epoch, app.joinpath("src/helper.incn"))
+    assert not touched(unit_epoch, app.joinpath("tests/fixture.incn"))
+    write(app.joinpath("src/later.incn"), "pub def later() -> None:\n    pass\n")?
+    changed_unit = capture(unit_request, Some(unit_epoch), admitted, 0)?
+    assert changed_unit.outcome == CaptureOutcome.Changed
+    assert changed_unit.counters.in_reach.reads == 1
     # A command whose roots capture does not know is refused, not guessed at.
     assert refused(capture(CaptureRequest(roots=[app.0], selection=InputSelection(command="check")), None, admitted, 0))
     return Ok(None)

@@ -18,9 +18,10 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     """
     Exercise the real Rust test producer and reporter, including a test-only local dependency.
 
-    1. Create a Rust library with a passing test and a failing test using a test-only helper.
+    1. Create a Rust library with a passing test and a failing test using a test-only helper, and a module of its own.
     2. Compile and run both tests, requiring a failing command outcome; rediscover an unavailable old witness.
-    3. Repair the failing assertion and require the same harness path to rebuild and pass.
+    3. Repair the failing assertion, removing the module and its file, and require the same harness path to rebuild
+       and pass.
     4. Compile procedural macro unit and integration harnesses in their producer's host domain.
     5. Require optimized qualification and iteration to preserve the same edit/revert behavior.
     6. Reuse and execute the test harnesses repeatedly from another checkout.
@@ -49,7 +50,11 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     write(alternate.joinpath("src/lib.rs"), helper_source.replace("{ 7 }", "{ 9 }"))?
     write(helper.joinpath("src/lib.incn"), incan_fixture("pub def facade_only() -> int:", "return 99"))?
     source = project.joinpath("src/lib.rs")
-    write(source, rust_tests(8))?
+    removed = project.joinpath("src/removed.rs")
+    write(removed, "/// The module's fixture value.\npub const VALUE: u32 = 7;\n")?
+    module = "/// A module the repair removes.\npub mod removed;\n"
+    in_module = "#[test]\nfn in_module() { assert_eq!(removed::VALUE, 7); }\n"
+    write(source, module + in_module + rust_tests(8))?
     binary = "fn main() {}\n#[test]\nfn in_binary() { assert_eq!(facet_tests::value(), 7); }\n"
     write(project.joinpath("src/main.rs"), binary)?
     integration = "#[test]\nfn imported() { assert_eq!(facet_tests::value(), 7); }\n"
@@ -74,8 +79,9 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     # An older target view's unlocatable dependency witness is rediscovered, never mistaken for current inputs.
     write(Path(programs[0] + ".d"), "old: /unavailable/checkout/src/lib.rs\n")?
     assert build_rust_tests(request)? == programs
-    # 3. Source edits invalidate the ordinary executable proof.
+    # 3. Source edits invalidate the ordinary executable proof; the evidence that named a removed module is rescanned.
     write(source, rust_tests(7))?
+    removed.unlink().map_err((error) => error.message())?
     rebuilt = build_rust_tests(request)?
     assert rebuilt == programs
     for program in rebuilt:
