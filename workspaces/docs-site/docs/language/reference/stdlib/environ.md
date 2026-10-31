@@ -20,6 +20,8 @@ from std.environ import args, get, get_as, get_optional, get_or
 
 A key is invalid when it is empty or contains `=` or NUL.
 
+For a program started by `incan run`, the first argument names its executable view under the project's `target/` directory. Oven executes that view; a host executable-path query such as `rust::std::env::current_exe()` therefore reports the view's location, subject to the host's path resolution. `args()` itself does not resolve or authenticate its first argument.
+
 ```incan
 from std.environ import EnvironError, args, get, get_as, get_optional, get_or
 
