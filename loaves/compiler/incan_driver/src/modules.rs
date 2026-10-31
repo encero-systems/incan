@@ -112,7 +112,9 @@ pub fn library_source_seeds(
     source_files.sort();
 
     let entry_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let own_roots = session.own_standard_package().map(|policy| policy.namespace_roots);
+    let own_roots = session
+        .own_standard_package()
+        .map(|policy| policy.namespace_roots.as_slice());
     let mut logical_sources = BTreeMap::<Vec<String>, PathBuf>::new();
     let mut seeds = vec![(path.to_path_buf(), "main".to_string(), vec!["main".to_string()])];
     for source_file in source_files {

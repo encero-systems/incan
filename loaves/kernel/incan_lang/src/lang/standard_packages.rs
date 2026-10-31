@@ -1,86 +1,39 @@
-//! Compiler-pinned namespace ownership of ordinary standard packages, independent of SDK catalogs/profiles.
+//! Namespace ownership derived from the compiler's single standard-library catalog.
 //!
-//! These immutable facts describe policy only. A matching name or public DTO does not select trusted source or issue
-//! an installed namespace grant. Publication must retain genuine executable-relative source selection; installed use
-//! must additionally authenticate original checked package/generation associations.
+//! These immutable facts describe publication policy only. A matching package name does not select trusted source or
+//! issue an installed namespace grant. Publication retains genuine executable-relative source selection; installed use
+//! authenticates original checked package/generation associations.
 
-/// One compiler-owned package and the reserved top-level namespaces it may publish.
+use std::collections::BTreeMap;
+use std::sync::LazyLock;
+
+use super::stdlib::STDLIB_NAMESPACES;
+
+/// One ordinary standard package and the reserved top-level namespaces it may publish.
 #[derive(Debug, PartialEq, Eq)]
 pub struct StandardPackageNamespacePolicy {
     /// Canonical ordinary package name.
     pub package_name: &'static str,
     /// Reserved roots this package owns below `std`; compiler-only namespaces have no package issuer here.
-    pub namespace_roots: &'static [&'static str],
+    pub namespace_roots: Vec<&'static str>,
 }
 
-/// Compiler-pinned ordinary ownership registry; changing ownership requires a compiler source change.
-pub const STANDARD_PACKAGE_NAMESPACE_POLICIES: &[StandardPackageNamespacePolicy] = &[
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_vocab",
-        namespace_roots: &["vocab"],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_core",
-        namespace_roots: &[
-            "features",
-            "prelude",
-            "registry",
-            "result",
-            "reflection",
-            "this",
-            "derives",
-            "traits",
-            "runtime",
-        ],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_interop",
-        namespace_roots: &["interop"],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_system",
-        namespace_roots: &["environ", "io", "tempfile", "fs"],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_codecs",
-        namespace_roots: &["checksum", "encoding"],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_compression",
-        namespace_roots: &["compression"],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_data",
-        namespace_roots: &[
-            "collections",
-            "graph",
-            "hash",
-            "json",
-            "toml",
-            "math",
-            "uuid",
-            "datetime",
-            "regex",
-            "serde",
-        ],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_async",
-        namespace_roots: &["async"],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_observability",
-        namespace_roots: &["logging", "telemetry"],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_web",
-        namespace_roots: &["web"],
-    },
-    StandardPackageNamespacePolicy {
-        package_name: "incan_stdlib_testing",
-        namespace_roots: &["testing"],
-    },
-];
+/// Compiler-pinned publication policies, projected from the module catalog without a second ownership list.
+pub static STANDARD_PACKAGE_NAMESPACE_POLICIES: LazyLock<Vec<StandardPackageNamespacePolicy>> = LazyLock::new(|| {
+    let mut packages = BTreeMap::<_, Vec<_>>::new();
+    for namespace in STDLIB_NAMESPACES {
+        if let Some(package) = namespace.package {
+            packages.entry(package).or_default().push(namespace.name);
+        }
+    }
+    packages
+        .into_iter()
+        .map(|(package_name, namespace_roots)| StandardPackageNamespacePolicy {
+            package_name,
+            namespace_roots,
+        })
+        .collect()
+});
 
 /// Look up immutable compiler policy by canonical package name; this pure query confers no source/namespace grant.
 pub fn standard_package_namespace_policy(name: &str) -> Option<&'static StandardPackageNamespacePolicy> {

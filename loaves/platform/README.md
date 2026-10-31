@@ -12,7 +12,7 @@
 
 ## Contract
 
-- **It is not compiler work.** The platform never imports compiler or language-kernel Loaves, and never imports `std` packages. `std` wraps the platform, never the other way round.
+- **It is not compiler work.** The platform never imports compiler or language-kernel Loaves, and imports no standard package except `std.primitives`. That package is the shared leaf and depends on no other standard package; higher-level standard modules wrap the platform or the primitives.
 - **It wraps; it never reimplements.** Each primitive reaches its OS or Rust facility thinly, through interop (`rust::std`). Low level means precise and minimal, not homegrown.
 - **It carries no protocol content.** IPC carries bytes and peer identity only. Encoding a payload and knowing a message family belong to the protocol that sends it, so the owner and engine protocols live with Oven, and the compiler worker's side of `incan.compiler-worker/1` lives with its host, `incan_worker_host`.
 - **It bounds requests, not stores.** A bound applies to one frame or one read, never to what a connection or store holds over its lifetime.
@@ -45,3 +45,5 @@ Oven enables the canonical file channel with `INCAN_ENGINE_TRACE=<existing direc
 Oven retains separate file-read, JSON-decode, parse and hash spans: the phases measure different work even when their input locator is the same. Repeated reads remain visible because the underlying work actually repeats. Fixed operation names are checked at call sites rather than accepted as arbitrary text; reducing the emitter cost preserves those timing facts.
 
 When canonical and JEC exports are requested together, Oven completes the operation once and projects that same span into both formats, preserving identical end timestamps and byte counts. The canonical-only configuration uses the retained fixed-key emitter.
+
+`trace.WorkObserver` carries optional start and finish function pointers supplied together by the caller. Its empty default touches no clock or sink. The caller owns destination selection, compatibility exports and flushing, and configures the observer before store work begins. The store reports its six publication operations through this observer without importing Oven. Oven supplies its existing JEC adapter at process entry, preserving both canonical and legacy work channels.

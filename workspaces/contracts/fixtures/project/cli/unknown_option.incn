@@ -1,5 +1,6 @@
 # behavior: Every public command refuses unknown options before accessing operands and points to help.
 # cli-commands:
+#   explain --nonexistent
 #   --nonexistent
 #   run --nonexistent
 #   check --nonexistent

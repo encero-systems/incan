@@ -2,6 +2,8 @@
 
 from rust::std::io import Write
 from rust::std::os::unix::net import UnixStream
+from rust::std::process import Command
+from std.environ import get_or
 from std.json import JsonValue, parse
 from std.fs import Path
 from pub::incan_platform.trace import (
@@ -62,6 +64,7 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     scratch = scratch_directory()?
     trace_contract(scratch.path().0)?
     typed_trace_contract(scratch.path().0)?
+    trace_completion_contract(scratch.path())?
     path = scratch.path().joinpath("o.sock").0
     mut listener = listen(path, true)?
     mut client = dial(path)?
@@ -89,6 +92,15 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     assert answer.exit == 3
     assert answer.binary == "/p/target/bin/p"
     assert answer.trace == ["oven: x"]
+    # Closing releases the socket at once, also for another holder of the connection, so the peer reads the end of
+    # the stream although its own write was never read; closing again does nothing.
+    mut holder = server
+    send_document(client, request.to_json())?
+    server.close()?
+    assert holder.descriptor() == -1
+    assert refused_frame(receive_document(holder))
+    assert refused_frame(receive_document(client))
+    holder.close()?
     # A header states a length of eight digits, within the bound.
     assert padded(42) == "00000042"
     assert length_of(padded(MAX_FRAME).encode("utf-8"))? == MAX_FRAME
@@ -261,6 +273,57 @@ def typed_trace_contract(directory: str) -> Result[None, str]:
     # The byte counter borrows UTF-8 text rather than encoding an allocated copy.
     assert text_size("λ", Some(clock)) == 2
     assert text_size("λ", None) == 0
+    return Ok(None)
+
+
+def trace_completion_contract(root: Path) -> Result[None, str]:
+    """
+    A failed observation is reported once after the child's stderr; successful and disabled traces preserve bytes.
+
+    1. Write a program that prints both streams and exits seven.
+    2. Compare disabled, successful, unwritable and bounded observations through the public command.
+    """
+    # 1. Native exit makes the program's nonzero status explicit.
+    source = root.joinpath("output.incn")
+    program = (
+        "from rust::std::io import Write, stderr\n"
+        + "from rust::std::process import exit\n"
+        + "def main() -> None:\n"
+        + "    println(\"program stdout\")\n"
+        + "    mut output = stderr()\n"
+        + "    _ = output.write_all(b\"program stderr\\x0a\")\n"
+        + "    exit(7i32)\n"
+    )
+    source.write_text(program, "utf-8", "strict", None).map_err((error) => error.message())?
+    # 2. Several failed channels still produce only one completion warning.
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut oversized = "x"
+    while len(oversized) <= MAX_TEXT:
+        oversized += oversized
+    modes = ["off", "success", "missing", "compatibility", "bound"]
+    for mode in modes:
+        mut command = Command.new(binary)
+        command.arg("run").arg(source.0).env("OVEN_OWNER", "off").env("INCAN_ENGINE", "legacy")
+        command.env_remove("INCAN_ENGINE_TRACE").env_remove("INCAN_JEC_TRACE").env_remove("OVEN_TRACE")
+        command.env_remove("INCAN_ENGINE_REQUEST")
+        if mode == "success" or mode == "bound":
+            command.env("INCAN_ENGINE_TRACE", root.0)
+        if mode == "missing":
+            command.env("INCAN_ENGINE_TRACE", root.joinpath("missing/trace").0)
+            command.env("INCAN_JEC_TRACE", root.joinpath("missing/work").0)
+        if mode == "compatibility":
+            command.env("OVEN_TRACE", root.joinpath("missing/reasons").0)
+        if mode == "bound":
+            command.env("INCAN_ENGINE_REQUEST", oversized)
+        output = command.output().map_err((error) => str(error))?
+        assert output.status.code() == Some(7i32), mode
+        assert output.stdout == b"program stdout\x0a", mode
+        if mode == "off" or mode == "success":
+            assert output.stderr == b"program stderr\x0a", mode
+        elif mode == "bound":
+            assert output.stderr == b"program stderr\x0aincan: trace incomplete: text field exceeds its bound\x0a", mode
+        else:
+            assert output.stderr == b"program stderr\x0aincan: trace incomplete: output channel unavailable\x0a", mode
     return Ok(None)
 
 

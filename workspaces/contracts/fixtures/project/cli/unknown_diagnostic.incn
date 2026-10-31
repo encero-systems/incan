@@ -1,0 +1,12 @@
+# behavior: An unknown diagnostic code is refused with nearby catalog codes.
+# cli-commands:
+#   explain INCAN-T0002
+# expect-exit: 1
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown diagnostic code
+#   INCAN-T0001
+
+def main() -> None:
+    """Unknown diagnostic lookup does not compile a project."""
+    pass

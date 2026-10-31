@@ -6,7 +6,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
 from std.fs import Path
-from pub::incan_platform.ipc import Connection, Listener, listen, readable, session_id, stale
+from pub::incan_platform.ipc import Connection, Listener, listen, session_id, stale
 from decimal_text import digits_only
 from engine_channel import Channel, Envelope, SendOutcome
 from engine_endpoint import endpoint, owner_uid, transport
@@ -155,7 +155,7 @@ def service_client(mut client: Client, mut state: ServiceState) -> None:
 def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
     """Consume at most eight ready frames, then settle accepted requests within available credits."""
     for _turn in range(8):
-        if not readable(client.channel.transport).map_err(transport)?:
+        if not client.channel.transport.readable().map_err(transport)?:
             break
         frame = client.channel.receive()?
         match handle(client, state, frame):

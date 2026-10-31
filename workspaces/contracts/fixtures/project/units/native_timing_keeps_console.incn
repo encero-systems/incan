@@ -1,9 +1,11 @@
-# behavior: requesting native phase timing never changes what a build and run print: the timing records go to the Oven trace, so stdout and stderr are byte-identical to an untimed run
+# behavior: Requested native timing records command entry on both first and repeated runs without changing program streams.
 # environment:
 #   INCAN_NATIVE_TIMING=1
 # cli-commands:
 #   run src/main.incn
 #   run src/main.incn
+# expect-trace-contains:
+#   boundary=command_entered
 # expect-stdout:
 #   timed
 # expect-stderr:
