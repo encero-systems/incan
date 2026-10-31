@@ -12,7 +12,7 @@
 
 ## Contract
 
-- **It is not compiler work.** The platform never imports compiler or language-kernel Loaves, and never imports `std` packages. `std` wraps the platform, never the other way round.
+- **It is not compiler work.** The platform never imports compiler or language-kernel Loaves, and imports no standard package except `std.primitives`. That package is the shared leaf and depends on no other standard package; higher-level standard modules wrap the platform or the primitives.
 - **It wraps; it never reimplements.** Each primitive reaches its OS or Rust facility thinly, through interop (`rust::std`). Low level means precise and minimal, not homegrown.
 - **It carries no protocol content.** IPC carries bytes and peer identity only. Encoding a payload and knowing a message family belong to the protocol that sends it, so the owner and engine protocols live with Oven, and the compiler worker's side of `incan.compiler-worker/1` lives with its host, `incan_worker_host`.
 - **It bounds requests, not stores.** A bound applies to one frame or one read, never to what a connection or store holds over its lifetime.
@@ -39,3 +39,5 @@ A span carries run/request/work identities, its parent, producer and operation, 
 The current `rust::std::time::Instant` clock is labeled `process-monotonic`: it cannot expose the host epoch through its public API. Cross-process clock alignment, request-scoped paged trace retention and the compiler writer remain tracked boundaries of #2481 and DD-0013 §11.1; this module does not claim those proof rows. The existing Rust invocation writer is the bootstrap boundary until its host is Incan. No wall timestamp is used to reconstruct elapsed durations.
 
 Oven enables the canonical file channel with `INCAN_ENGINE_TRACE=<existing directory>`, writing `engine-oven-<pid>.jsonl`. `INCAN_ENGINE_RUN` and `INCAN_ENGINE_REQUEST` provide caller correlation across processes; absent overrides, the run is scoped to a process's clock lifetime and the request to the invocation process. Each span separately names that clock lifetime in `clock_id`. A wall-clock reading distinguishes lifetimes only; it never enters durations. `INCAN_JEC_TRACE` retains its existing `oven-<pid>.jsonl` export and `OVEN_TRACE` retains its text export (including the explicitly requested `-` stderr destination). These are format adapters over the platform observations and file writer. A relayed owner text line is not recorded twice as canonical work.
+
+`trace.WorkObserver` carries optional start and finish function pointers supplied together by the caller. Its empty default touches no clock or sink. The caller owns destination selection, compatibility exports and flushing, and configures the observer before store work begins. The store reports its six publication operations through this observer without importing Oven. Oven supplies its existing JEC adapter at process entry, preserving both canonical and legacy work channels.
