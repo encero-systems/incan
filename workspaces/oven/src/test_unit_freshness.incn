@@ -13,6 +13,7 @@ from std.json import JsonValue
 from pub::incan_platform.trace import flush as flush_trace
 from std.environ import get_or
 from installation_check import verify_runtime
+from toolchain_archive import stage_loaves
 from installation_page import recall as recall_installation, begin_command, end_command
 from home_paths import installation_catalog
 from installation_codec import decode as decode_installation, encode as encode_installation
@@ -1102,7 +1103,8 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     observed = observe(closure)?
     key = question(closure, observed, selection)?
     match recall_catalog(key)?:
-        None => assert false, "the completed closure has no typed page"
+        None =>
+            assert false, "the completed closure has no typed page"
         Some(catalog) =>
             assert catalog_current(catalog)
             assert catalog.units == [first]
@@ -1116,7 +1118,8 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
             assert read_registry_units(closure)?.units[0] == first
             current = recall_catalog(key)?
             match current:
-                None => assert false, "directory repair did not retain a replacement typed page"
+                None =>
+                    assert false, "directory repair did not retain a replacement typed page"
                 Some(refreshed) =>
                     artifact_file = Path(first.artifact)
                     contents = artifact_file.read_bytes().map_err((error) => error.message())?
@@ -1132,7 +1135,8 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     assert question(closure, observed, selection + ":changed")? != key
     # An explicit match keeps this test usable by bootstrap compilers affected by #2431.
     match recall_catalog(next)?:
-        Some(_) => assert false, "a rewritten closure reused the previous generation's page"
+        Some(_) =>
+            assert false, "a rewritten closure reused the previous generation's page"
         None => pass
     assert read_registry_units(closure)?.units[0].name == first.name
     _ = flush_trace()
@@ -1146,13 +1150,15 @@ def check_registry_page_codec(scratch: Path, catalog: Catalog) -> Result[None, s
     page.write_bytes(bytes).map_err((error) => error.message())?
     mapped = page.map_read().map_err((error) => error.message())?
     match mapped.view(0, mapped.len()):
-        None => assert false, "the typed page is not mapped"
+        None =>
+            assert false, "the typed page is not mapped"
         Some(view) =>
             assert decode_catalog(view)?.units == catalog.units
             for length in [0, 7, 35, view.len() - 1]:
                 if let Some(truncated) = view.slice(0, length):
                     match decode_catalog(truncated):
-                        Ok(_) => assert false, "a truncated registry page was accepted"
+                        Ok(_) =>
+                            assert false, "a truncated registry page was accepted"
                         Err(_) => pass
     # Malformed scalar counts and versions are rejected before any row allocation.
     mut invalid_index = 0
@@ -1163,7 +1169,8 @@ def check_registry_page_codec(scratch: Path, catalog: Catalog) -> Result[None, s
         mapping = file.map_read().map_err((error) => error.message())?
         if let Some(view) = mapping.view(0, mapping.len()):
             match decode_catalog(view):
-                Ok(_) => assert false, "an invalid registry page was accepted"
+                Ok(_) =>
+                    assert false, "an invalid registry page was accepted"
                 Err(_) => pass
     return Ok(None)
 
@@ -1666,6 +1673,7 @@ def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str
 def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
     """A selected toolchain admits transported native, standard and registry payloads and refuses changed bytes."""
     verify_archive_members(scratch)?
+    verify_staged_loaf_artifacts(scratch)?
     original = scratch.joinpath("producer/runtime.incnlib")
     write(original, "runtime interface")?
     record_payload(original, "runtime producer")?
@@ -2001,4 +2009,28 @@ def verify_archive_members(scratch: Path) -> Result[None, str]:
         assert read(prior)? == "unchanged"
         for entry in home.joinpath("toolchains").iterdir().map_err((error) => error.message())?:
             assert not entry.name().startswith(".install-"), entry.0
+    return Ok(None)
+
+
+def verify_staged_loaf_artifacts(scratch: Path) -> Result[None, str]:
+    """Archive staging preserves compiled Loaf files while leaving builder logs and unit descriptions at source."""
+    source = scratch.joinpath("staged-loaf-source")
+    stage = scratch.joinpath("staged-loaf-target")
+    for profile in ["debug", "release"]:
+        original = source.joinpath("example").joinpath(profile)
+        write(original.joinpath("example.incnlib"), "checked interface")?
+        write(original.joinpath("example.incnbody"), "executable bodies")?
+        write(original.joinpath("libexample.rlib"), "native library")?
+        write(original.joinpath("build.log"), f"warning INCAN-T0125 at {scratch.0}/private/source.incn:1")?
+        write(original.joinpath("example.unit.json"), "builder unit")?
+    stage_loaves(source, stage)?
+    for profile in ["debug", "release"]:
+        original = source.joinpath("example").joinpath(profile)
+        packed = stage.joinpath("loaves/example").joinpath(profile)
+        assert read(packed.joinpath("example.incnlib"))? == "checked interface"
+        assert read(packed.joinpath("example.incnbody"))? == "executable bodies"
+        assert read(packed.joinpath("libexample.rlib"))? == "native library"
+        assert not packed.joinpath("build.log").exists()
+        assert not packed.joinpath("example.unit.json").exists()
+        assert original.joinpath("build.log").is_file()
     return Ok(None)

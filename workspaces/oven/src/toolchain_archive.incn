@@ -312,12 +312,13 @@ def from_registry(relative: str) -> str:
     return "../" + relative
 
 
-def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
+pub def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
     """
-    Ship compiled standard Loaves and their portable native closures, excluding unit descriptions.
+    Ship compiled standard Loaves and their portable native closures, excluding unit descriptions and build logs.
 
     Only the `debug` and `release` profiles travel; a builder's other directories, such as a replaced profile kept
-    while its successor was built, are never part of the toolchain.
+    while its successor was built, are never part of the toolchain. Build logs remain with the builder because
+    diagnostics may contain its private source paths; they are not inputs to an installed compilation.
     """
     if not source.is_dir():
         return Err(f"no standard Loaves at {source.0}")
@@ -329,7 +330,12 @@ def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
                 continue
             for artifact in profile.iterdir().map_err((error) => error.message())?:
                 name = artifact.name()
-                if not artifact.is_file() or ".unit.json" in name or name.endswith(RESTATED_RECORD_SUFFIX):
+                if (
+                    not artifact.is_file()
+                    or name == "build.log"
+                    or ".unit.json" in name
+                    or name.endswith(RESTATED_RECORD_SUFFIX)
+                ):
                     continue
                 destination = stage.joinpath("loaves").joinpath(package.name()).joinpath(profile.name()).joinpath(name)
                 if name.endswith(".native.json"):
