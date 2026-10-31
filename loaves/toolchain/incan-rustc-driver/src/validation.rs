@@ -1520,7 +1520,9 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
                 Ok(Scalar::EnumMutRef(index))
             }
             ty if scalar_referent(&ty) => {
-                if shared_reference(&local(function, value.local)?) {
+                // A whole shared-reference local is the reference itself, which `Read for &UnixStream` borrows
+                // exclusively; only a place reached through the reference reborrows its shared referent.
+                if !matches!(value.projection, Projection::Whole) && shared_reference(&local(function, value.local)?) {
                     return Err(invalid(function, "cannot mutably reborrow a shared scalar"));
                 }
                 Ok(Scalar::ScalarMutRef(vec![ty]))
