@@ -58,6 +58,8 @@ A performant native graph is not merely a native executable holding two lists. F
 
 ## Guide-level explanation
 
+All new API spellings below describe the proposed library contract, not implemented functionality. Existing RFC 047 calls are identified separately. Ordinary callers use duckborrowing; implementation signatures must preserve RFC 164 ownership and source dependencies.
+
 ### Keep ordinary graph values ordinary
 
 Existing construction remains valid:
@@ -109,6 +111,93 @@ def region_dependencies() -> Result[RelationGraph[Region, ReadsState], GraphErro
 
 For relationships between distinct model families, RFC 165's `Relation[S, T, P]` validates source, target and payload types. Its graph adapter preserves those family and relation identities; it must not accept reversed endpoint types merely because both are encoded as integers.
 
+### Store a compiler graph directly
+
+A graph can be database-backed from its first write. The compiler need not assemble an in-memory graph and export it afterward. These application models deliberately simplify compiler identities; production compiler records retain their checked identities rather than deriving identity from a display name.
+
+```incan
+from std import db
+from std.db import Record
+from std.fs import Path
+
+@derive(Record)
+model Function:
+    name: str
+    return_type: str
+
+model SourceLocation:
+    file: str
+    line: int
+
+model Calls:
+    location: SourceLocation
+
+model Inlines:
+    reason: str
+
+enum CompilerEdge:
+    Calls(Calls)
+    Inlines(Inlines)
+
+def store_and_read_calls(path: Path) -> Result[None, db.OperationError]:
+    # This demonstration adds new node identities on each invocation.
+    with db.open(path) as store:
+        with store.transaction() as transaction:
+            mut graph = transaction.graph[Function, CompilerEdge]("compiler.calls")?
+            # Validate or stage the graph definition and its owned families.
+            transaction.declare(graph)?
+
+            process = graph.add_node(
+                Function(name="process", return_type="str")
+            )?
+            normalize = graph.add_node(
+                Function(name="normalize", return_type="str")
+            )?
+
+            graph.add_edge(process, normalize, CompilerEdge.Calls(Calls(
+                location=SourceLocation(file="app.incn", line=12),
+            )))?
+            graph.add_edge(process, normalize, CompilerEdge.Calls(Calls(
+                location=SourceLocation(file="app.incn", line=18),
+            )))?
+            graph.add_edge(process, normalize, CompilerEdge.Inlines(Inlines(
+                reason="Small checked body",
+            )))?
+            receipt = transaction.commit()?
+
+        # Read exactly the committed selection, even if a newer commit exists.
+        snapshot = receipt.snapshot()?
+        graph = snapshot.graph[Function, CompilerEdge]("compiler.calls")?
+
+        with graph.incoming(normalize).cursor(
+            max_rows=256, max_bytes=1_048_576,
+        ) as cursor:
+            while let Some(batch) = cursor.next_batch()?:
+                for edge in batch:
+                    match edge.value:
+                        CompilerEdge.Calls(call) =>
+                            print(f"Call at {call.location.file}:{call.location.line}")
+                        CompilerEdge.Inlines(inline) =>
+                            print(f"Inlined: {inline.reason}")
+    return Ok(None)
+```
+
+The two calls have separate edge identities despite sharing endpoints. The inline relationship carries a different model. All three edges point from caller to callee; reading incoming edges inspects that direction from the target and does not create reverse edges. A node payload can likewise be a domain enum containing several model kinds.
+
+The graph selector belongs to the database adapter. It returns a typed graph handle, not a materialized container. `transaction.declare(graph)` explicitly validates or stages its definition; reopening it with incompatible model or relation descriptors must fail rather than migrate implicitly. `add_node` inserts a model and node membership; `add_edge` validates endpoints, stages its payload and updates adjacency in the same transaction. Database mutations are fallible even where the equivalent in-memory convenience operation has an infallible signature. `db.OperationError` retains the graph and storage causes involved in the operation.
+
+No explicit `.crumble()` is required. RFC 165 owns model encoding, typed reconstruction, sharing, retention and incremental staging. It may retain checked typed data in memory or stage encoded data on disk without holding every decoded model until commit. Reading these call-site payloads does not require decoding either endpoint's `Function` model.
+
+The incoming cursor is a convenience over indexed adjacency pages. `next_batch()` returns a fallible optional batch; `None` means the selected adjacency is exhausted. A hard resource limit, invalid cursor or storage failure returns a typed error, not apparent completion. A batch limit is separate from a total traversal budget. Reading a large adjacency may produce many bounded batches, and retained consumer batches remain accounted resources.
+
+### Share existing model records between graphs
+
+The graph-first surface owns records when `add_node(value)` is used. It must also support attaching an existing typed database record as a node without copying its model data. The adapter operation `attach_node(record)` takes a validated typed record reference and returns a distinct graph node identity; it does not accept an unscoped integer or infer identity from a payload hash. Repeated attachment may intentionally create separate occurrences, so idempotent domain lookup must be explicit rather than guessed from value equality.
+
+For an application that already has authoritative node families and relationship records, `snapshot.graph(nodes=nodes, edges=relations)` is the explicit projection form. The descriptors identify endpoint families and their checked mapping; multiple selected families may be represented by typed domain enums. This form reads those existing relationships without duplicating their authority. The named graph form and explicit projection form implement the same reading protocol.
+
+An existing function record can participate in a call graph and a type-use graph. Each graph has its own membership and relationships; the underlying model revision can be shared. Graph membership does not grant permission to delete that shared record, nor does removal of a node imply that an independently retained model record disappears.
+
 ### Read only the selected graph
 
 The proposed `read_view()` on an in-memory graph produces a consistent, scoped read borrow. A database snapshot produces a reader over explicitly selected node and relation families. Both implement the reading protocol below.
@@ -135,13 +224,19 @@ Existing graph-local `NodeId` and `EdgeId` handles do not become globally unique
 
 The new in-memory read surface uses `ScopedNodeId` and `ScopedEdgeId`, combining graph-instance identity with the existing local handle. Standard adapters must validate that identity before lookup. Bare legacy ids remain accepted by legacy container methods only; readers issue scoped keys for their own nodes and edges and must not offer an unchecked integer-to-scoped-key cast. An adapter cannot recover provenance that a legacy bare integer never carried and must not claim otherwise. Persistent adapters use typed record keys instead, not these scoped in-memory handles.
 
-Compatibility work must explicitly account for the current public model fields. Removing or privatizing a publicly exposed field is a breaking change even when direct mutation was undesirable; migration must identify and deprecate that access before removal. No implementation may silently preserve writable raw lists that can make an adjacency index stale.
+When indexed containers replace the current representation, raw structural fields (`nodes`, `edges`, and identity counters) become private. This is an explicit source compatibility change; the implementation must ship migration documentation and a diagnostic at each former public-field access, explaining the supported operation or reader that replaces it. A separate release retaining unsafe writable lists is not required. Existing constructor and method behavior remains governed by RFC 047. The migration must not return a copied list under the old field name or silently ignore direct edits.
+
+Graph-owned mutations must pass through supported operations, including payload replacement when indexes depend on the changed fields. This does not require all application models to be frozen. An independently reconstructed or copied model can be edited normally; editing it alone does not publish a change to the graph. No exposed alias may change structural or indexed state behind the maintained indexes.
 
 ### Typed relationship graph
 
 RFC 169 proposes a common dataset and structured-stream interface for heterogeneous model variants. This graph RFC retains ownership of node/edge identity, adjacency, and traversal. Multiple typed node and edge payloads do not require implementing the full dataset interface first.
 
 `RelationGraph[N, E]` must store typed node payloads `N` and edge payloads `E`, with stable node and edge identities scoped to its instance. `add_node(value)` returns a `ScopedNodeId`; `add_edge(source, target, payload)` returns `Result[ScopedEdgeId, GraphError]`. It must support parallel edges, payload lookup and replacement, node deletion with incident-edge removal, and forward/reverse adjacency. An edge update must not accidentally replace another parallel edge with the same endpoints. Removed identities must not be reused within that graph instance.
+
+`E` may be a complete model or an explicit payload enum admitting several edge models; `N` has the same freedom for node models. Stored relationships must preserve the checked variant and payload identities. Selecting one relationship kind must be possible through a declared family/variant index without decoding unrelated edge payloads. The graph adapter must validate compatible descriptors and must not collapse different variants because field names happen to match. RFC 169 owns their general heterogeneous dataset and stream projection surface.
+
+The required relation surface is directed: `source -> target` is authoritative, and incoming adjacency is reverse lookup over the same edge records. An undirected extension must be explicitly selected and must define its identity and traversal rules; this RFC does not imply an undirected constructor or silently add a second edge.
 
 This container does not infer legal domain endpoint kinds from an arbitrary enum payload. A domain adapter or a typed family relation must declare and validate those rules. Invalid endpoint references must fail before an edge becomes visible.
 
@@ -188,13 +283,34 @@ An adapter may normalize backend-specific keys into a tagged key type, but the m
 
 ### Read scopes, ownership and cursor lifetime
 
-RFC 164 owns explicit borrowing and returned reference contracts. Read-only projections use `Borrowed[T]`; `Reference[T]` is exclusive access and must not be used as a generic name for every retained view. A borrowed in-memory reader and its cursor must preserve their source dependencies. A database reader may instead own a lease retaining one immutable selection and may outlive the local snapshot binding when its complete resource contract permits that escape. Neither `Owned` nor a cursor type name alone proves independent retention. Views into reusable buffers remain borrowed until their last dependent use; advancing must not invalidate them. Concrete reader and cursor declarations must be reviewed against RFC 164, whose single-source reference contract targets 0.6.
+RFC 164 owns explicit borrowing and returned reference contracts. Read-only projections use `Borrowed[T]`; `Reference[T]` is exclusive access and must not be used as a generic name for every retained view. A borrowed in-memory reader and its cursor must preserve their source dependencies. A database reader may instead own a lease retaining one immutable selection and may outlive the local snapshot binding when its complete resource contract permits that escape. Neither `Owned` nor a cursor type name alone proves independent retention. Views into reusable buffers remain borrowed until their last dependent use; advancing must not invalidate them. Implementation declarations must carry RFC 164 source dependencies in public metadata; neither a reader wrapper nor a cursor may erase them.
 
 A traversal must observe one consistent read revision. The default in-memory `read_view()` holds a scoped read borrow preventing conflicting mutation and cannot outlive its source. A separate explicit snapshot operation may retain an immutable version with a documented copy or copy-on-write cost. Neither may quietly mix pre-edit and post-edit adjacency, and opening a reader must not conceal a whole-graph copy.
 
 Database readers inherit the snapshot lease and retention guarantees of RFC 165. A cursor must retain the read scope and any frontier state needed to resume safely. Cursor creation, continuation and disposal must account for that state; cursors must not hide unbounded copies of the graph.
 
 Resuming against another snapshot, graph selection, ordering or traversal profile must fail. A caller wanting a newer graph must start a new traversal or explicitly compute a diff. Releasing the last reader/cursor releases its retained state and lease; detached read scopes require explicit ownership transfer rather than a dangling borrow.
+
+### Reader and cursor declarations
+
+The required public operation shapes are below. Concrete generic parameter names and private handle layout are implementation details; the declared ownership and observable behavior are mandatory.
+
+| Operation | Result and retained dependency |
+| --- | --- |
+| `graph.read_view()` on an in-memory graph | A shared reader that borrows the graph. Its public source dependency is the graph receiver; it cannot escape that owner or permit conflicting graph mutation. |
+| `snapshot.graph[N, E](name)` | A fallible database reader that owns a lease on the selected snapshot, graph definition and indexes. Successful acquisition establishes that retention; the handle may outlive the binding used to obtain it. |
+| `reader.incoming(key)` / `reader.outgoing(key)` | A lazy adjacency selection retaining the reader dependency and direction. Constructing it does not materialize neighbors. |
+| `selection.cursor(max_rows=..., max_bytes=...)` | A scoped cursor borrowing its selection/reader, with checked keys, fixed ordering and bounded state. Entering the scope acquires cursor resources; exit releases them without committing. |
+| `cursor.next_batch()` | `Result[Option[Batch], F]`, with typed edge identity/endpoints and requested payloads. Absence means completed adjacency, never exhaustion of a work budget. |
+| Explicit bounded traversal page | Values plus `Complete`, `Limited`, `Cancelled` or `Failed`, counters and an optional compatible continuation. Continuation retains its read scope and required state. |
+
+Ordinary adjacency cursors borrow their reader; owning the cursor variable does not make it independently retained. An owned traversal continuation over a database may acquire or transfer a lease explicitly, and that operation must expose its ownership contract. No hidden lease or whole-graph clone repairs an escaping borrowed cursor. An in-memory continuation continues to borrow the graph unless an explicit snapshot operation created independently owned immutable storage.
+
+Returned batch columns or payload views retain their actual buffer source. Advancing, closing, dropping or replacing an owner while a dependent borrow remains usable must be rejected, unless an explicitly retained immutable buffer makes that operation safe under RFC 164. Moving an owned database reader or continuation transfers release obligations; closing the original database handle does not revoke an already acquired independent lease.
+
+### Pages and ergonomic iteration
+
+Explicit pages and scoped batch cursors are the required surface. RFC 115 fallible iteration is an adapter over the same page engine, not a separate traversal implementation. It must yield the same selected order and propagate source failures. If a traversal reaches a total budget, the adapter must expose the limited outcome and continuation through a typed result/error rather than end normally. Such iterator convenience may be added without reopening this RFC; it is not a prerequisite to deliver the required page and batch-cursor API.
 
 ### Traversal, limits and completeness
 
@@ -252,6 +368,16 @@ Performance evidence must include narrow and high-degree reads, cold and warm ru
 
 An application can choose memory graphs, a memory database or a durable database according to its needs. A pure graph dependency must not pull in the database, an analytical backend, a protocol compiler or a UI runtime. The platform substrate must not depend on graph algorithms or a downstream query library merely to store records.
 
+### Logical storage and Crumb
+
+A named stored graph has three logical components: a graph definition, node memberships referencing typed model records, and edge records containing identity, endpoints and typed payload references. An edge is a relationship; a fourth generic relationship entity is not required. A projection over existing families may derive memberships instead of materializing a second membership table. This is a logical model, not a requirement for SQL tables, one physical file per component or one storage partition for every edge kind.
+
+Outgoing and incoming indexes reference the same authoritative edges and retain graph, endpoint and relationship-kind scope. A graph query can request structure alone without decoding node or edge payloads. Indexes may be partitioned by family or variant; source selection must disclose which access path is used. Shared Crumb contents never merge node, edge or record identities.
+
+RFC 165 owns Crumb representation, database storage placement and revisions. Disk, spooled-memory and memory stores must expose the same graph meaning. Record revisions and all affected indexes publish atomically; an old snapshot continues to see the old complete graph. Updating a local model or calling `.crumble()` does not itself update a stored edge. Node deletion removes its incident graph relationships or fails atomically according to the graph operation; shared model records retain their separate database identity and retention rules.
+
+A large compiler graph must be usable directly through this path. Opening a graph, narrowing edge kinds, reading a small adjacency and obtaining a continuation must not require decoding or copying the complete graph. Qualification must include large, mixed-model compiler graphs, distinct source locations and long-running revisions, with working memory, decoding, copying and retained leases measured. Small in-memory lookup benchmarks alone do not establish this property.
+
 ### Declarative frameworks and targets
 
 An experience framework may use graphs for authored structure, dependencies, artifact bindings and inspection. It retains ownership of accessibility, appearance, event meaning, state-transition policy, reconciliation and target lowering. Graph location does not determine whether a model or decision is authoritative.
@@ -288,12 +414,10 @@ Read scopes, typed failures, cursors and completeness add concepts beyond a smal
 
 ## Design Decisions
 
-- **Scope:** typed relationships, storage-independent readers, ownership and bounded traversal are the new public contracts. Performance upgrades to existing graph operations are regular implementation work, not the reason for this RFC or a separate RFC prerequisite. Public-field compatibility is reviewed separately.
-
-## Unresolved questions
-
-- Which migration window and diagnostics should cover the existing public container fields before their storage representation can become opaque?
-- Which concrete reader and resumable-cursor declarations instantiate RFC 164's source-dependency contract for memory graphs and owned lease retention for database graphs? RFC 164 owns the general borrowing syntax. The default memory reader remains a scoped read borrow, and neither implementation may substitute a hidden graph copy.
-- Should bounded algorithms expose a fallible iterator in addition to pages at initial adoption? Either surface must preserve identical completeness, resource and scope rules; an iterator must not hide an unbounded frontier.
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Scope:** typed relationships, storage-independent readers, ownership and bounded traversal are the new library surface. Performance upgrades to existing graph operations remain ordinary implementation work.
+- **Typed payloads and direction:** nodes and edges accept full models, with explicit payload enums for multiple kinds. Directed edges preserve separate identities and payloads; incoming lookup does not create reverse edges. Endpoint legality follows declared adapters, not naming conventions.
+- **Graph-first storage:** named typed graphs can be authored directly through a database transaction. Existing record attachment and explicit projections avoid model duplication. RFC 165 handles Crumb, snapshots, storage placement and publication; large graphs never require whole-graph materialization.
+- **Storage ownership:** graph definitions, node memberships and edge records are logical structures. Incoming/outgoing indexes are derived access paths. Raw structural fields become private when indexed containers arrive, with migration diagnostics and supported replacements; constructor and method compatibility remains governed by RFC 047.
+- **Reader lifetime:** memory readers and ordinary cursors borrow their actual source. Database snapshot graph readers own acquired leases; explicitly retained continuations may do the same. Borrowed buffers cannot outlive or be invalidated by their owners, and ordinary users rely on duckborrowing.
+- **Traversal surface:** explicit pages and scoped batch cursors are required. Fallible iterator convenience uses the same engine and preserves limited outcomes; it is not a separate prerequisite. Limits must never look like successful exhaustion.
+- **Dataset boundary:** RFC 169 owns general sparse heterogeneous projections and structured streams. Supporting multiple graph payload kinds and implementing the graph reader do not depend on that entire surface.
