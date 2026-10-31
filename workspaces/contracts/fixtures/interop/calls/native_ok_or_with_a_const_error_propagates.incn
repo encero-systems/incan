@@ -1,0 +1,24 @@
+# behavior: `?` on a Rust `Option.ok_or(...)` whose error is a `const` str propagates that text as the enclosing `Result[T, str]` error (#2481)
+# expect-stdout:
+#   3
+#   nothing to take
+
+"""Take a value out of a Rust cell, refusing an empty cell with a constant message."""
+
+from rust::std::cell import RefCell
+
+const NOTHING: str = "nothing to take"
+
+
+def taken(cell: RefCell[Option[int]]) -> Result[int, str]:
+    value = cell.replace(None).ok_or(NOTHING)?
+    return Ok(value)
+
+
+def main() -> None:
+    match taken(RefCell.new(Some(3))):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match taken(RefCell.new(None)):
+        Ok(value) => println(value)
+        Err(error) => println(error)

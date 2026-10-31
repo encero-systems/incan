@@ -14826,11 +14826,14 @@ def lower_try_propagation(
     routing: &TryErrorRouting,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Materialize the checked Result read before consuming its selected payload on either propagation edge."""
+    """
+    Materialize the checked Result read before consuming its selected payload on either propagation edge. The only
+    error conversion the propagation performs is the owned text a `const` str error becomes; it decides that from the
+    concrete carriers.
+    """
     match routing:
         TryErrorRouting.SameType(error_type=_error) => pass
-        TryErrorRouting.ConversionRequired(source_error_type=_source, destination_error_type=_destination) =>
-            return Err("unsupported Body IR TryPropagate error conversion without retained conversion target")
+        TryErrorRouting.ConversionRequired(source_error_type=_source, destination_error_type=_destination) => pass
         _ => return Err("unsupported Body IR unresolved TryPropagate error routing")
     value = value_operand(builder, operand, span)?
     ty = operand_type(builder, value)?
