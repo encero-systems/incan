@@ -469,15 +469,14 @@ fn check_event(
             }
         }
     }
-    if access != Access::Replace {
-        for (moved, origins) in &state.moved {
-            if moved.overlaps(place) {
-                for origin in origins {
-                    conflicts.insert(Conflict {
-                        node,
-                        kind: ConflictKind::Moved(*origin),
-                    });
-                }
+    for (moved, origins) in &state.moved {
+        let replaces_moved_storage = access == Access::Replace && place.contains(moved);
+        if moved.overlaps(place) && !replaces_moved_storage {
+            for origin in origins {
+                conflicts.insert(Conflict {
+                    node,
+                    kind: ConflictKind::Moved(*origin),
+                });
             }
         }
     }
@@ -657,6 +656,17 @@ mod tests {
             "a mutable local cannot upgrade a shared loan"
         );
 
+        let mut invalid_edge = branches;
+        invalid_edge.nodes[1].successors.push(99);
+        assert!(
+            analyze(&invalid_edge).is_err(),
+            "missing CFG facts cannot authorize execution"
+        );
+        checked_indices_and_creation()
+    }
+
+    /// Unknown indices cannot prove containment, and a loan must exist on every predecessor reaching a use.
+    fn checked_indices_and_creation() -> Result<(), String> {
         let mut indexed = place(1);
         indexed.projection.push(Projection::Element(HirSourceSpan::new(80, 81)));
         let mut other_index = place(1);
@@ -705,12 +715,6 @@ mod tests {
             "may-created is insufficient when another predecessor never borrowed"
         );
 
-        let mut invalid_edge = branches;
-        invalid_edge.nodes[1].successors.push(99);
-        assert!(
-            analyze(&invalid_edge).is_err(),
-            "missing CFG facts cannot authorize execution"
-        );
         Ok(())
     }
 
@@ -757,6 +761,25 @@ mod tests {
             vec![],
         );
         assert!(analyze(&restored).map_err(|error| error.0)?.conflicts.is_empty());
+
+        let mut field = place(1);
+        field.projection.push(Projection::Field(identity("field", 2)));
+        let incomplete = graph(
+            vec![
+                access(place(1), Access::Move, None),
+                access(field, Access::Replace, None),
+            ],
+            vec![vec![1], vec![]],
+            vec![],
+        );
+        assert!(
+            analyze(&incomplete)
+                .map_err(|error| error.0)?
+                .conflicts
+                .iter()
+                .any(|conflict| { conflict.node == 1 && conflict.kind == super::ConflictKind::Moved(0) }),
+            "replacing a child cannot access an already consumed parent"
+        );
 
         let mut forbidden_transfer = restored;
         forbidden_transfer

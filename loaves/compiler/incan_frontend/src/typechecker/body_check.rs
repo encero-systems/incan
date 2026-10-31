@@ -466,6 +466,7 @@ fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
 /// Consume all protocols fields into the compatibility view; field additions require an explicit ownership choice.
 fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
     let ProtocolArtifacts {
+        explicit_input_flow,
         body_ir_truthiness_receivers,
         body_ir_iterations,
         iterations,
@@ -474,6 +475,7 @@ fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
         in_place_match_scrutinees,
         loan_free_scrutinees,
     } = local;
+    target.explicit_input_flow.extend(explicit_input_flow);
     target.body_ir_truthiness_receivers.extend(body_ir_truthiness_receivers);
     target.body_ir_iterations.extend(body_ir_iterations);
     target.iterations.extend(iterations);
@@ -698,6 +700,7 @@ impl TypeChecker {
         is_async: bool,
         span: Span,
         context: YieldContext,
+        ownership_source: Option<&FunctionDecl>,
     ) {
         #[cfg(test)]
         if !self.legacy_body_checking {
@@ -710,10 +713,16 @@ impl TypeChecker {
         #[cfg(test)]
         if self.legacy_body_checking {
             self.check_callable_body_in_frame(body, is_async, context);
+            if let Some(function) = ownership_source {
+                self.record_explicit_input_flow(function, span);
+            }
             return;
         }
         let scope = BodyCheckScope::enter(self);
         self.check_callable_body_in_frame(body, is_async, context);
+        if let Some(function) = ownership_source {
+            self.record_explicit_input_flow(function, span);
+        }
         let mut local = scope.finish(self);
         local.owner = span;
         self.body_checks.push(BodyCheckInput::Local(local));

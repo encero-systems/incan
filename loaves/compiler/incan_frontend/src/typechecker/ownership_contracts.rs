@@ -8,13 +8,48 @@ use incan_semantics_core::SymbolOrigin;
 
 mod checked;
 mod flow;
+mod source;
 
 use super::TypeChecker;
 use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Type};
 use crate::diagnostics::CompileError;
 use crate::symbols::{ResolvedType, TypeInfo};
 
+/// One body-owned source analysis. Unsupported projection and malformed internal facts remain distinct from a
+/// completed analysis with user-program conflicts; none of these variants alone enables executable lowering.
+#[derive(Debug, Clone)]
+pub(super) enum InputFlow {
+    Checked {
+        graph: flow::Graph,
+        analysis: flow::Analysis,
+    },
+    Unavailable(source::Unavailable),
+    Invalid {
+        graph: flow::Graph,
+        fault: flow::InvalidGraph,
+    },
+}
+
 impl TypeChecker {
+    /// Capture explicit input flow while the checked lexical frame and body-owned expression facts are active.
+    /// Statement output owns the result; it is never rediscovered by lowering or published as a valid empty graph.
+    pub(super) fn record_explicit_input_flow(&mut self, function: &crate::ast::FunctionDecl, span: Span) {
+        let Some(identity) = self.current_body_identity().cloned() else {
+            return;
+        };
+        if !self.type_info.declarations.ownership_contracts.contains_key(&identity) {
+            return;
+        }
+        let output = match source::build(self, function, span) {
+            Ok(graph) => match flow::analyze(&graph) {
+                Ok(analysis) => InputFlow::Checked { graph, analysis },
+                Err(fault) => InputFlow::Invalid { graph, fault },
+            },
+            Err(reason) => InputFlow::Unavailable(reason),
+        };
+        self.type_info.protocols.explicit_input_flow.insert(identity, output);
+    }
+
     /// Announce the place-binding migration without changing legacy runtime behavior or inferring a repair clone.
     ///
     /// An annotation does not opt out. Calls, constructed values, computed properties and explicit clone results are
@@ -149,6 +184,88 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Project actual checked source so CFG tests cannot bypass canonical root/type lookup with hand-built facts.
+    fn source_graph(
+        source: &str,
+    ) -> Result<Result<flow::Graph, super::source::Unavailable>, Box<dyn std::error::Error>> {
+        let checker = checked(source)?;
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let declaration = program.declarations.first().ok_or("missing function")?;
+        let crate::ast::Declaration::Function(function) = &declaration.node else {
+            return Err("expected function".into());
+        };
+        let projected = super::source::build(&checker, function, declaration.span);
+        let recorded = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .values()
+            .next()
+            .ok_or("source analysis was not retained with its checked body")?;
+        match (recorded, &projected) {
+            (InputFlow::Checked { graph, analysis }, Ok(rebuilt)) => {
+                assert_eq!(graph.nodes.len(), rebuilt.nodes.len());
+                assert_eq!(analysis, &flow::analyze(rebuilt).map_err(|fault| format!("{fault:?}"))?);
+            }
+            (InputFlow::Unavailable(reason), Err(rebuilt)) => assert_eq!(reason, rebuilt),
+            (InputFlow::Invalid { graph, fault }, _) => {
+                return Err(format!("invalid body graph ({} nodes): {fault:?}", graph.nodes.len()).into());
+            }
+            _ => return Err(format!("scoped and rebuilt source flow differ: {recorded:?}\n{projected:?}").into()),
+        }
+        Ok(projected)
+    }
+
+    /// Source branch and back-edge projections preserve consuming uses and distinguish Copy reads from transfers.
+    #[test]
+    fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, conflict) in [
+            ("def add(value: Borrowed[int]) -> int:\n    return value + 1\n", false),
+            ("def transfer(value: Owned[str]) -> str:\n    return value\n", false),
+            ("def copy(value: Borrowed[str]) -> str:\n    return value\n", true),
+            (
+                "def branch(value: Owned[str], flag: bool) -> str:\n    if flag:\n        taken = value\n    return value\n",
+                true,
+            ),
+            (
+                "def repeat(value: Owned[str]) -> None:\n    loop:\n        taken = value\n        continue\n",
+                true,
+            ),
+            (
+                "def restore(mut value: Owned[str]) -> str:\n    taken = value\n    value = \"new\"\n    return value\n",
+                false,
+            ),
+        ] {
+            let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
+            let analysis = flow::analyze(&graph).map_err(|error| format!("{source}\n{error:?}"))?;
+            assert_eq!(
+                !analysis.conflicts.is_empty(),
+                conflict,
+                "{source}\n{:?}",
+                analysis.conflicts
+            );
+        }
+        Ok(())
+    }
+
+    /// Calls, escaping results and annotation-owned local loans remain unavailable until their exact checked access
+    /// and dependency facts exist; a partial graph cannot count as validation of the whole callable.
+    #[test]
+    fn source_flow_refuses_unprojected_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "def show(value: Borrowed[int]) -> None:\n    print(value)\n",
+            "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n",
+            "def local(value: Borrowed[str]) -> None:\n    let view: Borrowed[str] = value\n",
+        ] {
+            assert!(
+                source_graph(source)?.is_err(),
+                "unsupported dependency admitted: {source}"
+            );
+        }
+        Ok(())
+    }
 
     /// Later callees and overloads expose their exact obligations before any body executes; malformed sources
     /// remain unavailable and are diagnosed by their declaration-owned check, without duplicate source errors.
