@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 
 /// A retained callable's original source result and its current concrete representation witness.
 #[derive(Clone)]
-struct ReturnSignature {
+pub(super) struct ReturnSignature {
     is_async: bool,
     original: IncanType,
     carrier: IncanType,
@@ -20,12 +20,12 @@ struct ReturnSignature {
 
 /// Immutable declaration and checker facts for one refinement pass. Original local types constrain propagation;
 /// retained signatures and owners may include authenticated dependency context.
-struct ReturnContext<'facts> {
-    nominals: &'facts [&'facts bir::NominalDeclaration],
-    implementations: &'facts [&'facts bir::TraitImplementation],
-    signatures: &'facts HashMap<CanonicalSymbolId, ReturnSignature>,
-    facts: &'facts TypeCheckInfo,
-    original: &'facts [IncanType],
+pub(super) struct ReturnContext<'facts> {
+    pub nominals: &'facts [&'facts bir::NominalDeclaration],
+    pub implementations: &'facts [&'facts bir::TraitImplementation],
+    pub signatures: &'facts HashMap<CanonicalSymbolId, ReturnSignature>,
+    pub facts: &'facts TypeCheckInfo,
+    pub original: &'facts [IncanType],
 }
 
 /// Refine opaque frames and checked call results to one concrete witness, propagating through canonical calls.
@@ -71,10 +71,8 @@ pub(super) fn retain_returns(
     for _ in 0..=module.bodies.len() {
         let mut changed = false;
         for (body, original) in module.bodies.iter_mut().zip(&original_locals) {
-            refine_block(
-                &mut body.block.stmts,
-                &mut body.locals,
-                std::sync::Arc::make_mut(&mut body.named_type_identities),
+            let carrier = refine_body(
+                body,
                 &ReturnContext {
                     nominals: &nominals,
                     implementations: &implementations,
@@ -87,13 +85,7 @@ pub(super) fn retain_returns(
             let Some(retained) = signatures.get_mut(identity) else {
                 continue;
             };
-            if !retained.opaque {
-                continue;
-            }
-            if let Some(carrier) = return_witness(&body.block, &body.locals, &body.named_type_identities)
-                && carrier != body.return_type
-            {
-                body.return_type = carrier.clone();
+            if let Some(carrier) = carrier {
                 retained.carrier = carrier;
                 changed = true;
             }
@@ -102,6 +94,28 @@ pub(super) fn retain_returns(
             break;
         }
     }
+}
+
+/// Apply one iteration of the existing return transfer to one body, preserving the original-local snapshot. A
+/// changed own carrier is returned separately so the group coordinator can publish its signature at the original
+/// visit point. This operation does not update the signature inventory or run another body's transfer.
+pub(super) fn refine_body(body: &mut bir::Body, context: &ReturnContext<'_>) -> Option<IncanType> {
+    refine_block(
+        &mut body.block.stmts,
+        &mut body.locals,
+        std::sync::Arc::make_mut(&mut body.named_type_identities),
+        context,
+    );
+    let retained = context.signatures.get(body.canonical.as_ref()?)?;
+    if !retained.opaque {
+        return None;
+    }
+    let carrier = return_witness(&body.block, &body.locals, &body.named_type_identities)?;
+    if carrier == body.return_type {
+        return None;
+    }
+    body.return_type = carrier.clone();
+    Some(carrier)
 }
 
 /// Keep the original trait's exact annotation identity beside its executable witness, without changing checker facts.
@@ -161,7 +175,7 @@ fn return_annotation_span(program: &ast::Program, body: &bir::Body) -> Option<as
 }
 
 /// Snapshot the checked callable frame before refinement so only its declared result authorizes an opaque return.
-fn signature(body: &bir::Body) -> ReturnSignature {
+pub(super) fn signature(body: &bir::Body) -> ReturnSignature {
     ReturnSignature {
         is_async: body.is_async,
         original: body.return_type.clone(),

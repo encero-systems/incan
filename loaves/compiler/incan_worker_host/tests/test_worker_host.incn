@@ -16,7 +16,20 @@ from std.json import JsonValue, parse
 from pub::incan_platform.ipc import Connection, dial
 from host import HostSettings, WorkerHost, complete, host_for, next_request
 from lifecycle import ActivationOutcome, Bounds, FOOTPRINT_CEILING, FOOTPRINT_MARGIN, Retirement, lifecycle
-from protocol import MISMATCH, PANIC_STATUS, SCHEMA, CompileRequest, Reply, WorkerCommand, encode_ready, encode_reply
+from protocol import (
+    MISMATCH,
+    PANIC_STATUS,
+    SCHEMA,
+    CompileRequest,
+    Reply,
+    WorkerCommand,
+    completion,
+    encode_ready,
+    encode_reply,
+    ready,
+    request_document,
+    retired,
+)
 
 const GENERATION: str = "0123456789abcdef"
 
@@ -106,16 +119,6 @@ def reason_of(document: JsonValue) -> str:
         None => return ""
 
 
-def retired(document: JsonValue) -> bool:
-    """Whether the reply says the worker retires."""
-    match document.get("retired"):
-        Some(value) =>
-            match value.as_bool():
-                Some(flag) => return flag
-                None => return false
-        None => return false
-
-
 def withdrawn(socket: str) -> bool:
     """Whether the worker's socket file is gone."""
     match metadata(socket):
@@ -153,14 +156,61 @@ def is_format(request: CompileRequest) -> bool:
 
 
 pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
-    """A reply and a readiness document are the same bytes Oven has always read."""
+    """Requests, replies and readiness keep their wire bytes; malformed completions authorize no replay."""
     completed = f"{{\"exit\":0,\"reason\":\"\",\"schema\":\"{SCHEMA}\"}}"
     assert encode_reply(Reply.Completed(0), false) == completed.encode("utf-8")
     refused = f"{{\"exit\":1,\"reason\":\"missing `cwd`\",\"retired\":true,\"schema\":\"{SCHEMA}\"}}"
     assert encode_reply(Reply.Refused("missing `cwd`"), true) == refused.encode("utf-8")
-    ready = f"{{\"generation\":\"{GENERATION}\",\"pid\":42,\"schema\":\"{SCHEMA}\",\"status\":\"ready\"}}"
-    assert encode_ready(GENERATION, 42) == ready.encode("utf-8")
+    ready_text = f"{{\"generation\":\"{GENERATION}\",\"pid\":42,\"schema\":\"{SCHEMA}\",\"status\":\"ready\"}}"
+    assert encode_ready(GENERATION, 42) == ready_text.encode("utf-8")
+    ready_document(GENERATION, 42)?
+    assert completion(parse(completed).map_err((error) => error.message())?)? == 0
+    refused_document = parse(refused).map_err((error) => error.message())?
+    assert retired(refused_document)
+    match completion(refused_document):
+        Err(reason) =>
+            assert reason == "missing `cwd`"
+        Ok(_) =>
+            assert false
+    for code in [0, 101, 255]:
+        document = parse(str(RustString.from_utf8(encode_reply(Reply.Completed(code), false)).map_err((_) => "UTF-8")?)).map_err(
+            (error) => error.message(),
+        )?
+        assert completion(document)? == code
+        assert not retired(document)
+    for invalid in [
+        "{}",
+        "{\"schema\":\"other\",\"exit\":0}",
+        f"{{\"schema\":\"{SCHEMA}\",\"exit\":256}}",
+        f"{{\"schema\":\"{SCHEMA}\",\"exit\":-1}}",
+    ]:
+        match completion(parse(invalid).map_err((error) => error.message())?):
+            Err(_) => pass
+            Ok(_) =>
+                assert false
+    unserved = "a compiler worker accepts only --unit, --check and --fmt requests"
+    assert encode_reply(Reply.Refused(unserved), false) == f"{{\"exit\":1,\"reason\":\"{unserved}\",\"schema\":\"{SCHEMA}\"}}".encode(
+        "utf-8",
+    )
+    assert encode_reply(Reply.Refused(MISMATCH), false) == f"{{\"exit\":1,\"reason\":\"{MISMATCH}\",\"schema\":\"{SCHEMA}\"}}".encode(
+        "utf-8",
+    )
+    request = request_document(
+        GENERATION,
+        ["--fmt", "/p/unit.json", "src/main.incn", "--check"],
+        "/p",
+        "/p/r.out",
+        "/p/r.err",
+    )
+    expected = f"{{\"arguments\":[\"--fmt\",\"/p/unit.json\",\"src/main.incn\",\"--check\"],\"cwd\":\"/p\",\"generation\":\"{GENERATION}\",\"schema\":\"{SCHEMA}\",\"stderr\":\"/p/r.err\",\"stdout\":\"/p/r.out\"}}"
+    assert request.to_json().map_err((error) => error.message())? == expected
     return Ok(None)
+
+
+def ready_document(generation: str, pid: int) -> Result[None, str]:
+    """Read the host's own readiness through the shared client contract."""
+    payload = RustString.from_utf8(encode_ready(generation, pid)).map_err((_) => "not UTF-8")?
+    return ready(parse(str(payload)).map_err((error) => error.message())?, generation, pid)
 
 
 pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Result[None, str]:

@@ -133,23 +133,29 @@ build_source_closure() {
     mv "$toolchain/toolchain.json.next" "$toolchain/toolchain.json"
     step support-build "$lane/out/native-builds/toolchain-native" "$source"
     native source-interfaces build-native-interfaces.sh
+    build_runtime_closure ""
+}
+
+# Compile the runtime and both standard profiles with the installed driver; PREFIX names this generation's phases.
+build_runtime_closure() {
+    local prefix=$1
     export SELFBUILD_SOURCE_INTERFACES=$INCAN_HOME/source-interfaces/loaves.json
-    native runtime-build build-native-runtime.sh --release
+    native "${prefix}runtime-build" build-native-runtime.sh --release
     unset SELFBUILD_SOURCE_INTERFACES
     check_runtime_roots
-    build_standard_packages
+    build_standard_packages "$prefix"
 }
 
 # Compile both profiles through the same generation-bound producer used by native lane builds.
 build_standard_packages() {
-    local package profile
-    mkdir "$out/standards"
+    local prefix=$1 package profile
+    mkdir "$out/${prefix}standards"
     for profile in release debug; do
         export SELFBUILD_PROFILE=$profile
-        export SELFBUILD_ADMITTED_STDLIB=$out/standards/$profile-admitted.txt
+        export SELFBUILD_ADMITTED_STDLIB=$out/${prefix}standards/$profile-admitted.txt
         : > "$SELFBUILD_ADMITTED_STDLIB"
         for package in core testing async system codecs compression web data observability vocab interop; do
-            native "std-$package-$profile" build-native-stdlib.sh "$package"
+            native "${prefix}std-$package-$profile" build-native-stdlib.sh "$package"
         done
     done
     unset SELFBUILD_PROFILE SELFBUILD_ADMITTED_STDLIB
@@ -265,6 +271,9 @@ build_source_closure
 # support generation, with every selected producer validated against the current source graph.
 # A seed archive is never relabeled as its output.
 native driver-build relink-driver.sh --release
+# The seed's driver compiled the closure the lowering links. The shipped runtime and standard packages are compiled
+# again by the candidate, so they carry this tree's lowering rather than the seed's.
+build_runtime_closure candidate-
 native oven-build build-native-tools.sh oven --rebuild
 cp "$lane/oven-bin/incan" "$out/bundle/incan"
 oven=$out/bundle/incan

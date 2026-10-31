@@ -1,0 +1,142 @@
+# behavior: a class bound by a match arm is dropped once, when its arm ends: the peer of a socket it holds sees end of file before the statement after the match, a probe it holds drops exactly once, and a loop of such matches keeps the heap flat (#2481)
+# expect-stdout:
+#   accepted true
+#   peer sees end of file
+#   bound first
+#   dropped first
+#   live probes 0
+#   bound second
+#   dropped second
+#   live probes 0
+#   ok arm: heap flat
+#   variant arm: heap flat
+
+"""Bind classes from fresh results and observe the socket they close, the probe they drop and the live heap."""
+
+from rust::std::cell import RefCell
+from rust::std::io import ErrorKind, Read
+from rust::std::os::unix::net import UnixStream
+from rust::std::rc import Rc
+from rust::std::time import Duration
+from rust::drop_probe import Probe, live_heap_bytes, live_probes
+
+const ROUNDS: int = 1000
+
+
+class Endpoint:
+    """One end of a socket pair, shared like a platform connection; dropping the last copy closes it."""
+
+    pub stream: Rc[RefCell[UnixStream]]
+
+    def connected(self) -> bool:
+        """Whether the socket still has its peer."""
+        return self.stream.borrow().peer_addr().is_ok()
+
+
+class Holder:
+    pub probe: Probe
+
+
+class Bundle:
+    pub names: list[str]
+
+
+enum Event:
+    Held(Holder)
+    Listed(Bundle)
+
+
+def accept(stream: UnixStream) -> Result[Endpoint, str]:
+    return Ok(Endpoint(stream=Rc.new(RefCell.new(stream))))
+
+
+def found(name: str) -> Result[Holder, str]:
+    return Ok(Holder(probe=Probe.new(name)))
+
+
+def bundle() -> Bundle:
+    return Bundle(names=["a name long enough to own heap storage", "another name long enough to own heap storage"])
+
+
+def listed() -> Result[Bundle, str]:
+    return Ok(bundle())
+
+
+def listed_event() -> Event:
+    return Event.Listed(bundle())
+
+
+def one_byte() -> bytes:
+    return "0".encode("utf-8")
+
+
+def peer_state(mut peer: UnixStream) -> str:
+    """Read one byte, waiting at most a few seconds: a closed peer is an end of file."""
+    _ = peer.set_read_timeout(Some(Duration.from_secs(5)))
+    mut buffer = one_byte()
+    match peer.read_exact(buffer):
+        Ok(_) => return "peer got a byte"
+        Err(error) =>
+            if error.kind() == ErrorKind.UnexpectedEof:
+                return "peer sees end of file"
+            return f"peer still connected: {error}"
+
+
+def serve(server: UnixStream, peer: UnixStream) -> None:
+    """Accept the server end into a class bound by a match arm; the arm's end closes it."""
+    match accept(server):
+        Ok(endpoint) => println(f"accepted {endpoint.connected()}")
+        Err(reason) => println(reason)
+    println(peer_state(peer))
+
+
+def ok_arm() -> int:
+    match listed():
+        Ok(bound) => return len(bound.names)
+        Err(_) => return 0
+
+
+def variant_arm() -> int:
+    match listed_event():
+        Event.Listed(bound) => return len(bound.names)
+        Event.Held(_) => return 0
+
+
+def report(label: str, grown: int) -> None:
+    """
+    Print whether a shape's rounds left the heap where they found it, from `grown` bytes measured before printing.
+
+    A value left behind by every round grows the heap by at least ROUNDS allocations; less than a byte a round is the
+    allocator's own bookkeeping.
+    """
+    if grown < ROUNDS:
+        println(f"{label}: heap flat")
+    else:
+        println(f"{label}: heap grew by {grown} bytes over {ROUNDS} rounds")
+
+
+def main() -> None:
+    match UnixStream.pair():
+        Ok(ends) =>
+            server, peer = ends
+            serve(server, peer)
+        Err(error) => println(f"no socket pair: {error}")
+    match found("first"):
+        Ok(bound) => println(f"bound {bound.probe.name()}")
+        Err(_) => pass
+    println(f"live probes {live_probes()}")
+    match Event.Held(Holder(probe=Probe.new("second"))):
+        Event.Held(bound) => println(f"bound {bound.probe.name()}")
+        Event.Listed(_) => pass
+    println(f"live probes {live_probes()}")
+    mut total = ok_arm() + variant_arm()
+    mut before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += ok_arm()
+    mut grown = live_heap_bytes() - before
+    report("ok arm", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += variant_arm()
+    grown = live_heap_bytes() - before
+    report("variant arm", grown)

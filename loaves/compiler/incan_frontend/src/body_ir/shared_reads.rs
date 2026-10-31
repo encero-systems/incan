@@ -7,7 +7,7 @@ use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, ast, bir};
 use incan_semantics_core::SymbolOrigin;
 
 /// One canonical callable's already checked closed storage signature.
-struct Signature {
+pub(super) struct Signature {
     identity: CanonicalSymbolId,
     arguments: Vec<IncanType>,
     parameters: Vec<IncanType>,
@@ -44,32 +44,9 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, program: &ast::Program) {
     loop {
         let mut changed = false;
         for body in &mut module.bodies {
-            if !private.contains(&body.span)
-                || body.canonical.as_ref().is_some_and(|id| escaped.contains(id))
-                || !matches!(body.return_type, IncanType::Primitive(_))
-                || !body.return_type.abi_v0_facts().ownership.is_trivially_copy()
-                || body.extern_delegation.is_some()
-                || !body.native_attributes.is_empty()
-            {
-                continue;
-            }
-            for parameter in &mut body.params {
-                if parameter.mutable || !native_owner(&parameter.ty, &body.named_type_identities) {
-                    continue;
-                }
-                let context = ReadContext {
-                    locals: &body.locals,
-                    signatures: &signatures,
-                    local: parameter.local,
-                    owner: &parameter.ty,
-                    cursor: false,
-                };
-                if readonly(&body.block.stmts, &context) {
-                    parameter.ty = IncanType::Ref(Box::new(parameter.ty.clone()));
-                    body.locals[parameter.local.index()].ty = parameter.ty.clone();
-                    changed = true;
-                }
-            }
+            let eligible =
+                private.contains(&body.span) && !body.canonical.as_ref().is_some_and(|id| escaped.contains(id));
+            changed |= retain_parameters(body, &signatures, eligible);
         }
         if !changed {
             break;
@@ -78,10 +55,49 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, program: &ast::Program) {
     }
     // A callee's signature is module-level, so a call inside a closure or generator body takes the same loans.
     for body in &mut module.bodies {
-        walk_calls_mut(&mut body.block.stmts, &mut |statement| {
-            retain_call_loans(statement, &signatures)
-        });
+        retain_body_calls(body, &signatures);
     }
+}
+
+/// Evaluate the existing private-parameter transfer rule for one body against final input signatures. Eligibility
+/// comes from that declaration's visibility and the selected escape membership. The caller owns group iteration;
+/// this operation never updates another signature or chooses a different fixed point.
+pub(super) fn retain_parameters(body: &mut bir::Body, signatures: &[Signature], eligible: bool) -> bool {
+    if !eligible
+        || !matches!(body.return_type, IncanType::Primitive(_))
+        || !body.return_type.abi_v0_facts().ownership.is_trivially_copy()
+        || body.extern_delegation.is_some()
+        || !body.native_attributes.is_empty()
+    {
+        return false;
+    }
+    let mut changed = false;
+    for parameter in &mut body.params {
+        if parameter.mutable || !native_owner(&parameter.ty, &body.named_type_identities) {
+            continue;
+        }
+        let context = ReadContext {
+            locals: &body.locals,
+            signatures,
+            local: parameter.local,
+            owner: &parameter.ty,
+            cursor: false,
+        };
+        if readonly(&body.block.stmts, &context) {
+            parameter.ty = IncanType::Ref(Box::new(parameter.ty.clone()));
+            body.locals[parameter.local.index()].ty = parameter.ty.clone();
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Finalize only this body's call-loan operands from selected final signatures, including its lexical closures and
+/// generators. Callee signature production and shared-loan group settlement have already finished.
+pub(super) fn retain_body_calls(body: &mut bir::Body, signatures: &[Signature]) {
+    walk_calls_mut(&mut body.block.stmts, &mut |statement| {
+        retain_call_loans(statement, signatures)
+    });
 }
 
 /// Combine native selections and concrete local bodies without deriving a signature from a name.
@@ -94,14 +110,18 @@ fn signatures(module: &bir::BodyIrModule) -> Vec<Signature> {
             arguments: callable.native_type_arguments.clone(),
             parameters: callable.parameters.clone(),
         })
-        .chain(module.bodies.iter().filter_map(|body| {
-            Some(Signature {
-                identity: body.canonical.clone()?,
-                arguments: Vec::new(),
-                parameters: body.params.iter().map(|parameter| parameter.ty.clone()).collect(),
-            })
-        }))
+        .chain(module.bodies.iter().filter_map(body_signature))
         .collect()
+}
+
+/// Project one body's parameter ABI independently from its executable statements. Anonymous frames have no
+/// canonical callable key and therefore supply no named signature.
+pub(super) fn body_signature(body: &bir::Body) -> Option<Signature> {
+    Some(Signature {
+        identity: body.canonical.clone()?,
+        arguments: Vec::new(),
+        parameters: body.params.iter().map(|parameter| parameter.ty.clone()).collect(),
+    })
 }
 
 /// Only native owners with retained declaration identity participate; source models and open types keep their ABI.
@@ -114,34 +134,38 @@ fn native_owner(ty: &IncanType, identities: &std::collections::BTreeMap<String, 
 
 /// A private function exposed as a callable retains the callable's owned argument contract.
 fn escaped_functions(module: &bir::BodyIrModule) -> HashSet<CanonicalSymbolId> {
+    module.bodies.iter().flat_map(body_escapes).collect()
+}
+
+/// Produce the callable-value escape contribution of one lexical owner, retaining the original function-item
+/// criterion. A caller queries membership across these contributions before refining a private parameter ABI.
+pub(super) fn body_escapes(body: &bir::Body) -> HashSet<CanonicalSymbolId> {
     let mut escaped = HashSet::new();
-    for body in &module.bodies {
-        walk(&body.block.stmts, &mut |statement| {
-            if let bir::StatementKind::Assign {
-                rvalue: bir::Rvalue::Closure { body, .. },
-                ..
-            } = &statement.kind
-                && body.function_item
-            {
-                walk(&body.stmts, &mut |statement| {
-                    if let bir::StatementKind::Call {
-                        callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
-                        ..
-                    } = &statement.kind
-                        && let Some(identity) = &target.canonical
-                    {
-                        escaped.insert(identity.clone());
-                    }
-                });
-            }
-        });
-    }
+    walk(&body.block.stmts, &mut |statement| {
+        if let bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Closure { body, .. },
+            ..
+        } = &statement.kind
+            && body.function_item
+        {
+            walk(&body.stmts, &mut |statement| {
+                if let bir::StatementKind::Call {
+                    callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                    ..
+                } = &statement.kind
+                    && let Some(identity) = &target.canonical
+                {
+                    escaped.insert(identity.clone());
+                }
+            });
+        }
+    });
     escaped
 }
 
 /// Borrow a shared native field binding or traversal cursor when every use stays read-only. A field binding starts
 /// from an explicit projected loan; a cursor's later assignments must already return shared views of its owner.
-fn retain_cursors(body: &mut bir::Body, signatures: &[Signature]) {
+pub(super) fn retain_cursors(body: &mut bir::Body, signatures: &[Signature]) {
     for index in 0..body.locals.len() {
         let local = body.locals[index].id;
         let owner = body.locals[index].ty.clone();

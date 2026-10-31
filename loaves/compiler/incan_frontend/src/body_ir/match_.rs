@@ -159,9 +159,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Transfer a single owned native payload from an unguarded match on a fresh enum temporary or the last
-    /// read of an owned native iterator item, local binding or owned parameter. No later read can reuse that carrier,
-    /// and a successful arm has no other payload to preserve. Borrowed parameters, loop-reused carriers, nested
+    /// Transfer a single owned payload from an unguarded match on a carrier no later read can reuse: a fresh enum
+    /// temporary, or the last read of an owned local binding. A successful arm has no other payload to preserve, so
+    /// the binding takes the payload and is its only owner: cloning it would leave the clone and the carrier to be
+    /// dropped, running the payload's drop twice. A native payload, which cannot be cloned, also transfers from the
+    /// last read of an owned native iterator item or owned parameter. Borrowed parameters, loop-reused carriers, nested
     /// patterns and guards retain their facts. A final owned local read authorizes transfer independently of whether
     /// its payload's declaration is available in this consumer. Checked non-Clone tuple newtypes retain the same
     /// transfer boundary as their native payload; reference payloads retain their existing facts.
@@ -203,10 +205,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(payload) = self.locals.get(binding.local.index()) else {
             return;
         };
-        let owned_local = local.origin == bir::LocalOrigin::UserBinding
-            && owned_last_read
+        let unread_carrier = (local.origin == bir::LocalOrigin::Temporary
+            || (local.origin == bir::LocalOrigin::UserBinding && owned_last_read))
             && !matches!(payload.ty, IncanType::Ref(_) | IncanType::RefMut(_));
-        if (owned_local || self.payload_needs_owned_transfer(&payload.ty))
+        if (unread_carrier || self.payload_needs_owned_transfer(&payload.ty))
             && matches!(
                 binding.fact,
                 bir::OwnershipFact::Borrow | bir::OwnershipFact::Clone | bir::OwnershipFact::Move

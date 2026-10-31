@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 mod inference;
 
 /// One checked function's hidden input slots, appended after its explicitly declared type parameters.
-struct TraitInputs {
+pub(super) struct TraitInputs {
     explicit_count: usize,
     parameters: Vec<String>,
     slots: Vec<usize>,
@@ -40,44 +40,60 @@ pub(super) fn retain_inputs(
         }
     }
     for body in context.iter().flat_map(|module| module.callable_declaration_frames()) {
-        let slots = body
-            .params
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, param)| {
-                let IncanType::TypeVar(name) = &param.ty else {
-                    return None;
-                };
-                body.named_type_identities
-                    .get(name)
-                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
-                    .map(|_| slot)
-            })
-            .collect::<Vec<_>>();
+        let inputs = published_inputs(body);
         if let Some(identity) = &body.canonical
-            && !slots.is_empty()
+            && !inputs.slots.is_empty()
         {
-            signatures.insert(
-                identity.clone(),
-                TraitInputs {
-                    explicit_count: body.type_parameters.len().saturating_sub(slots.len()),
-                    parameters: body.type_parameters[..body.type_parameters.len().saturating_sub(slots.len())].to_vec(),
-                    annotations: Vec::new(),
-                    slots,
-                },
-            );
+            signatures.insert(identity.clone(), inputs);
         }
     }
     for body in &mut module.bodies {
-        retain_block_inputs(
-            &mut body.block,
-            &mut body.locals,
-            &signatures,
-            &module.nominal_declarations,
-            &adoptions,
-            &body.named_type_identities,
-        );
+        retain_body_arguments(body, &signatures, &module.nominal_declarations, &adoptions);
     }
+}
+
+/// Read one authenticated provider frame's hidden input contract without inspecting its executable body. Empty
+/// contracts remain explicit native values; record schema/profile/evidence belong to the publishing adapter.
+pub(super) fn published_inputs(body: &bir::Body) -> TraitInputs {
+    let slots = body
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, param)| {
+            let IncanType::TypeVar(name) = &param.ty else {
+                return None;
+            };
+            body.named_type_identities
+                .get(name)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+                .map(|_| slot)
+        })
+        .collect::<Vec<_>>();
+    let explicit_count = body.type_parameters.len().saturating_sub(slots.len());
+    TraitInputs {
+        explicit_count,
+        parameters: body.type_parameters[..explicit_count].to_vec(),
+        annotations: Vec::new(),
+        slots,
+    }
+}
+
+/// Apply already selected trait input and adoption contracts to one body's arguments. The caller owns declaration
+/// and candidate selection; this operation does not collect signatures or inspect any sibling body.
+pub(super) fn retain_body_arguments(
+    body: &mut bir::Body,
+    signatures: &HashMap<CanonicalSymbolId, TraitInputs>,
+    nominals: &[bir::NominalDeclaration],
+    adoptions: &BTreeMap<(CanonicalSymbolId, CanonicalSymbolId), Vec<IncanType>>,
+) {
+    retain_block_inputs(
+        &mut body.block,
+        &mut body.locals,
+        signatures,
+        nominals,
+        adoptions,
+        &body.named_type_identities,
+    );
 }
 
 /// Retain identities from the checked annotation spans rather than widening legacy's nominal-only identity table.
@@ -110,7 +126,7 @@ fn retain_annotation_identities(body: &mut bir::Body, program: &ast::Program, fa
 }
 
 /// Mint one distinct hidden binder for each canonically proven trait parameter, preserving parameter order.
-fn retain_body_inputs(body: &mut bir::Body) -> TraitInputs {
+pub(super) fn retain_body_inputs(body: &mut bir::Body) -> TraitInputs {
     let explicit_count = body.type_parameters.len();
     let parameters = body.type_parameters.clone();
     let mut slots = Vec::new();
