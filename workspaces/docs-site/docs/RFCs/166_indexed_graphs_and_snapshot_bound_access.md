@@ -19,7 +19,7 @@
 
 ## Summary
 
-Evolve `std.graph` into an indexed, bounded and storage-independent graph facility while preserving RFC 047's in-memory containers. Add typed relationship payloads, snapshot-bound graph readers, paged traversal and explicit completeness, allowing the same algorithms to work over ordinary graph values or `std.db` records without copying an entire graph. Native performance becomes an inspectable access contract, not an inference from the compilation target. This is a follow-on to implemented RFC 047, not a replacement of its historical specification or a requirement that all graphs become databases.
+Evolve `std.graph` into an indexed, bounded and storage-independent graph facility while preserving RFC 047's in-memory containers. Add typed relationship payloads, snapshot-bound graph readers, paged traversal and explicit completeness, allowing the same algorithms to work over ordinary graph values or `std.db` records without copying an entire graph. The new reading surface makes scope, ownership, resource bounds and completeness explicit. This is a follow-on to implemented RFC 047, not a replacement of its historical specification or a requirement that all graphs become databases.
 
 ## Core model
 
@@ -145,6 +145,8 @@ This container does not infer legal domain endpoint kinds from an arbitrary enum
 Database relationship indexes must describe the same authoritative records as direct record reads. Type erasure inside an implementation must not permit incompatible model or relation families at the public API boundary.
 
 ### Indexed access and performance obligations
+
+Optimizing existing graph operations is ordinary implementation work and does not require this RFC or another language-design approval. Adjacency indexes, faster membership checks and reduced allocations may be delivered independently while preserving existing public contracts. This RFC is needed for typed relationship payloads and the shared, bounded graph-reading surface. Its access requirements constrain those new public contracts; they do not turn every performance improvement into a new design decision. Changing public fields or observable behavior remains a compatibility decision.
 
 Let `V` and `E` denote live nodes and edges, and let `d(v)` be the selected incident edge count. Implementations must report physical retained/deleted entries separately so these variables do not hide tombstone scans.
 
@@ -280,6 +282,10 @@ Read scopes, typed failures, cursors and completeness add concepts beyond a smal
 - **Storage adapters:** snapshot-bound reading, typed endpoint preservation, index access and dependency evidence through RFC 165.
 - **Type checking and ownership:** ordinary generic protocol dispatch and safe reader lifetimes; unsupported language requirements must be explicit.
 - **Tooling and contracts:** observable traversal reports, compatibility checks and cross-backend conformance, without claiming a new query language.
+
+## Design Decisions
+
+- **Scope:** typed relationships, storage-independent readers, ownership and bounded traversal are the new public contracts. Performance upgrades to existing graph operations are regular implementation work, not the reason for this RFC or a separate RFC prerequisite. Public-field compatibility is reviewed separately.
 
 ## Unresolved questions
 
