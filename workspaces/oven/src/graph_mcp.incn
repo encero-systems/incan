@@ -4,7 +4,7 @@ from rust::std::io import Write, stdin, stdout
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
-from graph_inspection import graph_response
+from graph_inspection import graph_response, options, prepare_inspection
 from graph_queries import display, nested, text
 from graph_memory import TaskMemory
 from home import TOOLCHAIN
@@ -123,11 +123,10 @@ model GraphServer:
             if task.strip() == "":
                 return Err("a nonempty task or declaration is required")
             budget = nested(arguments, "budget").expect_int().map_err((_) => "budget must be an integer")?
-            snapshot = self.current_snapshot()?
-            return graph_response(
+            prepared = prepare_inspection(options(
                 command + ["--task", task, "--budget", str(budget), "--format", "compact"],
-                self.memory.preferences(task, snapshot),
-            )
+            )?)?
+            return prepared.respond(self.memory.preferences(task, prepared.snapshot()?))
         if name == "record_feedback":
             return self.record_feedback(arguments)
         if name == "task_memory":
@@ -155,10 +154,11 @@ model GraphServer:
 
     def record_feedback(mut self, arguments: JsonValue) -> Result[str, str]:
         """Accept explicit feedback only for a declaration proved in the client's still-current graph snapshot."""
-        snapshot = self.current_snapshot()?
+        prepared = prepare_inspection(options(["codegraph", self.root, "--format", "json"])?)?
+        snapshot = prepared.snapshot()?
         if text(arguments, "snapshot") != snapshot:
             return Err("feedback snapshot is stale; read the current graph summary")
-        document = graph_response(["codegraph", self.root, "--format", "json"])?
+        document = prepared.respond()?
         records = parse_records(document)?
         mut keys: list[str] = []
         wanted = text(arguments, "declaration")
