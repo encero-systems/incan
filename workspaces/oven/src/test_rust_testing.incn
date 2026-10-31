@@ -5,13 +5,16 @@ from std.environ import get_or
 from std.testing import fail
 from codegen import compiled_arguments, rust_incremental_arguments, rust_iteration_enabled
 from files import make_directory, read, write
+from graph_dependencies import prepare_graph
+from graph_rust import inspect_rust
+from features import FeatureRequest
 from rust_testing import build_rust_tests
 from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
 from rust_units import RustBuild, facet_slot, ordered, read_registry_units, rust_output
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
-from toolchain import load_toolchain, rust_compiler
+from toolchain import Toolchain, load_toolchain, rust_compiler
 
 
 pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]:
@@ -127,6 +130,30 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     verify_incremental_revert(optimized, helper, helper_source, project)?
     # 6. The bakery's dependency evidence remains valid in a second checkout.
     verify_relocated_harnesses(optimized, project, root.joinpath("relocated"))?
+    verify_native_graph_publication(helper, toolchain)?
+    return Ok(None)
+
+
+def verify_native_graph_publication(helper: Path, toolchain: Toolchain) -> Result[None, str]:
+    """A cached native preparation returns a complete graph publication, restoring a lost filename binding."""
+    provider = helper.resolve().map_err((error) => error.message())?
+    root = provider.parent().joinpath("graph_consumer")
+    make_directory(root.joinpath("src"))?
+    manifest = "[project]\nname='graph_consumer'\nversion='0.1.0'\n[dependencies]\nhelper={path='../helper'}\n"
+    write(root.joinpath("loaf.toml"), manifest)?
+    write(root.joinpath("src/main.incn"), "def main() -> None:\n    pass\n")?
+    facet = local_facet(provider.0, DependencyDomain.Target, "helper")
+    prepared = prepare_graph(root, "debug", FeatureRequest(), {}, toolchain, [], true)?
+    unit = prepared.built[facet.key()]
+    graph = Path(unit.directory).joinpath("helper.incngraph")
+    original = graph.read_bytes().map_err((error) => error.message())?
+    _ = inspect_rust(root, "debug", FeatureRequest(), {}, toolchain, true)?
+    # Losing a filename is not losing a fact, and a cached preparation must not return a partial publication.
+    Path(unit.artifact).unlink().map_err((error) => error.message())?
+    restored = inspect_rust(root, "debug", FeatureRequest(), {}, toolchain, true)?
+    assert len(restored) > 0
+    assert Path(unit.artifact).is_file(), "cached native preparation returned an incomplete library publication"
+    assert graph.read_bytes().map_err((error) => error.message())? == original
     return Ok(None)
 
 
