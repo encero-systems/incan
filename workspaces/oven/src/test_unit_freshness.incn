@@ -13,7 +13,8 @@ from std.json import JsonValue
 from pub::incan_platform.trace import flush as flush_trace
 from std.environ import get_or
 from installation_check import verify_runtime
-from installation_page import recall as recall_installation
+from installation_page import recall as recall_installation, begin_command, end_command
+from home_paths import installation_catalog
 from installation_codec import decode as decode_installation, encode as encode_installation
 from trace_adapter import count_work, finish_counting
 from page_codec import Reader, put_texts
@@ -1794,6 +1795,15 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
     assert work.parses == 0 and work.decodes == 0
     assert work.stats > 0
     assert work.pages <= 1
+    # A command captures once; ending it restores generation checks for later library or resident requests.
+    begin_command()
+    _ = load_toolchain_at(directory)?
+    count_work(directory.0 + "/")
+    for _index in range(2):
+        assert load_toolchain_at(directory)?.driver == page.toolchain.driver
+    captured = finish_counting()
+    end_command()
+    assert captured.stats == 0 and captured.reads == 0 and captured.hashes == 0
     encoded = encode_installation(page)?
     fixture = directory.parent().joinpath("installation-page.bin")
     fixture.write_bytes(encoded).map_err((error) => error.message())?
@@ -1807,7 +1817,7 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
     verify_page_refusals(fixture, encoded)?
     verify_page_vectors(fixture)?
     digest = fingerprint_page(encoded)
-    canonical = payload_path(bakery()?, digest)
+    canonical = payload_path(installation_catalog()?, digest)
     canonical.chmod(false).map_err((error) => error.message())?
     canonical.write_bytes(b"damaged page").map_err((error) => error.message())?
     match recall_installation(directory):
