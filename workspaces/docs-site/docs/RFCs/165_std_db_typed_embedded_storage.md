@@ -22,7 +22,7 @@
 
 ## Summary
 
-Introduce `std.db`, an embedded, typed, transactional record store with memory-only and local-durable profiles. Incan models define stored values; explicit identities, immutable revisions, indexed relationships and snapshot-bound reads define how those values are retained and connected. The public standard-library API wraps one generic platform storage substrate rather than creating a second engine. Compiler tooling, document publishers, interactive applications and higher-level query libraries can share that substrate without sharing domain policy, requiring a server, or importing a query engine. RFC 166 defines the graph-reading interface over these records and ordinary in-memory graphs.
+Introduce `std.db`, an Incan-native embedded, typed, transactional database with persistent disk, temporary spooled-memory and strictly in-memory modes. Incan models define stored values; explicit identities, immutable revisions, indexed relationships and snapshot-bound reads define how those values are retained and connected. The public standard-library API uses one shared platform storage substrate rather than creating a second engine. Compiler tooling, document publishers, interactive applications and higher-level query libraries can share that substrate without sharing domain policy, requiring a server, or importing a query engine. RFC 166 defines the graph-reading interface over these records and ordinary in-memory graphs.
 
 ## Core model
 
@@ -61,6 +61,8 @@ The standard library should offer a reusable, native foundation. A database must
 
 - Make typed records and relationships directly usable from Incan without SQL DDL, an ORM or an application-authored serialization layer.
 - Provide atomic, consistent, isolated transactions and explicitly qualified durability.
+- Support disk, temporary spooled-memory and strictly in-memory storage through the same typed record and transaction operations.
+- Keep ordinary access compatible with duckborrowing; explicit lifetime brands belong to the primitive API.
 - Share one storage implementation between toolchain and application consumers through a consumer-neutral API.
 - Support cheap view forks, bounded snapshot reads, mapped byte access and explicit owned materialization.
 - Support typed point access and column-projected batch scans without making an analytical query engine part of storage.
@@ -116,6 +118,26 @@ Family registration is explicit. Constructing a family handle does not write a s
 
 `db.memory()` creates an isolated memory store with the same logical record and transaction semantics. Its receipts report memory durability. It does not create files or silently spill to disk. `db.open(path)` opens or creates a local-durable store directory, validating its format and capabilities first. Opening an existing unrelated directory must fail rather than adopt or overwrite its contents.
 
+### Choose storage placement without changing the data contract
+
+The same typed Incan records and logical transaction operations are available in three explicit modes:
+
+| Mode | Storage and lifetime contract |
+| --- | --- |
+| Disk | Persistent records and indexes live on disk, with bounded memory caches and working buffers. The complete database need not fit in RAM. Durable success remains subject to the qualified filesystem profile. |
+| Spooled memory | Temporary storage starts in memory and spills to temporary disk storage when its configured memory threshold requires it. It supports incremental write buffering, read-ahead staging and short-lived caches without promising persistence across restarts. |
+| Memory | Retained contents stay in memory. Capacity exhaustion is a typed failure; the database does not silently spill to disk. |
+
+Storage placement does not change table types, record identities, transaction atomicity or a reader's selected contents. Spooling must preserve active snapshots, cursors and borrowed data. Migration must not relocate or release buffers still being borrowed. If retained buffers prevent meeting the memory bound, report resource exhaustion rather than invalidate a borrower or silently exceed the bound. The primitive implementation owns placement and retention mechanics; ordinary callers use duckborrowing without naming lifetime brands.
+
+Spilling and flushing are not committing. A cursor may stage writes incrementally across many input batches while one transaction remains unpublished. Persistent and spooled storage may stage encoded data on disk without retaining the complete decoded input in RAM. A caller may instead commit each batch in its own transaction, deliberately accepting that earlier committed batches survive later failures. No buffer threshold may silently select that policy for the caller. Memory mode still needs memory for its retained contents; incremental input avoids additional whole-input retention, not the storage cost of those contents.
+
+Spooled mode is temporary even after data reaches disk. Normal release reclaims temporary storage once its owners and retained readers release it; active retention must not be revoked merely to remove a spool file. Interrupted processes may leave temporary artifacts requiring recovery cleanup, but those artifacts are not a supported persistent database or a restart-durability promise. Failure to acquire or extend temporary storage is a typed failure, not a silent switch to another storage mode.
+
+Read-ahead is an access optimization that can also serve disk mode. Spooled mode describes retention and placement of temporary data, not exclusive ownership of the read-ahead mechanism. Inspection must distinguish logical stored data, working-memory use, temporary disk use and retained buffers. Buffering may improve throughput for a workload; no universal speedup is claimed.
+
+The public constructor names and tuning parameters for these modes remain part of the concrete API test drive. `db.memory()` and `db.open(path)` above are current draft spellings; the three-mode contract does not invent an already implemented spooling constructor.
+
 ### Fork a view without copying its records
 
 ```incan
@@ -146,7 +168,7 @@ Interactive state may remain in a memory store. A render pass reads one snapshot
 
 ### An embedded database without a mandatory query language
 
-An application may use `std.db` directly as its local transactional database: open a directory or memory store, register typed families, update records, follow indexed relationships and read a consistent snapshot. A query library may instead consume bounded typed batches from that same snapshot and supply joins, grouping, sorting or analytical expressions. Both use the same storage and publication contracts; neither requires SQL.
+An application may use `std.db` directly as its local transactional database: open a disk, temporary spooled-memory or memory store, register typed families, update records, follow indexed relationships and read a consistent snapshot. A query library may instead consume bounded typed batches from that same snapshot and supply joins, grouping, sorting or analytical expressions. Both use the same storage and publication contracts; neither requires SQL.
 
 Model-shaped data does not imply one heap-allocated model per scanned row. Selecting two numeric fields from a wide family must have a batch path that does not decode every unrelated field or construct every complete record. Indexed application reads and analytical scans are complementary access patterns, not separate databases containing duplicate authoritative records.
 
@@ -158,7 +180,7 @@ The following are required concepts and proposed public names. Generic family an
 
 | Surface               | Required contract                                                                                                    |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `Store`               | Own one memory store or open one physical local store; expose capabilities and format identity.                      |
+| `Store`               | Own a disk, temporary spooled-memory or memory store; expose placement, capabilities and format identity.                      |
 | `Family[T]`           | Bind `T` to one family identity, schema version and codec profile; mismatches are typed errors.                      |
 | `RecordId[T]`         | Name a logical record of `T`; include or retain its originating store and family scope.                              |
 | `RevisionRef[T]`      | Pin an exact immutable revision and its logical record identity.                                                     |
@@ -217,7 +239,7 @@ Abort and failed pre-publication validation must leave the visible view unchange
 
 Each commit has an explicit transaction identity. If I/O or acknowledgment fails after publication may have happened, the result must identify an indeterminate outcome. A resolution operation must distinguish committed, not committed and still unknown. A retry must not silently apply the transaction twice, and no resolution operation may replay application effects.
 
-Local-durable success requires the documented file-data, index, manifest and directory publication ordering for a supported filesystem profile. Unsupported durability must be reported before claiming a durable commit. Memory-store success provides atomicity, consistency and isolation but explicitly does not promise survival of process failure. There is no silent downgrade between profiles.
+Local-durable success requires the documented file-data, index, manifest and directory publication ordering for a supported filesystem profile. Unsupported durability must be reported before claiming a durable commit. Memory and spooled-memory success provide atomicity, consistency and isolation but explicitly do not promise survival of process failure. Temporary disk spill does not upgrade that guarantee. There is no silent downgrade between profiles.
 
 ### Snapshots, mapped views and bounded reads
 
@@ -298,6 +320,7 @@ Inspection must expose capabilities, schemas, view and snapshot identities, inde
 | Incremental publication  | Body, title, include, template, route, rename and deletion changes produce the same outputs as a clean recomputation, including one source rendered under multiple profiles and routes.                                                         |
 | Interactive experience   | A render reads one state snapshot; a draft fork cannot mutate the published view; stale cursors and absent-selection changes are detected; no callback or effect executes inside storage operations.                                            |
 | Scale and memory         | Point reads, bounded ranges, idle snapshots and streaming compaction are measured at increasing corpus sizes; counters expose unrelated work and hidden whole-store materialization.                                                            |
+| Storage modes | Equivalent typed operations agree across disk, spooled-memory and memory modes. Cross the spool threshold during an uncommitted incremental import and with active readers; verify stable identities, no premature publication, valid borrowed buffers, observable resource bounds and temporary cleanup after retention ends. Memory exhaustion must not create spill files. |
 | Packaging                | A consumer selecting memory graphs alone excludes storage; a storage consumer excludes analytical engines, protocol compilers and renderer runtimes unless explicitly selected.                                                                 |
 | Projected batch scans    | A narrow projection over a wide family agrees with point reads; counters prove no full-model construction on the direct-column path, disclose decoded/copied bytes and keep unsupported predicates explicit.                                    |
 
@@ -338,7 +361,7 @@ This RFC adds a standard module. It does not reopen RFC 047 or reinterpret exist
 
 ## Drawbacks
 
-The standard library would acquire a long-lived storage-format and recovery commitment. Precise identities, leases, cursors and trace semantics add API weight, and typed schemas require explicit evolution. Retention can consume disk until a caller releases roots; bounded resource errors are less convenient than silent eviction. Supporting both memory and durable profiles requires conformance across different failure models. These costs are justified only if consumers actually share the implementation and its proofs.
+The standard library would acquire a long-lived storage-format and recovery commitment. Precise identities, leases, cursors and trace semantics add API weight, and typed schemas require explicit evolution. Retention can consume disk until a caller releases roots; bounded resource errors are less convenient than silent eviction. Supporting disk, spooled-memory and memory modes requires conformance across different failure models. These costs are justified only if consumers actually share the implementation and its proofs.
 
 ## Layers affected
 
