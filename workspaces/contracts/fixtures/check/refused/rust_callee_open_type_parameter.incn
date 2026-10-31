@@ -1,0 +1,17 @@
+# behavior: a Rust method call whose type parameter nothing in the call fixes, such as `Command.args` given a generator whose native item type is not known, is refused at check time instead of stopping the build (#2481)
+# expect-diagnostic: INCAN-T0122
+
+"""A native call compiles only through a callee whose type arguments are all known."""
+
+from rust::std::process import Command
+
+
+def names() -> Generator[str]:
+    """Yield one argument."""
+    yield "one"
+
+
+def main() -> None:
+    """Pass a generator where `Command.args` takes any `IntoIterator<Item = S>`."""
+    mut command = Command.new("true")
+    command.args(names())

@@ -396,9 +396,21 @@ impl TypeChecker {
         }
         self.reject_unbound_c_abi_span_constructors();
         self.reject_unbound_scoped_c_string_views(&stmt.node);
-        // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its
-        // context (an argument's declared type, a typed return); only the two shapes above are refused (#1720).
-        self.open_rust_generic_calls.clear();
+        self.settle_open_rust_generic_calls();
+    }
+
+    /// End the statement's native call selection facts. A call nested somewhere other than a direct binding or a
+    /// bare statement is closed by its context (an argument's declared type, a typed return) when its callee was
+    /// retained; one without a callee is refused (#1720, #2481).
+    fn settle_open_rust_generic_calls(&mut self) {
+        let mut nested = std::mem::take(&mut self.open_rust_generic_calls)
+            .into_iter()
+            .collect::<Vec<_>>();
+        nested.sort_by_key(|(span, _)| *span);
+        for (span, call) in nested {
+            self.refuse_unselected_open_rust_generic_call(&call, span);
+        }
+        self.tied_rust_trait_callees.clear();
     }
 
     /// Check a tuple unpack before introducing its names. Plain names reassign the nearest active binding while
@@ -1329,9 +1341,9 @@ impl TypeChecker {
     /// Attach the open Rust associated call a new binding received to that binding, or refuse it at once when
     /// the binding is the discard `_` (#1720).
     ///
-    /// The call was recorded by its span when the method call resolved; a direct `name = call()` is the one place
-    /// a later reader can still fix the owner's type arguments, so the binding is watched until its block ends
-    /// instead of being refused here. `_` is never read, so nothing can fix them and the call is refused at once.
+    /// The call was recorded by its span when the method call resolved. A direct `name = call()` binding is watched
+    /// until its block ends, so the refusal can name the binding to annotate if nothing reads it, or say which
+    /// parameters stay open if something does. `_` is never read, so the call is refused at once.
     fn bind_open_rust_generic_assignment(&mut self, name: &str, value_span: Span) {
         let Some(call) = self.open_rust_generic_calls.remove(&value_span) else {
             return;
@@ -1373,13 +1385,32 @@ impl TypeChecker {
 
     /// Stop watching the open Rust generic bindings named `name`: a read or a reassignment reached it (#1720).
     ///
-    /// Any later reader is taken as the one that fixes the type arguments. That is deliberately generous, since
-    /// Rust's own inference decides which uses fix them; the checker refuses only a binding nothing reads at all.
+    /// A later use does not fix the owner's type arguments: the call compiles only through the callee checking
+    /// retained for it. A read binding whose call has none is refused for its open parameters (#2481).
     pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str) {
         if self.open_rust_generic_bindings.is_empty() {
             return;
         }
-        self.open_rust_generic_bindings.retain(|binding| binding.name != name);
+        let (read, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
+            .into_iter()
+            .partition(|binding| binding.name == name);
+        self.open_rust_generic_bindings = still_watched;
+        for binding in read {
+            self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
+        }
+    }
+
+    /// Refuse an open Rust associated call that is no longer watched when checking retained no callee for it.
+    fn refuse_unselected_open_rust_generic_call(&mut self, call: &super::OpenRustGenericCall, span: Span) {
+        if self.type_info.rust.checked_calls.contains_key(&span) {
+            return;
+        }
+        let callee = format!("{}.{}", call.owner, call.method);
+        self.errors.push(errors::rust_callee_not_selected(
+            &callee,
+            errors::NativeCalleeGap::OpenTypeParameters(&call.type_params),
+            span,
+        ));
     }
 
     /// Refuse every open Rust generic binding that the statement block `block` declared and nothing read (#1720).

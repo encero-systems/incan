@@ -213,8 +213,8 @@ impl TypeChecker {
             false,
             call.span,
         );
-        if self.errors.len() == errors_before {
-            self.retain_checked_rust_method(
+        if self.errors.len() == errors_before
+            && let Err(refusal) = self.retain_checked_rust_method(
                 method,
                 &method.signature.type_params,
                 info,
@@ -224,7 +224,9 @@ impl TypeChecker {
                 Some(&owner),
                 &result,
                 call.span,
-            );
+            )
+        {
+            self.errors.push(refusal);
         }
         Some(result)
     }
@@ -357,7 +359,7 @@ impl TypeChecker {
             if self.errors.len() != errors_before {
                 return Some(result);
             }
-            self.retain_checked_rust_method(
+            if let Err(refusal) = self.retain_checked_rust_method(
                 method,
                 &method.signature.type_params,
                 info,
@@ -367,7 +369,9 @@ impl TypeChecker {
                 Some(&owner),
                 &result,
                 call.span,
-            );
+            ) {
+                self.errors.push(refusal);
+            }
             if let Some(retained) = self.type_info.rust.checked_calls.get_mut(&call.span) {
                 retained.receiver_adjustments = adjustments;
             }
