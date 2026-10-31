@@ -156,6 +156,16 @@ def is_format(request: CompileRequest) -> bool:
         WorkerCommand.Format => return true
         WorkerCommand.Unit => return false
         WorkerCommand.Check => return false
+        WorkerCommand.SourceFiles => return false
+
+
+def is_discovery(request: CompileRequest) -> bool:
+    """Whether the request lists a formatting run's sources."""
+    match request.command:
+        WorkerCommand.SourceFiles => return true
+        WorkerCommand.Unit => return false
+        WorkerCommand.Check => return false
+        WorkerCommand.Format => return false
 
 
 pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
@@ -191,7 +201,7 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
             Err(_) => pass
             Ok(_) =>
                 assert false
-    unserved = "a compiler worker accepts only --unit, --check and --fmt requests"
+    unserved = "a compiler worker accepts only --unit, --check, --fmt and --source-files requests"
     assert encode_reply(Reply.Refused(unserved), false) == f"{{\"exit\":1,\"reason\":\"{unserved}\",\"schema\":\"{SCHEMA}\"}}".encode(
         "utf-8",
     )
@@ -230,7 +240,7 @@ def ready_document(generation: str, pid: int) -> Result[None, str]:
 pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Result[None, str]:
     """
     A header that is not a length, a length over the frame bound, a payload that is not JSON and an unserved command
-    are each refused with a reason; the request queued behind them is served.
+    are each refused with a reason; the formatting run and the source listing queued behind them are served.
     """
     socket = socket_path("frames")
     mut host = host_for(settings(socket, 10000, 16777216, None))?
@@ -241,6 +251,9 @@ pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Re
     invalid_policy = request_text(GENERATION, "--fmt").replace("\"cwd\"", "\"retire_after\":\"yes\",\"cwd\"")
     mut invalid_lifetime = caller(socket, invalid_policy)?
     mut valid = caller(socket, request_text(GENERATION, "--fmt"))?
+    sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    listing = f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{GENERATION}\",\"arguments\":[\"--source-files\",\"src\"],{sinks}}}"
+    mut discovery = caller(socket, listing)?
     request = served(host)?
     assert is_format(request)
     assert request.arguments == ["/p/unit.json", "src/main.incn", "--check"]
@@ -258,6 +271,10 @@ pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Re
     complete(host, ActivationOutcome.Exited(0), -1)
     answered = reply(valid)?
     assert exit_of(answered) == 0 and reason_of(answered) == "" and not retired(answered)
+    listed = served(host)?
+    assert is_discovery(listed) and listed.arguments == ["src"]
+    complete(host, ActivationOutcome.Exited(0), -1)
+    assert exit_of(reply(discovery)?) == 0
     assert not withdrawn(socket)
     return Ok(None)
 

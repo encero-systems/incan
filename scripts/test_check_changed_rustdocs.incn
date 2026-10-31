@@ -1,11 +1,18 @@
 """Verify rustdoc recognition across the attribute forms used in Rust source."""
 
 from check_changed_rustdocs import has_doc_comment
+from check_support import repository_above
+from std.fs import Path
 
 
 def test_a_doc_block_directly_above_the_signature_counts() -> None:
     """A directly preceding rustdoc block documents its function."""
     assert has_doc_comment(["/// Doc.", "fn f() {}"], 1)
+    # Repository discovery refuses paths with no checkout, including filesystem roots and relative paths.
+    for path in ["/", ".", ""]:
+        match repository_above(Path(path)):
+            Ok(_) => assert false, "a path without a checkout was accepted"
+            Err(_) => pass
 
 
 def test_a_single_line_attribute_between_doc_and_signature_is_stepped_over() -> None:

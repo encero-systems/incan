@@ -318,7 +318,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let scrutinee_ty = self.resolve_ty(value.span);
         let in_place = self.matches_in_place(value.span, &scrutinee_ty);
+        let first_temporary = self.locals.len();
         let scrutinee_place = self.lower_expr_to_place(value, scope, out);
+        self.end_scrutinee_temporaries(value.span, &scrutinee_place, in_place, first_temporary, scope, out);
         let scrutinee = bir::Operand::place(scrutinee_place.clone(), bir::OwnershipFact::Borrow, false);
 
         let layouts_before = self.materialized_range_locals.clone();
@@ -380,7 +382,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_loop(loop_scope, None, span, out, |builder, loop_scope, body_stmts| {
             let scrutinee_ty = builder.resolve_ty(value.span);
             let in_place = builder.matches_in_place(value.span, &scrutinee_ty);
+            let first_temporary = builder.locals.len();
             let scrutinee_place = builder.lower_expr_to_place(value, loop_scope, body_stmts);
+            builder.end_scrutinee_temporaries(
+                value.span,
+                &scrutinee_place,
+                in_place,
+                first_temporary,
+                loop_scope,
+                body_stmts,
+            );
             let scrutinee = bir::Operand::place(scrutinee_place.clone(), bir::OwnershipFact::Borrow, false);
 
             // Exactly one arm runs per iteration, so a fact the matched arm established must not survive into code

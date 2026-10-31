@@ -135,10 +135,10 @@ pub(crate) struct CaptureCounts {
 }
 
 /// One owner's normalized syntax root and the range of every syntax node, keyed both ways.
-struct OwnerSyntax {
-    root: String,
-    by_path: BTreeMap<String, Span>,
-    by_span: BTreeMap<Span, String>,
+pub(super) struct OwnerSyntax {
+    pub(super) root: String,
+    pub(super) by_path: BTreeMap<String, Span>,
+    pub(super) by_span: BTreeMap<Span, String>,
     starts: BTreeMap<(usize, Option<[u8; 32]>), String>,
     ends: BTreeMap<(usize, Option<[u8; 32]>), String>,
 }
@@ -419,8 +419,21 @@ fn owner_name(declaration: &Spanned<Declaration>) -> (&'static str, Option<Strin
 
 impl OwnerSyntax {
     /// Serialize one declaration once, recording each range with its structural path and hashing everything else.
-    fn of(declaration: &Spanned<Declaration>) -> Result<Self, AnchorFault> {
-        let mut inventory = SyntaxInventory::default();
+    pub(super) fn of(declaration: &Spanned<Declaration>) -> Result<Self, AnchorFault> {
+        Self::with_profile(declaration, false)
+    }
+
+    /// Inventory declaration/default inputs without visiting the selected function's statement body.
+    pub(super) fn of_header(declaration: &Spanned<Declaration>) -> Result<Self, AnchorFault> {
+        Self::with_profile(declaration, true)
+    }
+
+    /// Keep one serializer and path vocabulary for both declared-header and executable-owner projections.
+    fn with_profile(declaration: &Spanned<Declaration>, header_only: bool) -> Result<Self, AnchorFault> {
+        let mut inventory = SyntaxInventory {
+            header_only,
+            ..SyntaxInventory::default()
+        };
         declaration
             .serialize(&mut inventory)
             .map_err(|error| AnchorFault::Encoding(error.0))?;
@@ -471,6 +484,8 @@ impl ser::Error for InventoryError {
 /// its expansion identity to the hash; every other value is hashed with a type tag and explicit lengths.
 #[derive(Default)]
 struct SyntaxInventory {
+    /// Declaration/default records do not depend on the selected function's statement body.
+    header_only: bool,
     hasher: Sha256,
     path: Vec<String>,
     /// Next element index of each open sequence, tuple or map.
@@ -874,6 +889,9 @@ impl ser::SerializeStruct for &mut SyntaxInventory {
         if let Some(span) = self.span.as_mut() {
             span.field = key;
             return value.serialize(&mut **self);
+        }
+        if self.header_only && key == "body" && self.path.iter().map(String::as_str).eq(["node", "Function"]) {
+            return Ok(());
         }
         self.enter(key);
         value.serialize(&mut **self)?;

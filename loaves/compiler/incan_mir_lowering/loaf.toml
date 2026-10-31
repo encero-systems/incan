@@ -4,6 +4,7 @@ version = "0.6.0-dev.8"
 
 [dependencies]
 incan_mir_plan = { path = "../incan_mir_plan" }
+internal_models = { path = "../internal_models" }
 
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }

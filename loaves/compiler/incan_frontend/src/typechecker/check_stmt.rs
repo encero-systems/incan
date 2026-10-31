@@ -989,7 +989,7 @@ impl TypeChecker {
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
             self.note_list_reassignment(&assign.name, span);
-            self.mark_open_rust_generic_binding_read(&assign.name);
+            self.mark_open_rust_generic_binding_read(&assign.name, assign.name_span);
             return;
         }
 
@@ -1218,7 +1218,7 @@ impl TypeChecker {
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
                 self.note_list_reassignment(name, target_span);
-                self.mark_open_rust_generic_binding_read(name);
+                self.mark_open_rust_generic_binding_read(name, target_span);
                 return;
             }
             if let Some(static_info) = self.lookup_static_info(name) {
@@ -1360,7 +1360,7 @@ impl TypeChecker {
         self.c_abi_raw_call_results.push(result);
     }
 
-    /// Attach the open Rust associated call a new binding received to that binding, or refuse it at once when
+    /// Attach the open native call result a new binding received to that binding, or refuse it at once when
     /// the binding is the discard `_` (#1720).
     ///
     /// The call was recorded by its span when the method call resolved. A direct `name = call()` binding is watched
@@ -1372,6 +1372,10 @@ impl TypeChecker {
             return;
         };
         if assign.name == "_" {
+            if !call.owner_parameters {
+                self.refuse_unselected_open_rust_generic_call(&call, value_span);
+                return;
+            }
             self.errors.push(errors::rust_owner_type_args_not_inferred(
                 &call.owner,
                 &call.method,
@@ -1410,10 +1414,12 @@ impl TypeChecker {
             statement,
             identity,
             read_in: None,
+            active_reads: Vec::new(),
+            passive_uses: Vec::new(),
         });
     }
 
-    /// Refuse an open Rust associated call whose value a bare expression statement throws away (#1720).
+    /// Refuse an open native call whose value a bare expression statement throws away (#1720, #2481).
     ///
     /// `HashMap.new()` on its own line binds nothing, so no later statement can supply the type arguments Rust
     /// would need; the call is refused where it stands.
@@ -1421,6 +1427,10 @@ impl TypeChecker {
         let Some(call) = self.open_rust_generic_calls.remove(&expr_span) else {
             return;
         };
+        if !call.owner_parameters {
+            self.refuse_unselected_open_rust_generic_call(&call, expr_span);
+            return;
+        }
         self.errors.push(errors::rust_owner_type_args_not_inferred(
             &call.owner,
             &call.method,
@@ -1434,11 +1444,14 @@ impl TypeChecker {
     ///
     /// The use that read is the one that must fix the owner's type arguments, and it fixes them while it is checked;
     /// the end of the statement holding the read refuses a binding it left open (#2481).
-    pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str) {
+    pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str, span: Span) {
         let block = self.statement_blocks.current;
         for binding in &mut self.open_rust_generic_bindings {
-            if binding.name == name && binding.read_in.is_none() {
-                binding.read_in = Some(block);
+            if binding.name == name {
+                binding.read_in.get_or_insert(block);
+                if !binding.active_reads.contains(&span) {
+                    binding.active_reads.push(span);
+                }
             }
         }
     }
@@ -1460,7 +1473,7 @@ impl TypeChecker {
         ));
     }
 
-    /// Refuse every open Rust generic binding that the statement block `block` declared and nothing read (#1720).
+    /// Refuse every open native generic binding that block `block` declared and no fixing use settled (#1720).
     ///
     /// Called when that block ends, after settling a read the block's last statement did not. Bindings of enclosing
     /// blocks stay watched: one after this block can still read them.
@@ -1475,6 +1488,10 @@ impl TypeChecker {
             self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
         }
         for binding in left_unread {
+            if !binding.call.owner_parameters {
+                self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
+                continue;
+            }
             self.errors.push(errors::rust_owner_type_args_not_inferred(
                 &binding.call.owner,
                 &binding.call.method,
@@ -1955,6 +1972,7 @@ impl TypeChecker {
             // ---- Context: pattern-driven `while let` loop ----
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                self.note_loan_free_scrutinee(&value_ty, value.span);
                 let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
@@ -2243,6 +2261,7 @@ impl TypeChecker {
             Condition::Expr(expr) => self.check_expr_condition_body(expr, body, incoming_refinements),
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                self.note_loan_free_scrutinee(&value_ty, value.span);
                 let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.apply_branch_refinements(incoming_refinements);

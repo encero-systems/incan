@@ -230,6 +230,7 @@ impl TypeChecker {
     ) -> ResolvedType {
         let subject_ty = self.check_expr(subject);
         let subject_ty = self.settle_open_constructor_sides_in_place(subject, subject_ty);
+        self.note_loan_free_scrutinee(&subject_ty, subject.span);
         let subject_binding = if let Expr::Ident(name) = &subject.node {
             self.lookup_variable_info(name)
                 .cloned()

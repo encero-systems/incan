@@ -1,0 +1,13 @@
+# behavior: an imported Rust function the selected crate does not declare is refused at its import, not checked into a call without native storage (#2481)
+# expect-diagnostic: INCAN-I0001
+
+"""The selected libc 0.2 declares no `clock_gettime_nsec_np`, so the import grants nothing to call."""
+
+from rust::libc import clock_gettime_nsec_np
+
+
+def main() -> None:
+    """Call the imported name inside an acknowledged unsafe region."""
+    unsafe:
+        value: u64 = clock_gettime_nsec_np(8i32)
+        println(value)

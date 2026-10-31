@@ -1,5 +1,6 @@
 """Recover exact legacy producer edges from retained rustc artifact readings; registry_pages owns completed closures."""
 
+from pub::incan_platform.trace import Operation
 from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
@@ -8,6 +9,7 @@ from retained_readings import recall, retain
 from registry_units import RegistryUnit, sole_library
 from rust_target import decoded
 from toolchain import load_toolchain, rust_compiler
+from jec import begin, record
 
 # The selection under which a closure's completion is retained, followed by the pinned compiler that read it.
 pub const COMPLETION: str = "registry-completion/2"
@@ -15,10 +17,17 @@ pub const COMPLETION: str = "registry-completion/2"
 
 pub def complete_legacy(units: list[RegistryUnit]) -> Result[list[RegistryUnit], str]:
     """Complete missing producer edges from exact native hashes; the caller owns typed-page retention and claims."""
+    if len([unit for unit in units if not has_native_metadata(unit)]) == 0:
+        return Ok(units)
     toolchain = load_toolchain()?
     if len([unit for unit in units if not unit.recorded]) == 0 and len(toolchain.externs) == 0:
         return Ok(units)
     return completed_units(units, rust_compiler(toolchain), toolchain.sysroot)
+
+
+def has_native_metadata(unit: RegistryUnit) -> bool:
+    """A baked closure records the exact native identity or its producer's refusal; neither needs rediscovery."""
+    return unit.refusal != "" or (unit.recorded and unit.name != "" and unit.crate_hash != "" and unit.artifact != "")
 
 
 pub def completion_selection(rustc: str) -> Result[str, str]:
@@ -122,7 +131,9 @@ def metadata(artifact: str, rustc: str) -> Result[str, str]:
     command.env("RUSTC_BOOTSTRAP", "1")
     command.arg("-Zls=root")
     command.arg(artifact)
+    clock = begin()
     output = command.output().map_err((error) => error.to_string())?
+    record(Operation.RegistryMetadata, artifact, clock)
     if not output.status.success():
         return Err(f"cannot read registry producer metadata {artifact}: {decoded(output.stderr)}")
     printed = decoded(output.stdout)

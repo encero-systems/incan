@@ -8,9 +8,41 @@ from json_fields import required_text
 from std.json import JsonValue
 from observation import file_digest, observe
 from publication import publish
-from home import home
+from home_paths import home
+pub from payload_types import PayloadAdmission
+from frozen_inputs import payload as frozen_payload
 
 const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
+
+
+pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
+    """Capture an admitted payload's proof before publishing its containing installation by rename."""
+    identity, payload = publication(path)?
+    document = read_json(available_record(path)?)?
+    return Ok(
+        PayloadAdmission(
+            identity=identity,
+            payload=payload,
+            observation=required_text(document, "observation")?,
+            provenance=source_provenance(document)?,
+        ),
+    )
+
+
+pub def relocate_payload(path: Path, admission: PayloadAdmission) -> Result[None, str]:
+    """Bind a verified generation at its published location without rehashing; changed bytes require fresh admission."""
+    if observe(path)?.stamp != admission.observation:
+        return Err(f"{path.0}: payload changed while publishing installation")
+    destination = imported_record(path)?
+    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    return publish_record(
+        destination,
+        path,
+        admission.identity,
+        admission.payload,
+        admission.observation,
+        admission.provenance,
+    )
 
 
 pub def record_payload(path: Path, identity: str, provenance: list[str] = [], refusal: str = "") -> Result[None, str]:
@@ -78,6 +110,8 @@ pub def published_identity(path: Path) -> Result[str, str]:
     Missing producer records and changed generations refuse; relocation must be admitted before naming the unit. An
     artifact of an installed registry entry is admitted under that entry's identity the first time it is named.
     """
+    if let Some(admission) = frozen_payload(path)?:
+        return Ok(admission.identity)
     mut record = available_record(path)?
     if not record.is_file():
         if let Some(entry) = registry_entry(path):
@@ -112,6 +146,7 @@ def registry_entry(path: Path) -> Option[str]:
         if character not in "0123456789abcdef":
             return None
     return Some(f"sha256:{digest}")
+
 
 pub def import_payload(path: Path, identity: str, expected_payload: str = "") -> Result[None, str]:
     """
@@ -150,6 +185,8 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
 
 pub def publication(path: Path) -> Result[tuple[str, str], str]:
     """Export an admitted producer identity and payload digest without rehashing its bytes."""
+    if let Some(admission) = frozen_payload(path)?:
+        return Ok((admission.identity, admission.payload))
     identity = published_identity(path)?
     document = read_json(available_record(path)?)?
     return Ok((identity, required_text(document, "payload")?))

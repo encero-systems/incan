@@ -2436,10 +2436,10 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
 /// Report a Rust associated call whose owner type arguments nothing in the program fixes (#1720).
 ///
 /// `HashMap.new()` leaves `K` and `V` open; a later use of the binding fixes them, such as an insert, a typed parameter
-/// or a typed return, but a binding that is never read again gives nothing to fix them. This refusal covers a result
-/// that is discarded or bound to a local nothing reads; a binding whose first use fixes nothing is refused with
-/// `INCAN-T0122` instead. `owner` is the receiver as the source spells it (`HashMap`), `method` the
-/// associated function, `type_params` the owner's open parameters, and `binding` the local the result was bound to,
+/// or a typed return. Reads whose checking needs no open parameter, such as a length query, leave them open. This
+/// refusal covers a discarded result or a binding with no type-determining use; a first use that needs them but fixes
+/// nothing is refused with `INCAN-T0122` instead. `owner` is the receiver as the source spells it (`HashMap`), `method`
+/// the associated function, `type_params` the owner's open parameters, and `binding` the local the result was bound to,
 /// or `None` when the value was discarded. The hint shows both spellings that close the parameters, with example
 /// types sized to the parameter count. `INCAN-T0105` is its stable code.
 pub fn rust_owner_type_args_not_inferred(
@@ -2465,7 +2465,7 @@ pub fn rust_owner_type_args_not_inferred(
     .with_stable_code("INCAN-T0105");
     match binding {
         Some(name) => error
-            .with_note(format!("'{name}' is never read after this binding, so nothing later fixes them"))
+            .with_note(format!("'{name}' has no later use that determines these type arguments"))
             .with_hint(format!(
                 "Write them in the call, '{owner}.{method}[{examples}]()', or annotate the binding, '{name}: {owner}[{examples}] = {owner}.{method}()'"
             )),

@@ -11,6 +11,7 @@ from std.toml import TomlLocation
 from std import toml
 from std.toml import TomlValue, TomlKind
 from manifest_errors import IntakeError, IntakeErrorKind
+from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
 
 
@@ -343,7 +344,7 @@ def read_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, In
     """Read all dependency/feature tables and retain the rest for the later checked facet producer."""
     clock = begin()
     document = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
-    record("manifest_parse", manifest, clock, text_size(source, clock))
+    record(Operation.ManifestParse, manifest, clock, text_size(source, clock))
     root = table(document, manifest, [])?
     mut dependencies = read_groups(root, None, manifest, [], 0)?
     if "target" in root:

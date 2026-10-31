@@ -6,6 +6,8 @@ from std.json import JsonValue, parse
 from std.fs import Path
 from pub::incan_platform.trace import (
     SCHEMA,
+    Emitter,
+    Operation,
     MAX_TEXT,
     TraceError,
     Counters,
@@ -20,6 +22,7 @@ from pub::incan_platform.trace import (
 from pub::incan_platform.ipc import MAX_FRAME, dial, length_of, listen, padded
 from owner_protocol import Reply, Request, receive_document, reply_of, request_of, send_document
 from scratch import scratch_directory
+from jec import text_size
 
 
 def raw(path: str, bytes_sent: bytes) -> Result[None, str]:
@@ -58,6 +61,7 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     """A document survives a frame in both directions; the bound is a refusal before any allocation."""
     scratch = scratch_directory()?
     trace_contract(scratch.path().0)?
+    typed_trace_contract(scratch.path().0)?
     path = scratch.path().joinpath("o.sock").0
     mut listener = listen(path, true)?
     mut client = dial(path)?
@@ -153,6 +157,8 @@ def trace_contract(directory: str) -> Result[None, str]:
     assert trace_value(decoded, "records")?.expect_int().map_err((error) => error.message())? == 2
     assert trace_value(decoded, "calls")?.expect_int().map_err((error) => error.message())? == 3
     assert trace_value(decoded, "cpu_ns")?.is_null()
+    assert trace_value(decoded, "clock")?.expect_str().map_err((error) => error.message())? == "host-monotonic-raw"
+    assert parent.start_ns > 0
     assert child.clock_id == parent.clock_id and child.clock_id != ""
     for key in ["run", "request", "work", "producer", "operation", "snapshot", "thread", "outcome", "clock_id"]:
         assert trace_value(decoded, key)?.expect_str().map_err((error) => error.message())? != ""
@@ -197,6 +203,64 @@ def trace_contract(directory: str) -> Result[None, str]:
         Err(TraceError.RecordBound) => pass
         Err(_) => return Err("wrong refusal for an oversized encoded record")
         Ok(_) => return Err("oversized encoded record was accepted")
+    return Ok(None)
+
+
+def typed_trace_contract(directory: str) -> Result[None, str]:
+    """A retained emitter preserves escaping and counters, and refuses dynamic bounds before writing a prefix."""
+    destination = directory + "/typed.jsonl"
+    emitter = Emitter.open(destination, "test", "run", "request").map_err((_) => "emitter open failed")?
+    clock = match trace_begin(true):
+        Some(value) => value
+        None => return Err("enabled emitter did not start")
+
+    key = "quote\"\\\n\tλ"
+    emitter.emit(clock, Operation.JsonRead, key, 17).map_err((_) => "typed emit failed")?
+    flush_trace().map_err((_) => "typed flush failed")?
+    saved = Path(destination).read_text("utf-8", "strict").map_err((error) => error.message())?
+    decoded = parse(saved).map_err((error) => error.message())?
+    assert trace_value(decoded, "operation")?.expect_str().map_err((error) => error.message())? == "json_read"
+    assert trace_value(decoded, "key")?.expect_str().map_err((error) => error.message())? == key
+    assert trace_value(decoded, "bytes")?.expect_int().map_err((error) => error.message())? == 17
+    assert trace_value(decoded, "calls")?.expect_int().map_err((error) => error.message())? == 1
+    assert trace_value(decoded, "request")?.expect_str().map_err((error) => error.message())? == "request"
+    assert trace_value(decoded, "clock_id")?.expect_str().map_err((error) => error.message())? == clock.origin
+    assert trace_refused(emitter.emit(clock, Operation.FileRead, key, -1))
+    mut oversized = "x"
+    while len(oversized) <= MAX_TEXT:
+        oversized += oversized
+    assert trace_refused(emitter.emit(clock, Operation.FileRead, oversized))
+    assert trace_refused(Emitter.open(destination, oversized))
+    flush_trace().map_err((_) => "refused flush failed")?
+    assert Path(destination).read_text("utf-8", "strict").map_err((error) => error.message())? == saved
+    # Escaping can overflow fixed scratch even though every source field fits its own bound.
+    control = parse("\"\\u0001\"").map_err((error) => error.message())?
+    mut quoted = control.expect_str().map_err((error) => error.message())?
+    while len(quoted) < MAX_TEXT:
+        quoted += quoted
+    crowded = Emitter.open(destination, quoted, quoted, quoted).map_err((_) => "bounded open failed")?
+    match crowded.emit(clock, Operation.FileRead, quoted):
+        Err(TraceError.RecordBound) => pass
+        Err(_) => return Err("typed record returned the wrong bound")
+        Ok(_) => return Err("typed record exceeded its encoding bound")
+    # A refused scratch prefix is neither published nor retained for the next complete record.
+    for index in range(400):
+        next_clock = match trace_begin(true):
+            Some(value) => value
+            None => return Err("enabled drain did not start")
+
+        emitter.emit(next_clock, Operation.FileRead, f"read-{index}", index).map_err((_) => "typed drain failed")?
+    flush_trace().map_err((_) => "typed drain flush failed")?
+    drained = Path(destination).read_text("utf-8", "strict").map_err((error) => error.message())?
+    lines = drained.strip().split("\n")
+    assert len(lines) == 401
+    for index in range(400):
+        row = parse(lines[index + 1]).map_err((error) => error.message())?
+        assert trace_value(row, "key")?.expect_str().map_err((error) => error.message())? == f"read-{index}"
+        assert trace_value(row, "bytes")?.expect_int().map_err((error) => error.message())? == index
+    # The byte counter borrows UTF-8 text rather than encoding an allocated copy.
+    assert text_size("λ", Some(clock)) == 2
+    assert text_size("λ", None) == 0
     return Ok(None)
 
 

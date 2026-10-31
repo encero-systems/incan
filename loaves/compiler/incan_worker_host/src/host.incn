@@ -10,6 +10,7 @@ caller required teardown after one activation.
 from rust::std::env import set_current_dir
 from rust::std::process import id
 from std.environ import get_or
+from pub::incan_platform.trace import Clock, Emitter, Operation, begin as trace_begin, flush as flush_trace
 from pub::incan_platform.ipc import Connection, Listener, dial, listen
 from endpoint import CallerWatch, SocketFile, owner_uid, socket_file, start_watchdog, withdraw
 from lifecycle import (
@@ -68,6 +69,8 @@ pub class WorkerHost:
     policy: Lifecycle
     active: Option[Connection] = None
     retire_after: bool = false
+    observer: Option[Emitter] = None
+    activation_clock: Option[Clock] = None
 
     def next(mut self) -> Option[CompileRequest]:
         """
@@ -102,6 +105,7 @@ pub class WorkerHost:
         Answer the open activation: decide the reply and any retirement, which withdraws the socket before the reply
         is sent, then send the reply and close the activation.
         """
+        self.finish_observation()
         settled = self.policy.settle(outcome, footprint)
         match settled.retirement:
             Some(reason) => self.retire(reason)
@@ -112,6 +116,18 @@ pub class WorkerHost:
             Some(caller) => self.answer(caller, settled.reply)
             None => pass
         self.active = None
+
+    def finish_observation(mut self) -> None:
+        """Flush one activation before its reply, so the caller's request span encloses the worker record."""
+        match self.observer:
+            Some(emitter) =>
+                match self.activation_clock:
+                    Some(clock) =>
+                        _ = emitter.emit(clock, Operation.DriverRequest, "activation")
+                        _ = flush_trace()
+                    None => pass
+            None => pass
+        self.activation_clock = None
 
     def caller_watch(self) -> Option[CallerWatch]:
         """What the compiler entry watches while the open activation compiles, if one is open."""
@@ -168,6 +184,7 @@ pub class WorkerHost:
                         return None
                     Admission.Admitted(request) =>
                         # 4. The caller stays connected until its activation is answered.
+                        self.activation_clock = trace_begin(self.observer is not None)
                         self.active = Some(caller)
                         self.retire_after = request.retire_after
                         return Some(request)
@@ -242,6 +259,7 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
         Some(selected) => owner = selected
         None => pass
     host = WorkerHost(
+        observer=worker_observer(),
         generation=settings.generation,
         phase=Phase.Serving,
         socket=bound,
@@ -275,6 +293,21 @@ pub def complete(mut host: WorkerHost, outcome: ActivationOutcome, footprint: in
 pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:
     """What the compiler entry watches while the open activation compiles; `None` when no activation is open."""
     return host.caller_watch()
+
+
+def worker_observer() -> Option[Emitter]:
+    """Open the requested canonical worker channel once; absent tracing never starts a clock or writer."""
+    directory = get_or("INCAN_ENGINE_TRACE", "")
+    if directory == "":
+        return None
+    match Emitter.open(
+        f"{directory}/engine-worker-{id()}.jsonl",
+        "compiler-worker",
+        get_or("INCAN_ENGINE_RUN", ""),
+        get_or("INCAN_ENGINE_REQUEST", ""),
+    ):
+        Ok(emitter) => return Some(emitter)
+        Err(_) => return None
 
 
 def footprint_ceiling() -> int:

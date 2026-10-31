@@ -1,20 +1,29 @@
 """Reuse contracts: an unchanged unit is keyed from metadata alone, and any relevant change is a different key."""
 
-from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions
+from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions, rename
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.io import BytesIO
 from std.json import JsonValue
+from pub::incan_platform.trace import flush as flush_trace
+from installation_check import verify_runtime
+from installation_page import recall as recall_installation
+from installation_codec import decode as decode_installation, encode as encode_installation
+from trace_adapter import count_work, finish_counting
+from page_codec import Reader, put_texts
 from files import json_text, make_directory, read, read_json, remove, write as write_file
 from json_fields import required_items, required_text
 from registry_metadata import completion_selection
 from registry_pages import question, recall_catalog, current as catalog_current
 from registry_codec import Catalog, decode as decode_catalog, encode as encode_catalog
 from retained_readings import INSTALLED_DIGEST, installed_digest, recall, retain
-from segment_store import readmit_payload
-from bakery import fact_file, find, forget_verified, seal, staging
+from segment_store import readmit_payload, payload_path
+from bakery import bakery, fact_file, find, forget_verified, library_directory, seal, staging
 from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
 from incan_units import executable_outputs, test_report, view_executable
 from intake import ManifestReader
@@ -49,13 +58,30 @@ from rust_units import (
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
 from rust_target import compiler_version, deployment_target
-from toolchain import NativeCrate, Toolchain, admit_compiler_facts, load_toolchain, read_toolchain, rust_compiler
+from toolchain import (
+    NativeCrate,
+    Toolchain,
+    admit_compiler_facts,
+    load_toolchain,
+    read_toolchain,
+    rust_compiler,
+    prepare_installation,
+    finish_installation,
+    load_toolchain_at,
+)
 from toolchain_access import ToolchainAccess
-from compiler_facts import admit_fact
+from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
 from unit import UnitDescription, UnitLoaf
 from unit_rust import add_extern, compile_library_unit
 from unit_compiler import described_by, write_unit
-from unit_publication import admit_payload, published_identity, record_path, record_payload
+from unit_publication import (
+    admit_payload,
+    published_identity,
+    record_path,
+    record_payload,
+    verified_payload,
+    relocate_payload,
+)
 from unit_freshness import (
     Key,
     artifact_files,
@@ -864,6 +890,12 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     # 3. A missing cache or an incomplete stamp cannot pass by recompiling silently.
     assert read(attempts)? == "x"
     assert output.parent().joinpath("app.rustabi").is_file()
+    # An unbaked replacement must not inherit a previous portable view's fact selection.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert not output.parent().joinpath("fact.json").is_file()
+    assert library_directory(bakery()?, output.parent())?.0 == output.parent().0
+    assert read(attempts)? == "xx"
     return Ok(None)
 
 
@@ -990,7 +1022,13 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     # 1. One installed producer entry, linked into a closure of its own.
     toolchain = load_toolchain()?
     installed = Path(toolchain.registry_units)
-    item = required_items(read_json(installed)?, "units")?[0]
+    supplied = required_items(read_json(installed)?, "units")?[0]
+    # Exercise the legacy completion contract even when the supplying installation already carries native facts.
+    mut legacy: Dict[str, JsonValue] = {}
+    for key in supplied.keys():
+        if key not in ["name", "crate_hash", "artifact", "kind", "refusal"]:
+            legacy[key] = supplied.require(key).map_err((error) => error.message())?
+    item = JsonValue.object(legacy)
     entry = required_text(item, "entry")?.replace(":", "-")
     source = installed.parent().joinpath("entries").joinpath(entry)
     directory = scratch.joinpath("registry")
@@ -1006,6 +1044,56 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     settled(closure)?
     first = read_registry_units(closure)?.units[0]
     assert first.name != "" and first.crate_hash != ""
+    # A baked closure carries native identity, so a fresh home need not ask rustc for it again.
+    mut published: Dict[str, JsonValue] = {}
+    for key in item.keys():
+        published[key] = item.require(key).map_err((error) => error.message())?
+    published["name"] = JsonValue.string("baked_native_name")
+    published["crate_hash"] = JsonValue.string(first.crate_hash)
+    published["artifact"] = artifact
+    published["kind"] = JsonValue.string(first.kind)
+    published["dependencies"] = JsonValue.array(
+        [JsonValue.object({"entry": JsonValue.string(entry)}) for entry in first.dependencies],
+    )
+    mut unavailable: Dict[str, JsonValue] = {}
+    for key in published.keys():
+        if key != "dependencies":
+            unavailable[key] = published[key]
+    unavailable["entry"] = JsonValue.string("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    unavailable["refusal"] = JsonValue.string("producer recorded an unavailable alternative")
+    baked_closure = directory.joinpath("baked.json")
+    write(
+        baked_closure,
+        json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string("incan.oven.closure/1"), "externs": externs, "units": JsonValue.array(
+                    [JsonValue.object(published), JsonValue.object(unavailable)],
+                )},
+            ),
+        )?,
+    )?
+    assert read_registry_units(baked_closure)?.units[0].name == "baked_native_name"
+    assert read_registry_units(baked_closure)?.units[1].refusal == "producer recorded an unavailable alternative"
+    # Relative artifacts belong to the closure's directory, including a closure outside its artifact store.
+    relative = artifact.expect_str().map_err((error) => error.message())?
+    relocated_path = JsonValue.string("../../registry/" + relative)
+    mut outside = published
+    outside["artifact"] = relocated_path
+    outside_externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": relocated_path})})
+    outside_closure = scratch.joinpath("published/deep/closure.json")
+    write(
+        outside_closure,
+        json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string("incan.oven.closure/1"), "externs": outside_externs, "units": JsonValue.array(
+                    [JsonValue.object(outside)],
+                )},
+            ),
+        )?,
+    )?
+    selected = read_registry_units(outside_closure)?.units[0]
+    assert selected.artifact == directory.joinpath(relative).0
+    assert Path(selected.artifact).is_file()
     # 2. The exact typed page answers without a closure or completion JSON document.
     selection = completion_selection(rust_compiler(toolchain))?
     observed = observe(closure)?
@@ -1044,6 +1132,7 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
         Some(_) => assert false, "a rewritten closure reused the previous generation's page"
         None => pass
     assert read_registry_units(closure)?.units[0].name == first.name
+    _ = flush_trace()
     return Ok(None)
 
 
@@ -1131,7 +1220,8 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     # A view replaced behind Oven's back is the user's; the next view restores the fact's executable.
     write(tests.joinpath("app"), "someone else's binary")?
     match fact_file(store, fact, "app"):
-        Some(payload) => assert read(payload)? == "first build"
+        Some(payload) =>
+            assert read(payload)? == "first build"
         None => return Err("the baked executable is absent")
     view_executable(store, fact, tests.joinpath("app"), "test")?
     assert read(tests.joinpath("app"))? == "first build"
@@ -1586,7 +1676,9 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
     write(registry, read(original)?)?
     write(
         directory.joinpath("registry/closure.json"),
-        "{\"externs\":{\"registry producer\":{\"path\":\"libregistry.rlib\"}}}",
+        "{\"externs\":{\"registry producer\":{\"path\":\"libregistry.rlib\",\"payload_digest\":\"" + file_digest(
+            original,
+        )? + "\"}}}",
     )?
     document = JsonValue.object(
         {"schema": JsonValue.string("incan.toolchain/1"), "driver": JsonValue.string(toolchain.driver), "sysroot": JsonValue.string(
@@ -1596,7 +1688,16 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
         ), "search": JsonValue.array([]), "registry_units": JsonValue.string("registry/closure.json")},
     )
     write(directory.joinpath("toolchain.json"), json_text(document)?)?
+    write(registry, "damaged during transport")?
+    match read_toolchain(directory):
+        Ok(_) =>
+            assert false, "a damaged transported registry payload was admitted"
+        Err(_) => pass
+    write(registry, read(original)?)?
     read_toolchain(directory)?
+    verify_renamed_admission(scratch, original)?
+    verify_published_installation(scratch, original)?
+    verify_installation_check(scratch)?
     assert published_identity(copied)? == "runtime producer"
     assert published_identity(standard)? == "runtime producer"
     assert published_identity(registry)? == "registry producer"
@@ -1607,6 +1708,204 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
                 assert false, "a changed payload cannot retain its transported producer identity"
             Err(_) => pass
         write(payload, read(original)?)?
+    return Ok(None)
+
+
+def verify_renamed_admission(scratch: Path, original: Path) -> Result[None, str]:
+    """A published installation retains verified generations and refuses replacements without reading payload bytes again."""
+    stage = scratch.joinpath("admission-stage")
+    payload = stage.joinpath("library.rlib")
+    compiler = stage.joinpath("driver")
+    write(payload, read(original)?)?
+    record_payload(payload, "renamed producer")?
+    write(compiler, "compiler generation")?
+    admit_fact(compiler)?
+    admitted_payload = verified_payload(payload)?
+    admitted_compiler = verified_fact(compiler)?
+    target = scratch.joinpath("admission-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    installed_payload = target.joinpath("library.rlib")
+    installed_compiler = target.joinpath("driver")
+    relocate_payload(installed_payload, admitted_payload)?
+    relocate_fact(installed_compiler, admitted_compiler)?
+    assert published_identity(installed_payload)? == "renamed producer"
+    assert fact_identity(installed_compiler)? == admitted_compiler.digest
+    write(installed_payload, "damaged payload")?
+    write(installed_compiler, "damaged compiler")?
+    match relocate_payload(installed_payload, admitted_payload):
+        Ok(_) =>
+            assert false, "changed payload retained installation admission"
+        Err(_) => pass
+    match relocate_fact(installed_compiler, admitted_compiler):
+        Ok(_) =>
+            assert false, "changed compiler retained installation admission"
+        Err(_) => pass
+    return Ok(None)
+
+
+def verify_published_installation(scratch: Path, original: Path) -> Result[None, str]:
+    """Installation verifies each staged payload once; first selection reads only the admission marker and description."""
+    stage = scratch.joinpath("installation-stage")
+    write(stage.joinpath("driver"), "fixture compiler")?
+    write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
+    write(stage.joinpath("stdlib/core/loaf.toml"), "[project]\nname='core'\nversion='1.0.0'\n")?
+    write(stage.joinpath("stdlib/core/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
+    write(stage.joinpath("library.rlib"), read(original)?)?
+    write(stage.joinpath("library.native.json"), "{\"search\":[],\"externs\":[],\"macro_externs\":[]}")?
+    record_payload(stage.joinpath("library.rlib"), "installed producer")?
+    write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
+    write(
+        stage.joinpath("toolchain.json"),
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\"}",
+    )?
+    _, admission = prepare_installation(stage)?
+    assert len(admission.payloads) == 1 and len(admission.facts) == 2
+    target = scratch.joinpath("installation-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    finish_installation(target, admission)?
+    installed = load_toolchain_at(target)?
+    assert installed.driver == target.joinpath("driver").0
+    assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
+    verify_installation_page(target)?
+    _ = flush_trace()
+    return Ok(None)
+
+
+def verify_installation_page(directory: Path) -> Result[None, str]:
+    """Warm selections read the admitted page, preserve full intent, refresh edits and refuse page damage."""
+    page = match recall_installation(directory)?:
+        None => return Err("installation did not publish an admitted page")
+        Some(found) => found
+
+    assert len(page.manifests) == 1
+    assert page.manifests[0].intent.name == "core"
+    assert len(page.manifests[0].digest) == 64
+    # Repeated source-level selections emit no reads, decodes or hashes of these installed inputs.
+    count_work(directory.0 + "/")
+    for _index in range(2):
+        assert load_toolchain_at(directory)?.driver == page.toolchain.driver
+        assert published_identity(directory.joinpath("library.rlib"))? == "installed producer"
+        assert len(required_items(read_json(directory.joinpath("library.native.json"))?, "search")?) == 0
+    work = finish_counting()
+    assert work.reads == 0 and work.hashes == 0
+    assert work.parses == 0 and work.decodes == 0
+    assert work.stats > 0
+    assert work.pages <= 1
+    encoded = encode_installation(page)?
+    fixture = directory.parent().joinpath("installation-page.bin")
+    fixture.write_bytes(encoded).map_err((error) => error.message())?
+    mapped = fixture.map_read().map_err((error) => error.message())?
+    match mapped.view(0, mapped.len()):
+        None => return Err("fixture has no whole mapped range")
+        Some(view) =>
+            decoded = decode_installation(view)?
+            assert encode_installation(decoded)? == encoded
+            assert decoded.manifests[0].intent == page.manifests[0].intent
+    verify_page_refusals(fixture, encoded)?
+    verify_page_vectors(fixture)?
+    digest = fingerprint_page(encoded)
+    canonical = payload_path(bakery()?, digest)
+    canonical.chmod(false).map_err((error) => error.message())?
+    canonical.write_bytes(b"damaged page").map_err((error) => error.message())?
+    match recall_installation(directory):
+        Ok(_) => return Err("damaged installation page was silently reused or reproduced")
+        Err(_) => pass
+    canonical.write_bytes(encoded).map_err((error) => error.message())?
+    manifest = directory.joinpath("stdlib/core/loaf.toml")
+    write(manifest, "[project]\nname='core'\nversion='2.0.0'\n")?
+    match recall_installation(directory)?:
+        None => pass
+        Some(_) => return Err("changed manifest retained its preceding admission")
+    _ = load_toolchain_at(directory)?
+    refreshed = match recall_installation(directory)?:
+        None => return Err("changed installation was not re-admitted")
+        Some(found) => found
+
+    assert refreshed.manifests[0].intent.version == "2.0.0"
+    write(manifest, "[project\n")?
+    match load_toolchain_at(directory):
+        Ok(_) => return Err("a damaged standard manifest retained admission")
+        Err(_) => pass
+    write(manifest, "[project]\nname='core'\nversion='2.0.0'\n")?
+    _ = load_toolchain_at(directory)?
+    # Source preparation can publish a new producer of unchanged bytes during one command.
+    record_payload(directory.joinpath("library.rlib"), "refreshed producer")?
+    assert published_identity(directory.joinpath("library.rlib"))? == "refreshed producer"
+    native = directory.joinpath("library.native.json")
+    write(native, "{\"search\":[\"refreshed\"],\"externs\":[],\"macro_externs\":[]}")?
+    assert len(required_items(read_json(native)?, "search")?) == 1
+    _ = load_toolchain_at(directory)?
+    producer = record_path(directory.joinpath("library.rlib"))
+    original = read(producer)?
+    write(producer, "damaged producer record")?
+    match published_identity(directory.joinpath("library.rlib")):
+        Ok(_) => return Err("changed producer record retained its admitted identity")
+        Err(_) => pass
+    write(producer, original)?
+    _ = load_toolchain_at(directory)?
+    return Ok(None)
+
+
+def fingerprint_page(data: bytes) -> str:
+    """The exact value digest used by the sealed page's immutable revision."""
+    return hexlify(sha256.digest(data))
+
+
+def verify_page_refusals(path: Path, data: bytes) -> Result[None, str]:
+    """Malformed page scalars, versions, truncation and trailing bytes refuse before they can supply facts."""
+    extended = BytesIO(b"")
+    extended.write_bytes(data).map_err((error) => error.message())?
+    extended.write_bytes(b"\x00").map_err((error) => error.message())?
+    for bytes in [b"invalid", data[:16], extended.getvalue()]:
+        path.write_bytes(bytes).map_err((error) => error.message())?
+        mapped = path.map_read().map_err((error) => error.message())?
+        if let Some(view) = mapped.view(0, mapped.len()):
+            match decode_installation(view):
+                Ok(_) => return Err("malformed installation page was accepted")
+                Err(_) => pass
+    return Ok(None)
+
+
+def verify_page_vectors(path: Path) -> Result[None, str]:
+    """Packed vectors retain empty and Unicode strings; separator contents use the canonical length form."""
+    for values in [[], [""], ["first", "λ", ""], ["embedded\\x00value", ""]]:
+        buffer = BytesIO(b"")
+        put_texts(buffer, values)?
+        path.write_bytes(buffer.getvalue()).map_err((error) => error.message())?
+        mapped = path.map_read().map_err((error) => error.message())?
+        match mapped.view(0, mapped.len()):
+            None => return Err("vector fixture has no mapped range")
+            Some(view) =>
+                mut reader = Reader(view=view)
+                assert reader.texts()? == values
+                assert reader.offset == view.len()
+    return Ok(None)
+
+
+def verify_installation_check(scratch: Path) -> Result[None, str]:
+    """Installation uses one ordinary run, validates its output and removes the temporary project on either outcome."""
+    directory = scratch.joinpath("checked-installation")
+    make_directory(directory)?
+    oven = scratch.joinpath("installation-oven")
+    calls = scratch.joinpath("installation-calls")
+    mut script = "#!/bin/sh\n" + f"printf 'x' >> '{calls.0}'\n"
+    script += "[ \"$1\" = run ] && [ -f \"$2\" ] || exit 1\n"
+    script += "[ -z \"${INCAN_STDLIB:-}\" ] || exit 1\n"
+    script += "printf 'incan installation verified\\n'\n"
+    write(oven, script)?
+    make_executable(oven)?
+    verify_runtime(oven.0, directory)?
+    assert read(calls)? == "x"
+    # A refused runtime is reported after removing the check's project too.
+    write(oven, script + "exit 1\n")?
+    make_executable(oven)?
+    match verify_runtime(oven.0, directory):
+        Ok(_) =>
+            assert false, "installation accepted a failed runtime"
+        Err(_) => pass
+    assert read(calls)? == "xx"
+    for path in scratch.iterdir().map_err((error) => error.message())?:
+        assert not path.name().startswith(".installation-check-")
     return Ok(None)
 
 

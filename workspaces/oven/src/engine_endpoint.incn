@@ -1,10 +1,8 @@
 """Discover one locked engine per physical store and authenticate startup through incan.engine/1."""
 
-from rust::std::env import current_exe
+from rust::std::env::consts import OS
 from rust::std::fs import metadata
 from rust::std::os::unix::fs import MetadataExt
-from rust::std::os::unix::process import CommandExt
-from rust::std::process import Command, Stdio
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
@@ -76,7 +74,7 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
         identity.compiler_generation,
         str(idle),
     ]
-    mut child = spawn_detached(executable, arguments).map_err(transport)?
+    mut child = spawn_detached(executable, arguments, idle_memory_environment()).map_err(transport)?
     for _poll in range(STARTUP_POLLS):
         match dial(selected.socket):
             Ok(transport) => return handshake(Channel(transport=transport), identity)
@@ -86,6 +84,13 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
         sleep(Duration.from_millis(2))
     terminate(child).map_err(transport)?
     return Err(transport("engine did not acknowledge startup"))
+
+
+def idle_memory_environment() -> dict[str, str]:
+    """Ask Apple's allocator to return freed pages and disable its large cache in the resident service only."""
+    if OS == "macos":
+        return {"MallocSpaceEfficient": "1", "MallocAggressiveMadvise": "1", "MallocLargeCache": "0"}
+    return {}
 
 
 pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refusal]:

@@ -1,7 +1,14 @@
 """Only selected Rust import roots receive compiler metadata authority; ambient support remains link-only."""
 
-from toolchain import NativeCrate
-from unit import UnitDescription
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from features import FeatureRequest
+from files import make_directory, write
+from incan_units import make_unit
+from scratch import scratch_directory
+from toolchain import NativeCrate, Toolchain, load_toolchain
+from unit import UnitDescription, describe
 from unit_rust import add_extern, add_rust_root
 
 
@@ -30,4 +37,67 @@ pub def test_an_owned_rust_facet_is_linked_and_declared_exactly_once() -> Result
     assert repeated.rust_crates == ["example_native"]
     assert len(repeated.externs) == 2
     assert repeated.externs[1].name == "example_native"
+    verify_relocated_incan_closure()?
     return Ok(None)
+
+
+def verify_relocated_incan_closure() -> Result[None, str]:
+    """
+    Reuse exact native dependencies after deleting views and after another checkout changes its provider.
+
+    1. Build identical provider, bridge and application Loaves in two checkouts.
+    2. Delete the first application's targets and rebuild without losing any library.
+    3. Change its provider, then recompile only the other application's entry against its original provider.
+    """
+    temporary = scratch_directory()?
+    root = temporary.path()
+    toolchain = load_toolchain()?
+    # 1. The bridge and application share one provider through separate edges.
+    provider = "pub def value() -> int:\n    return 1\n"
+    bridge = "from pub::provider import value\n\npub def bridged() -> int:\n    return value()\n"
+    mut app = "from pub::provider import value\nfrom pub::bridge import bridged\n\n"
+    app += "def main() -> None:\n    println(value() + bridged())\n"
+    for checkout in ["one", "two"]:
+        project = root.joinpath(checkout)
+        write_loaf(project, "provider", "", provider)?
+        write_loaf(project, "bridge", "provider={path='../provider'}\n", bridge)?
+        write_loaf(project, "app", "provider={path='../provider'}\nbridge={path='../bridge'}\n", app)?
+        assert application_output(project, toolchain)? == "2\n"
+    # 2. Targets carry no durable compilation authority.
+    first = root.joinpath("one")
+    first.joinpath("app/target").remove_tree().map_err((error) => error.message())?
+    assert application_output(first, toolchain)? == "2\n"
+    # 3. Replacing one checkout's provider cannot retarget the other's baked bridge.
+    write(first.joinpath("provider/src/lib.incn"), provider.replace("return 1", "return 2"))?
+    assert application_output(first, toolchain)? == "4\n"
+    second = root.joinpath("two")
+    write(second.joinpath("app/src/main.incn"), app + "    println(0)\n")?
+    assert application_output(second, toolchain)? == "2\n0\n"
+    return Ok(None)
+
+
+def write_loaf(root: Path, name: str, dependencies: str, source: str) -> Result[None, str]:
+    """Write one ordinary fixture Loaf; only the application declares a script instead of a library."""
+    directory = root.joinpath(name)
+    make_directory(directory.joinpath("src"))?
+    mut manifest = f"[project]\nname='{name}'\nversion='0.1.0'\n"
+    if dependencies != "":
+        manifest += "[dependencies]\n" + dependencies
+    mut entry = "lib.incn"
+    if name == "app":
+        entry = "main.incn"
+        manifest += "[project.scripts]\nmain='src/main.incn'\n"
+    write(directory.joinpath("loaf.toml"), manifest)?
+    return write(directory.joinpath("src").joinpath(entry), source)
+
+
+def application_output(root: Path, toolchain: Toolchain) -> Result[str, str]:
+    """Build and execute the application's ordinary release view, returning its exact standard output."""
+    project = root.joinpath("app")
+    unit = describe(project.joinpath("src/main.incn"), "release", FeatureRequest())?
+    output = project.joinpath("target/incan/release/bin/app")
+    made = make_unit(unit, toolchain, output)?
+    assert made.code == 0
+    process = Command.new(made.launch.0).output().map_err((error) => error.to_string())?
+    assert process.status.success()
+    return RustString.from_utf8(process.stdout).map_err((error) => error.to_string())

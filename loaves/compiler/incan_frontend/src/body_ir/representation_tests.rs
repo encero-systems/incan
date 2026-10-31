@@ -399,6 +399,7 @@ fn assert_free_function_input_oracle() -> Result<(), Box<dyn std::error::Error>>
         library_package: None,
     };
     let reports = tempfile::tempdir()?;
+    std::fs::write(reports.path().join("interrupted.tmp"), b"{\"equal\":")?;
     assert!(super::verify_free_function_inputs(&program, &[], &info, &context, reports.path()).is_err());
     info.body_ir_oracle_inputs = Some(owners);
     super::verify_free_function_inputs(&program, &[], &info, &context, reports.path())?;

@@ -8,6 +8,7 @@ Layout under the store root:
 
 - `FORMAT`: the format this store is written in; a store in another format is refused, never read as empty.
 - `CURRENT`: the committed generation and the digest of its manifest; replaced by rename, never edited.
+- `RETAINED`: collection's generation boundary and exact historical view leases; expired descriptors cannot reopen.
 - `snapshots/<generation>.<digest>.manifest`: one generation's parent, transaction, segment inventory, and the index
   root of each view.
 - `segments/<sha256>.seg`: immutable segments of frames: full key and value, or full key alone for a tombstone.
@@ -36,6 +37,7 @@ and live lock precede that switch. A transaction whose writes are all already pr
 from rust::std::process import id, exit as process_exit
 from rust::std::rc import Rc
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.environ import get_or
@@ -45,7 +47,7 @@ from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError, _BytesIO
 from pub::incan_platform.durability import sync_ordered
 from store_index import Entry, IndexError, Location, build, entries as index_entries, find as index_find, insert
-from store_index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
+from store_index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages, read_page
 
 const FORMAT: str = "incan.segment-store/3"
 const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
@@ -71,7 +73,7 @@ pub enum Lookup:
 
 
 pub model StoreError:
-    """A store failure: `integrity` (damaged or missing object), `format`, `conflict` or `io`, with the object named."""
+    """A named store failure: integrity, format, conflict, I/O, an expired snapshot, or deferred busy collection."""
 
     pub kind: str
     pub object: str
@@ -94,7 +96,8 @@ pub model Snapshot:
     One committed generation seen through one view; it never changes after it is taken.
 
     A snapshot is a descriptor, not a cache: it names the generation, the view and that view's index root, and the
-    generation's segment inventory and view roots for publication. It holds no decoded records.
+    generation's segment inventory and view roots for publication. An opened nonempty view owns its scoped OS lease
+    through the descriptor's lifetime. It holds no decoded records.
     """
 
     pub root: Path
@@ -104,6 +107,7 @@ pub model Snapshot:
     pub index: str
     pub segments: list[str]
     pub views: list[ViewRoot]
+    pub pin: Option[Rc[FileLock]] = None
 
 
 pub model Write:
@@ -116,7 +120,7 @@ pub model Write:
 
 
 pub model Transaction:
-    """Writes begun on one view's generation; nothing is visible until `commit` publishes them."""
+    """Unpublished writes and their payload preparation leases; publication makes the records own their content."""
 
     pub root: Path
     pub base: int
@@ -124,6 +128,7 @@ pub model Transaction:
     pub fork: str
     pub id: str
     pub writes: list[Write]
+    pub payloads: list[PreparedPayload] = []
 
 
 pub model ReadCounts:
@@ -188,39 +193,63 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
     unknown format is refused; none of them is read as an empty store. A view the generation does not name is empty.
     """
     check_view_key(view)?
+    if not root.joinpath("FORMAT").exists() and not root.joinpath("CURRENT").exists() and not root.is_symlink():
+        return Ok(empty_snapshot(root, view))
+    ensure_directory(root.joinpath("locks"))?
+    gate = root.joinpath("locks/lifecycle").lock_exclusive().map_err((error) => io_failure(root, error))?
+    return registered_snapshot(root, view)
+
+
+def empty_snapshot(root: Path, view: str) -> Snapshot:
+    """An absent selection owns no persisted objects and needs neither a lease nor a filesystem mutation."""
+    return Snapshot(root=root, generation=0, digest="", view=view, index="", segments=[], views=[])
+
+
+def registered_snapshot(root: Path, view: str) -> Result[Snapshot, StoreError]:
+    """Read CURRENT and acquire its live root under the lifecycle gate, so collection cannot expire it in between."""
     check_format(root)?
     pointer = root.joinpath("CURRENT")
     if not pointer.exists() and not pointer.is_symlink():
         if root.joinpath("FORMAT").exists():
             return Err(failure("integrity", pointer.0, "committed store has no CURRENT pointer"))
-        return Ok(Snapshot(root=root, generation=0, digest="", view=view, index="", segments=[], views=[]))
+        return Ok(empty_snapshot(root, view))
     text = pointer.read_text("utf-8", "strict").map_err((error) => io_failure(pointer, error))?
     fields = text.strip().split(" ")
     if len(fields) != 2 or len(fields[1]) != 64:
         return Err(failure("format", pointer.0, "malformed generation pointer"))
     match natural(fields[0]):
         None => return Err(failure("format", pointer.0, "malformed generation"))
-        Some(generation) => return read_manifest(root, generation, fields[1], view)
+        Some(generation) =>
+            mut selected = read_manifest(root, generation, fields[1], view)?
+            if selected.index != "":
+                selected.pin = Some(Rc.new(lease_registered(selected)?))
+            return Ok(selected)
 
 
 pub def view_snapshot(selected: Snapshot, name: str) -> Result[Snapshot, StoreError]:
     """Select another virtual view of the same immutable generation without rereading CURRENT."""
     check_view_key(name)?
+    if selected.view == name:
+        mut held = selected
+        if held.generation > 0 and held.index != "" and held.pin is None:
+            held.pin = Some(Rc.new(lease(held)?))
+        return Ok(held)
     mut index = ""
     for entry in selected.views:
         if entry.view == name:
             index = entry.root
-    return Ok(
-        Snapshot(
-            root=selected.root,
-            generation=selected.generation,
-            digest=selected.digest,
-            view=name,
-            index=index,
-            segments=selected.segments,
-            views=selected.views,
-        ),
+    mut result = Snapshot(
+        root=selected.root,
+        generation=selected.generation,
+        digest=selected.digest,
+        view=name,
+        index=index,
+        segments=selected.segments,
+        views=selected.views,
     )
+    if result.generation > 0 and result.index != "":
+        result.pin = Some(Rc.new(lease(result)?))
+    return Ok(result)
 
 
 pub def current(view: Snapshot) -> Result[Snapshot, StoreError]:
@@ -578,7 +607,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     ensure_directory(root.joinpath("locks"))?
     locking = begin_work()
     held = root.joinpath("locks/publication").lock_exclusive().map_err((error) => io_failure(root, error))?
-    record_work("store_lock", root.0, locking)
+    record_work(Operation.StoreLock, root.0, locking)
     mut selected_view = first.view
     if execution_view != "":
         selected_view = execution_view
@@ -819,14 +848,17 @@ pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
 
 def pinned_publication(view: Snapshot, name: str) -> Result[Publication, StoreError]:
     """Acquire a selected generation's lease before its acknowledgment; an unpinned commit retains its selected view."""
+    mut selected = view
     if name == "":
-        return Ok(Publication(snapshot=view))
-    selected = view
+        if selected.pin is None:
+            selected.pin = Some(Rc.new(lease(selected)?))
+        return Ok(Publication(snapshot=selected))
     if view.view != name:
         return Err(failure("format", name, "execution pin must name the returned view"))
-    held = lease(selected)?
+    if selected.pin is None:
+        selected.pin = Some(Rc.new(lease(selected)?))
     publication_boundary("pin-acquired")
-    return Ok(Publication(snapshot=selected, pin=Some(Rc.new(held))))
+    return Ok(Publication(snapshot=selected, pin=selected.pin))
 
 
 pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
@@ -839,6 +871,14 @@ pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
     identity's exclusive lock and retain the selected view's roots while a shared holder is alive. Host failure ends
     every live interest; recovery reads the committed manifest, never a duplicate lease record.
     """
+    ensure_directory(view.root.joinpath("locks"))?
+    gate = view.root.joinpath("locks/lifecycle").lock_exclusive().map_err((error) => io_failure(view.root, error))?
+    return lease_registered(view)
+
+
+def lease_registered(view: Snapshot) -> Result[FileLock, StoreError]:
+    """Register a validated immutable root while its caller holds the lifecycle gate; expired roots cannot reopen."""
+    check_retained(view)?
     leases = view.root.joinpath("leases")
     ensure_directory(leases)?
     name = hexlify(sha256.digest(view.view.encode("utf-8")))
@@ -942,33 +982,55 @@ pub def payload_path(root: Path, digest: str) -> Path:
     return root.joinpath("payloads").joinpath(digest[:2]).joinpath(digest)
 
 
-pub def put_payload(root: Path, source: Path) -> Result[str, StoreError]:
-    """Store `source` under its content digest, read-only and synced; an existing payload must hold those bytes."""
+pub model PreparedPayload:
+    """An immutable digest with an OS lease spanning preparation through commit or abandonment."""
+
+    pub digest: str
+    pub pin: Rc[FileLock]
+
+
+pub def pin_payload(root: Path, digest: str) -> Result[PreparedPayload, StoreError]:
+    """Protect one canonical content name before validating or installing it; dropping the descriptor abandons it."""
+    if len(digest) != 64:
+        return Err(failure("format", digest, "payload digest requires 64 hexadecimal digits"))
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return Err(failure("format", digest, "payload digest is not canonical hexadecimal"))
+    leases = root.joinpath("payload-leases")
+    ensure_directory(leases)?
+    pin = leases.joinpath(digest).lock_shared().map_err((error) => io_failure(leases, error))?
+    return Ok(PreparedPayload(digest=digest, pin=Rc.new(pin)))
+
+
+pub def put_payload(root: Path, source: Path) -> Result[PreparedPayload, StoreError]:
+    """Store immutable, synced content and return its live preparation guard; retain it until a record owns the digest."""
     digests = put_payloads(root, [source])?
     return Ok(digests[0])
 
 
-pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[str], StoreError]:
+pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[PreparedPayload], StoreError]:
     """
     Store each source under its content digest, read-only, in order; an existing payload must hold those bytes.
 
     Each new file is synced before it is renamed into place, and each payload directory that received one is synced
-    once after all of them, before the caller's commit names them.
+    once after all of them, before the caller's commit names them. Returned descriptors retain independent live
+    preparation leases; attach them to the transaction until its committed records own every referenced digest.
     """
     return store_payloads(root, sources, true)
 
 
-pub def prepare_payloads(root: Path, sources: list[Path]) -> Result[list[str], StoreError]:
+pub def prepare_payloads(root: Path, sources: list[Path]) -> Result[list[PreparedPayload], StoreError]:
     """Stage ordered immutable payloads for a transaction that flushes their complete graph before publication."""
     return store_payloads(root, sources, false)
 
 
-def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[list[str], StoreError]:
+def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[list[PreparedPayload], StoreError]:
     """Install each immutable payload once; optionally finish an independent durable insertion."""
-    mut digests: list[str] = []
+    mut digests: list[PreparedPayload] = []
     mut touched: set[str] = set()
     for source in sources:
         digest = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
+        prepared = pin_payload(root, digest)?
         target = payload_path(root, digest)
         if target.is_file():
             if not payload_intact(root, digest):
@@ -977,7 +1039,7 @@ def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[lis
             install_payload(source, target)?
         # An intact existing name may belong to a writer that died before ordering its directory entry.
         touched.add(target.parent().0)
-        digests.append(digest)
+        digests.append(prepared)
     for directory in sorted([name for name in touched]):
         sync_directory(Path(directory))?
     if len(touched) > 0:
@@ -1064,7 +1126,7 @@ def sync_file(path: Path) -> Result[None, StoreError]:
     """Order one staged file's contents; the publication barriers perform the full durable drive flush."""
     clock = begin_work()
     result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
-    record_work("store_file_sync", path.0, clock)
+    record_work(Operation.StoreFileSync, path.0, clock)
     return result
 
 
@@ -1074,14 +1136,14 @@ def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
     temporary = Path(f"{target.0}.{id()}.tmp")
     writing = begin_work()
     temporary.write_bytes(data).map_err((error) => io_failure(temporary, error))?
-    record_work("store_file_write", target.0, writing)
+    record_work(Operation.StoreFileWrite, target.0, writing)
     boundary = publication_kind(target)
     publication_boundary(f"{boundary}-written")
     sync_file(temporary)?
     publication_boundary(f"{boundary}-synced")
     renaming = begin_work()
     temporary.replace(target).map_err((error) => io_failure(target, error))?
-    record_work("store_file_rename", target.0, renaming)
+    record_work(Operation.StoreFileRename, target.0, renaming)
     publication_boundary(f"{boundary}-replaced")
     return Ok(None)
 
@@ -1121,6 +1183,7 @@ pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
         return Err(failure("conflict", root.0, "repair requires a previously committed root"))
     held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
     check_format(root)?
+    check_retained(committed)?
     candidate = read_manifest(root, committed.generation, committed.digest, committed.view)?
     # 2. No selected view may hide a damaged index path or frame.
     for selected in candidate.views:
@@ -1209,7 +1272,7 @@ def quarantine_path(root: Path, object: str) -> Result[Path, StoreError]:
     return Ok(directory.joinpath(f"{object}.{id()}.{serial}"))
 
 
-pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[None, StoreError]:
+pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[PreparedPayload, StoreError]:
     """
     Explicitly re-admit exact frozen bytes from a trusted replacement without editing the damaged inode.
 
@@ -1225,16 +1288,17 @@ pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[None,
         return Err(failure("integrity", source.0, "replacement differs from the committed payload digest"))
     # 2. The ordinary installer retains the same canonical identity without an in-place edit.
     quarantine_payload(root, expected)?
-    if put_payload(root, source)? != expected:
+    prepared = put_payload(root, source)?
+    if prepared.digest != expected:
         return Err(failure("integrity", source.0, "replacement changed during re-admission"))
-    return Ok(None)
+    return Ok(prepared)
 
 
 def sync_directory(path: Path) -> Result[None, StoreError]:
     """Synchronize directory entries, measuring OS durability separately from record encoding and locks."""
     clock = begin_work()
     result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
-    record_work("store_directory_sync", path.0, clock)
+    record_work(Operation.StoreDirectorySync, path.0, clock)
     return result
 
 
@@ -1244,10 +1308,273 @@ def sync_durable(path: Path) -> Result[None, StoreError]:
     handle = path.open("rb").map_err((error) => io_failure(path, error))?
     handle.sync().map_err((error) => io_failure(path, error))?
     counted["durable_syncs"] = counted.get("durable_syncs", 0) + 1
-    record_work("store_durable_sync", path.0, clock)
+    record_work(Operation.StoreDurableSync, path.0, clock)
     return Ok(None)
 
 
 pub def durable_syncs() -> int:
     """Completed strong storage barriers in this process, independent of ordinary file and directory ordering."""
     return counted.get("durable_syncs", 0)
+
+
+# ---- Explicit obsolete-layout collection ----
+
+
+pub model Reclaimed:
+    """Removed immutable files and logical lengths, with payload counts and bytes reported separately."""
+
+    pub files: int = 0
+    pub bytes: int = 0
+    pub payloads: int = 0
+    pub payload_bytes: int = 0
+
+
+model Marked:
+    """The exact immutable roots and layout files reached by current views and live scoped leases."""
+
+    roots: set[str] = set()
+    files: set[str] = set()
+    pages: set[str] = set()
+    segments: set[str] = set()
+    payloads: set[str] = set()
+
+
+pub def collect_layouts(root: Path) -> Result[Reclaimed, StoreError]:
+    """
+    Reclaim superseded manifests, index pages and segments while preserving every current view and live old reader.
+
+    1. Pause publication, capture current roots and mark live leases outside the registration gate.
+    2. Repeat the short handshake until every newly registered root is marked, or defer without deleting anything.
+    3. Expire unretained descriptors atomically, then unlink only unreachable layouts.
+
+    Payload eligibility belongs to its owning record codec. This operation conservatively keeps all payloads and all
+    staging, including an uncommitted producer's files; it never guesses references from opaque record bytes.
+    """
+    return collect_records(root, no_payload_references, false)
+
+
+pub def collect_records(
+    root: Path,
+    references: (str, bytes) -> Result[list[str], StoreError],
+    payloads: bool = true,
+) -> Result[Reclaimed, StoreError]:
+    """
+    Reclaim obsolete storage while current views, live readers and active preparations retain their content.
+
+    1. Pause publication and trace current views through their owning codecs.
+    2. Mark newly registered old readers, then expire all unretained historical descriptors atomically.
+    3. Remove obsolete layouts and unreferenced payloads whose preparation locks are free.
+
+    `references` must enumerate every payload a record's owning codec names or return an error. Marking errors abort
+    before unlinking. `payloads=false` is layout-only maintenance and does not authorize removing opaque content.
+    The collector never waits on a producer's payload lock while holding publication, which that producer needs.
+    """
+    # 1. Writers keep computing; canonical publication waits for this explicit maintenance operation.
+    ensure_directory(root.joinpath("locks"))?
+    writer = root.joinpath("locks/publication").lock_exclusive().map_err((error) => io_failure(root, error))?
+    mut latest = snapshot(root)?
+    mut marked = Marked()
+    for entry in latest.views:
+        mark_snapshot(marked, read_manifest(root, latest.generation, latest.digest, entry.view)?, references)?
+    selected_segments = sorted([name for name in marked.segments])
+    if latest.generation > 0 and selected_segments != sorted(latest.segments):
+        latest = switch(root, latest, selected_segments, latest.views, "collection")?
+        for entry in latest.views:
+            mark_snapshot(marked, read_manifest(root, latest.generation, latest.digest, entry.view)?, references)?
+    # 2. New pins can register during traversal; readers themselves never take publication's lock.
+    for _attempt in range(8):
+        pending = collect_handshake(root, latest, marked)?
+        if len(pending) == 0:
+            # 3. A producer that registered during traversal retains its digest under the same OS lock.
+            mut result = sweep_layouts(root, marked)?
+            if payloads:
+                reclaimed = sweep_payloads(root, marked.payloads)?
+                result.files += reclaimed.files
+                result.bytes += reclaimed.bytes
+                result.payloads += reclaimed.files
+                result.payload_bytes += reclaimed.bytes
+            return Ok(result)
+        for selected in pending:
+            mark_snapshot(marked, selected, references)?
+    return Err(failure("busy", root.0, "collection deferred because new snapshot leases kept arriving"))
+
+
+def lease_token(view: Snapshot) -> str:
+    """The full immutable generation and scoped view named by a liveness lock and retention entry."""
+    name = hexlify(sha256.digest(view.view.encode("utf-8")))
+    return f"{view.generation}-{view.digest}-{name}"
+
+
+def check_retained(view: Snapshot) -> Result[None, StoreError]:
+    """Refuse an expired old view after collection, even if its manifest has not been unlinked yet."""
+    registry = view.root.joinpath("RETAINED")
+    if not registry.exists() or view.generation == 0:
+        return Ok(None)
+    text = registry.read_text("utf-8", "strict").map_err((error) => io_failure(registry, error))?
+    lines = text.strip().split("\n")
+    if len(lines) == 0:
+        return Err(failure("integrity", registry.0, "empty retention registry"))
+    boundary = natural(lines[0])
+    match boundary:
+        None => return Err(failure("integrity", registry.0, "malformed retention generation"))
+        Some(generation) =>
+            if view.generation > generation or lease_token(view) in lines[1:]:
+                return Ok(None)
+    return Err(failure("expired", lease_token(view), "snapshot view was not retained by collection"))
+
+
+def collect_handshake(root: Path, latest: Snapshot, mut marked: Marked) -> Result[list[Snapshot], StoreError]:
+    """Capture new live roots, or expire all other descriptors under the short registration gate."""
+    gate = root.joinpath("locks/lifecycle").lock_exclusive().map_err((error) => io_failure(root, error))?
+    pending = live_snapshots(root, marked)?
+    if len(pending) > 0:
+        return Ok(pending)
+    registry = root.joinpath("RETAINED")
+    data = ("\n".join([str(latest.generation)] + sorted([token for token in marked.roots])) + "\n").encode("utf-8")
+    place_synced(registry, data)?
+    sync_directory(root)?
+    sync_durable(registry)?
+    return Ok([])
+
+
+def live_snapshots(root: Path, mut marked: Marked) -> Result[list[Snapshot], StoreError]:
+    """Resolve immutable manifest descriptors only for locks the OS proves live; never infer liveness from a PID."""
+    leases = root.joinpath("leases")
+    if not leases.is_dir():
+        return Ok([])
+    mut pending: list[Snapshot] = []
+    for path in leases.iterdir().map_err((error) => io_failure(leases, error))?:
+        name = path.name()
+        if not name.startswith(".") or not name.endswith(".incan.lock"):
+            return Err(failure("integrity", path.0, "unexpected lease entry"))
+        token = name[1:len(name) - 11]
+        if token in marked.roots:
+            continue
+        logical = leases.joinpath(token)
+        free = logical.try_lock_exclusive().map_err((error) => io_failure(logical, error))?
+        if free is not None:
+            continue
+        fields = token.split("-")
+        if len(fields) != 3 or len(fields[2]) != 64:
+            return Err(failure("integrity", path.0, "malformed live lease descriptor"))
+        match natural(fields[0]):
+            None => return Err(failure("integrity", path.0, "malformed lease generation"))
+            Some(generation) =>
+                if generation == 0:
+                    if fields[1] != "":
+                        return Err(failure("integrity", path.0, "empty snapshot lease names a manifest"))
+                    continue
+                if len(fields[1]) != 64:
+                    return Err(failure("integrity", path.0, "malformed lease manifest digest"))
+                manifest = read_manifest(root, generation, fields[1], HOME_VIEW)?
+                mut found = false
+                for entry in manifest.views:
+                    selected = read_manifest(root, generation, fields[1], entry.view)?
+                    if lease_token(selected) == token:
+                        pending.append(selected)
+                        found = true
+                if not found:
+                    # An empty view is valid, but has no lazy pages or frames to protect.
+                    marked.roots.add(token)
+                    marked.files.add(manifest_path(root, generation, fields[1]).0)
+    return Ok(pending)
+
+
+def mark_snapshot(
+    mut marked: Marked,
+    view: Snapshot,
+    references: (str, bytes) -> Result[list[str], StoreError],
+) -> Result[None, StoreError]:
+    """Trace authenticated pages and exact frame locations, ignoring historical inventory and parent provenance."""
+    token = lease_token(view)
+    if token in marked.roots:
+        return Ok(None)
+    marked.roots.add(token)
+    marked.files.add(manifest_path(view.root, view.generation, view.digest).0)
+    mut pending: list[str] = [view.index]
+    mut index = 0
+    while index < len(pending):
+        name = pending[index]
+        index += 1
+        if name == "" or name in marked.pages:
+            continue
+        page = read_page(view.root, name).map_err(index_failure)?
+        marked.pages.add(name)
+        marked.files.add(page_path(view.root, name).0)
+        for entry in page.entries:
+            if page.level > 0:
+                pending.append(entry.child)
+            else:
+                match entry.location:
+                    None => return Err(failure("integrity", name, "leaf without frame location"))
+                    Some(location) =>
+                        value = read_frame(view.root, entry.key, location)?
+                        match value:
+                            Lookup.Found(bytes_view) =>
+                                for digest in references(entry.key, owned(bytes_view))?:
+                                    if len(digest) != 64:
+                                        return Err(failure("integrity", entry.key, "malformed payload reference"))
+                                    marked.payloads.add(digest)
+                            _ => pass
+                        marked.segments.add(location.segment)
+                        marked.files.add(view.root.joinpath(f"segments/{location.segment}.seg").0)
+    return Ok(None)
+
+
+def sweep_layouts(root: Path, marked: Marked) -> Result[Reclaimed, StoreError]:
+    """Unlink only unmarked immutable layouts after descriptor expiry; deletion errors preserve an honest failure."""
+    mut result = Reclaimed()
+    for name in ["snapshots", "indexes", "segments"]:
+        directory = root.joinpath(name)
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir().map_err((error) => io_failure(directory, error))?:
+            if path.0 in marked.files:
+                continue
+            mut suffix = ".seg"
+            if name == "indexes":
+                suffix = ".page"
+            elif name == "snapshots":
+                suffix = ".manifest"
+            if not path.name().endswith(suffix) or path.is_symlink():
+                continue
+            info = path.stat().map_err((error) => io_failure(path, error))?
+            size = info.size().map_err((error) => io_failure(path, error))?
+            path.unlink().map_err((error) => io_failure(path, error))?
+            result.files += 1
+            result.bytes += size
+        sync_directory(directory)?
+    return Ok(result)
+
+
+def no_payload_references(key: str, value: bytes) -> Result[list[str], StoreError]:
+    """Layout-only maintenance keeps opaque payload ownership at the caller's codec boundary."""
+    return Ok([])
+
+
+def sweep_payloads(root: Path, marked: set[str]) -> Result[Reclaimed, StoreError]:
+    """Unlink unreferenced content only while holding its exclusive preparation lock; live producers win the race."""
+    mut result = Reclaimed()
+    directory = root.joinpath("payloads")
+    if not directory.is_dir():
+        return Ok(result)
+    for prefix in directory.iterdir().map_err((error) => io_failure(directory, error))?:
+        if not prefix.is_dir() or prefix.is_symlink():
+            continue
+        for path in prefix.iterdir().map_err((error) => io_failure(prefix, error))?:
+            digest = path.name()
+            if len(digest) != 64 or digest in marked or path.is_symlink():
+                continue
+            leases = root.joinpath("payload-leases")
+            ensure_directory(leases)?
+            free = leases.joinpath(digest).try_lock_exclusive().map_err((error) => io_failure(path, error))?
+            if free is None:
+                continue
+            size = path.stat().map_err((error) => io_failure(path, error))?.size().map_err(
+                (error) => io_failure(path, error),
+            )?
+            path.unlink().map_err((error) => io_failure(path, error))?
+            result.files += 1
+            result.bytes += size
+        sync_directory(prefix)?
+    return Ok(result)

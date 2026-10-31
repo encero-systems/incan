@@ -63,6 +63,7 @@ from type_parameters import substitute
 from nominal_frames import closed_arguments, closed_type, declaration_storage
 from program_context import body_at
 from native_type_identity import ConstructorIndex, native_owner
+from lowering import display_plan_value
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
@@ -91,12 +92,17 @@ pub def propagate_result(
     destination: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Move the selected payload once; error returns drop every other initialized owner before returning."""
+    """
+    Move the selected payload once; error returns drop every other initialized owner before returning. A `const` str
+    error becomes the owned text the enclosing `Result[T, str]` carries, as at any other owned text boundary; any other
+    differing error type is refused.
+    """
     _owner, input = result_layout(builder, frame_place_type(builder.locals, source))?
     output_type = builder.locals[0].ty
     output_owner, output = result_layout(builder, output_type)?
-    if input.variants[1].fields != output.variants[1].fields:
-        return Err("unsupported Body IR TryPropagate error conversion")
+    owns_text = input.variants[1].fields == [PlanType.FrozenStr] and output.variants[1].fields == [PlanType.String]
+    if input.variants[1].fields != output.variants[1].fields and not owns_text:
+        return Err("unsupported Body IR TryPropagate error conversion without retained conversion target")
     failure = builder.new_block(span)
     success = builder.new_block(span)
     condition = variant_condition(builder, source, 0, span)
@@ -106,9 +112,11 @@ pub def propagate_result(
     owners = builder.owned
     builder.current = failure
     error = Place(local=source.local, projection=Projection.VariantField(1, 0, input.variants[1].fields[0]), span=span)
-    builder.emit(
-        plan_assign(plan_place(0, span), RvalueKind.Enum(output_owner, 1, [read_place(error, true, span)]), span),
-    )
+    mut propagated = read_place(error, true, span)
+    if owns_text:
+        text = display_plan_value(builder, read_place(error, false, span), span, false)?
+        propagated = read_place(text, true, span)
+    builder.emit(plan_assign(plan_place(0, span), RvalueKind.Enum(output_owner, 1, [propagated]), span))
     drop_all_owned(builder, span)
     builder.finish(TerminatorKind.Return, span)
     builder.current = success

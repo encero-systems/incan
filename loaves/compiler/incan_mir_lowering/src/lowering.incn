@@ -502,7 +502,7 @@ from closures import (
 # =====================================================================================================================
 from attributes import native_attributes
 from externs import delegated_function
-from mutable_parameters import mutable_argument
+from mutable_parameters import exclusive_referent, mutable_argument
 from partial_callables import (
     default_flags,
     with_supplied_flags,
@@ -7446,6 +7446,16 @@ pub def list_slice_view(
     return Ok(read_place(output, mutable, span))
 
 
+def lends_shared_referent(actual: PlanType, referent: PlanType) -> bool:
+    """Whether `referent` is the shared nominal reference to a value of type `actual`."""
+    match actual:
+        (PlanType.Model(_, _) | PlanType.Enum(_, _)) =>
+            match shared_receiver_type(actual):
+                Ok(reference) => return reference == referent
+                Err(_) => return false
+        _ => return false
+
+
 def borrow_scalar_operand(
     mut builder: Builder,
     value: &RustOperand,
@@ -7463,6 +7473,12 @@ def borrow_scalar_operand(
             if mutable and read.fact != OwnershipFact.MutBorrow:
                 return Err("unsupported Body IR scalar reference without an exclusive borrow fact")
             owner = scalar_borrow_owner(builder, read, referent, mutable, span)?
+            # A shared reference read through its referent, as a receiver is, is lent as a fresh loan of that
+            # referent: `Read for &UnixStream` takes `&mut &UnixStream`, and the loan's own identity is unobservable.
+            if mutable and lends_shared_referent(place_type(builder.locals, owner), referent):
+                loan = temporary(builder, referent, span)
+                builder.emit(plan_assign(loan, RvalueKind.Borrow(owner), span))
+                owner = loan
             actual = place_type(builder.locals, owner)
             match referent:
                 PlanType.NativeTraitObject(_path, _send, _sync) =>
@@ -7480,7 +7496,10 @@ def borrow_scalar_operand(
                         if inner != elements:
                             return Err("unsupported Body IR scalar reborrow referent")
                         owner = Place(local=owner.local, projection=Projection.Deref(referent), span=span)
-                    _ => return Err("unsupported Body IR scalar borrow of another type")
+                    _ =>
+                        return Err(
+                            f"unsupported Body IR scalar borrow of another type: {actual:?} for a {referent:?} referent",
+                        )
         RustOperand.Constant(_constant) =>
             if mutable:
                 return Err("unsupported Body IR mutable scalar constant borrow")
@@ -13251,6 +13270,8 @@ def enum_payload_read(
         PlanType.SliceRef(_elements) => return Ok(read_place(place, false, span))
         PlanType.NativeArrayRef(_elements, _length) => return Ok(read_place(place, false, span))
         PlanType.StrRef => return Ok(read_place(place, false, span))
+        (PlanType.ModelMutRef(_, _) | PlanType.EnumMutRef(_, _) | PlanType.StringMutRef | PlanType.TupleMutRef(_)) =>
+            return reborrowed_payload(builder, place, payload_type, span)
         _ => pass
     if numeric_carrier(payload_type) or payload_type == PlanType.Bool or payload_type == PlanType.Unit:
         return Ok(read_place(place, false, span))
@@ -13266,6 +13287,22 @@ def enum_payload_read(
         cloned = clone_text(builder, place, span)?
         return Ok(read_place(cloned, true, span))
     return clone_nominal_operand(builder, place, span)
+
+
+def reborrowed_payload(
+    mut builder: Builder,
+    place: Place,
+    reference: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Lend an exclusive reference payload's referent again, as `Option.as_mut()` hands it out. An exclusive reference can
+    be neither copied nor cloned; reborrowing leaves the carrier whole for any later reader.
+    """
+    referent = dereferenced_place(place, exclusive_referent(reference)?, span)?
+    reborrow = temporary(builder, reference, span)
+    builder.emit(plan_assign(reborrow, RvalueKind.MutBorrow(referent), span))
+    return Ok(read_place(reborrow, true, span))
 
 
 def enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
@@ -13952,11 +13989,7 @@ def element_plan_operand(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Convert an already evaluated collection element to the element's checked carrier, as `element_operand` does."""
-    mut operand = value
-    if element == PlanType.String and operand_type(builder, operand)? == PlanType.FrozenStr:
-        text = display_plan_operand(builder, operand, span)?
-        operand = read_place(text, true, span)
-    operand = boundary_plan_operand(builder, operand, element, span)?
+    operand = boundary_plan_operand(builder, value, element, span)?
     return coerce_numeric_operand(builder, operand, element, span)
 
 
@@ -13976,6 +14009,11 @@ pub def boundary_plan_operand(
     if source == PlanType.StrRef and target == PlanType.String:
         owned = owned_slice_text(builder, value, span)
         return Ok(read_place(owned, true, span))
+    # A `const` str reaching a destination that owns text, such as an `Err` payload or a list element, becomes owned
+    # text there, as at a `str` parameter.
+    if source == PlanType.FrozenStr and target == PlanType.String:
+        text = display_plan_operand(builder, value, span)?
+        return Ok(read_place(text, true, span))
     # A borrowed source model that reaches a destination owning one was admitted by the checker there, so it is cloned.
     match (source, target):
         (PlanType.Tuple(_source_fields), PlanType.Tuple(_target_fields)) =>
@@ -14789,11 +14827,14 @@ def lower_try_propagation(
     routing: &TryErrorRouting,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Materialize the checked Result read before consuming its selected payload on either propagation edge."""
+    """
+    Materialize the checked Result read before consuming its selected payload on either propagation edge. The only
+    error conversion the propagation performs is the owned text a `const` str error becomes; it decides that from the
+    concrete carriers.
+    """
     match routing:
         TryErrorRouting.SameType(error_type=_error) => pass
-        TryErrorRouting.ConversionRequired(source_error_type=_source, destination_error_type=_destination) =>
-            return Err("unsupported Body IR TryPropagate error conversion without retained conversion target")
+        TryErrorRouting.ConversionRequired(source_error_type=_source, destination_error_type=_destination) => pass
         _ => return Err("unsupported Body IR unresolved TryPropagate error routing")
     value = value_operand(builder, operand, span)?
     ty = operand_type(builder, value)?
@@ -14801,7 +14842,7 @@ def lower_try_propagation(
     track_rvalue_moves(builder, RvalueKind.Use(value))
     builder.emit(plan_assign(source, RvalueKind.Use(value), span))
     builder.owned.append(source.local)
-    target = scalar_place(builder, destination, span)?
+    target = assignment_place(builder, destination, span)?
     return propagate_result(builder, source, target, span)
 
 

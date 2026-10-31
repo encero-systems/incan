@@ -11,6 +11,7 @@ from home import unit_ledger
 from loaf_local_graph import unique
 from manifest_vocabulary import manifest_vocabulary
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
+from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain, rust_compiler
@@ -22,7 +23,7 @@ from rust_target import compiler_version, deployment_target, inherited_deploymen
 from apple_sdk import selected_sdk
 from std.environ import get_or
 
-const UNIT_DOMAIN: str = "incan.oven.unit/2"
+const UNIT_DOMAIN: str = "incan.oven.unit/3"
 
 
 pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]:
@@ -52,7 +53,7 @@ pub def artifact_identity(path: Path) -> Result[str, str]:
     """
     clock = begin()
     result = observe(path)
-    record_work("artifact_identity", path.0, clock)
+    record_work(Operation.ArtifactIdentity, path.0, clock)
     return Ok(result?.stamp)
 
 

@@ -37,6 +37,8 @@ from segment_store import (
     fork,
     read_counts,
     lease,
+    view_snapshot,
+    collect_layouts,
     durable_syncs,
     repair_current,
     quarantine_record,
@@ -90,6 +92,11 @@ pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_an
     root = scratch.path().joinpath("store")
     empty = snapshot(root).map_err((error) => error.message())?
     assert empty.generation == 0
+    assert not root.exists(), "opening an absent store created control files"
+    root.mkdir(true, true).map_err((error) => error.message())?
+    assert snapshot(root).map_err((error) => error.message())?.generation == 0
+    assert len(root.iterdir().map_err((error) => error.message())?) == 0, "opening an empty directory changed it"
+    empty_lease = lease(empty).map_err((error) => error.message())?
     assert text(lookup(empty, "a")) == "<absent>"
     first = write_one(root, "a", "one").map_err((error) => error.message())?
     second = write_one(root, "a", "two").map_err((error) => error.message())?
@@ -104,9 +111,15 @@ pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_an
     held = lease(first).map_err((error) => error.message())?
     leases = root.joinpath("leases")
     before = len(leases.iterdir().map_err((error) => error.message())?)
-    assert before == 1, "an execution pin published a duplicate durable descriptor"
+    assert before == deleted.generation + 1, "an execution pin published a duplicate durable descriptor"
     another = lease(first).map_err((error) => error.message())?
     assert len(leases.iterdir().map_err((error) => error.message())?) == before
+    unbound = snapshot(root, "unbound").map_err((error) => error.message())?
+    unbound_lease = lease(unbound).map_err((error) => error.message())?
+    collect_layouts(root).map_err((error) => error.message())?
+    assert text(lookup(empty, "a")) == "<absent>"
+    assert text(lookup(unbound, "a")) == "<absent>"
+    prove_snapshot_collection(scratch.path().joinpath("collection"))?
     return Ok(None)
 
 
@@ -260,8 +273,8 @@ pub def test_compaction_preserves_contents_and_gives_a_byte_identical_base() -> 
     source = scratch.path().joinpath("artifact")
     source.write_bytes(b"program").map_err((error) => error.message())?
     digest = put_payload(two, source).map_err((error) => error.message())?
-    assert payload_intact(two, digest)
-    stored = payload_path(two, digest)
+    assert payload_intact(two, digest.digest)
+    stored = payload_path(two, digest.digest)
     stored.chmod(false).map_err((error) => error.message())?
     stored.write_bytes(b"damaged").map_err((error) => error.message())?
     match put_payload(two, source):
@@ -612,3 +625,62 @@ def prove_concurrent_writers(base: Path) -> Result[None, str]:
         assert text(lookup(seen, "anchor")) == "unchanged"
     println("S1 concurrent processes: 2 disjoint commits; 1 rival commit and 1 conflict")
     return Ok(None)
+
+
+def prove_snapshot_collection(root: Path) -> Result[None, str]:
+    """Lazy old reads survive collection; a released historical descriptor cannot be registered again."""
+    expired = pinned_collection(root)?
+    reclaimed = collect_layouts(root).map_err((error) => error.message())?
+    assert reclaimed.files > 0 and reclaimed.bytes > 0
+    assert text(lookup(snapshot(root).map_err((error) => error.message())?, "value")) == "replacement-19"
+    match lease(expired):
+        Ok(_) => return Err("an expired snapshot registered after collection")
+        Err(error) =>
+            assert error.kind == "expired", error.message()
+    match view_snapshot(expired, expired.view):
+        Ok(_) => return Err("view selection reopened an expired descriptor")
+        Err(error) =>
+            assert error.kind == "expired", error.message()
+    match repair_current(expired):
+        Ok(_) => return Err("repair selected an expired descriptor")
+        Err(error) =>
+            assert error.kind == "expired", error.message()
+    prove_expired_repair_preserves_current(root.joinpath("repair"))?
+    println(f"collection released snapshot: {reclaimed.files} files, {reclaimed.bytes} bytes")
+    return Ok(None)
+
+
+def prove_expired_repair_preserves_current(root: Path) -> Result[None, str]:
+    """A peer can retain an old manifest without authorizing another expired view to replace CURRENT."""
+    first = write_one(root, "value", "shared").map_err((error) => error.message())?
+    peer = fork(first, "peer").map_err((error) => error.message())?
+    mut expired = snapshot(root).map_err((error) => error.message())?
+    write_one(root, "value", "different").map_err((error) => error.message())?
+    write_one(root, "value", "shared").map_err((error) => error.message())?
+    expired.pin = None
+    collect_layouts(root).map_err((error) => error.message())?
+    pointer = root.joinpath("CURRENT")
+    before = pointer.read_text("utf-8", "strict").map_err((error) => error.message())?
+    match repair_current(expired):
+        Ok(_) => return Err("repair accepted an expired view through its peer's manifest")
+        Err(error) =>
+            assert error.kind == "expired", error.message()
+    assert pointer.read_text("utf-8", "strict").map_err((error) => error.message())? == before
+    assert text(lookup(peer, "value")) == "shared"
+    assert text(lookup(snapshot(root).map_err((error) => error.message())?, "value")) == "shared"
+    return Ok(None)
+
+
+def pinned_collection(root: Path) -> Result[Snapshot, str]:
+    """Keep an unopened old value live across twenty superseding generations and a maintenance collection."""
+    mut old = write_one(root, "value", "old").map_err((error) => error.message())?
+    for turn in range(20):
+        write_one(root, "value", f"replacement-{turn}").map_err((error) => error.message())?
+    reclaimed = collect_layouts(root).map_err((error) => error.message())?
+    assert reclaimed.files > 0 and reclaimed.bytes > 0
+    assert text(lookup(old, "value")) == "old", "collection removed a live snapshot's lazy frame"
+    println(
+        f"collection with pinned snapshot: 20 superseded generations, {reclaimed.files} files, {reclaimed.bytes} bytes",
+    )
+    old.pin = None
+    return Ok(old)

@@ -1915,6 +1915,12 @@ pub struct ProtocolArtifacts {
     /// The change has to reach the parameter, so lowering matches such a scrutinee in place, through a mutable
     /// reference, and binds each pattern name to the part of the parameter it names rather than to a copy.
     pub in_place_match_scrutinees: HashSet<crate::ast::Span>,
+    /// Scrutinee spans of the `match`, `if let` and `while let` forms whose value holds no loan: its checked type
+    /// names no reference and no Rust type with lifetime parameters, at any depth.
+    ///
+    /// Such a value cannot borrow from the temporaries its evaluation made, so lowering ends them before the arms run
+    /// and an arm may move the owner they borrowed.
+    pub loan_free_scrutinees: HashSet<crate::ast::Span>,
 }
 
 /// A typechecker-resolved user-defined operator call consumed by IR lowering.
@@ -3376,6 +3382,17 @@ impl TypeCheckInfo {
     /// through a name the pattern binds, so each name binds the part of the parameter it names (#1561).
     pub fn match_scrutinee_is_changed_in_place(&self, span: Span) -> bool {
         self.protocols.in_place_match_scrutinees.contains(&span)
+    }
+
+    /// Record that the value of the `match`, `if let` or `while let` scrutinee at `span` holds no loan.
+    pub fn record_loan_free_scrutinee(&mut self, span: Span) {
+        self.protocols.loan_free_scrutinees.insert(span);
+    }
+
+    /// Return whether the scrutinee at `span` holds no loan, so the temporaries its evaluation made can end before
+    /// the arms run.
+    pub fn scrutinee_holds_no_loan(&self, span: Span) -> bool {
+        self.protocols.loan_free_scrutinees.contains(&span)
     }
 }
 

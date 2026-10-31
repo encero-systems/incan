@@ -7,28 +7,32 @@ from std.fs import Path
 from std.fs.locking import FileLock
 from bakery import (
     Fact,
-    canonical_payload,
     claim,
     claim_file,
     collect,
     fact_file,
     find,
     forget_verified,
+    verification_entries,
+    view,
     lookup,
+    library_directory,
     register_root,
     seal,
+    prepare_seal,
     staging,
     staging_root,
+    view_directory,
     verify_all,
     repair_derived,
 )
-from segment_store import begin, commit, keys, put, readmit_payload, snapshot
+from segment_store import begin, commit, delete, get, keys, put, put_payload, payload_path, readmit_payload, snapshot
 from files import make_directory, read, write as write_file
-from incan_units import compile_executable
+from incan_units import compile_executable, obtain_executable
 from scratch import scratch_directory
 from toolchain import Toolchain
 from unit import UnitDescription
-from unit_freshness import Key
+from unit_freshness import Key, fingerprint
 
 
 def write(path: Path, text: str) -> Result[None, str]:
@@ -87,7 +91,8 @@ def counted_toolchain(scratch: Path) -> Result[Toolchain, str]:
     driver = scratch.joinpath("toolchain").joinpath("driver")
     attempts = scratch.joinpath("attempts")
     mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
-    script += f"printf x >> '{attempts.0}'\nprintf 'compiled program' > \"$4\"\nexit 0\n"
+    script += f"printf x >> '{attempts.0}'\nprintf 'compiled program' > \"$4\"\n"
+    script += "printf '%s' '{\"schema\":\"incan.native-shared/1\",\"libraries\":[]}' > \"$4.native-shared.json\"\nexit 0\n"
     write(driver, script)?
     mut chmod = Command.new("/bin/chmod")
     assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
@@ -105,8 +110,7 @@ pub def test_two_projects_with_the_same_unit_compile_it_once_and_target_holds_on
     """
     Two projects asking for one identity compile it once; deleting `target/` or editing a view costs only views.
 
-    1. The first project bakes; the second views the same fact without starting a compiler, and its unchanged view
-       can be started from the stored payload.
+    1. The first project bakes; the second views the same fact without starting a compiler.
     2. An edited view leaves the fact intact, and it is the edited view that starts.
     3. Deleting a project's `target/` recreates its view and compiles nothing.
     """
@@ -136,17 +140,20 @@ pub def test_two_projects_with_the_same_unit_compile_it_once_and_target_holds_on
     assert compile_executable(second, toolchain, second_output, key, false, Some(store))? == 0
     assert attempts(root) == "x"
     assert read(second_output)? == "compiled program"
-    fact = baked(store, key.digest)?
-    assert launched(store, fact, second_output) == stored_payload(store, key.digest, "app")?.0
     # 2. A view is the user's to change; the unit is not, and the changed view is what starts.
     write_file(first_output, "stripped by the user")?
     assert payload_text(store, key.digest, "app")? == "compiled program"
-    assert launched(store, fact, first_output) == ""
     # 3. A deleted target directory is only views.
     root.joinpath("two").joinpath("target").remove_tree().map_err((error) => error.message())?
     assert compile_executable(second, toolchain, second_output, key, false, Some(store))? == 0
     assert read(second_output)? == "compiled program"
     assert attempts(root) == "x"
+    # Development linkage must also start the requested view, so the host reports it as the executable image.
+    made = obtain_executable(second, toolchain, second_output, key, true, Some(store))?
+    assert made.launch.0 == second_output.0, "a development run replaced the view with its bakery payload"
+    assert verification_entries() > 0
+    forget_verified()
+    assert verification_entries() == 0, "request teardown retained verified payload metadata"
     return Ok(None)
 
 
@@ -233,8 +240,8 @@ pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() 
     return Ok(None)
 
 
-pub def test_collection_is_refused_and_removes_nothing() -> Result[None, str]:
-    """`incan bakery gc` is refused until collection honors live snapshot leases, and nothing it could reach is removed."""
+pub def test_collection_preserves_published_units_for_cold_and_warm_readers() -> Result[None, str]:
+    """Collection between publication and view selection preserves both cold and warm unit readers and payloads."""
     scratch = scratch_directory()?
     store = scratch.path().joinpath("bakery")
     library = digest_of("d4")
@@ -242,13 +249,29 @@ pub def test_collection_is_refused_and_removes_nothing() -> Result[None, str]:
     assert bake(store, library, "library")?
     assert bake(store, orphan, "orphan")?
     register_root(store, scratch.path().joinpath("project").0, library)?
-    match collect(store, -1):
-        Ok(_) =>
-            assert false, "collection ran without its lease protocol"
-        Err(reason) =>
-            assert "disabled" in reason, reason
-    assert found(find(store, library)?)
-    assert found(find(store, orphan)?)
+    abandoned = scratch.path().joinpath("abandoned")
+    write(abandoned, "uncommitted payload")?
+    digest = abandoned_digest(store, abandoned)?
+    collect(store, -1)?
+    assert not payload_path(store, digest).exists(), "abandoned payload was retained"
+    for _turn in range(2):
+        collected = collect(store, -1)?
+        assert collected.kept == 2 and collected.removed == 0
+        assert found(find(store, library)?)
+        assert found(find(store, orphan)?)
+        assert payload_text(store, library, "payload")? == "library"
+        assert payload_text(store, orphan, "payload")? == "orphan"
+        match find(store, library)?:
+            None => return Err("published unit disappeared before view selection")
+            Some(fact) =>
+                destination = scratch.path().joinpath("selected/payload")
+                view(store, fact, "payload", destination)?
+                assert read(destination)? == "library"
+    prove_prepared_payload_survives_collection(store, scratch.path())?
+    prove_superseded_payloads_are_collected(store, scratch.path())?
+    active = prove_active_staging_survives(store)?
+    reclaimed = collect(store, -1)?
+    assert reclaimed.staging_cleared > 0 and not active.exists(), "abandoned staging was retained"
     return Ok(None)
 
 
@@ -260,6 +283,31 @@ pub def test_the_name_record_answers_the_latest_identity_of_a_name() -> Result[N
     for index in range(20):
         assert bake(store, digest_of(f"{index}a"), f"{index}", [], "dep")?
     assert lookup(store, "dep")? == Some(digest_of("19a"))
+    verify_frozen_library_bindings(scratch.path())?
+    return Ok(None)
+
+
+def verify_frozen_library_bindings(root: Path) -> Result[None, str]:
+    """Repairing a unit record gives new consumers another layout without retargeting an older native closure."""
+    store = root.joinpath("library-bakery")
+    identity = fingerprint(["library-layout-fixture", root.0])?
+    first = staging(store, identity)?
+    write(first.joinpath("payload"), "first library")?
+    fact = seal(store, identity, first, "library", identity, [], "test")?
+    target = root.joinpath("target/library")
+    view_directory(store, fact, target)?
+    original = library_directory(store, target)?
+    damage_unit_record(store, identity)?
+    replacement = staging(store, identity)?
+    write(replacement.joinpath("payload"), "repaired library")?
+    repaired = repair_derived(store, identity, replacement, "library", identity, [], "verified-test-inputs")?
+    view_directory(store, repaired, target)?
+    current = library_directory(store, target)?
+    assert current.0 != original.0
+    assert library_directory(store, original)?.0 == original.0
+    assert read(original.joinpath("payload"))? == "first library"
+    assert read(current.joinpath("payload"))? == "repaired library"
+    assert original.joinpath("payload").is_symlink()
     return Ok(None)
 
 
@@ -286,13 +334,6 @@ def baked(store: Path, identity: str) -> Result[Fact, str]:
     match find(store, identity)?:
         None => return Err(f"{identity[:12]} is not baked")
         Some(fact) => return Ok(fact)
-
-
-def launched(store: Path, fact: Fact, view: Path) -> str:
-    """The stored payload that starts in place of `view`, or empty when the view itself starts."""
-    match canonical_payload(store, fact, view.name(), view):
-        Some(payload) => return payload.0
-        None => return ""
 
 
 def payload_text(store: Path, identity: str, relative: str) -> Result[str, str]:
@@ -329,12 +370,7 @@ def damage(path: Path, text: str) -> Result[None, str]:
 
 def prove_codec_repair(store: Path, identity: str) -> Result[None, str]:
     """A frame with a valid storage digest but invalid unit encoding is quarantined by its owning codec."""
-    view = snapshot(store).map_err((error) => error.message())?
-    unit_keys = [key for key in keys(view).map_err((error) => error.message())? if key.startswith("incan.bakery.unit\t") and key.endswith(
-        f"\t{identity}",
-    )]
-    assert len(unit_keys) == 1, f"expected one unit record, found {len(unit_keys)}"
-    commit(put(begin(view), unit_keys[0], b"invalid unit encoding")).map_err((error) => error.message())?
+    damage_unit_record(store, identity)?
     match find(store, identity):
         Ok(_) =>
             assert false, "a malformed unit was read as absence"
@@ -347,4 +383,85 @@ def prove_codec_repair(store: Path, identity: str) -> Result[None, str]:
     repair_derived(store, identity, replacement, "library", "dep", [], "verified-test-inputs")?
     assert len(store.joinpath("quarantine").iterdir().map_err((error) => error.message())?) == before + 1, "codec damage was not quarantined"
     assert payload_text(store, identity, "payload")? == "codec repaired"
+    return Ok(None)
+
+
+def damage_unit_record(store: Path, identity: str) -> Result[None, str]:
+    """Replace one test fact's typed record with malformed bytes while retaining its canonical payloads."""
+    view = snapshot(store).map_err((error) => error.message())?
+    unit_keys = [key for key in keys(view).map_err((error) => error.message())? if key.startswith("incan.bakery.unit\t") and key.endswith(
+        f"\t{identity}",
+    )]
+    assert len(unit_keys) == 1, f"expected one unit record, found {len(unit_keys)}"
+    commit(put(begin(view), unit_keys[0], b"invalid unit encoding")).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def abandoned_digest(store: Path, source: Path) -> Result[str, str]:
+    """Install and abandon an unpublished payload by dropping its preparation guard."""
+    return Ok(put_payload(store, source).map_err((error) => error.message())?.digest)
+
+
+def prove_active_staging_survives(store: Path) -> Result[Path, str]:
+    """Force collection while an active producer owns its staging, then abandon that producer on return."""
+    identity = "sha256:" + digest_of("ee1")
+    held = claim(store, identity)?
+    active = staging(store, identity)?
+    write(active.joinpath("payload"), "active producer")?
+    collect(store, -1)?
+    assert read(active.joinpath("payload"))? == "active producer"
+    return Ok(active)
+
+
+def prove_prepared_payload_survives_collection(store: Path, root: Path) -> Result[None, str]:
+    """Force collection after immutable installation but before publication, then commit without reinstalling."""
+    identity = digest_of("abc")
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), "prepared before collection")?
+    prepared = prepare_seal(store, identity, staged, "library", "prepared", [], "test")?
+    path = payload_path(store, prepared.fact.files[0].digest)
+    assert not found(find(store, identity)?)
+    collect(store, -1)?
+    assert read(path)? == "prepared before collection", "collection removed a live preparation"
+    commit(prepared.transaction).map_err((error) => error.message())?
+    assert payload_text(store, identity, "payload")? == "prepared before collection"
+    return Ok(None)
+
+
+def prove_superseded_payloads_are_collected(store: Path, root: Path) -> Result[None, str]:
+    """Explicitly dropped unit roots reclaim their payloads; an old live snapshot retains its late payload reads."""
+    first = digest_of("100")
+    assert bake(store, first, "old live payload", [], "history")?
+    old_path = stored_payload(store, first, "payload")?
+    mut old = snapshot(store).map_err((error) => error.message())?
+    mut previous = first
+    mut bytes = 0
+    mut payload_bytes = 0
+    mut payloads = 0
+    for index in range(20):
+        identity = digest_of(f"{index + 200}")
+        content = f"replacement unit generation {index}"
+        assert bake(store, identity, content, [], "history")?
+        previous_path = stored_payload(store, previous, "payload")?
+        commit(delete(begin(snapshot(store).map_err((error) => error.message())?), "incan.bakery.unit\t" + previous)).map_err(
+            (error) => error.message(),
+        )?
+        reclaimed = collect(store, -1)?
+        bytes += reclaimed.bytes_reclaimed
+        payload_bytes += reclaimed.payload_bytes_reclaimed
+        payloads += reclaimed.payloads_removed
+        if previous != first:
+            assert not previous_path.exists(), "a superseded unit payload was retained"
+        previous = identity
+    assert read(old_path)? == "old live payload"
+    assert get(old, "incan.bakery.unit\t" + first).map_err((error) => error.message())? is not None
+    old.pin = None
+    released = collect(store, -1)?
+    assert not old_path.exists(), "released historical payload was retained"
+    payload_bytes += released.payload_bytes_reclaimed
+    payloads += released.payloads_removed
+    assert payloads == 20 and payload_bytes > 0
+    println(
+        f"payload collection: 20 superseded generations, {payloads} payloads and {payload_bytes} payload bytes reclaimed, {bytes} total immutable bytes before release, live old payload retained",
+    )
     return Ok(None)

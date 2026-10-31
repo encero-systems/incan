@@ -7,6 +7,7 @@ from bakery import (
     bakery,
     claim,
     find,
+    forget_view,
     view_directory,
     lookup,
     reached,
@@ -124,13 +125,14 @@ pub def compile_library_unit(
     compiler: str = "",
 ) -> Result[i32, str]:
     """
-    Obtain a prepared library from the home bakery; its artifact directory becomes a link to the fact.
+    Obtain a prepared library from the home bakery; its artifact directory becomes a disposable view of the fact.
     The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
 
-    Compilers read a library's artifacts from the fact itself, through that link, so no artifact is copied.
+    Compiler consumers bind its artifacts through the bakery's store-owned filename layout (`library_directory`),
+    so a native closure never depends on a project's mutable view.
 
-    1. Key the library; a sealed fact of its identity is linked and no compiler starts.
-    2. Otherwise claim the identity, and link a fact another command sealed meanwhile.
+    1. Key the library; a sealed fact of its identity is viewed and no compiler starts.
+    2. Otherwise claim the identity, and view a fact another command sealed meanwhile.
     3. Stage its vocabulary worker and compile it into a staging directory of the fact.
     4. Require every published artifact, including a worker its manifest names, before sealing the fact.
     """
@@ -186,6 +188,7 @@ pub def compile_library_unit(
 def compile_unbaked(library: UnitDescription, toolchain: Toolchain, output: Path, key: Key) -> Result[i32, str]:
     """Compile a library whose inputs cannot be named portably in place; nothing is baked or reused."""
     directory = output.parent()
+    forget_view(directory)?
     stage_vocabulary(library, directory)?
     compiled = compile_prepared_unit(library, toolchain, output, Some(key), key.refusal)?
     if compiled != 0:

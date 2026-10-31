@@ -27,6 +27,7 @@ from std.hash import sha256
 from std.json import JsonValue, parse
 from json_fields import array, strings, text_field
 from publication import publish
+from pub::incan_platform.trace import Operation
 from jec import begin, record
 from trace_adapter import reason, relay as relay_observations
 
@@ -299,20 +300,26 @@ pub def file_digest(path: Path) -> Result[str, str]:
     content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
     clock = begin()
     result = hexlify(sha256.digest(content))
-    record("file_hash", path.0, clock, len(content))
+    record(Operation.FileHash, path.0, clock, len(content))
     return Ok(result)
 
 
 pub def observe(path: Path) -> Result[Observation, str]:
     """A file or directory's identity as the filesystem reports it, following symbolic links."""
     prefix = f"{path.0}: "
-    info = described(metadata(path.0).map_err((error) => f"{prefix}{error}")?)
+    clock = begin()
+    found = metadata(path.0)
+    record(Operation.FileStat, path.0, clock)
+    info = described(found.map_err((error) => f"{prefix}{error}")?)
     return Ok(Observation(stamp=info.stamp(), newest=info.newest_second()))
 
 
 pub def file_metadata(path: Path) -> Result[Option[FileMetadata], str]:
     """One status query of a file or directory, following symbolic links; `None` when nothing is there."""
-    match metadata(path.0):
+    clock = begin()
+    found = metadata(path.0)
+    record(Operation.FileStat, path.0, clock)
+    match found:
         Ok(info) => return Ok(Some(described(info)))
         Err(error) =>
             if error.kind() == ErrorKind.NotFound:

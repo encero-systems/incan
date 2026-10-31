@@ -11,8 +11,9 @@ progress, and `roots/<project>/<identity>` for the identities each project's bui
 
 Asking is one path for cold and warm builds: find the record, or claim its identity, look again, bake into a private
 staging directory, store the payloads and publish the record. Concurrent askers wait on the claim and then find the
-record. The store reports a damaged record or payload; lookup refuses damage until an explicit repair or verified re-admission. Collection is
-disabled until it honors live snapshot leases; the store has no size ceiling.
+record. The store reports a damaged record or payload; lookup refuses damage until an explicit repair or verified re-admission.
+Explicit collection reclaims superseded layouts and unreachable payloads under live snapshot and preparation leases;
+the store has no size ceiling.
 """
 
 from rust::std::fs import OpenOptions, Permissions, copy as copy_file, metadata, rename, set_permissions
@@ -26,12 +27,15 @@ from std.fs import Path
 from std.fs.locking import FileLock
 from std.json import JsonValue
 from files import json_text, make_directory, read_json
-from home import home
+from home_paths import home
+pub from home_paths import bakery
+from pub::incan_platform.trace import Operation
 from jec import begin as begin_work, record as record_work
 from json_fields import required_items, required_text, string_value
 from observation import observe, trace
 from publication import publish
 from unit_publication import record_path, record_verified_payload, source_origins
+from sealed_set import payload_references as sealed_payload_references
 from segment_store import (
     EXPECT_REPAIR,
     Lookup,
@@ -53,6 +57,7 @@ from segment_store import (
     put,
     prepare_payloads,
     snapshot,
+    collect_records,
 )
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
@@ -87,12 +92,16 @@ pub model Fact:
 
 
 pub model Collected:
-    """What one collection did: units kept and removed, roots dropped, staging directories cleared."""
+    """Unit, root and staging counts, plus obsolete layout files and their logical bytes removed."""
 
     pub kept: int
     pub removed: int
     pub roots_dropped: int
     pub staging_cleared: int
+    pub layouts_removed: int = 0
+    pub bytes_reclaimed: int = 0
+    pub payloads_removed: int = 0
+    pub payload_bytes_reclaimed: int = 0
 
 
 pub def unit_identity(key: Key) -> str:
@@ -104,14 +113,6 @@ pub def unit_name(unit: UnitDescription) -> str:
     """The name a unit is indexed under: package, version, kind, profile and active features."""
     features = ",".join(unit.active_features)
     return f"{unit.package}\t{unit.version}\t{unit.kind}\t{unit.profile}\t{features}"
-
-
-pub def bakery() -> Result[Path, str]:
-    """This home's bakery: `<home>/bakery`, or the directory `INCAN_BAKERY` names (a cache volume, or a case's own)."""
-    configured = get_or("INCAN_BAKERY", "")
-    if configured != "":
-        return Path(configured).absolute().map_err((error) => error.message())
-    return Ok(home()?.joinpath("bakery"))
 
 
 def record_key(identity: str) -> str:
@@ -136,7 +137,7 @@ pub def find(store: Path, identity: str) -> Result[Option[Fact], str]:
     """The baked unit of `identity`, or nothing; see `find_unit`."""
     clock = begin_work()
     found = find_unit(store, identity)
-    record_work("bakery_find", identity, clock)
+    record_work(Operation.BakeryFind, identity, clock)
     return found
 
 
@@ -188,7 +189,7 @@ pub def claim(store: Path, identity: str) -> Result[FileLock, str]:
     """Claim `identity` for baking; see `claim_unit`."""
     clock = begin_work()
     held = claim_unit(store, identity)
-    record_work("bakery_claim", identity, clock)
+    record_work(Operation.BakeryClaim, identity, clock)
     return held
 
 
@@ -231,12 +232,12 @@ pub def seal(
     prepared = prepare_seal(store, identity, staged, kind, name, reaches, provenance)?
     published = commit(prepared.transaction).map_err(store_failure)?
     trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
-    record_work("bakery_seal", identity, clock)
+    record_work(Operation.BakerySeal, identity, clock)
     return Ok(prepared.fact)
 
 
 pub model PreparedFact:
-    """Ordered immutable payloads and an unpublished record transaction; the producer retains its claim until commit."""
+    """An unpublished fact whose transaction holds every payload lease; the producer also retains its unit claim."""
 
     pub fact: Fact
     pub transaction: Transaction
@@ -256,9 +257,10 @@ pub def prepare_seal(
     digests = prepare_payloads(store, [staged.joinpath(relative) for relative in relatives]).map_err(store_failure)?
     mut files: list[FactFile] = []
     for index in range(len(relatives)):
-        files.append(stored_file(staged, relatives[index], digests[index])?)
+        files.append(stored_file(staged, relatives[index], digests[index].digest)?)
     fact = Fact(identity=identity, kind=kind, name=name, reaches=reaches, files=files)
     mut transaction = begin(snapshot(store).map_err(store_failure)?)
+    transaction.payloads = digests
     transaction = put(transaction, record_key(identity), encode_fact(fact, provenance)?.encode("utf-8"), EXPECT_REPAIR)
     transaction = put(transaction, name_key(name), identity.encode("utf-8"))
     _ = staged.remove_tree()
@@ -294,20 +296,6 @@ pub def fact_file(store: Path, fact: Fact, relative: str) -> Option[Path]:
         if file.path == relative:
             return Some(payload_path(store, file.digest))
     return None
-
-
-pub def canonical_payload(store: Path, fact: Fact, relative: str, view: Path) -> Option[Path]:
-    """
-    The stored payload of one file of `fact` while `view` is still an unchanged clone of it, so a caller can start the
-    canonical file, which the platform has already assessed, in place of a new view of it. `None` once the user
-    changed the view: the view is theirs, and what they made of it is what runs.
-    """
-    match fact_file(store, fact, relative):
-        None => return None
-        Some(payload) =>
-            if same_file(payload, view):
-                return Some(payload)
-            return None
 
 
 pub def has_files_under(fact: Fact, prefix: str) -> bool:
@@ -415,7 +403,7 @@ pub def view(store: Path, fact: Fact, relative: str, destination: Path) -> Resul
     """Make `destination` a view of one file of `fact`; see `view_unit_file`."""
     clock = begin_work()
     viewed = view_unit_file(store, fact, relative, destination)
-    record_work("bakery_view", destination.0, clock)
+    record_work(Operation.BakeryView, destination.0, clock)
     return viewed
 
 
@@ -471,7 +459,7 @@ pub def view_directory(store: Path, fact: Fact, destination: Path, prefix: str =
     """Make `destination` a view of a whole unit, or of its files below `prefix`; see `view_unit_directory`."""
     clock = begin_work()
     viewed = view_unit_directory(store, fact, destination, prefix)
-    record_work("bakery_view", destination.0, clock)
+    record_work(Operation.BakeryView, destination.0, clock)
     return viewed
 
 
@@ -568,6 +556,103 @@ pub def reached(store: Path, directories: list[str]) -> Result[list[str], str]:
     return Ok(identities)
 
 
+pub def forget_view(directory: Path) -> Result[None, str]:
+    """Remove only a directory's fact selection before an unbaked producer replaces its local outputs."""
+    marker = directory.joinpath(VIEW_RECORD)
+    if marker.is_file():
+        marker.unlink().map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def library_directory(store: Path, directory: Path) -> Result[Path, str]:
+    """
+    Name a baked library through store-owned filename bindings, independently of any project's disposable views.
+
+    Native libraries require their original filenames and sibling metadata. Each layout names the exact payload set,
+    so a later fact repair cannot retarget an existing native closure. Data bindings link canonical payloads;
+    executable workers are materialized inside the layout to preserve the compiler's artifact-root confinement.
+    Producer records describe these bindings' generations.
+    An unbaked or installed directory retains its existing location.
+
+    1. Read the view's exact unit identity and require its complete fact.
+    2. Under a layout claim, bind every member to its canonical payload and admit its producer records.
+    """
+    # 1. A view selects an exact fact; the name index never substitutes another revision.
+    marker = directory.joinpath(VIEW_RECORD)
+    if not marker.is_file():
+        return Ok(directory)
+    canonical = store.resolve().map_err((error) => error.message())?
+    fact = library_fact(canonical, read_json(marker)?)?
+    return bind_library(canonical, fact)
+
+
+def library_fact(store: Path, marker: JsonValue) -> Result[Fact, str]:
+    """Read a layout's exact payload snapshot, or a project's current unit selection, refusing damaged payloads."""
+    if marker.get("layout") != None:
+        document = required_text(marker, "fact")?
+        match decode_fact(document.encode("utf-8")):
+            None => return Err("invalid library layout fact")
+            Some(fact) =>
+                if (
+                    required_text(marker, "identity")? != fact.identity
+                    or required_text(marker, "layout")? != library_layout(fact)?
+                ):
+                    return Err("library layout names another payload set")
+                for file in fact.files:
+                    if not payload_current(store, file):
+                        return Err(f"{file.path}: library payload is damaged")
+                return Ok(fact)
+    identity = required_text(marker, "identity")?
+    match find(store, identity)?:
+        None => return Err(f"library's baked unit is absent: {identity}")
+        Some(fact) => return Ok(fact)
+
+
+def library_layout(fact: Fact) -> Result[str, str]:
+    """Name the exact member payloads, keeping earlier layouts valid after a unit-record repair."""
+    return fingerprint(["incan.bakery.library-layout/1", encode_fact(fact, "library bindings")?])
+
+
+def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
+    """Complete immutable filename bindings under a claim before returning the library to any consumer."""
+    # 2. A crashed first binder is completed by the next caller before any consumer gets the directory.
+    layout = library_layout(fact)?
+    held = claim(store, f"library-layout/{layout}")?
+    selected = store.joinpath("libraries").joinpath(layout)
+    make_directory(selected)?
+    for file in fact.files:
+        if file.path == "" or file.path.startswith("/") or ".." in file.path.split("/"):
+            return Err("library member is not a relative filename")
+        source = payload_path(store, file.digest)
+        target = selected.joinpath(file.path)
+        make_directory(target.parent())?
+        if is_record(file):
+            if not target.is_file():
+                clone(source, target, false)?
+        elif file.program:
+            # A worker's resolved executable must remain inside the library's verified artifact root.
+            if target.is_symlink():
+                target.unlink().map_err((error) => error.message())?
+            view_file(store, file, target)?
+        elif target.is_symlink():
+            resolved = target.resolve().map_err((error) => error.message())?
+            if resolved.0 != source.0:
+                return Err(f"{target.0}: library binding names another payload")
+        elif target.exists():
+            return Err(f"{target.0}: library binding is not a payload link")
+        else:
+            target.symlink_to(source).map_err((error) => error.message())?
+    if not selected.joinpath(VIEW_RECORD).is_file():
+        marker = JsonValue.object({
+            "identity": JsonValue.string(fact.identity),
+            "layout": JsonValue.string(layout),
+            "fact": JsonValue.string(encode_fact(fact, "library bindings")?),
+        })
+        publish(selected.joinpath(VIEW_RECORD), json_text(marker)?)?
+    admit_views(fact.files, selected, "")?
+    return Ok(selected)
+
+
 pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     """
     The current view of the unit a directory was viewed from, for readers of a library's artifacts.
@@ -578,8 +663,11 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     record = directory.joinpath(VIEW_RECORD)
     if not record.is_file():
         return Ok(None)
-    identity = required_text(read_json(record)?, "identity")?
+    marker = read_json(record)?
     store = bakery()?
+    if marker.get("layout") != None:
+        return Ok(Some(library_directory(store, directory)?))
+    identity = required_text(marker, "identity")?
     match find(store, identity)?:
         None => return Ok(None)
         Some(fact) =>
@@ -608,8 +696,12 @@ def repair_view(store: Path, fact: Fact, directory: Path) -> Result[None, str]:
 
 pub def forget_verified() -> None:
     """Forget which payloads this process verified, as a new process would; the next find reads them again."""
-    for digest in [name for name in verified.keys()]:
-        verified[digest] = ""
+    verified = {}
+
+
+pub def verification_entries() -> int:
+    """Payload metadata observations owned by the current request; idle services must retain zero."""
+    return len(verified)
 
 
 # ---- Roots and collection ----
@@ -628,11 +720,71 @@ pub def register_root(store: Path, project: str, identity: str) -> Result[None, 
 
 pub def collect(store: Path, keep_days: int) -> Result[Collected, str]:
     """
-    Collection by reachability. It is disabled: removing objects is safe only once collection honors every live
-    snapshot lease and root under the store's lifecycle protocol, so until then nothing is ever removed.
+    Reclaim unreachable immutable storage and abandoned unit staging without invalidating readers or producers.
+
+    Current views and live snapshots retain their unit and sealed-set payloads. Preparation descriptors protect
+    unpublished content. Unit staging is removed only under its free claim; root history remains retained.
+    `keep_days` remains accepted for CLI compatibility and does not expire a root.
     """
-    trace(f"bakery {store.0}: collection requested, keeping roots of the last {keep_days} days")
-    return Err("bakery collection is disabled until it honors live snapshot leases; nothing was removed")
+    trace(f"bakery {store.0}: explicit lease-aware layout collection (root history retained, keep-days {keep_days})")
+    collected = collect_records(store, payload_references).map_err(store_failure)?
+    current = snapshot(store).map_err(store_failure)?
+    kept = len([key for key in keys(current).map_err(store_failure)? if key.startswith("incan.bakery.unit\t")])
+    return Ok(
+        Collected(
+            kept=kept,
+            removed=0,
+            roots_dropped=0,
+            staging_cleared=collect_staging(store)?,
+            layouts_removed=collected.files - collected.payloads,
+            bytes_reclaimed=collected.bytes,
+            payloads_removed=collected.payloads,
+            payload_bytes_reclaimed=collected.payload_bytes,
+        ),
+    )
+
+
+def payload_references(key: str, value: bytes) -> Result[list[str], StoreError]:
+    """Decode payload ownership at its family's boundary; malformed units abort collection before any unlink."""
+    if key.startswith("incan.bakery.unit\t"):
+        match decode_fact(value):
+            None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit payload references"))
+            Some(fact) => return Ok([file.digest for file in fact.files])
+    return sealed_payload_references(key, value)
+
+
+def collect_staging(store: Path) -> Result[int, str]:
+    """Clear abandoned unit staging only after the kernel proves its producer's claim is free."""
+    directory = staging_root(store)
+    if not directory.is_dir():
+        return Ok(0)
+    mut cleared = 0
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        parts = entry.name().split(".")
+        if len(parts) != 2 or not entry.is_dir() or entry.is_symlink():
+            continue
+        mut digest = parts[0]
+        if digest.startswith("sha256:"):
+            digest = digest[7:]
+        if not canonical_digest(digest):
+            continue
+        lock = claim_file(store, parts[0])
+        make_directory(lock.parent())?
+        free = lock.try_lock_exclusive().map_err((error) => error.message())?
+        if free is not None:
+            entry.remove_tree().map_err((error) => error.message())?
+            cleared += 1
+    return Ok(cleared)
+
+
+def canonical_digest(value: str) -> bool:
+    """Whether a unit staging prefix is a full lowercase SHA-256 name."""
+    if len(value) != 64:
+        return false
+    for character in value:
+        if character not in "0123456789abcdef":
+            return false
+    return true
 
 
 # ---- Verification ----
@@ -679,8 +831,8 @@ def verify_record(store: Path, key: str, value: bytes) -> list[str]:
 
 pub def parse_bakery(arguments: list[str]) -> Result[int, str]:
     """
-    Parse `incan bakery verify` or `incan bakery gc [--keep-days N]`: `VERIFY`, or the days of root history to keep
-    (-1 keeps every root).
+    Parse `incan bakery verify` or `incan bakery gc [--keep-days N]`: `VERIFY`, or the compatibility root-history
+    argument (-1 when omitted). Layout collection retains root history regardless of this argument.
     """
     if len(arguments) == 0:
         return Err("a subcommand is required: gc or verify")
@@ -718,7 +870,7 @@ pub def bakery_command(request: int) -> Result[i32, str]:
         return Ok(0)
     collected = collect(store, request)?
     println(
-        f"kept {collected.kept} units, removed {collected.removed}, dropped {collected.roots_dropped} roots, " + f"cleared {collected.staging_cleared} staging directories",
+        f"kept {collected.kept} units, removed {collected.removed}, dropped {collected.roots_dropped} roots, " + f"cleared {collected.staging_cleared} staging directories, reclaimed {collected.layouts_removed} layouts and {collected.payloads_removed} payloads ({collected.bytes_reclaimed} bytes)",
     )
     return Ok(0)
 

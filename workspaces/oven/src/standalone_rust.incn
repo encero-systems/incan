@@ -4,7 +4,7 @@ from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, parse_json, read_json, write
 from driver_command import driver_command
-from home import standard_packages
+from home import standard_intents
 from json_fields import array, field, required_items, required_text, strings
 from loaf_local_graph import unique
 from observation import trace
@@ -17,6 +17,7 @@ from toml_fields import optional_string, optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain, located
 from unit import UnitDescription
 from unit_freshness import fingerprint, unit_key
+from pub::incan_platform.trace import Operation
 from jec import begin, record
 
 const IMPORTS_SCHEMA: str = "incan.oven.rust-imports/1"
@@ -129,7 +130,7 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     command.arg(path.0)
     clock = begin()
     output = command.output().map_err((error) => error.to_string())?
-    record("driver_spawn", f"--rust-imports {path.0}", clock)
+    record(Operation.DriverSpawn, f"--rust-imports {path.0}", clock)
     if not output.status.success():
         return Err(decoded(output.stderr))
     records = array(parse_json(decoded(output.stdout))?, []).map_err((_) => "invalid Rust import records")?
@@ -219,15 +220,10 @@ def import_features(request: JsonValue) -> Result[list[str], str]:
 
 def known_request(name: str) -> Result[RegistrySelection, str]:
     """Read a known crate's default request from the standard packages' authored dependency declarations."""
-    for package in standard_packages()?:
-        manifest = read_manifest(Path(package.root))?
-        key = f"dependencies.{name}"
-        match optional_string(manifest, f"{key}.version")?:
-            Some(version) =>
-                loaf = optional_string(manifest, f"{key}.loaf")?.unwrap_or("")
-                if loaf != f"crates-io/{name}":
-                    continue
-                features = optional_strings(manifest, f"{key}.features")?.unwrap_or([])
-                return Ok(RegistrySelection(loaf=loaf, requirement=version, features=features))
-            None => pass
+    for intent in standard_intents()?:
+        for request in intent.rust_inputs:
+            if request.alias == name and request.loaf == Some(f"crates-io/{name}") and request.version != "":
+                return Ok(
+                    RegistrySelection(loaf=f"crates-io/{name}", requirement=request.version, features=request.features),
+                )
     return Err(f"unknown Rust crate `{name}`: no version specified; add @ \"VERSION\" to its import")

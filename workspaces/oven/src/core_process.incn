@@ -35,11 +35,13 @@ pub def executable() -> Result[str, str]:
     return current_exe().map((path) => str(path.to_string_lossy().into_owned())).map_err((error) => str(error))
 
 
-pub def spawn_detached(executable: str, arguments: list[str]) -> Result[Process, str]:
-    """Start an internal service in its own process group with no inherited command console streams."""
+pub def spawn_detached(executable: str, arguments: list[str], environment: dict[str, str] = {}) -> Result[Process, str]:
+    """Start an internal service with scoped environment overrides, its own group and no command console streams."""
     mut command = Command.new(executable)
     for argument in arguments:
         command.arg(argument)
+    for name in sorted([key for key in environment.keys()]):
+        command.env(name, environment[name])
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null()).process_group(0)
     child = command.spawn().map_err((error) => f"cannot start service: {error}")?
     return Ok(Process(child=Rc.new(RefCell.new(child))))

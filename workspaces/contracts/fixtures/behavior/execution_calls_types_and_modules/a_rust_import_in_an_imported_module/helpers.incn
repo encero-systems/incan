@@ -1,5 +1,5 @@
 """Provide the sibling declarations used by the fixture."""
-from rust::incan_std_core::text import normalize
+from rust::incan_std_core::collections import normalize_list_index
 
 
 pub def helper() -> int:

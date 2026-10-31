@@ -19,12 +19,13 @@ from files import json_text
 from incan_units import run_program
 from json_fields import required_text
 from observation import observe, file_metadata, trace
-from segment_store import Snapshot, begin, claim, commit, put, snapshot, view_snapshot, lease
+from segment_store import Snapshot, begin, claim, commit, put, snapshot, view_snapshot
 from toolchain import load_toolchain, toolchain_file
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 
 pub def execute(
@@ -58,7 +59,7 @@ pub def execute(
     request = session_id()?
     identity = identity_for(store, compiler)?
     mut channel = connect(store, identity).map_err(detail)?
-    record_work("engine_connect", source.0, connecting)
+    record_work(Operation.EngineConnect, source.0, connecting)
     channel.transport.wait_at_most(600)
     submitted = begin_work()
     send(
@@ -77,7 +78,7 @@ pub def execute(
     )?
     # 2. Execution is impossible before a real captured epoch and a successful selected native result.
     complete, interest = await_completion(channel, request)?
-    record_work("engine_request", source.0, submitted)
+    record_work(Operation.EngineRequest, source.0, submitted)
     if complete.observation_handle != "":
         println(report(store, complete.observation_handle)?)
     if complete.status != CompletionStatus.Success:
@@ -94,7 +95,7 @@ pub def execute(
     mut code: Result[i32, str] = Ok(0)
     if command == "run":
         code = run_program(Path(binary), arguments, argv0, true)
-    record_work("engine_child", source.0, executing)
+    record_work(Operation.EngineChild, source.0, executing)
     # Execution has ended. Cleanup cannot replace its outcome, and disconnect releases the lease if delivery fails.
     _ = send(channel, request, Message.Release(Release(lease_id=interest)))
     _ = channel.transport.close()
@@ -127,7 +128,7 @@ def execute_local(
             observation_policy="",
         ),
     )?
-    record_work("engine_capture", source.0, capturing)
+    record_work(Operation.EngineCapture, source.0, capturing)
     if captured.commits != 0:
         return Ok(None)
     handle = program_handle(captured.identity, compiler, view)?
@@ -138,19 +139,20 @@ def execute_local(
 
         Some(unit) =>
             pinning = begin_work()
-            held = lease(exact).map_err((error) => error.message())?
-            record_work("engine_lease", view, pinning)
+            if exact.pin is None:
+                return Err("selected native snapshot has no execution lease")
+            record_work(Operation.EngineLease, view, pinning)
             restoring = begin_work()
             restore_program(store, unit)?
-            record_work("engine_unit", unit.identity, restoring)
-            record_work("engine_select", view, selecting)
+            record_work(Operation.EngineUnit, unit.identity, restoring)
+            record_work(Operation.EngineSelect, view, selecting)
             trace(
                 f"engine local: encodings={captured.encodings} publications={captured.commits} reads={captured.counters.in_reach.reads} hashes={captured.counters.in_reach.hashes}",
             )
             if command == "run":
                 executing = begin_work()
                 code = run_program(Path(unit.binary), arguments, argv0, true)?
-                record_work("engine_child", source.0, executing)
+                record_work(Operation.EngineChild, source.0, executing)
                 return Ok(Some(code))
             return Ok(Some(0))
 
@@ -165,7 +167,7 @@ def installed_compiler() -> Result[str, str]:
     admitting = begin_work()
     catalog = home()?.joinpath("bakery")
     compiler = installation_compiler(catalog)?
-    record_work("engine_admission", catalog.0, admitting)
+    record_work(Operation.EngineAdmission, catalog.0, admitting)
     return Ok(compiler)
 
 
