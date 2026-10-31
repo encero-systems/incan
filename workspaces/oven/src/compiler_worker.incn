@@ -183,6 +183,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
                 directory.to_string_lossy().into_owned(),
                 f"{toolchain.console}.out",
                 f"{toolchain.console}.err",
+                toolchain.retire_worker,
             )
             send_document(connected, document)?
             # 3. A completed request grants only its actual exit code, never a retained checking result.
@@ -191,6 +192,8 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
             if retired(reply):
                 trace("compiler worker: retired after its request")
+            elif toolchain.retire_worker:
+                return Err("compiler worker did not honor the requested activation lifetime")
             return Ok(Some(status_code(completion(reply)?)))
 
 
