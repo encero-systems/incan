@@ -486,6 +486,16 @@ impl BodyBuilder<'_, '_> {
                 .ok_or("native receiver adjustment without an identity")?;
             adjusted = bir::ArgumentElement::One(value);
         }
+        // A checked exclusive receiver lends the adjusted referent again. The temporary owns the reference, not
+        // its referent; retaining Move here loses the authority required by a mutable native slice boundary.
+        if call
+            .parameters
+            .first()
+            .is_some_and(|parameter| matches!(parameter.ty, crate::symbols::ResolvedType::RefMut(_)))
+            && let bir::ArgumentElement::One(bir::Operand::Place(read)) = &mut adjusted
+        {
+            self.retain_argument_borrow(read, true);
+        }
         let slots = call
             .parameters
             .iter()
