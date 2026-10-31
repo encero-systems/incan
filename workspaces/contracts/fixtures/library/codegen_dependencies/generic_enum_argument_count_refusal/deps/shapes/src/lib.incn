@@ -19,3 +19,9 @@ pub model Holder[T]:
 pub def number() -> Packet[int]:
     """Return a provider-constructed value for the consumer's matching control."""
     return Packet.Value(8)
+
+
+pub enum Pair[A, B]:
+    """Require both declared payload type parameters before constructing the pair."""
+
+    Value(A, B)

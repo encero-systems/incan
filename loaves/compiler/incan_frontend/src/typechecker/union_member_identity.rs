@@ -67,6 +67,21 @@ fn identity_module_path(identity: &CanonicalSymbolId) -> Option<Vec<String>> {
 }
 
 impl TypeChecker {
+    /// Compare two accepted source type names through their retained declaration identities. Imported aliases and
+    /// provider-qualified names may agree; same-spelled declarations from different providers never do.
+    pub(in crate::typechecker) fn source_type_names_same_declaration(&self, left: &str, right: &str) -> bool {
+        left == right
+            || self.source_nominal_carrier_key(left).as_deref() == Some(right)
+            || self.source_nominal_carrier_key(right).as_deref() == Some(left)
+            || matches!(
+                (
+                    self.public_library_type_identities.get(left),
+                    self.public_library_type_identities.get(right),
+                ),
+                (Some(left_identity), Some(right_identity)) if left_identity == right_identity
+            )
+    }
+
     /// Return the retained carrier of an accepted source type binding, including a provider-qualified import. No
     /// declaration is inferred from a display spelling.
     pub(in crate::typechecker) fn source_nominal_carrier_key(&self, name: &str) -> Option<String> {
