@@ -7,6 +7,7 @@
 
 mod checked_replay;
 mod model;
+pub(crate) mod ownership;
 pub mod public_identities;
 mod retained;
 mod type_projection;
@@ -20,6 +21,7 @@ use incan_vocab::{
 
 pub use checked_replay::CheckedExportReplay;
 pub use model::*;
+pub use ownership::OwnershipExport;
 pub use type_projection::{
     VisitTypeRefs, contains_native_union, with_checked_type_origins, with_checked_type_routes,
     with_native_nominal_origins, with_self_owned_native_unions,
@@ -33,6 +35,9 @@ pub(crate) use validation::sha256_digest;
 /// Format 6 dropped the vocabulary helper bindings, Cargo dependency and stdlib feature lists, the desugarer
 /// artifact's target, profile and entry point, and provider implementation facets.
 pub const LIBRARY_MANIFEST_FORMAT: u32 = 6;
+
+/// Providers carrying explicit ownership require this capability so older readers cannot erase a source-only contract.
+pub const OWNERSHIP_MANIFEST_FORMAT: u32 = 7;
 
 /// Stable schema version for generic provider metadata embedded in `.incnlib` manifests.
 pub const COMPILED_PROVIDER_METADATA_SCHEMA_VERSION: u32 = 1;

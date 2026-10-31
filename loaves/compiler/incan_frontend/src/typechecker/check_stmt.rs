@@ -1013,6 +1013,8 @@ impl TypeChecker {
             return;
         }
 
+        self.warn_place_binding_migration(assign);
+
         // New binding
         let is_mutable = matches!(assign.binding, BindingKind::Mutable);
 

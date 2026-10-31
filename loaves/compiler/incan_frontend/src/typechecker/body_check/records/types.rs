@@ -18,6 +18,13 @@ pub(super) fn type_fields(ty: &ResolvedType, fields: &mut Vec<String>) -> Result
             fields.push("list".into());
             type_fields(&arguments[0], fields)?;
         }
+        ResolvedType::Generic(name, arguments)
+            if incan_lang::lang::types::ownership::from_str(name).is_some() && arguments.len() == 1 =>
+        {
+            fields.push("ownership".into());
+            fields.push(name.clone());
+            type_fields(&arguments[0], fields)?;
+        }
         ResolvedType::Function(parameters, result) => {
             fields.push("callable".into());
             parameter_fields(parameters, fields)?;
@@ -47,6 +54,13 @@ fn read_type_at(fields: &mut std::slice::Iter<'_, String>, depth: usize) -> Resu
         "unit" => ResolvedType::Unit,
         "unknown" => ResolvedType::Unknown,
         "list" => ResolvedType::Generic("List".into(), vec![read_type_at(fields, depth + 1)?]),
+        "ownership" => {
+            let name = next(fields)?;
+            let mode = incan_lang::lang::types::ownership::from_str(name)
+                .filter(|mode| mode.as_str() == name)
+                .ok_or(NodeBindingError::Unsupported("ownership mode"))?;
+            ResolvedType::Generic(mode.as_str().into(), vec![read_type_at(fields, depth + 1)?])
+        }
         "callable" => ResolvedType::Function(
             read_parameters_at(fields, depth + 1)?,
             Box::new(read_type_at(fields, depth + 1)?),

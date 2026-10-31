@@ -173,6 +173,7 @@ nav:
           - Feature inventory (generated): language/reference/feature_inventory.md
           - Code style guide: language/reference/code_style.md
           - Assignments: language/reference/assignments.md
+          - Explicit ownership: language/reference/explicit_ownership.md
           - Functions and calls: language/reference/functions.md
           - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
@@ -237,6 +238,7 @@ nav:
       - Explanation:
           - Why Incan?: language/explanation/why_incan.md
           - Why not just Rust?: language/explanation/why_not_just_rust.md
+          - Ownership declarations: language/explanation/ownership_declarations.md
           - How Incan works: language/explanation/how_incan_works.md
           - Compile time and runtime: language/explanation/compile_time_and_runtime.md
           - Checked catalogs and loaded registries: language/explanation/checked_and_loaded_registries.md

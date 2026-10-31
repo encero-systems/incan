@@ -99,6 +99,7 @@ pub(super) fn declarations(
                         .map(|param| parameter(param, anchor))
                         .collect::<Result<_, _>>()?,
                     return_type: type_expr(result, anchor)?,
+                    result_source: None,
                     body: statements(body, anchor)?,
                 }),
                 DeclarationKind::Model(fields) => ast::Declaration::Model(ast::ModelDecl {

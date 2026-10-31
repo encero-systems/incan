@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/1"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/1"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/2"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/2"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -143,7 +143,7 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
         # Field names are versioned schema vocabulary, never native field offsets or Debug spellings.
         if field.family not in [
             "type", "binding", "reference", "write", "builtin", "parameter", "signature", "diagnostic",
-            "status", "default", "final-type", "native-call", "target", "identifier", "effect",
+            "status", "default", "final-type", "native-call", "target", "identifier", "effect", "ownership",
         ]:
             return Err(CodecFault.Unsupported(field.family))
         key = field.family + "\x00" + field.node + "\x00" + field.selector
@@ -241,6 +241,10 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         if field.selector not in ["expr", "body-expr", "assignment", "destination"]:
             return Err(CodecFault.Unsupported(field.selector))
         end = type_end(values, 0, 0)?
+    elif field.family == "ownership":
+        if field.selector != "contract" or field.node == "":
+            return Err(CodecFault.Malformed)
+        end = ownership_end(values)?
     elif field.family == "signature":
         if field.selector == "declaration":
             if len(values) == 0 or values[0] not in ["true", "false"]:
@@ -315,6 +319,10 @@ def type_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFau
         return Ok(offset + 1)
     if tag == "list":
         return type_end(values, offset + 1, depth + 1)
+    if tag == "ownership":
+        if offset + 1 >= len(values) or values[offset + 1] not in ["Borrowed", "BorrowedMut", "Owned", "Reference"]:
+            return Err(CodecFault.Malformed)
+        return type_end(values, offset + 2, depth + 1)
     if tag == "callable":
         after = parameters_end(values, offset + 1, depth + 1)?
         return type_end(values, after, depth + 1)
@@ -377,3 +385,50 @@ def full_digest(value: str) -> bool:
         if not ((48 <= digit and digit <= 57) or (97 <= digit and digit <= 102)):
             return false
     return true
+
+
+def ownership_end(values: list[str]) -> Result[int, CodecFault]:
+    """Explicit access modes, type component paths and stable source slots survive independently of source spelling."""
+    if len(values) < 3 or values[0] != "1":
+        return Err(CodecFault.Malformed)
+    count = decimal(values[1])?
+    if count > len(values):
+        return Err(CodecFault.Malformed)
+    mut end = 2
+    for _ in range(count):
+        if end + 3 >= len(values) or values[end] not in ["Borrowed", "BorrowedMut", "Owned", "Reference"]:
+            return Err(CodecFault.Malformed)
+        if values[end + 1] != "result":
+            decimal(values[end + 1])?
+        size = decimal(values[end + 2])?
+        end += 3
+        if size > len(values) - end:
+            return Err(CodecFault.Malformed)
+        for component in values[end:end + size]:
+            decimal(component)?
+        end = type_end(values, end + size, 0)?
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
+    if values[end] == "none":
+        if count == 0:
+            return Err(CodecFault.Malformed)
+        return Ok(end + 1)
+    if values[end] == "parameter":
+        if end + 1 >= len(values):
+            return Err(CodecFault.Malformed)
+        decimal(values[end + 1])?
+        end += 2
+    elif values[end] == "receiver":
+        end += 1
+    else:
+        return Err(CodecFault.Malformed)
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
+    size = decimal(values[end])?
+    end += 1
+    if size > len(values) - end:
+        return Err(CodecFault.Malformed)
+    for identity in values[end:end + size]:
+        if identity == "":
+            return Err(CodecFault.Malformed)
+    return Ok(end + size)
