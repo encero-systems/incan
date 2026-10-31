@@ -78,7 +78,7 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(unit) =>
             # 3. A completed native descriptor is selected independently for each caller.
             selecting = begin()
-            selection = select_program(store, pending.view, unit)?
+            selection = select_program(store, pending.view, unit, pending.handle)?
             selected = selection.snapshot
             record("engine_select", pending.view, selecting)
             pinning = begin()

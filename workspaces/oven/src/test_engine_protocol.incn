@@ -6,7 +6,7 @@ from rust::std::time import Duration
 from std.environ import get_or
 from std.fs import Path
 from files import write
-from engine_programs import read_program, select_program, NativeUnit
+from engine_programs import read_program, select_program, program_handle, NativeUnit
 from engine_client import service_identity
 from segment_store import snapshot
 from engine_proofs import report
@@ -143,8 +143,9 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert service_identity(store)?.compiler_generation == installed.compiler_generation
     assert snapshot(store).map_err((error) => error.message())?.generation == 1
     native = NativeUnit(identity="unit", payload="payload", binary="program")
-    first_selection = select_program(store, "selection", native)?
-    repeat_selection = select_program(store, "selection", native)?
+    handle = program_handle("epoch", "compiler", "selection")?
+    first_selection = select_program(store, "selection", native, handle)?
+    repeat_selection = select_program(store, "selection", native, handle)?
     assert first_selection.encodings == 1 and first_selection.commits == 1
     assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
     assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
@@ -400,6 +401,9 @@ def process_lifecycle() -> Result[None, str]:
                 assert value.binding_outcome == BindingOutcome.Selected
                 assert value.status == CompletionStatus.Success
                 assert value.admission_proof.startswith("sha256:")
+                # Capture, the shared unit and this caller's selection each publish once.
+                publications = snapshot(root).map_err((error) => error.message())?.generation
+                assert publications == 3, f"native request published {publications} generations instead of 3"
                 completed = true
             Message.Refused(value) =>
                 assert value.code == 13
@@ -452,9 +456,13 @@ def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: in
                 assert value.binding_outcome == BindingOutcome.Selected
                 assert value.status == CompletionStatus.Success
                 proof = parse(report(root, value.observation_handle)?).map_err((error) => error.message())?
-                mut counters = ["unit_evaluations", "native_bakes", "epoch_reads"]
+                mut counters = ["unit_evaluations", "native_bakes"]
                 if turn > 0:
-                    counters.extend(["source_reads", "source_hashes"])
+                    counters.extend(["source_reads", "source_hashes", "epoch_reads"])
+                else:
+                    assert proof.require("epoch_reads").map_err((error) => error.message())?.expect_int().map_err(
+                        (error) => error.message(),
+                    )? == 1, "the new virtual view did not activate exactly one captured epoch"
                 for name in counters:
                     assert proof.require(name).map_err((error) => error.message())?.expect_int().map_err(
                         (error) => error.message(),

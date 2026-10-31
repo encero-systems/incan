@@ -240,7 +240,9 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
                     view=submit.view,
                     proofs=submit.observation_policy == "proofs",
                     counters=captured.counters,
-                    handle=program_handle(captured.identity, state.identity.compiler_generation).map_err(transport)?,
+                    handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
+                        transport,
+                    )?,
                 ),
             )
             return send(client.channel, request, Message.Captured(Captured(epoch=captured.identity, snapshot=selected)))
