@@ -255,14 +255,6 @@ def check_worker_retirement() -> Result[None, str]:
         .output()
         .map_err((error) => str(error))?
     assert outcome.status.success() and outcome.stdout == b"hello\x0a" and outcome.stderr == b""
-    lines = trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
-    waits = len([line for line in lines if "worker_observer_joined" in line])
-    detached = len([line for line in lines if "worker_observer_detached" in line])
-    releases = len([line for line in lines if "worker_heap_released" in line])
-    assert waits == 0 and detached == 1 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
-    released_requests = [line for line in lines if "engine request released:" in line]
-    assert len(released_requests) == 1, "request teardown did not release its payload verification observations"
-    assert "captures=0 verification=0" in released_requests[0]
     # Stop this test's disposable engine before the temporary directory leaves scope.
     store = root.joinpath("store")
     mut identity = service_identity(store)?
@@ -275,6 +267,15 @@ def check_worker_retirement() -> Result[None, str]:
             assert value.status == "Stopping"
         _ => return Err("retirement proof did not stop its engine")
     _ = channel.transport.close()
+    # Stop acknowledges that the resident service drained its buffered observations.
+    lines = trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
+    waits = len([line for line in lines if "worker_observer_joined" in line])
+    detached = len([line for line in lines if "worker_observer_detached" in line])
+    releases = len([line for line in lines if "worker_heap_released" in line])
+    assert waits == 0 and detached == 1 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    released_requests = [line for line in lines if "engine request released:" in line]
+    assert len(released_requests) == 1, "request teardown did not release its payload verification observations"
+    assert "captures=0 verification=0" in released_requests[0]
     check_worker_clock(observations)?
     return Ok(None)
 

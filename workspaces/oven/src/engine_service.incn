@@ -33,7 +33,7 @@ from bakery import forget_verified, verification_entries
 from observation import trace
 from files import discard_file
 from jec import begin as begin_work, record as record_work
-from pub::incan_platform.trace import Operation
+from pub::incan_platform.trace import Operation, flush as flush_trace
 
 const MAX_CLIENTS: int = 16
 
@@ -168,7 +168,7 @@ def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Ref
 
 
 def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Result[None, Refusal]:
-    """Handle the E1 control families; producer and query families have schemas but refuse execution."""
+    """Handle E1 controls and drain observations before acknowledging Stop; unsupported execution families refuse."""
     request = frame.header.request
     match frame.message:
         Message.Ack(_) => return Ok(None)
@@ -220,6 +220,7 @@ def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Resu
             return send(client.channel, request, Message.Event(Event(status="Draining", trace_handle="")))
         Message.Stop(_) =>
             state.stopping = true
+            _ = flush_trace()
             return send(client.channel, request, Message.Event(Event(status="Stopping", trace_handle="")))
         _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
 
