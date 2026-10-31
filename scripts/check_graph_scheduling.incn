@@ -1,0 +1,127 @@
+"""Exercise graph-case concurrency, selector isolation and report aggregation through a built contract runner."""
+
+from rust::std::env import args
+from rust::std::fs import Permissions, set_permissions
+from rust::std::os::unix::fs import PermissionsExt
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+
+const HEADER: str = """# behavior: independent graph commands retain their own status and report
+# graph-commands:
+#   . --unknown
+# expect-exit: 2
+# expect-stderr:
+#   unknown graph option
+
+def main() -> None:
+    pass
+"""
+const PROBE: str = """#!/bin/sh
+name=${PWD##*/}
+active="$GRAPH_PROBE_ROOT/$name.running"
+mkdir "$active" || exit 4
+count=0
+for other in "$GRAPH_PROBE_ROOT/"*.running; do
+    if [ -d "$other" ]; then count=$((count + 1)); fi
+    if [ "$other" != "$active" ] && [ -d "$other" ]; then
+        touch "$GRAPH_PROBE_ROOT/overlap"
+    fi
+done
+if [ "$count" -gt 2 ]; then touch "$GRAPH_PROBE_ROOT/overbudget"; fi
+sleep 0.1
+rmdir "$active" || exit 4
+printf 'unknown graph option\n' >&2
+exit 2
+"""
+
+
+def main() -> Result[None, str]:
+    """1. Create isolated graph probes. 2. Prove serial and parallel behavior. 3. Prove selector isolation."""
+    arguments = [argument for argument in args()]
+    if len(arguments) != 2:
+        return Err("usage: check_graph_scheduling.incn CONTRACT_RUNNER")
+    # 1. Each case runs the same observable refusal, in an independent scratch project.
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixtures = root.joinpath("fixtures").joinpath("graph").joinpath("cli")
+    fixtures.mkdir(true, true).map_err((error) => error.message())?
+    for name in ["first", "second", "third"]:
+        write(fixtures.joinpath(f"{name}.incn"), HEADER)?
+    probe = root.joinpath("oven-probe")
+    write(probe, PROBE)?
+    set_permissions(probe.0, Permissions.from_mode(493)).map_err((error) => str(error))?
+    # 2. The same runner must respect one job, use two jobs, and preserve one aggregate area report.
+    check_run(arguments[1], root, probe, "serial", ["--jobs", "1", "graph"], 3, false)?
+    check_run(arguments[1], root, probe, "parallel", ["--jobs", "2", "graph"], 3, true)?
+    # 3. A partial selector cannot schedule its siblings, and the serial comparison option remains serial.
+    check_run(arguments[1], root, probe, "selected", ["--jobs", "2", "graph/cli/second"], 1, false)?
+    check_run(arguments[1], root, probe, "comparison", ["--jobs", "2", "--serial-families", "graph"], 3, false)?
+    write(fixtures.joinpath("second.incn"), HEADER.replace("expect-exit: 2", "expect-exit: 7"))?
+    check_failure(arguments[1], root, probe)?
+    println("graph scheduling: serial, parallel, selected and serial comparison passed")
+    return Ok(None)
+
+
+def check_run(
+    runner: str,
+    root: Path,
+    probe: Path,
+    name: str,
+    options: list[str],
+    expected: int,
+    overlap: bool,
+) -> Result[None, str]:
+    """Require fresh case verdicts, one area summary and the requested observable overlap without timing thresholds."""
+    evidence = root.joinpath(name)
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    mut command = Command.new(runner)
+    command.arg(probe.0).arg(root.joinpath("fixtures").0).arg("--scratch").arg(evidence.joinpath("scratch").0)
+    command.env("GRAPH_PROBE_ROOT", evidence.0)
+    for option in options:
+        command.arg(option)
+    output = command.output().map_err((error) => str(error))?
+    text = str(RustString.from_utf8(output.stdout).map_err((error) => str(error))?)
+    if not output.status.success():
+        return Err(f"{name}: contract probe failed: {text}")
+    expected_total = f"total: {expected} passed, 0 failed, 0 pending"
+    if expected_total not in text:
+        return Err(f"{name}: missing total {expected_total}: {text}")
+    mut names = ["first", "second", "third"]
+    if expected == 1:
+        names = ["second"]
+    cases = [line for line in text.split("\n") if line.startswith("PASS ")]
+    if cases != [f"PASS graph/cli/{case_name}" for case_name in names]:
+        return Err(f"{name}: case selection or report order changed: {text}")
+    reports = [line for line in text.split("\n") if line.startswith("area graph/cli:")]
+    if len(reports) != 1 or reports[0] != f"area graph/cli: {expected} passed, 0 failed, 0 pending":
+        return Err(f"{name}: graph area reports were not aggregated: {text}")
+    if evidence.joinpath("overlap").is_file() != overlap:
+        return Err(f"{name}: independent graph case overlap was not {overlap}")
+    if evidence.joinpath("overbudget").is_file():
+        return Err(f"{name}: graph cases exceeded two command slots")
+    return Ok(None)
+
+
+def check_failure(runner: str, root: Path, probe: Path) -> Result[None, str]:
+    """A failed case remains a failed aggregate, without losing either successful sibling's verdict."""
+    evidence = root.joinpath("failure")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    mut command = Command.new(runner)
+    command.arg(probe.0).arg(root.joinpath("fixtures").0).arg("--jobs").arg("2").arg("graph")
+    command.env("GRAPH_PROBE_ROOT", evidence.0)
+    output = command.output().map_err((error) => str(error))?
+    text = str(RustString.from_utf8(output.stdout).map_err((error) => str(error))?)
+    mut code = -1
+    if let Some(status) = output.status.code():
+        code = int(status)
+    if code != 1 or "total: 2 passed, 1 failed, 0 pending" not in text:
+        return Err(f"failed graph case was not preserved in the aggregate: {text}")
+    return Ok(None)
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Write one owned probe input as strict UTF-8."""
+    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(None)
