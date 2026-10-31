@@ -6,18 +6,22 @@ from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_capture import CaptureCounters
 from engine_messages import BindingOutcome, Complete, CompletionStatus
-from engine_programs import obtain, select_program
-from engine_proofs import retain
-from segment_store import lease
+from engine_programs import obtain, prepare_selection
+from engine_epochs import CapturedRequest, after_projection
+from engine_proofs import retain, prepare_report
+from segment_store import begin as begin_selection
+from segment_store import Transaction, commit_pinned
+from observation import trace
 from jec import begin, record
 
 
 pub model Pending:
-    """A bounded captured request descriptor; decoded compiler or source state is never retained here."""
+    """One transient captured request; its input observations are released when this activation settles."""
 
     pub request: bytes
     pub token: str
     pub revision: str
+    pub capture: CapturedRequest
     pub view: str
     pub proofs: bool
     pub counters: CaptureCounters
@@ -54,14 +58,14 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => error.message())?
     producing = begin()
-    produced = obtain(store, pending.revision, pending.handle, directory.joinpath(run).0)?
+    produced = obtain(store, pending.revision, pending.handle, directory.joinpath(run).0, Some(pending.capture.epoch))?
     record("engine_unit", pending.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
-    if pending.proofs:
-        observation = retain(store, run, pending.counters, produced)?
     match produced.unit:
         None =>
+            if pending.proofs:
+                observation = retain(store, run, pending.counters, produced)?
             return Ok(
                 Ready(
                     message=Complete(
@@ -78,14 +82,33 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(unit) =>
             # 3. A completed native descriptor is selected independently for each caller.
             selecting = begin()
-            selection = select_program(store, pending.view, unit, pending.handle)?
-            selected = selection.snapshot
+            captured = after_projection(pending.capture)?
+            selection = prepare_selection(store, pending.view, unit, pending.handle)?
+            mut group: list[Transaction] = []
+            if let Some(transaction) = captured.transaction:
+                group.append(transaction)
+            if let Some(transaction) = produced.transaction:
+                group.append(transaction)
+            if let Some(transaction) = selection.transaction:
+                group.append(transaction)
+            if pending.proofs:
+                group.append(prepare_report(store, run, pending.counters, produced)?)
+                observation = run
+            if len(group) == 0:
+                group.append(begin_selection(selection.snapshot))
+            published = commit_pinned(group, pending.view).map_err((error) => error.message())?
+            selected = published.snapshot
+            if produced.native_bakes > 0:
+                trace(
+                    f"bakery {unit.identity[:12]}: baked program {Path(unit.binary).name()} (generation {selected.generation})",
+                )
+
             record("engine_select", pending.view, selecting)
             pinning = begin()
-            held = lease(selected).map_err((error) => error.message())?
+            held = required_pin(published.pin)?
             record("engine_lease", pending.view, pinning)
             handle = pending.handle
-            pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=Rc.new(held))
+            pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=held)
             return Ok(
                 Ready(
                     message=Complete(
@@ -100,3 +123,10 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
                     pin=Some(pin),
                 ),
             )
+
+
+def required_pin(pin: Option[Rc[FileLock]]) -> Result[Rc[FileLock], str]:
+    """A completed request must already hold its selected generation's execution pin."""
+    match pin:
+        Some(held) => return Ok(held)
+        None => return Err("publication completed without an execution pin")

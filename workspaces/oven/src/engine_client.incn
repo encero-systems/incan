@@ -3,24 +3,23 @@
 from std.fs import Path
 from std.environ import get_or
 from std.json import JsonValue, parse
-from std.encoding.hex import hexlify
 from pub::incan_platform.ipc import session_id
 from bakery import bakery
 from core_process import executable
 from compiler_worker import relay_console
 from engine_channel import Channel, SendOutcome
 from engine_endpoint import connect, owner_uid
-from engine_epochs import record_text
+from engine_epochs import record_text, prepare_submit
 from engine_messages import Complete, CompletionStatus, Message, Release, Submit
-from engine_programs import read_program
+from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
 from incan_units import run_program
 from json_fields import required_text
-from observation import observe
-from segment_store import Snapshot, begin, claim, commit, put, snapshot
+from observation import observe, file_metadata, trace
+from segment_store import Snapshot, begin, claim, commit, put, snapshot, view_snapshot, lease
 from toolchain import load_toolchain, toolchain_file
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
@@ -54,6 +53,9 @@ pub def execute(
     store = bakery()?
     store.mkdir(true, true).map_err((error) => error.message())?
     identity = service_identity(store)?
+    if not proofs:
+        if let Some(code) = execute_local(store, identity, command, absolute, view, profile, arguments, argv0)?:
+            return Ok(code)
     mut channel = connect(store, identity).map_err(detail)?
     record_work("engine_connect", source.0, connecting)
     channel.transport.wait_at_most(600)
@@ -98,12 +100,57 @@ pub def execute(
     return code
 
 
+def execute_local(
+    store: Path,
+    identity: Identity,
+    command: str,
+    source: Path,
+    view: str,
+    profile: str,
+    arguments: list[str],
+    argv0: Option[str],
+) -> Result[Option[i32], str]:
+    """An unchanged local capture and selected native record need no service request or control round trips."""
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    if selected.index == "":
+        return Ok(None)
+    captured = prepare_submit(
+        store,
+        Submit(
+            command=command,
+            view=view,
+            input_selection=profile,
+            requested_roots=source.0,
+            options="",
+            observation_policy="",
+        ),
+    )?
+    if captured.commits != 0:
+        return Ok(None)
+    handle = program_handle(captured.identity, identity.compiler_generation, view)?
+    exact = view_snapshot(captured.snapshot, view).map_err((error) => error.message())?
+    match selected_program(exact, handle)?:
+        None => return Ok(None)
+
+        Some(unit) =>
+            held = lease(exact).map_err((error) => error.message())?
+            restore_program(store, unit)?
+            trace(
+                f"engine local: encodings={captured.encodings} publications={captured.commits} reads={captured.counters.in_reach.reads} hashes={captured.counters.in_reach.hashes}",
+            )
+            if command == "run":
+                return Ok(Some(run_program(Path(unit.binary), arguments, argv0, true)?))
+            return Ok(Some(0))
+
+
 pub def service_identity(store: Path) -> Result[Identity, str]:
     """Bind one persistent physical-store id to exact service and admitted compiler generations."""
     binary = executable()?
     generation = fingerprint([binary, observe(Path(binary))?.stamp])?
     admitting = begin_work()
-    store_id, compiler = installation_identity(store)?
+    admission_store = home()?.joinpath("bakery")
+    compiler = installation_compiler(admission_store)?
+    store_id = physical_store_identity(store)?
     record_work("engine_admission", store.0, admitting)
     return Ok(
         Identity(
@@ -116,39 +163,30 @@ pub def service_identity(store: Path) -> Result[Identity, str]:
     )
 
 
-def installation_identity(store: Path) -> Result[tuple[str, str], str]:
-    """
-    Read the physical store and admitted compiler identities, publishing first admission in one transaction.
+def physical_store_identity(store: Path) -> Result[str, str]:
+    """Name the physical root by its filesystem identity, independent of homes, aliases and directory contents."""
+    match file_metadata(store)?:
+        Some(found) => return fingerprint(["incan.engine.physical-store/1", str(found.device), str(found.inode)])
+        None => return Err("engine store root disappeared during admission")
 
-    An unchanged installation opens one snapshot and no claim or publication transaction. The shared claim
-    serializes initial admission across homes, with a fresh read after it is acquired.
-    """
+
+def installation_compiler(store: Path) -> Result[str, str]:
+    """Admit a toolchain once per installation in the home catalog, independent of project or alternate stores."""
     pin = toolchain_file()?
     stamp = observe(pin)?.stamp
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
     key = f"incan.engine.installation\t{fingerprint([pin.0] + configuration)?}"
     selected = snapshot(store).map_err((error) => error.message())?
-    if let Some(identity) = record_text(selected, "incan.engine.store-id")?:
-        if let Some(compiler) = admitted_compiler(selected, key, stamp)?:
-            return Ok((identity, compiler))
+    if let Some(compiler) = admitted_compiler(selected, key, stamp)?:
+        return Ok(compiler)
     held = claim(store, "incan.engine.installation").map_err((error) => error.message())?
     checked = snapshot(store).map_err((error) => error.message())?
-    mut transaction = begin(checked)
-    mut identity = ""
-    match record_text(checked, "incan.engine.store-id")?:
-        Some(found) => identity = found
-        None =>
-            identity = hexlify(session_id()?)
-            transaction = put(transaction, "incan.engine.store-id", identity.encode("utf-8"))
-    mut compiler = ""
-    match admitted_compiler(checked, key, stamp)?:
-        Some(found) => compiler = found
-        None =>
-            compiler = compiler_fingerprint(load_toolchain()?)?
-            value = json_text(JsonValue.object({"pin": JsonValue.string(stamp), "compiler": JsonValue.string(compiler)}))?
-            transaction = put(transaction, key, value.encode("utf-8"))
-    _ = commit(transaction).map_err((error) => error.message())?
-    return Ok((identity, compiler))
+    if let Some(compiler) = admitted_compiler(checked, key, stamp)?:
+        return Ok(compiler)
+    compiler = compiler_fingerprint(load_toolchain()?)?
+    value = json_text(JsonValue.object({"pin": JsonValue.string(stamp), "compiler": JsonValue.string(compiler)}))?
+    _ = commit(put(begin(checked), key, value.encode("utf-8"))).map_err((error) => error.message())?
+    return Ok(compiler)
 
 
 def admitted_compiler(selected: Snapshot, key: str, stamp: str) -> Result[Option[str], str]:

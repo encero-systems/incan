@@ -19,7 +19,8 @@ from engine_capture import (
     capture_with,
     decoded_epoch,
 )
-from engine_epochs import capture_submit
+from engine_epochs import capture_submit, prepare_submit, after_projection
+from segment_store import commit
 from engine_messages import Submit
 
 const PIN: str = """{"schema": "incan.toolchain/1", "driver": "bin/driver", "sysroot": "sysroot",
@@ -120,7 +121,7 @@ pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[Non
     assert not touched(epoch, app.joinpath("tests/fixture.incn"))
     # Persisted unchanged capture borrows its revision without encoding it or opening a publication transaction.
     store = scratch.path().joinpath("engine-store")
-    submit = Submit(
+    mut submit = Submit(
         command="run",
         view="project",
         input_selection="debug",
@@ -134,6 +135,17 @@ pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[Non
     assert repeated.encodings == 0 and repeated.commits == 0
     assert repeated.identity_encodings == 0
     assert repeated.revision == persisted.revision and repeated.epoch == persisted.epoch
+    # Projection's excluded target directory is captured before publication, so the first rerun writes nothing.
+    submit.view = "project-after-projection"
+    prepared = prepare_submit(store, submit)?
+    make_directory(app.joinpath("src/target/incan"))?
+    projected = after_projection(prepared)?
+    match projected.transaction:
+        Some(transaction) => _ = commit(transaction).map_err((error) => error.message())?
+        None => return Err("first capture did not prepare its records")
+    first_rerun = prepare_submit(store, submit)?
+    assert first_rerun.encodings == 0 and first_rerun.commits == 0
+    assert first_rerun.identity_encodings == 0
     return Ok(None)
 
 

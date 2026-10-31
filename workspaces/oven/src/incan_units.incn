@@ -15,6 +15,9 @@ retryable.
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command
 from std.fs import Path
+from std.fs.locking import FileLock
+from rust::std::rc import Rc
+from segment_store import Transaction
 from bakery import (
     bakery,
     claim,
@@ -24,6 +27,7 @@ from bakery import (
     reached,
     register_root,
     seal,
+    prepare_seal,
     staging,
     unit_identity,
     unit_name,
@@ -100,6 +104,9 @@ pub model Compilation:
     pub code: i32
     pub evaluations: int = 0
     pub native_bakes: int = 0
+    pub fact: Option[Fact] = None
+    pub transaction: Option[Transaction] = None
+    pub claim: Option[Rc[FileLock]] = None
 
 
 pub def compile_executable(
@@ -121,6 +128,7 @@ pub def obtain_executable(
     key: Key,
     development: bool = false,
     selected_store: Option[Path] = None,
+    defer_publication: bool = false,
 ) -> Result[Compilation, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -151,14 +159,14 @@ pub def obtain_executable(
     if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
         view_executable(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused")
-        return Ok(Compilation(code=0))
+        return Ok(Compilation(code=0, fact=Some(fact)))
     # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
     held = claim(store, identity)?
     # 3. A bake another command finished while this one waited is used, not repeated.
     if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
         view_executable(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused (built meanwhile by another command)")
-        return Ok(Compilation(code=0))
+        return Ok(Compilation(code=0, fact=Some(fact)))
     # 4. A failed bake publishes nothing; its staging directory goes with it.
     staged = staging(store, identity)?
     code = compile_staged(unit, toolchain, staged.joinpath(output.name()), key, bake_reason(store, unit), shared)?
@@ -168,9 +176,32 @@ pub def obtain_executable(
     if key.compiler != "" and unit_key(unit, toolchain, key.compiler)?.digest != key.digest:
         _ = staged.remove_tree()
         return Err("unit inputs changed while the native producer ran; no unit record was published")
-    # 5. Only a sealed fact is viewed.
+    # 5. A request may group the record with capture and selection while retaining the producer claim.
+
     reaches = reached(store, [loaf.dir for loaf in unit.loaves])?
+    if defer_publication:
+        prepared = prepare_seal(
+            store,
+            identity,
+            staged,
+            unit.kind,
+            unit_name(unit),
+            reaches,
+            f"incan {unit.kind} {unit.profile}",
+        )?
+        view_executable(store, prepared.fact, output, unit.kind, shared)?
+        return Ok(
+            Compilation(
+                code=0,
+                evaluations=1,
+                native_bakes=1,
+                fact=Some(prepared.fact),
+                transaction=Some(prepared.transaction),
+                claim=Some(Rc.new(held)),
+            ),
+        )
     fact = seal(store, identity, staged, unit.kind, unit_name(unit), reaches, f"incan {unit.kind} {unit.profile}")?
+
     view_executable(store, fact, output, unit.kind, shared)?
     return Ok(Compilation(code=0, evaluations=1, native_bakes=1))
 
