@@ -106,14 +106,13 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
                         Ok(client) => clients.append(client)
                         Err(_) => pass
             None => pass
-        for index in range(len(clients)):
-            mut client = clients[index]
-            service_client(client, state)
-            clients[index] = client
-        clients = [client for client in clients if not client.closed]
+        if len(clients) > 0:
+            for index in range(len(clients)):
+                mut client = clients[index]
+                service_client(client, state)
+                clients[index] = client
+            clients = [client for client in clients if not client.closed]
         state.clients = len(clients)
-        if not state.busy():
-            forget_verified()
         if state.stopping or state.exits(int(clock.elapsed().as_millis()), idle * 1000):
             return Ok(None)
         sleep(Duration.from_millis(2))

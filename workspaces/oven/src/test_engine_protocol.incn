@@ -4,6 +4,7 @@ from core_process import Process, spawn_detached
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.environ import get_or
+from std.encoding.hex import hexlify
 from std.fs import Path
 from files import write, json_text
 from bakery import Collected, collect
@@ -662,7 +663,7 @@ def process_lifecycle() -> Result[None, str]:
     another.mkdir(true, true).map_err((error) => error.message())?
     copied_source = another.joinpath("hello.incn")
     write(copied_source, source.read_text("utf-8", "strict").map_err((error) => error.message())?)?
-    for turn in range(2):
+    for turn in range(50):
         check_service_reuse(idle_channel, root, copied_source, turn)?
     assert not another.joinpath("target/incan/observations").exists(), "a native hit repeated unit preparation"
     idle_channel.transport.close()?
@@ -699,6 +700,7 @@ def check_unchanged_request(mut channel: Channel, root: Path, source: Path) -> R
         if complete:
             break
     assert complete
+    release_service_result(channel, request)?
     return Ok(None)
 
 
@@ -756,7 +758,24 @@ def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: in
         if completed:
             break
     assert completed
+    release_service_result(channel, request)?
     return Ok(None)
+
+
+def release_service_result(mut channel: Channel, request: bytes) -> Result[None, str]:
+    """A completed request releases its exact execution lease before another request uses the bounded control window."""
+    token = f"{hexlify(channel.session)}:{hexlify(request)}"
+    _ = channel.send(request, Message.Release(Release(lease_id=token))).map_err(detail)?
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        channel.acknowledge(frame).map_err(detail)?
+        match frame.message:
+            Message.Event(event) =>
+                if event.status == "Released":
+                    return Ok(None)
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+    return Err("service did not release the completed request")
 
 
 def launch_service(binary: str, root: Path, identity: Identity) -> Result[Process, str]:
