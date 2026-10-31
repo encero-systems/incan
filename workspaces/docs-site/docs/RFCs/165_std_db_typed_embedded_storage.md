@@ -108,26 +108,45 @@ model Page:
     route: str
     title: str
 
-def save_page() -> Result[None, db.DbError]:
+def save_page() -> Result[None, db.OperationError]:
     """Publish one typed page and read its committed revision."""
-    store = db.open(Path("site.db"))?
-    pages = store.family[Page]("pages", schema_version=1)?
-    published = store.view("published")?
-    mut transaction = published.begin()?
-    transaction.declare(pages)?
-    page = transaction.insert(pages, Page(route="/guide/", title="Guide"))?
-    receipt = transaction.commit()?
-    snapshot = receipt.snapshot()?
-    match snapshot.get(pages, page)?:
-        db.RecordState.Present(version) => print(version.value.title)
-        db.RecordState.Deleted(_) => pass
-        db.RecordState.Absent => pass
+    with db.open(Path("site.db")) as store:
+        pages = store.family[Page]("pages", schema_version=1)?
+        published = store.view("published")?
+        mut transaction = published.begin()?
+        transaction.declare(pages)?
+        page = transaction.insert(pages, Page(route="/guide/", title="Guide"))?
+        receipt = transaction.commit()?
+        snapshot = receipt.snapshot()?
+        match snapshot.get(pages, page)?:
+            db.RecordState.Present(version) => print(version.value.title)
+            db.RecordState.Deleted(_) => pass
+            db.RecordState.Absent => pass
     return Ok(None)
 ```
 
 Family registration is explicit. Constructing a family handle does not write a schema; `transaction.declare(family)` validates or stages its declaration in the transaction's selected view. Reads validate the handle against the snapshot's descriptor. Reopening an existing family does not replace its schema because the local model changed. This avoids SQL ceremony without hiding schema evolution.
 
-`db.memory()` creates an isolated memory store with the same logical record and transaction semantics. Its receipts report memory durability. It does not create files or silently spill to disk. `db.open(path)` opens or creates a local-durable store directory, validating its format and capabilities first. Opening an existing unrelated directory must fail rather than adopt or overwrite its contents.
+`db.memory()` creates an isolated memory store with the same logical record and transaction semantics. Its receipts report memory durability. It does not create files or silently spill to disk. `db.open(path)` constructs a lazy database scope descriptor; entering it opens or creates a local-durable store directory after validating its format and capabilities. Opening an existing unrelated directory must fail rather than adopt or overwrite its contents.
+
+### Fluent lazy resource scopes
+
+The public `db.open(path).read()` chain constructs a lazy read scope. Constructing the chain does not perform the database acquisition or begin a transaction. Entering `with` opens the database and begins a consistent read; only successful entry binds the reader. The following helper uses the `Page` model declared above and assumes an existing table with string keys and Page values:
+
+```incan
+def load_page(path: Path, route: str) -> Result[Option[Page], db.OperationError]:
+    with db.open(path).read() as reader:
+        pages = reader.table[str, Page]("pages")?
+        return Ok(pages.get(route)?)
+```
+
+Table lookup and owned point retrieval are ordinary fallible operations. There is no cursor requirement for a single record. `OperationError` denotes the public operation-error umbrella, retaining typed database failures and applicable RFC 094 scope-failure aggregates rather than reducing failures to text. Its complete declaration belongs to the remaining API specification.
+
+The chain's scope owns the database acquisition and read lifetime. Exit releases the reader and its owned database handle. If opening succeeds but beginning the read fails, entry must release the acquired handle before reporting failure; acquisition and cleanup failures must both survive. Independently retained batches may continue owning their backing resources after the root handle closes. Closing that handle does not promise destruction of all independently retained storage resources.
+
+Fallibility is declared by the scope's entry contract and checked under RFC 094. The lack of a header question mark is not permission to unwrap a Result, panic on an acquisition error or report false success. The enclosing function must provide a compatible propagation or handling boundary. Ordinary eager Result-returning acquisitions continue requiring their explicit handling; this fluent spelling is a lazy library scope, not general method forwarding through Result.
+
+The primitive retains explicit, fallible acquisition and release operations for dev.9, independently of context-manager implementation. Public scope construction and primitive acquisition are different operations; the lazy spelling does not change when the primitive performs I/O.
 
 ### Choose storage placement without changing the data contract
 

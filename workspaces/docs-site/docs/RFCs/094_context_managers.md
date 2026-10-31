@@ -237,6 +237,18 @@ def __exit__(self, exit: ScopeExit) -> Result[None, E]
 
 `Ok(None)` means cleanup succeeded; `Err(error)` reports its typed failure. This selects the fallible exit method's return shape. The complete generic protocol declaration and propagation contract remain open. Independent local Result matching belongs to RFC 147.
 
+A manager may also declare typed fallible entry:
+
+```incan
+def __enter__(self) -> Result[T, E]
+```
+
+For this declared protocol form, successful entry binds T, not Result[T, E]. An entry failure does not execute the suite and must propagate through a compatible enclosing error contract or an explicitly supported handling boundary. The typechecker must diagnose a missing boundary; there is no implicit unwrap or panic conversion. This protocol interpretation is specific to context entry and is not general Result method forwarding. Infallible entry keeps its T-returning form. The complete generic binding of entry and exit error types and receiver ownership remains part of the protocol question below.
+
+A lazy scope descriptor can therefore be used directly in a header such as `with db.open(path).read() as reader:`. RFC 165 owns that library adaptation: header evaluation constructs the descriptor, while entry performs the database acquisition and starts the read. A fallible eager acquisition still uses its explicit Result handling before entry, as in the earlier file examples.
+
+If composite entry acquires one resource and then fails acquiring another, the entry implementation owns cleanup of the already acquired resources. The compiler does not call the outer manager's exit hook after failed entry. Any cleanup failure must be retained alongside the entry failure, with the same typed failure and provenance guarantees as work/finalization failures. Successfully entered enclosing managers still exit normally on propagation.
+
 `ScopeExit` must distinguish at least these outcomes:
 
 ```incan
@@ -374,6 +386,7 @@ Vocabulary blocks that lower through context managers can use the same internal 
 ## Design Decisions
 
 - Retain `__enter__` and `__exit__` as the protocol hook names.
+- Permit declared fallible entry through `__enter__ -> Result[T, E]`. Successful entry binds T; failure skips the body, requires checked propagation or handling, and does not call that manager's exit hook. Composite acquisition cleans up its own partial resources and preserves all failures. Lazy descriptors support fluent library resource scopes without general Result unwrapping.
 - RFC 122's active validation policy belongs to the current execution context and survives suspension there. Cleanup restores the previous policy on every exit where cleanup executes, including return, propagation and cancellation. Independent execution contexts must not leak policy into one another. This rule does not choose inheritance for explicitly spawned tasks, which belongs to RFC 142, or permit every synchronous manager to suspend safely.
 - `as` accepts ordinary irrefutable binding patterns. A refutable extraction requires an explicit failure path rather than an implicit panic; no new starred pattern syntax is introduced.
 - Entered borrowed views invalidated by exit cannot escape through returns, storage, closures or tasks. Independently owned results may escape under ordinary ownership rules; explicit resource-specific checked transfer can preserve a resource beyond the scope. Retaining an owned path does not keep its resource alive. Receiver and protocol details must enforce these rules without changing them.
@@ -391,7 +404,7 @@ Vocabulary blocks that lower through context managers can use the same internal 
 ## Unresolved questions
 
 - What complete static propagation mechanics and panic carrier compose with the selected ScopeFailure.Multiple aggregate? Original typed failures, immutable membership with scope/phase provenance, work-first then actual inside-out cleanup presentation, and distinct panic significance are settled. The generic protocol and receiver questions below remain open.
-- What complete protocol declaration binds E for the selected `__exit__ -> Result[None, E]` form, and how do finalization failures propagate through an enclosing Result and interact with pending returns and loop control? Typed finalization failure, its Result return shape, checked fallibility, and rejection of false success are settled. Infallible cleanup retains its None-returning form.
+- What complete protocol declaration binds the error types for the selected `__enter__ -> Result[T, E]` and `__exit__ -> Result[None, E]` forms, and how do finalization failures propagate through an enclosing Result and interact with pending returns and loop control? Typed finalization failure, its Result return shape, checked fallibility, and rejection of false success are settled. Infallible cleanup retains its None-returning form.
 - What receiver, borrowed-view, and ownership-transfer rules connect the retained manager to its entered value, especially for existing reference-counted handles and guards? The protocol must prevent invalid escape and make promised resource release enforceable.
 - What is the exact async-safety rule: reject `await` in synchronous context-manager suites, require an await-safe marker, or introduce a separate async context-manager protocol?
 - How should tooling display vocabulary blocks that lower through context managers without pretending the user wrote a `with` statement?
