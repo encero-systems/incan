@@ -1,0 +1,379 @@
+"""Canonical field records for the initial free-function checker profile; native objects never enter the codec."""
+
+from std.encoding.hex import hexlify
+from std.hash import sha256
+
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/1"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/1"
+const MAX_RECORD_BYTES: int = 65536
+const MAX_FIELDS: int = 4096
+
+
+@derive(Eq)
+pub enum CheckedFamily:
+    """Declaration/default output, pending local output and settled output have distinct contracts."""
+
+    Declaration
+    Local
+    Final
+
+
+@derive(Eq)
+pub model CanonicalField:
+    """A schema-owned field: node is a structural role or stable binding reference; values follow its typed grammar."""
+
+    pub family: str
+    pub node: str
+    pub selector: str
+    pub values: list[str]
+
+
+@derive(Eq)
+pub model CheckedRecord:
+    """One checked owner; owner is its checked stable source identity, root its position-free semantic syntax."""
+
+    pub profile: str
+    pub owner: str
+    pub root: str
+    pub family: CheckedFamily
+    pub fields: list[CanonicalField]
+
+
+@derive(Eq)
+pub enum CodecFault:
+    """Infrastructure/capability refusals; none is a source-language diagnostic or a legacy fallback request."""
+
+    Malformed
+    ProfileMismatch
+    OwnerMismatch
+    BodyChanged
+    Unsupported(str)
+    Limit
+
+
+pub def encode_record(record: CheckedRecord) -> Result[bytes, CodecFault]:
+    """
+    Encode one bounded field-addressable record, independently of native object layout.
+
+    1. Validate the supported schema and canonical field ordering.
+    2. Frame UTF-8 fields with decimal byte lengths and a colon.
+    3. Refuse a record requiring a larger schema page.
+    """
+    # 1. Validate the supported schema and canonical field ordering.
+    validate(record)?
+    # 2. Frame UTF-8 fields with decimal byte lengths and a colon.
+    mut tokens = [CHECKER_SCHEMA, record.profile, record.owner, record.root, family_name(record.family)]
+    tokens.append(str(len(record.fields)))
+    for field in record.fields:
+        tokens += [field.family, field.node, field.selector, str(len(field.values))] + field.values
+    mut fragments: list[str] = []
+    mut size = 0
+    for token in tokens:
+        raw = token.encode()
+        prefix = str(len(raw)) + ":"
+        fragments.append(prefix + token)
+        size += len(prefix) + len(raw)
+        if size > MAX_RECORD_BYTES:
+            return Err(CodecFault.Limit)
+    # 3. Refuse a record requiring a larger schema page.
+    return Ok("".join(fragments).encode())
+
+
+pub def decode_record(
+    encoded: bytes, profile: str, owner: str, root: str,
+) -> Result[CheckedRecord, CodecFault]:
+    """
+    Decode a complete canonical record, then bind its semantic identity without accepting stale coordinates.
+
+    1. Read bounded UTF-8 frames and reject truncated, ambiguous or trailing bytes.
+    2. Decode the schema's ordered fields and validate their capabilities.
+    3. Check the requested profile, owner and body root.
+    """
+    # 1. Read bounded UTF-8 frames and reject truncated, ambiguous or trailing bytes.
+    tokens = frames(encoded)?
+    if len(tokens) < 6 or tokens[0] != CHECKER_SCHEMA:
+        return Err(CodecFault.Malformed)
+    # 2. Decode the schema's ordered fields and validate their capabilities.
+    family = read_family(tokens[4])?
+    count = decimal(tokens[5])?
+    if count > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut fields: list[CanonicalField] = []
+    mut offset = 6
+    for _ in range(count):
+        if offset + 4 > len(tokens):
+            return Err(CodecFault.Malformed)
+        size = decimal(tokens[offset + 3])?
+        if size > MAX_FIELDS or offset + 4 + size > len(tokens):
+            return Err(CodecFault.Malformed)
+        fields.append(CanonicalField(
+            family=tokens[offset], node=tokens[offset + 1], selector=tokens[offset + 2],
+            values=tokens[offset + 4:offset + 4 + size],
+        ))
+        offset += 4 + size
+    if offset != len(tokens):
+        return Err(CodecFault.Malformed)
+    record = CheckedRecord(profile=tokens[1], owner=tokens[2], root=tokens[3], family=family, fields=fields)
+    validate(record)?
+    # 3. Check the requested profile, owner and body root.
+    if record.profile != profile:
+        return Err(CodecFault.ProfileMismatch)
+    if record.owner != owner:
+        return Err(CodecFault.OwnerMismatch)
+    if record.root != root:
+        return Err(CodecFault.BodyChanged)
+    return Ok(record)
+
+
+pub def semantic_digest(record: CheckedRecord) -> Result[str, CodecFault]:
+    """Hash precisely the canonical fields, including schema/profile and excluding source revision and positions."""
+    return Ok("sha256:" + hexlify(sha256.digest(encode_record(record)?)))
+
+
+def validate(record: CheckedRecord) -> Result[None, CodecFault]:
+    """Reject unknown capabilities and duplicate/unsorted fields; an empty supported family remains explicit."""
+    if record.profile != CHECKER_PROFILE:
+        return Err(CodecFault.ProfileMismatch)
+    if record.owner == "" or not full_digest(record.root):
+        return Err(CodecFault.Malformed)
+    if len(record.fields) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut previous = ""
+    for field in record.fields:
+        # Field names are versioned schema vocabulary, never native field offsets or Debug spellings.
+        if field.family not in [
+            "type", "binding", "reference", "write", "builtin", "parameter", "signature", "diagnostic",
+            "status", "default", "final-type", "native-call", "target", "identifier", "effect",
+        ]:
+            return Err(CodecFault.Unsupported(field.family))
+        key = field.family + "\x00" + field.node + "\x00" + field.selector
+        if key <= previous or len(field.values) > MAX_FIELDS:
+            return Err(CodecFault.Malformed)
+        if "\x00" in field.family or "\x00" in field.node or "\x00" in field.selector:
+            return Err(CodecFault.Malformed)
+        validate_field(field)?
+        previous = key
+    return Ok(None)
+
+
+def family_name(family: CheckedFamily) -> str:
+    """The persistent stage tag is independent of compiler enum discriminants."""
+    match family:
+        CheckedFamily.Declaration => return "declaration"
+        CheckedFamily.Local => return "local"
+        CheckedFamily.Final => return "final"
+
+
+def read_family(value: str) -> Result[CheckedFamily, CodecFault]:
+    """Unknown stage tags require a new admitted codec profile."""
+    match value:
+        "declaration" => return Ok(CheckedFamily.Declaration)
+        "local" => return Ok(CheckedFamily.Local)
+        "final" => return Ok(CheckedFamily.Final)
+        _ => return Err(CodecFault.Unsupported(value))
+
+
+def frames(encoded: bytes) -> Result[list[str], CodecFault]:
+    """Parse canonical byte-length frames without integer conversion panics or accepting noncanonical lengths."""
+    if len(encoded) > MAX_RECORD_BYTES:
+        return Err(CodecFault.Limit)
+    mut offset = 0
+    mut tokens: list[str] = []
+    while offset < len(encoded):
+        mut end = offset
+        while end < len(encoded) and encoded[end] != 58:
+            end += 1
+        if end == len(encoded):
+            return Err(CodecFault.Malformed)
+        prefix = encoded[offset:end].decode().map_err((_) => CodecFault.Malformed)?
+        size = decimal(prefix)?
+        offset = end + 1
+        if size > len(encoded) - offset:
+            return Err(CodecFault.Malformed)
+        tokens.append(encoded[offset:offset + size].decode().map_err((_) => CodecFault.Malformed)?)
+        offset += size
+    return Ok(tokens)
+
+
+def decimal(text: str) -> Result[int, CodecFault]:
+    """Accept only a bounded unsigned canonical decimal spelling, including the one-byte zero."""
+    if text == "" or len(text) > 5 or (len(text) > 1 and text.startswith("0")):
+        return Err(CodecFault.Malformed)
+    mut value = 0
+    for digit in text.encode():
+        if digit < 48 or digit > 57:
+            return Err(CodecFault.Malformed)
+        value = value * 10 + digit - 48
+    return Ok(value)
+
+
+pub def from_native_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
+    """Convert native field primitives into the Incan-owned schema; this boundary never accepts native dump bytes."""
+    if len(rows) == 0 or len(rows[0]) != 5 or rows[0][0] != "header":
+        return Err(CodecFault.Malformed)
+    header = rows[0]
+    mut fields: list[CanonicalField] = []
+    for row in rows[1:]:
+        if len(row) < 4:
+            return Err(CodecFault.Malformed)
+        fields.append(CanonicalField(family=row[0], node=row[1], selector=row[2], values=row[3:]))
+    record = CheckedRecord(
+        profile=header[4], owner=header[1], root=header[2], family=read_family(header[3])?, fields=fields,
+    )
+    validate(record)?
+    return Ok(record)
+
+
+pub def native_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFault]:
+    """Project decoded canonical fields for the narrow rebinding adapter, retaining every field and ordered value."""
+    validate(record)?
+    mut rows = [["header", record.owner, record.root, family_name(record.family), record.profile]]
+    for field in record.fields:
+        rows.append([field.family, field.node, field.selector] + field.values)
+    return Ok(rows)
+
+
+def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
+    """The profile defines each primitive field grammar; unknown selectors or extra primitives are unsupported."""
+    values = field.values
+    mut end = 0
+    if field.family == "type":
+        if field.selector not in ["expr", "body-expr", "assignment", "destination"]:
+            return Err(CodecFault.Unsupported(field.selector))
+        end = type_end(values, 0, 0)?
+    elif field.family == "signature":
+        if field.selector == "declaration":
+            if len(values) == 0 or values[0] not in ["true", "false"]:
+                return Err(CodecFault.Malformed)
+            end = parameters_end(values, 1, 0)?
+            end = type_end(values, end, 0)?
+        elif field.selector in ["call", "body-call"]:
+            end = parameters_end(values, 0, 0)?
+        elif field.selector in ["monomorphs", "type-arguments"]:
+            if len(values) == 0:
+                return Err(CodecFault.Malformed)
+            count = decimal(values[0])?
+            if count > len(values):
+                return Err(CodecFault.Malformed)
+            end = 1
+            for _ in range(count):
+                end = type_end(values, end, 0)?
+        else:
+            return Err(CodecFault.Unsupported(field.selector))
+    elif field.family in ["binding", "reference", "write", "builtin", "default"]:
+        if len(values) != 1 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        end = 1
+    elif field.family == "parameter":
+        end = type_end(values, 0, 0)?
+    elif field.family == "identifier":
+        if field.selector != "kind" or values != ["value"]:
+            return Err(CodecFault.Unsupported("identifier"))
+        end = 1
+    elif field.family == "target":
+        if field.selector != "source" or len(values) < 2:
+            return Err(CodecFault.Malformed)
+        end = len(values)
+    elif field.family == "status":
+        if field.node != "" or field.selector not in ["refused", "pending"] or len(values) != 1:
+            return Err(CodecFault.Malformed)
+        if values[0] not in ["true", "false"]:
+            return Err(CodecFault.Malformed)
+        end = 1
+    elif field.family == "effect":
+        if field.node != "" or field.selector == "" or values != ["checked"]:
+            return Err(CodecFault.Malformed)
+        end = 1
+    elif field.family == "native-call":
+        if field.node != "" or field.selector != "empty" or values != ["true"]:
+            return Err(CodecFault.Unsupported("native-call"))
+        end = 1
+    elif field.family == "final-type":
+        if field.selector == "empty" and values == ["true"]:
+            end = 1
+        elif field.selector == "expression":
+            end = type_end(values, 0, 0)?
+        elif field.selector == "binding" and field.node != "":
+            end = type_end(values, 0, 0)?
+        else:
+            return Err(CodecFault.Malformed)
+    elif field.family == "diagnostic":
+        end = diagnostic_end(values)?
+    else:
+        return Err(CodecFault.Unsupported(field.family))
+    if end != len(values):
+        return Err(CodecFault.Malformed)
+    return Ok(None)
+
+
+def type_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFault]:
+    """Validate one prefix-encoded type with a bounded nesting depth, independently of native type object layout."""
+    if depth > 32 or offset >= len(values):
+        return Err(CodecFault.Malformed)
+    tag = values[offset]
+    if tag in ["int", "float", "bool", "str", "bytes", "unit", "unknown"]:
+        return Ok(offset + 1)
+    if tag == "list":
+        return type_end(values, offset + 1, depth + 1)
+    if tag == "callable":
+        after = parameters_end(values, offset + 1, depth + 1)?
+        return type_end(values, after, depth + 1)
+    return Err(CodecFault.Unsupported("type:" + tag))
+
+
+def parameters_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFault]:
+    """Parameter markers retain spelling, source shape, default/preset/mutation bits and the complete checked type."""
+    if offset >= len(values):
+        return Err(CodecFault.Malformed)
+    count = decimal(values[offset])?
+    if count > len(values):
+        return Err(CodecFault.Malformed)
+    mut end = offset + 1
+    for _ in range(count):
+        if end + 6 >= len(values):
+            return Err(CodecFault.Malformed)
+        if values[end] not in ["named", "unnamed"]:
+            return Err(CodecFault.Malformed)
+        if values[end] == "unnamed" and values[end + 1] != "":
+            return Err(CodecFault.Malformed)
+        if values[end + 2] not in ["normal", "rest", "keywords"]:
+            return Err(CodecFault.Malformed)
+        for bit in values[end + 3:end + 6]:
+            if bit not in ["true", "false"]:
+                return Err(CodecFault.Malformed)
+        end = type_end(values, end + 6, depth + 1)?
+    return Ok(end)
+
+
+def diagnostic_end(values: list[str]) -> Result[int, CodecFault]:
+    """Diagnostics retain recipe prose, optional catalog code, ordered notes/hints and structural related ranges."""
+    if len(values) < 7 or values[0] not in ["error", "syntax", "type", "warning", "lint"]:
+        return Err(CodecFault.Malformed)
+    mut end = 3
+    for _ in range(2):
+        if end >= len(values):
+            return Err(CodecFault.Malformed)
+        count = decimal(values[end])?
+        end += 1 + count
+        if end >= len(values):
+            return Err(CodecFault.Malformed)
+    if values[end] == "expected-actual":
+        end += 3
+    elif values[end] == "no-expected-actual":
+        end += 1
+    else:
+        return Err(CodecFault.Malformed)
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
+    count = decimal(values[end])?
+    return Ok(end + 1 + count * 2)
+
+
+def full_digest(value: str) -> bool:
+    """A normalized node root carries the full SHA-256 spelling, not a shortened hint or nonempty placeholder."""
+    if len(value) != 71 or not value.startswith("sha256:"):
+        return false
+    for digit in value[7:].encode():
+        if not ((48 <= digit and digit <= 57) or (97 <= digit and digit <= 102)):
+            return false
+    return true
