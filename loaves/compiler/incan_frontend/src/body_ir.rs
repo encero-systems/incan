@@ -1152,6 +1152,20 @@ impl ReadCountdown {
     }
 }
 
+/// A block outside every loop that ends by returning, such as a match arm that refuses its input. Only its own
+/// statements follow a read in it, so the reads it holds decide whether a read is an enclosing owner's last on this
+/// path. Outside a loop, no `break` or `continue` can leave the block for later statements.
+struct TerminalPath {
+    /// The block's scope; owners declared inside it keep their ordinary countdown.
+    scope: bir::ScopeId,
+    /// Conditional depth when the block was entered. A read in a branch nested inside the block can leave the owner
+    /// live on a sibling path, and a read in a loop nested inside it can repeat, so only a read at this depth and
+    /// outside every loop transfers.
+    conditionals: usize,
+    /// Source reads the block still holds of each non-Copy owner declared before it.
+    reads: HashMap<bir::LocalId, usize>,
+}
+
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
@@ -1241,6 +1255,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Active conditional bodies. An enclosing owner cannot be marked unconditionally moved by just one path;
     /// locals created within that body retain ordinary final transfers.
     conditional_scopes: Vec<bir::ScopeId>,
+    /// Active blocks that end by returning, innermost last. Statements after such a block are not on its path, so
+    /// an enclosing owner's last read in it transfers the owner although later statements still read it.
+    terminal_paths: Vec<TerminalPath>,
     /// Assignment destination whose current value ends when its right-hand side completes, with the enclosing loop
     /// depth. A loop nested inside that expression still repeats reads of the current value.
     replacing_local: Option<(bir::LocalId, usize)>,
@@ -1340,6 +1357,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             pending_argument_reads: Vec::new(),
             loop_scopes: Vec::new(),
             conditional_scopes: Vec::new(),
+            terminal_paths: Vec::new(),
             replacing_local: None,
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
@@ -1924,10 +1942,54 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Consume one seeded read through its canonical owner, returning the remaining source occurrences.
     /// Source projections and shared comparisons count once; generated projections must not consume this budget.
     fn consume_place_read(&mut self, place: &bir::Place) -> Option<usize> {
-        let remaining = self.remaining_reads.get_mut(&place.local_id()?)?;
+        let local = place.local_id()?;
+        for path in &mut self.terminal_paths {
+            if let Some(reads) = path.reads.get_mut(&local) {
+                *reads = reads.saturating_sub(1);
+            }
+        }
+        let remaining = self.remaining_reads.get_mut(&local)?;
         remaining.remaining = remaining.remaining.saturating_sub(1);
         remaining.projected |= !place.projection.is_empty();
         Some(remaining.remaining)
+    }
+
+    /// Enter a block that ends by returning, counting the reads it holds of each non-Copy owner declared before it.
+    /// The count is textual over the block, as the ordinary countdown is over a suffix, so it is never too low.
+    pub(super) fn enter_terminal_path(&mut self, stmts: &[ast::Spanned<ast::Statement>], scope: bir::ScopeId) {
+        let owners = self
+            .remaining_reads
+            .iter()
+            .filter(|(_, countdown)| countdown.remaining > 0)
+            .map(|(local, _)| *local)
+            .filter(|local| self.local_is_outside_scope(*local, scope))
+            .collect::<Vec<_>>();
+        let reads = owners
+            .into_iter()
+            .filter_map(|local| {
+                let declaration = self.locals.get(local.index())?;
+                if declaration.ty.abi_v0_facts().ownership.is_trivially_copy() {
+                    return None;
+                }
+                Some((local, count_reads_in_stmts(declaration.name.as_deref()?, stmts)))
+            })
+            .collect();
+        self.terminal_paths.push(TerminalPath {
+            scope,
+            conditionals: self.conditional_scopes.len(),
+            reads,
+        });
+    }
+
+    /// Whether the read just consumed was `local`'s last on the innermost block that ends by returning, read at that
+    /// block's own depth, so no statement on this path reads it again.
+    fn last_read_on_terminal_path(&self, local: bir::LocalId) -> bool {
+        self.terminal_paths.last().is_some_and(|path| {
+            path.reads.get(&local) == Some(&0)
+                && self.loop_scopes.is_empty()
+                && path.conditionals == self.conditional_scopes.len()
+                && self.local_is_outside_scope(local, path.scope)
+        })
     }
 
     /// Select the Duckborrower fact and last-use marker for reading `place`.
@@ -1954,7 +2016,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// [`Self::source_place_operand`]; synthetic projections do not. A newly eligible final read in a conditional body
     /// retains an enclosing owner for the other paths' scope-exit drops. Bare-only native transfers retain their
     /// existing contract, including owners without Clone. After the join, a final whole-owner read may transfer
-    /// normally. This remains conservative across shadowed names and unvisited source-read forms.
+    /// normally. An owner's last read in a block that ends by returning transfers it on that path alone, since no
+    /// later statement is on that path (see [`TerminalPath`]). This remains conservative across shadowed names and
+    /// unvisited source-read forms.
     fn ownership_fact_for_place(&mut self, place: &bir::Place, ty: &IncanType) -> (bir::OwnershipFact, bool) {
         let is_copy = matches!(ty, IncanType::Ref(_)) || ty.abi_v0_facts().ownership.is_trivially_copy();
         if !place.projection.is_empty() {
@@ -2001,6 +2065,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         if remaining == 0 && !self.pending_argument_reads.contains(&local) && !reused_by_loop && !conditional_owner {
             self.moved_out.insert(local);
+            (bir::OwnershipFact::Move, true)
+        } else if !self.pending_argument_reads.contains(&local) && self.last_read_on_terminal_path(local) {
+            // The block returns after this read, so the owner transfers on this path alone. Other paths still own
+            // it, and its scope-exit drop stays for them.
             (bir::OwnershipFact::Move, true)
         } else {
             (bir::OwnershipFact::Clone, false)
