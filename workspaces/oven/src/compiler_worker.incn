@@ -14,11 +14,10 @@ from std.environ import get_or
 from rust::std::time import Duration
 from std.fs import Path
 from std.fs.locking import FileLock
-from std.json import JsonValue
 from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file
 from home import owners_dir
-from json_fields import required_text
+from pub::incan_worker_host.protocol import SCHEMA, completion, ready, request_document, retired
 from observation import trace, trace_boundary
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
@@ -29,13 +28,11 @@ from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command
 from jec import begin, record, invocation_key
 
-const SCHEMA: str = "incan.compiler-worker/1"
 const READINESS_POLLS: int = 7500
 # The resident memory one worker may reach while it compiles, which bounds how many physical memory holds.
 const WORKER_CEILING_BYTES: int = 4294967296
 # The pool size when physical memory cannot be read.
 const UNBOUNDED_WORKERS: int = 1024
-const MAX_STATUS: int = 255
 
 
 pub model Completion:
@@ -179,14 +176,22 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             mut connected = connected_socket
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
-            send_document(connected, request(toolchain, arguments, generation)?)?
+            directory = current_dir().map_err((error) => f"compiler working directory: {error}")?
+            document = request_document(
+                generation,
+                arguments,
+                directory.to_string_lossy().into_owned(),
+                f"{toolchain.console}.out",
+                f"{toolchain.console}.err",
+            )
+            send_document(connected, document)?
             # 3. A completed request grants only its actual exit code, never a retained checking result.
             reply = receive_document(connected)?
             record("driver_request", invocation_key(arguments), clock)
             # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
             if retired(reply):
                 trace("compiler worker: retired after its request")
-            return completion(reply)
+            return Ok(Some(status_code(completion(reply)?)))
 
 
 def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLock], str]:
@@ -375,14 +380,7 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
                 mut connected = waiting
                 connected.wait_at_most(5)
                 document = receive_document(connected)?
-                if required_text(document, "schema")? != SCHEMA:
-                    return Err("compiler worker readiness protocol mismatch")
-                if required_text(document, "generation")? != endpoint.generation:
-                    return Err("compiler worker readiness generation mismatch")
-                if integer_field(document, "pid")? != int(child.id()):
-                    return Err("compiler worker readiness PID mismatch")
-                if required_text(document, "status")? != "ready":
-                    return Err("compiler worker did not acknowledge readiness")
+                ready(document, endpoint.generation, int(child.id()))?
                 trace(f"compiler worker: started pid {child.id()}")
                 return Ok(None)
             None => pass
@@ -391,53 +389,3 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
         sleep(Duration.from_millis(2))
     _ = child.kill()
     return Err("the compiler worker did not acknowledge readiness")
-
-
-def request(toolchain: Toolchain, arguments: list[str], generation: str) -> Result[JsonValue, str]:
-    """The original compiler invocation plus its owner's current working directory and request-local console sinks."""
-    directory = current_dir().map_err((error) => f"compiler working directory: {error}")?
-    mut fields: Dict[str, JsonValue] = {}
-    fields["schema"] = JsonValue.string(SCHEMA)
-    fields["generation"] = JsonValue.string(generation)
-    fields["arguments"] = JsonValue.array([JsonValue.string(argument) for argument in arguments])
-    fields["cwd"] = JsonValue.string(directory.to_string_lossy().into_owned())
-    fields["stdout"] = JsonValue.string(f"{toolchain.console}.out")
-    fields["stderr"] = JsonValue.string(f"{toolchain.console}.err")
-    return Ok(JsonValue.object(fields))
-
-
-def completion(document: JsonValue) -> Result[Option[i32], str]:
-    """
-    The actual exit status, which the worker reports as its command would exit; malformed replies and transport
-    failures authorize no cold replay.
-    """
-    if required_text(document, "schema")? != SCHEMA:
-        return Err("compiler worker completion protocol mismatch")
-    if let Some(reason) = document.get("reason"):
-        if let Some(text) = reason.as_str():
-            if text != "":
-                return Err(text)
-    if let Some(value) = document.get("exit"):
-        if let Some(code) = value.as_int():
-            if code >= 0 and code <= MAX_STATUS:
-                return Ok(Some(status_code(code)))
-    return Err("compiler worker returned no valid completion code")
-
-
-def retired(document: JsonValue) -> bool:
-    """
-    Whether the worker exits after this reply. It withdraws its endpoint first, so no later request dials it; a
-    retirement is neither a failed request nor a reason to replay one.
-    """
-    if let Some(value) = document.get("retired"):
-        if let Some(flag) = value.as_bool():
-            return flag
-    return false
-
-
-def integer_field(document: JsonValue, name: str) -> Result[int, str]:
-    """A required integer field of a worker reply, refusing missing and differently typed fields."""
-    if let Some(value) = document.get(name):
-        if let Some(number) = value.as_int():
-            return Ok(number)
-    return Err(f"compiler worker reply has no integer `{name}`")

@@ -384,6 +384,7 @@ from frame import (
     forget_owned,
     drop_owned,
     drop_all_owned,
+    bind_read_value,
     track_rvalue_moves,
     forget_moved_arguments,
     cleanup_exit,
@@ -4662,19 +4663,9 @@ def lower_library_method(
                     callee = CalleeKind.FutureMethod(path, type_arguments)
                     return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
                 _ => pass
-            if len(type_arguments) != 0:
-                return instantiated_external_call(
-                    builder,
-                    path,
-                    type_arguments,
-                    parameters,
-                    result,
-                    operands,
-                    output,
-                    span,
-                )
-            external_call(builder, path, parameters, result, operands, output, span)
-            return Ok(None)
+            # Like a source method's, an owned result (text, an enum, a model, a collection) gets an owner in the
+            # caller, so a discarded or matched result is dropped as well.
+            return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
 
 
 def library_method_arguments(
@@ -13096,14 +13087,12 @@ def bind_structural_pattern(
                 OwnershipFact.Unknown => return Err("unsupported Body IR pattern binding ownership Unknown")
                 OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable pattern binding")
                 _ => pass
-            owned_binding = ty == PlanType.String or tuple_has_owners(ty) or owned_carrier(ty) or is_owned_collection(ty)
+            # A component with owned storage is read through the payload policy, which clones or moves it; any other
+            # is copied. Either way the binding owns exactly what its read produced.
             mut value = read_place(source, false, span)
-            if owned_binding:
+            if ty == PlanType.String or tuple_has_owners(ty) or owned_carrier(ty) or is_owned_collection(ty):
                 value = enum_payload_read(builder, source, binding.fact, span)?
-            track_rvalue_moves(builder, RvalueKind.Use(value))
-            builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
-            if owned_binding:
-                builder.owned.append(local)
+            bind_read_value(builder, local, value, span)
         RustPattern.Tuple(items) =>
             ty = place_type(builder.locals, source)
             fields = tuple_fields(source, ty, span)?
@@ -14308,11 +14297,7 @@ def bind_enum_fields(
                     if bind_shared_enum_payload(builder, local, projected, binding.fact, span)?:
                         continue
                     payload = moved_native_enum_payload(builder, source, projected, fields, binding.fact, span)?
-                    value = boundary_plan_operand(builder, payload, ty, span)?
-                    track_rvalue_moves(builder, RvalueKind.Use(value))
-                    builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
-                    if ty == PlanType.String or is_nominal_type(ty):
-                        builder.owned.append(local)
+                    bind_read_value(builder, local, boundary_plan_operand(builder, payload, ty, span)?, span)
             _ =>
                 if pattern_binds(fields[slot]):
                     bind_nested_payload(builder, source, variant, slot, fields[slot], span)?
@@ -14328,15 +14313,18 @@ def moved_native_enum_payload(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """
-    Transfer a checked native or standard payload move, retiring its carrier's drop entry when present.
-    Intrinsic call temporaries can be drop-free; checked Body IR supplies their move authority.
+    Transfer a checked payload move, retiring its carrier's drop entry when present.
+    Intrinsic call temporaries can be drop-free; checked Body IR supplies their move authority. A source enum the
+    frame owns gives its single payload up the same way; any other source carrier keeps its payload, and the binding
+    takes a clone that it owns.
     """
     owner = enum_owner(place_type(builder.locals, source))?
     if fact != OwnershipFact.Move:
         return enum_payload_read(builder, payload, fact, span)
     if owner < len(builder.enums):
         if library_enum_item(builder.enums[owner]) == "":
-            return enum_payload_read(builder, payload, fact, span)
+            if len(fields) != 1 or source.projection != Projection.Whole or source.local not in builder.owned:
+                return enum_payload_read(builder, payload, fact, span)
     else:
         carrier = builder.intrinsics[owner - len(builder.enums)].carrier
         if carrier != "Option" and carrier != "Result":

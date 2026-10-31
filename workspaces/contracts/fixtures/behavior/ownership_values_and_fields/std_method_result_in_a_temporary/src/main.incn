@@ -1,0 +1,90 @@
+# behavior: a standard library method's owned result that only a temporary holds (an enum matched or bound by `if let`, a discarded result, a parsed document) is dropped when its statement ends, so a loop of such calls keeps the heap flat (#2481)
+# expect-stdout:
+#   match scrutinee: heap flat
+#   if let scrutinee: heap flat
+#   discarded result: heap flat
+#   parsed document: heap flat
+
+"""Run each shape once to settle lazily created runtime state, then many times, comparing the live heap around them."""
+
+from std.json import JsonValue, parse
+from rust::drop_probe import live_heap_bytes
+
+const ROUNDS: int = 1000
+const DOCUMENT: str = "{\"name\": \"a name long enough to own heap storage\", \"items\": [\"first item\", \"second item\"]}"
+
+
+def matched(value: JsonValue) -> int:
+    """Match an owned optional result, then a result read from its payload."""
+    match value.get("items"):
+        Some(items) =>
+            match items.as_str():
+                Some(text) => return len(text)
+                None => return 1
+        None => return 0
+
+
+def if_let(value: JsonValue) -> int:
+    """Read an owned optional result through `if let`."""
+    if let Some(name) = value.get("name"):
+        if let Some(text) = name.as_str():
+            return len(text)
+    return 0
+
+
+def discarded(value: JsonValue) -> int:
+    """Discard an owned result."""
+    _ = value.to_json()
+    return 1
+
+
+def parsed(document: str) -> int:
+    """Match a freshly parsed document."""
+    match parse(document):
+        Ok(value) => return matched(value)
+        Err(_) => return 0
+
+
+def report(label: str, grown: int) -> None:
+    """
+    Print whether a shape's rounds left the heap where they found it, from `grown` bytes measured before printing.
+
+    A value left behind by every round grows the heap by at least ROUNDS allocations; less than a byte a round is the
+    allocator's own bookkeeping.
+    """
+    if grown < ROUNDS:
+        println(f"{label}: heap flat")
+    else:
+        println(f"{label}: heap grew by {grown} bytes over {ROUNDS} rounds")
+
+
+def measure(value: JsonValue) -> int:
+    """Run each shape once, then ROUNDS times, and report the heap growth of the repeated rounds."""
+    mut total = matched(value) + if_let(value) + discarded(value) + parsed(DOCUMENT)
+    mut before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += matched(value)
+    mut grown = live_heap_bytes() - before
+    report("match scrutinee", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += if_let(value)
+    grown = live_heap_bytes() - before
+    report("if let scrutinee", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += discarded(value)
+    grown = live_heap_bytes() - before
+    report("discarded result", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += parsed(DOCUMENT)
+    grown = live_heap_bytes() - before
+    report("parsed document", grown)
+    return total
+
+
+def main() -> None:
+    match parse(DOCUMENT):
+        Ok(value) => _ = measure(value)
+        Err(_) => println("the document does not parse")
