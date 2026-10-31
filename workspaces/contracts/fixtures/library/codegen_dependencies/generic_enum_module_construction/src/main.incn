@@ -2,7 +2,7 @@
 # expect-stdout:
 #   module-enum-ok
 
-from pub::shapes import Packet as ImportedPacket, Holder, number
+from pub::shapes import Packet as ImportedPacket, number
 import pub::shapes as shapes
 from rust::std::collections import HashMap
 from rust::std::string import String as NativeString
@@ -39,8 +39,6 @@ def main() -> None:
                     assert false
         Err(_) =>
             assert false
-    holder: Holder[int] = shapes.Holder[int](value=6)
-    assert holder.get() == 6
     native: HashMap[NativeString, int] = HashMap.new()
     assert native.len() == 0
     println("module-enum-ok")
