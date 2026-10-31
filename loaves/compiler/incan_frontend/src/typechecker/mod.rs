@@ -845,6 +845,8 @@ pub struct TypeChecker {
     pub dependency_direct_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
     pub dependency_derivable_modules: HashMap<String, Vec<String>>,
+    /// Checked declaring identities of source-module derive entries, including imported trait aliases.
+    pub dependency_derivable_trait_identities: HashMap<String, CanonicalSymbolId>,
     /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
     pub dependency_module_traits: HashMap<String, TraitInfo>,
     /// RFC 024 trait-level Rust derive metadata from imported source modules, keyed by module-qualified trait name.
@@ -1131,6 +1133,7 @@ impl TypeChecker {
             nominal_declarations: union_member_identity::NominalDeclarationContext::default(),
             dependency_direct_member_partial_projections: HashMap::new(),
             dependency_derivable_modules: HashMap::new(),
+            dependency_derivable_trait_identities: HashMap::new(),
             dependency_module_traits: HashMap::new(),
             dependency_trait_rust_derive_paths: HashMap::new(),
             local_rust_derive_paths: HashMap::new(),
@@ -3416,9 +3419,10 @@ impl TypeChecker {
             .and_then(|(module_path, name)| self.package_trait_declaration(module_path, name));
         for t in adopted {
             if self.trait_name_matches(&t.name, trait_name)
-                || t.source_name
-                    .as_deref()
-                    .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name))
+                || (t.module_path.is_none()
+                    && t.source_name
+                        .as_deref()
+                        .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name)))
                 || adoption_names_bound_identity(t, bound_identity.as_ref())
                 || package_trait
                     .as_ref()
@@ -8859,6 +8863,44 @@ impl TypeChecker {
                 self.dependency_trait_rust_derive_paths.insert(qualified, paths.clone());
             }
         }
+        self.retain_derivable_trait_bindings(&module_paths, &traits);
+    }
+
+    /// Retain each module derive entry while its lexical imports still identify the selected trait declaration.
+    /// Imported names are metadata references, not declarations owned by the bundle. Keeping their checked identities,
+    /// contracts and native derive paths here prevents a later consumer's equal-spelled binding from answering them.
+    fn retain_derivable_trait_bindings(&mut self, module_paths: &[String], trait_names: &[String]) {
+        for name in trait_names {
+            let Some(symbol_id) = self.symbols.lookup(name) else {
+                continue;
+            };
+            let Some(identity) = self.symbols.identity_of(symbol_id).cloned() else {
+                continue;
+            };
+            let Some(SymbolKind::Trait(info)) = self.symbols.get(symbol_id).map(|symbol| &symbol.kind) else {
+                continue;
+            };
+            let info = info.clone();
+            let Some((owner, source_name)) = self.canonical_trait_source_target(&identity) else {
+                continue;
+            };
+            let owner_key = format!("{}.{}", owner.join("."), source_name);
+            let paths = self
+                .dependency_trait_rust_derive_paths
+                .get(&owner_key)
+                .cloned()
+                .or_else(|| self.loaf_trait_rust_derive_paths(&owner, &source_name))
+                .unwrap_or_default();
+            for module_path in module_paths {
+                let key = format!("{module_path}.{name}");
+                self.dependency_derivable_trait_identities
+                    .insert(key.clone(), identity.clone());
+                self.dependency_module_traits.insert(key.clone(), info.clone());
+                if !paths.is_empty() {
+                    self.dependency_trait_rust_derive_paths.insert(key, paths.clone());
+                }
+            }
+        }
     }
 
     /// Extract RFC 024 `__derives__` trait names from an imported dependency AST.
@@ -9093,6 +9135,7 @@ impl TypeChecker {
         self.body_ir_dependency_pub_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
+        self.dependency_derivable_trait_identities.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
@@ -9141,6 +9184,7 @@ impl TypeChecker {
         self.body_ir_dependency_pub_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
+        self.dependency_derivable_trait_identities.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);

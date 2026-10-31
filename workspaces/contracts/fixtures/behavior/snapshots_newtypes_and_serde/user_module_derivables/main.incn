@@ -3,10 +3,20 @@
 #   yaml
 #   {"value":1}
 #   schema
+#   {"value":7}
+#   8
+#   {"value":9}
+#   schema
+#   {"value":11}
+#   12
 
 from std.serde import json
 import yaml
 import schema
+import formats
+import formats as aliases
+import descriptions
+import relayed_formats
 
 
 @derive(json, yaml)
@@ -35,3 +45,33 @@ def main() -> None:
     println(encode_yaml(Payload(value=1)))
     println(encode_json(Payload(value=1)))
     println(name(Schematic(value=1)))
+    println(encode_json(Encoded(value=7)))
+    match formats.restore[Encoded]('{"value":8}'):
+        Ok(value) => println(value.value)
+        Err(error) => println(error)
+    println(encode_json(Combined(value=9)))
+    println(name(Described(value=1)))
+    println(encode_json(Relayed(value=11)))
+    match relayed_formats.restore[Relayed]('{"value":12}'):
+        Ok(value) => println(value.value)
+        Err(error) => println(error)
+
+
+@derive(formats)
+model Encoded:
+    value: int
+
+
+@derive(aliases, json)
+model Combined:
+    value: int
+
+
+@derive(descriptions)
+model Described:
+    value: int
+
+
+@derive(relayed_formats)
+model Relayed:
+    value: int
