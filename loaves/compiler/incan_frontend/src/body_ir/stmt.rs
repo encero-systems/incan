@@ -21,11 +21,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let enclosing_aliases = self.static_aliases.clone();
         let enclosing_handles = self.static_binding_locals.clone();
 
-        // ---- Context: source-order statements ----
+        // ---- Context: source-order statements, on a path that ends here when a block outside loops returns ----
+        let terminal = nested
+            && self.loop_scopes.is_empty()
+            && matches!(stmts.last().map(|stmt| &stmt.node), Some(ast::Statement::Return(_)));
+        if terminal {
+            self.enter_terminal_path(stmts, scope);
+        }
         for (index, stmt) in stmts.iter().enumerate() {
             let first_temporary = self.locals.len();
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
             self.insert_statement_temporary_drops(out, scope, first_temporary, hir_span(stmt.span));
+        }
+        if terminal {
+            self.terminal_paths.pop();
         }
 
         // ---- Context: a handle selected by runtime control flow ----
