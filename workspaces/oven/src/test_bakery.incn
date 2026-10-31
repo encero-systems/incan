@@ -14,6 +14,7 @@ from bakery import (
     fact_file,
     find,
     forget_verified,
+    verification_entries,
     lookup,
     register_root,
     seal,
@@ -147,6 +148,9 @@ pub def test_two_projects_with_the_same_unit_compile_it_once_and_target_holds_on
     assert compile_executable(second, toolchain, second_output, key, false, Some(store))? == 0
     assert read(second_output)? == "compiled program"
     assert attempts(root) == "x"
+    assert verification_entries() > 0
+    forget_verified()
+    assert verification_entries() == 0, "request teardown retained verified payload metadata"
     return Ok(None)
 
 

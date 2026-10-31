@@ -602,8 +602,12 @@ def repair_view(store: Path, fact: Fact, directory: Path) -> Result[None, str]:
 
 pub def forget_verified() -> None:
     """Forget which payloads this process verified, as a new process would; the next find reads them again."""
-    for digest in [name for name in verified.keys()]:
-        verified[digest] = ""
+    verified = {}
+
+
+pub def verification_entries() -> int:
+    """Payload metadata observations owned by the current request; idle services must retain zero."""
+    return len(verified)
 
 
 # ---- Roots and collection ----
