@@ -20,7 +20,7 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
 
     1. Create a Rust library with a passing test and a failing test using a test-only helper, and a module of its own.
     2. Compile and run both tests, requiring a failing command outcome; rediscover an unavailable old witness.
-    3. Repair the failing assertion, removing the module and its file, and require the same harness path to rebuild
+    3. Repair the failing assertion, remove and add a module with its file, and require the same harness path to rebuild
        and pass.
     4. Compile procedural macro unit and integration harnesses in their producer's host domain.
     5. Require optimized qualification and iteration to preserve the same edit/revert behavior.
@@ -86,6 +86,15 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     assert rebuilt == programs
     for program in rebuilt:
         assert run_rust_harness(Path(program), project)? == 0
+    # Adding a module refreshes dep-info before the producer is keyed, just as removing one does.
+    write(removed, "/// The added module's fixture value.\npub const VALUE: u32 = 7;\n")?
+    write(source, module + in_module + rust_tests(7))?
+    assert build_rust_tests(request)? == programs
+    for program in programs:
+        assert run_rust_harness(Path(program), project)? == 0
+    write(source, rust_tests(7))?
+    removed.unlink().map_err((error) => error.message())?
+    assert build_rust_tests(request)? == programs
     verify_incremental_revert(request, helper, helper_source, project)?
     # 4. A procedural macro retains its crate kind and sysroot proc_macro binding.
     macro = root.joinpath("macro")

@@ -1453,20 +1453,18 @@ pub def compile_binary(
     # 4. A baked binary of the identity is viewed; otherwise it is compiled and baked.
     dependencies = directory.joinpath(f"{output_name}.d")
     mut inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
-    if inputs.refusal != "":
-        # Evidence that is absent or stale, or a prior view's without a portable source mapping, names no identity:
-        # scan this checkout before compiling.
-        discovered = dependency_arguments(arguments, dependencies)
-        invoke_rustc(request.rustc, discovered, environment, declared.unstable, name)?
-        inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
     label = f"unit {name} rust binary"
     store = rust_store()?
+    if view_baked_binary(store, inputs, name, output_name, directory, facet.project)?:
+        return Ok(binary.0)
+    # Old dep-info proposes a hit only. A miss rescans before claiming the complete identity: new modules and
+    # newly selected includes must enter that identity before the native producer runs.
+    discovered = dependency_arguments(arguments, dependencies)
+    invoke_rustc(request.rustc, discovered, environment, declared.unstable, name)?
+    inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
     held = claim_rust(store, f"binary {inputs.digest}")?
-    if inputs.refusal == "":
-        if view_baked_binary(store, inputs.digest, output_name, directory, facet.project)?:
-            trace(f"{label}: reused")
-            println(f"reused {name}")
-            return Ok(binary.0)
+    if view_baked_binary(store, inputs, name, output_name, directory, facet.project)?:
+        return Ok(binary.0)
     trace(f"{label}: compiled (not baked)")
     toolchain = selected_toolchain(request)?
     observations = compilation_observations(Path(facet.project), dependencies, arguments, [], toolchain)?
@@ -1514,14 +1512,25 @@ def incremental_directory(request: RustBuild, facet: LocalFacet, role: str) -> P
     return rust_output(Path(request.project), request.profile).joinpath("incremental").joinpath(f"{slot}-{role}")
 
 
-def view_baked_binary(store: Path, identity: str, output_name: str, directory: Path, project: str) -> Result[bool, str]:
-    """View a baked binary and its dependency evidence into `directory`; false when it is not baked."""
-    match find(store, identity)?:
+def view_baked_binary(
+    store: Path,
+    key: Key,
+    name: str,
+    output_name: str,
+    directory: Path,
+    project: str,
+) -> Result[bool, str]:
+    """View and report a baked binary with its dep-info; false for a miss or refused identity."""
+    if key.refusal != "":
+        return Ok(false)
+    match find(store, key.digest)?:
         None => return Ok(false)
         Some(fact) =>
-            register_root(store, project, identity)?
+            register_root(store, project, key.digest)?
             view(store, fact, output_name, directory.joinpath(output_name))?
             view(store, fact, f"{output_name}.d", directory.joinpath(f"{output_name}.d"))?
+            trace(f"unit {name} rust binary: reused")
+            println(f"reused {name}")
             return Ok(true)
 
 
