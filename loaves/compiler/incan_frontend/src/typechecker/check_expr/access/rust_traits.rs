@@ -9,8 +9,8 @@ use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
 use crate::ast::{Expr, Spanned};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type};
 use crate::symbols::ResolvedType;
+use crate::typechecker::IdentKind;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
-use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{
     RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
 };
@@ -273,8 +273,7 @@ impl TypeChecker {
         if signature.params.first().is_some_and(|parameter| {
             Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
         }) {
-            self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
-            self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+            self.validate_exclusive_rust_receiver(call.receiver_expr, call.span);
         }
         let selected = TraitCandidate {
             path: format!("{}::{}", call.rust_path, call.method),
@@ -1380,8 +1379,7 @@ impl TypeChecker {
                 Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
             })
         {
-            self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
-            self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+            self.validate_exclusive_rust_receiver(call.receiver_expr, call.span);
         }
         let errors_before = self.errors.len();
         let result = self.validate_rust_method_call(
