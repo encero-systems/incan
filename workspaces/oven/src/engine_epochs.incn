@@ -6,6 +6,7 @@ from engine_capture import (
     BuildEpoch,
     CaptureRequest,
     CaptureCounters,
+    CaptureOutcome,
     InputSelection,
     admitted_home,
     capture,
@@ -14,6 +15,7 @@ from engine_capture import (
 from engine_messages import Submit
 from segment_store import Lookup, Snapshot, begin, commit, lookup, owned, put, snapshot
 from unit_freshness import fingerprint
+from jec import begin as begin_work, record as record_work
 
 
 pub model CapturedRequest:
@@ -23,6 +25,9 @@ pub model CapturedRequest:
     pub revision: str
     pub snapshot: Snapshot
     pub counters: CaptureCounters
+    # Canonical epoch encodings and publication attempts performed by this capture, including no-op commits.
+    pub encodings: int = 1
+    pub commits: int = 1
 
 
 pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
@@ -44,7 +49,7 @@ pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     admitted = admitted_home()?
     head = f"incan.engine.capture-head\t{fingerprint([submit.view, source.0, submit.input_selection, admitted.pin])?}"
     before = snapshot(store).map_err((error) => error.message())?
-    previous = previous_epoch(before, head)?
+    prior_revision, previous = previous_epoch(before, head)?
     # 2. Build and run select the same program inputs; the verb is an execution action, not a compiled identity.
     request = CaptureRequest(
         roots=[source.0],
@@ -52,28 +57,43 @@ pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
         whole_unit=true,
     )
     # Complete nanosecond metadata guards this Unix request; no coarse timestamp grace delays unchanged reuse.
+    checking = begin_work()
     captured = capture(request, previous, admitted, 0)?
+    record_work("engine_capture_inputs", source.0, checking)
     match captured.epoch:
         None => return Err(f"capture could not settle inputs: {captured.unstable}")
         Some(epoch) =>
+            if captured.outcome == CaptureOutcome.Unchanged:
+                return Ok(
+                    CapturedRequest(
+                        epoch=epoch,
+                        revision=prior_revision,
+                        snapshot=before,
+                        counters=captured.counters,
+                        encodings=0,
+                        commits=0,
+                    ),
+                )
             # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
+            publishing = begin_work()
             encoded = epoch.encoded()?
             revision = fingerprint([encoded])?
             mut transaction = begin(before)
             transaction = put(transaction, epoch_key(revision), encoded.encode("utf-8"))
             transaction = put(transaction, head, revision.encode("utf-8"))
             published = commit(transaction).map_err((error) => error.message())?
+            record_work("engine_capture_publish", source.0, publishing)
             return Ok(CapturedRequest(epoch=epoch, revision=revision, snapshot=published, counters=captured.counters))
 
 
-def previous_epoch(view: Snapshot, head: str) -> Result[Option[BuildEpoch], str]:
+def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, Option[BuildEpoch]], str]:
     """Read exactly the selected capture head and epoch; damage is a refusal, never a cold miss."""
     match record_text(view, head)?:
-        None => return Ok(None)
+        None => return Ok(("", None))
         Some(revision) =>
             match record_text(view, epoch_key(revision))?:
                 None => return Err("capture head names a missing epoch record")
-                Some(text) => return Ok(Some(decoded_epoch(text)?))
+                Some(text) => return Ok((revision, Some(decoded_epoch(text)?)))
 
 
 pub def load_epoch(store: Path, revision: str) -> Result[BuildEpoch, str]:
