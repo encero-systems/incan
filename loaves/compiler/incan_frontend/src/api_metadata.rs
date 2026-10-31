@@ -17,10 +17,10 @@ use crate::ast::{
 use crate::decorator_resolution;
 use crate::diagnostics::CompileError;
 use crate::library_exports::{
-    CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedField, CheckedFunctionExport,
-    CheckedMethod, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedPartialExport,
-    CheckedPartialTargetKind, CheckedPresetValue, CheckedProperty, CheckedTraitExport, CheckedTypeAliasExport,
-    CheckedTypeBound, CheckedTypeParam, collect_checked_public_exports,
+    CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedExportProjection,
+    CheckedField, CheckedFunctionExport, CheckedMethod, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport,
+    CheckedPartialExport, CheckedPartialTargetKind, CheckedPresetValue, CheckedProperty, CheckedTraitExport,
+    CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam, collect_checked_public_exports,
 };
 use crate::library_manifest::{
     CanonicalIdentityExport, ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport,
@@ -780,7 +780,8 @@ pub fn collect_checked_api_metadata(
 }
 
 /// Select a source overload by its checked declaration identity, including any expansion ancestry. Name lookup
-/// selects an overload set and cannot supply one declaration's defaults or ownership contract.
+/// selects an overload set and cannot supply one declaration's defaults or ownership contract. A public alias shares
+/// its target's canonical identity but must never rename the authored declaration in checked API metadata.
 fn checked_source_function<'a>(
     exports: &'a [CheckedNamedExport],
     checker: &TypeChecker,
@@ -794,7 +795,9 @@ fn checked_source_function<'a>(
         .identity
         .as_ref()?;
     exports.iter().find_map(|export| {
-        if export.identity.canonical.as_ref() != Some(identity) {
+        if export.identity.projection != CheckedExportProjection::Direct
+            || export.identity.canonical.as_ref() != Some(identity)
+        {
             return None;
         }
         match &export.kind {
@@ -2988,6 +2991,55 @@ mod tests {
             &checker,
             vec!["lib".to_string()],
         ))
+    }
+
+    /// Every public overload must retain its own authored anchor so nested aliases can prove canonical backing.
+    #[test]
+    fn checked_api_preserves_each_overloaded_alias_target() -> Result<(), String> {
+        let source = r#"
+pub def select(value: int) -> int:
+    return value
+
+pub def select(value: str) -> str:
+    return value
+
+pub pick = alias select
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_package_identity(Some("alias_repro".to_string()));
+        checker.set_current_module_path(Some(vec!["entries".to_string()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let exports = collect_checked_public_exports(&program, &checker);
+        let metadata = collect_checked_api_metadata(&program, &checker, vec!["entries".to_string()]);
+        let functions = metadata
+            .declarations
+            .iter()
+            .filter_map(|declaration| match declaration {
+                ApiDeclaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(functions.len(), 2, "checked exports: {exports:#?}; API: {metadata:#?}");
+        for export in exports.iter().filter(|export| export.name == "select") {
+            let identity = export
+                .identity
+                .canonical
+                .as_ref()
+                .ok_or("missing canonical overload identity")?;
+            assert!(
+                functions
+                    .iter()
+                    .any(|function| function.name == identity.declaration_name
+                        && function.anchor.span == identity.declaration_span),
+                "unbacked overload: {identity:#?}; API: {metadata:#?}"
+            );
+        }
+        assert_ne!(functions[0].return_type, functions[1].return_type);
+        Ok(())
     }
 
     #[test]
