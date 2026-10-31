@@ -40,6 +40,7 @@ mod formatting;
 mod frontend;
 mod frozen_values;
 mod futures;
+mod generic_enums;
 mod generic_layouts;
 mod generic_loans;
 mod identity;

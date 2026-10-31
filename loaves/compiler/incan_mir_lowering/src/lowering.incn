@@ -42,6 +42,7 @@ from pub::incan_mir_plan import (
     Plan,
     PlanExport,
     GenericModelDeclaration,
+    GenericEnumDeclaration,
     StaticCell,
     PlanType,
     SizedNumeric,
@@ -318,6 +319,7 @@ from unions import (
     carrier_injection,
 )
 from generic_layouts import generic_models
+from generic_enums import generic_enums
 from tuples import (
     is_tuple_type,
     tuple_has_owners,
@@ -7928,9 +7930,11 @@ def lowered_plan(
     # 3. Publish only the declarations and entry points retained by the completed plan.
     mut exports: list[PlanExport] = []
     mut templates: list[GenericModelDeclaration] = []
+    mut enum_templates: list[GenericEnumDeclaration] = []
     if kind == "library":
         templates = generic_models(template_constructors, source_context, retained_nominals, files[entry])?
-        exports = loaf_exports(context, emitted_frames.body_positions, source_context, templates)
+        enum_templates = generic_enums(template_constructors, source_context, context, enums, intrinsics, files[entry])?
+        exports = loaf_exports(context, emitted_frames.body_positions, source_context, templates, enum_templates)
         publish_unions(original_constructors, context, intrinsics, published)?
     planned = completed_plan(
         context,
@@ -7945,6 +7949,7 @@ def lowered_plan(
         statics,
         exports,
         templates,
+        enum_templates,
         zip_carriers,
     )?
     return Ok(UnitPlanning.Complete(planned))
@@ -8032,6 +8037,7 @@ def completed_plan(
     statics: list[StaticCell],
     exports: list[PlanExport],
     templates: list[GenericModelDeclaration],
+    enum_templates: list[GenericEnumDeclaration],
     zip_carriers: list[ZipCarrier],
 ) -> Result[Option[Plan], str]:
     """Admit the completed unit's test and program entries, then transfer its owned native inventories into the plan."""
@@ -8054,6 +8060,7 @@ def completed_plan(
                 tests=test_entries,
                 programs=selected_program_entries(context)?,
                 generic_models=templates,
+                generic_enums=enum_templates,
                 zip_carriers=zip_carriers,
             ),
         ),
@@ -8519,6 +8526,7 @@ def loaf_exports(
     emitted: &list[int],
     declarations: &BodyIrModule,
     templates: list[GenericModelDeclaration],
+    enum_templates: list[GenericEnumDeclaration],
 ) -> list[PlanExport]:
     """
     Export every body and type a Loaf compiles at its crate root, under the encoding of its canonical identity:
@@ -8553,8 +8561,15 @@ def loaf_exports(
             exports.append(
                 PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
             )
-    for enum_position in range(len(context.enum_declarations)):
-        declaration = borrowed_at(context.enum_declarations, enum_position)
+    for enum_position in range(len(declarations.enum_declarations)):
+        declaration = borrowed_at(declarations.enum_declarations, enum_position)
+        if len(declaration.type_parameters) != 0:
+            mut retained = false
+            for template in enum_templates:
+                if template.name == declaration.carrier_name():
+                    retained = true
+            if not retained:
+                continue
         if declaration.native_item == "" and is_package_identity(declaration.canonical):
             exports.append(
                 PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),

@@ -1,0 +1,91 @@
+"""Provider-owned generic enum templates and their exact closed native aliases."""
+
+from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration as RustEnumDeclaration
+from rust::incan_semantics_core import IncanType as RustType
+from pub::incan_mir_plan import GenericEnumDeclaration, GenericEnumVariant, GenericLayoutType, EnumDeclaration, PlanType
+from pub::incan_mir_plan import source_span as plan_span
+from native_type_identity import ConstructorIndex
+from generic_layouts import generic_field_type, referenced_templates
+from layout_types import native_source_type
+from symbols import model_symbol
+
+
+pub def generic_enums(
+    constructors: &ConstructorIndex,
+    source: &BodyIrModule,
+    closed: &BodyIrModule,
+    mut layouts: list[EnumDeclaration],
+    intrinsics: list[EnumDeclaration],
+    file: str,
+) -> Result[list[GenericEnumDeclaration], str]:
+    """Publish each retained source template once and alias every closed carrier to its canonical provider storage."""
+    referenced = referenced_templates(source)
+    mut templates: list[GenericEnumDeclaration] = []
+    for declaration in source.enum_declarations:
+        if len(declaration.type_parameters) == 0 or declaration.native_item != "":
+            continue
+        mut instantiated = false
+        for instance in closed.enum_declarations:
+            if instance.canonical == declaration.canonical:
+                instantiated = true
+        if not declaration.public and not instantiated and declaration.carrier_name() not in referenced:
+            continue
+        mut variants: list[GenericEnumVariant] = []
+        for variant in declaration.variants:
+            mut fields: list[GenericLayoutType] = []
+            for field in variant.fields:
+                fields.append(generic_field_type(constructors, source, field, declaration.type_parameters.clone())?)
+            variants.append(GenericEnumVariant(name=str(variant.name), fields=fields))
+        derives = alias_instances(constructors, declaration, closed, layouts, intrinsics)?
+        templates.append(
+            GenericEnumDeclaration(
+                name=declaration.carrier_name(),
+                parameters=declaration.type_parameters.clone(),
+                variants=variants,
+                derives=derives,
+                span=plan_span(file=file, line=1, column=1),
+            ),
+        )
+    return Ok(templates)
+
+
+def alias_instances(
+    constructors: &ConstructorIndex,
+    declaration: &RustEnumDeclaration,
+    closed: &BodyIrModule,
+    mut layouts: list[EnumDeclaration],
+    intrinsics: list[EnumDeclaration],
+) -> Result[list[str], str]:
+    """Carry checked derives to the template and exact arguments to aliases without changing variant or field order."""
+    mut derives: list[str] = []
+    for derive in declaration.derives:
+        if derive != "Display":
+            derives.append(str(derive))
+    unions: list[RustType] = []
+    for instance in closed.enum_declarations:
+        if instance.canonical != declaration.canonical:
+            continue
+        mut arguments: list[PlanType] = []
+        for argument in instance.native_type_arguments:
+            arguments.append(
+                native_source_type(
+                    constructors,
+                    closed.nominal_declarations,
+                    closed.enum_declarations,
+                    unions,
+                    argument,
+                    intrinsics,
+                )?,
+            )
+        for index in range(len(layouts)):
+            if layouts[index].name != model_symbol(instance.carrier_name()):
+                continue
+            for derive in layouts[index].derives:
+                if derive not in derives:
+                    derives.append(derive)
+            layouts[index].library_item = "crate::" + declaration.carrier_name()
+            layouts[index].library_type_arguments = arguments
+            layouts[index].derives = []
+            if "Copy" in derives:
+                layouts[index].derives = ["Copy"]
+    return Ok(derives)

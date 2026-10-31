@@ -21,7 +21,7 @@ from pub::incan_mir_plan import (
     EnumDeclaration,
 )
 from nominal_instances import NominalInstance
-from decls import library_item
+from decls import library_item, library_enum_item
 from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from closures import callable_component, packed_input
@@ -116,7 +116,7 @@ pub def generic_models(
     return Ok(models)
 
 
-def referenced_templates(module: &BodyIrModule) -> list[str]:
+pub def referenced_templates(module: &BodyIrModule) -> list[str]:
     """Inventory checked template heads without selecting implementations or inferring bindings from source names."""
     mut referenced: list[str] = []
     for body in module.bodies:
@@ -165,7 +165,7 @@ def retain_type_templates(ty: &RustType, mut referenced: list[str]) -> None:
         _ => pass
 
 
-def generic_field_type(
+pub def generic_field_type(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     ty: &RustType,
@@ -238,6 +238,13 @@ def generic_layout_path(module: &BodyIrModule, base: str) -> Result[str, str]:
         if str(declaration.name) != base:
             continue
         item = library_item(declaration)
+        if item != "":
+            return Ok(item)
+        return Ok("crate::" + base)
+    for declaration in module.enum_declarations:
+        if declaration.carrier_name() != base:
+            continue
+        item = library_enum_item(declaration)
         if item != "":
             return Ok(item)
         return Ok("crate::" + base)
