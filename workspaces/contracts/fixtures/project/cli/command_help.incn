@@ -1,6 +1,8 @@
 # behavior: Every command provides usage, options, an example and the reference before requiring operands.
 # cli-commands:
 #   run --help
+#   explain --help
+#   explain -h
 #   check --help
 #   test --help
 #   describe-unit --help

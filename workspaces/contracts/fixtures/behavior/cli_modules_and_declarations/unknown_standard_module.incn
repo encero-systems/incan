@@ -1,0 +1,11 @@
+# behavior: unknown standard packages retain the unknown-module diagnostic
+# expect-stderr-contains:
+#   Unknown stdlib module `std.nope`
+# expect-exit: 1
+
+from std.nope import hexlify
+
+
+def main() -> None:
+    """Attempt to use an unregistered standard package."""
+    println(hexlify(b""))

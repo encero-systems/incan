@@ -42,6 +42,31 @@ pub model Clock:
     pub origin: str
 
 
+pub model WorkObserver:
+    """
+    Caller-owned work callbacks for a component that must not depend on its consumer's observation policy.
+
+    An empty observer neither starts a clock nor calls a sink. The caller supplies both callbacks together and owns
+    their destination, compatibility exports and flushing. Callbacks must not change the observed operation's result.
+    """
+
+    pub start: Option[() -> Option[Clock]] = None
+    pub finish: Option[(Operation, str, Option[Clock], int) -> None] = None
+
+    def begin(self) -> Option[Clock]:
+        """Start only a fully configured observer; the empty observer allocates no observation state."""
+        if let Some(_) = self.finish:
+            if let Some(callback) = self.start:
+                return callback()
+        return None
+
+    def record(self, operation: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
+        """Finish an enabled operation through the caller's sink; no clock means no callback."""
+        if let Some(_) = clock:
+            if let Some(callback) = self.finish:
+                callback(operation, key, clock, bytes)
+
+
 model Origin:
     """One process lifetime identity and span sequence, protected by the language's static guard."""
 

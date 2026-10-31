@@ -11,6 +11,7 @@ from std.hash import sha256
 from std.io import BytesIO
 from std.json import JsonValue
 from pub::incan_platform.trace import flush as flush_trace
+from std.environ import get_or
 from installation_check import verify_runtime
 from installation_page import recall as recall_installation
 from installation_codec import decode as decode_installation, encode as encode_installation
@@ -42,6 +43,7 @@ from rust_freshness import (
 )
 from rust_units import (
     BuiltUnit,
+    decoded,
     RegistryUnits,
     RustBuild,
     RustFacet,
@@ -1662,6 +1664,7 @@ def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str
 
 def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
     """A selected toolchain admits transported native, standard and registry payloads and refuses changed bytes."""
+    verify_archive_members(scratch)?
     original = scratch.joinpath("producer/runtime.incnlib")
     write(original, "runtime interface")?
     record_payload(original, "runtime producer")?
@@ -1950,3 +1953,42 @@ def damage(path: Path, text: str) -> Result[None, str]:
     """Overwrite a sealed payload file, as a stray tool would, past its read-only permissions."""
     set_permissions(path.0, Permissions.from_mode(420)).map_err((error) => str(error))?
     return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def verify_archive_members(scratch: Path) -> Result[None, str]:
+    """
+    Archive installation admits a nested C sysroot, refuses the root host link and preserves a prior installation.
+
+    1. Pack real archive members with a manifest that stops before toolchain admission.
+    2. Check the public installer in an isolated home and verify its staging cleanup.
+    """
+    # 1. The deliberate name mismatch proves an allowed member reached manifest verification.
+    root = scratch.joinpath("archive-members")
+    write(root.joinpath("c/sysroot/include/payload"), "nested C sysroot")?
+    write(root.joinpath("sysroot/payload"), "refused host link")?
+    write(root.joinpath("toolchain.json"), "{\"name\":\"archive-member-probe\"}")?
+    archive = scratch.joinpath("members.tar")
+    home = scratch.joinpath("archive-home")
+    prior = home.joinpath("toolchains/0.6.0-dev.8/prior")
+    write(prior, "unchanged")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    # 2. Each refusal leaves both the prior installation and its sibling staging directory unchanged.
+    for member, refused in [("c/sysroot", false), ("./c/sysroot", false), ("sysroot", true), ("./sysroot", true)]:
+        mut pack = Command.new("tar")
+        pack.args(["-cf", archive.0, "-C", root.0, "toolchain.json", member])
+        packed = pack.output().map_err((error) => str(error))?
+        assert packed.status.success(), decoded(packed.stderr)
+        mut install = Command.new(binary)
+        install.args(["toolchain", "install", archive.0]).env("INCAN_HOME", home.0).env("OVEN_OWNER", "off")
+        install.env("INCAN_ENGINE", "legacy").env_remove("INCAN_STDLIB")
+        output = install.output().map_err((error) => str(error))?
+        assert output.status.code() == Some(1i32), member
+        message = decoded(output.stderr)
+        if refused:
+            assert "unsafe toolchain archive member:" in message, message
+        else:
+            assert "archive toolchain archive-member-probe does not match" in message, message
+        assert read(prior)? == "unchanged"
+        for entry in home.joinpath("toolchains").iterdir().map_err((error) => error.message())?:
+            assert not entry.name().startswith(".install-"), entry.0
+    return Ok(None)

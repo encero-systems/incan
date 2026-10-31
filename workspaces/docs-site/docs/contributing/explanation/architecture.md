@@ -42,6 +42,12 @@ Standard packages compile as ordinary Loaves. Native implementations travel with
 
 Rust items are checked against ABI caches supplied by the installed toolchain. Paths outside those caches can be extracted by the pinned Rust compiler during checking. The checker records the result once for downstream compilation.
 
+### Standard namespace ownership
+
+The compiler's `STDLIB_NAMESPACES` catalog records module lookup, submodule discovery and the ordinary standard Loaf that may publish each root. Publication policies are projected from that catalog; there is no separate package ownership list. Compiler-only namespaces have no package issuer. `std.primitives` is an ordinary ambient standard package, so a consumer does not declare it in its manifest.
+
+Loaf manifests currently describe package names and dependency intent, but do not declare reserved namespace ownership. A package name or matching source directory cannot grant that authority: installed namespace admission still validates the original checked package and generation. The compiler catalog therefore remains the authority for reserved roots. Adding manifest-driven ownership requires an authenticated ownership declaration, rather than inferring it from a package's name.
+
 ## Build and inspection
 
 `incan build PATH` describes and compiles a unit or Rust project. `incan run PATH` builds and executes a source program. Unchanged executables and resident project preparation can be reused. Tests still execute afresh.
