@@ -33,7 +33,7 @@ from graph_mcp import serve_graph, parse_path
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
-from pub::incan_platform.trace import flush as flush_trace
+from trace_adapter import finish as finish_trace
 from jec import begin as begin_work, record as record_work
 
 
@@ -55,7 +55,7 @@ pub model Options:
 def main() -> None:
     """Dispatch the CLI and drain observations on normal return; explicit exits drain at their own boundary."""
     command_line()
-    _ = flush_trace()
+    finish_trace()
 
 
 def command_line() -> None:
@@ -209,7 +209,7 @@ def fail(message: str, code: i32) -> None:
     if code == 2:
         text += f"{HELP_HINT}\n"
     _ = err.write_all(RustString.from(text).into_bytes())
-    _ = flush_trace()
+    finish_trace()
     exit(code)
 
 
@@ -451,7 +451,7 @@ def finish(command: str, result: Result[i32, str]) -> None:
     match result:
         Err(reason) => fail(f"incan {command}: {reason}", 1)
         Ok(code) =>
-            _ = flush_trace()
+            finish_trace()
             exit(code)
 
 
