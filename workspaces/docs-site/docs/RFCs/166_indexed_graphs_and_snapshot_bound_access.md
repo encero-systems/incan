@@ -1,6 +1,6 @@
 # RFC 166: Indexed graphs and snapshot-bound graph access
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-30
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,7 +13,7 @@
     - RFC 161 (semantic core IR)
     - RFC 165 (typed embedded storage)
     - RFC 169 (typed datasets and structured streams)
-- **Issue:** —
+- **Issue:** [#2524](https://github.com/encero-systems/incan/issues/2524)
 - **RFC PR:** —
 - **Written against:** v0.6.0-dev.9
 - **Shipped in:** —
