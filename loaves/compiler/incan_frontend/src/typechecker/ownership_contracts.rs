@@ -7,6 +7,7 @@ use incan_lang::lang::types::ownership::{self, OwnershipMode};
 use incan_semantics_core::SymbolOrigin;
 
 mod checked;
+mod flow;
 
 use super::TypeChecker;
 use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Type};
@@ -148,6 +149,82 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Later callees and overloads expose their exact obligations before any body executes; malformed sources
+    /// remain unavailable and are diagnosed by their declaration-owned check, without duplicate source errors.
+    #[test]
+    fn function_headers_supply_ownership_before_bodies() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def caller() -> None:\n    pass\ndef view(value: Borrowed[Page]) -> Borrowed[str] from value.title:\n    return value.title\ndef view(prefix: str, value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\ndef invalid(value: Borrowed[str]) -> Borrowed[str] from absent:\n    return value\nmodel Page:\n    title: str\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.reset_program_check(&program, false);
+        checker.collect_program_check_declarations(&program);
+        assert_eq!(checker.check_work.function_declarations, 0);
+        let contracts = &checker.type_info.declarations.ownership_contracts;
+        assert_eq!(contracts.len(), 2, "{contracts:?}");
+        for (index, declaration) in program.declarations[1..3].iter().enumerate() {
+            let binding = checker
+                .type_info
+                .declarations
+                .function_bindings_by_span
+                .get(&declaration.span)
+                .ok_or("missing overload header")?;
+            let identity = binding.identity.as_ref().ok_or("missing exact overload identity")?;
+            let contract = contracts.get(identity).ok_or("missing overload ownership")?;
+            let dependency = contract.result_source.as_ref().ok_or("missing source relationship")?;
+            assert_eq!(dependency.slot, crate::ownership_metadata::SourceSlot::Parameter(index));
+            assert_eq!(dependency.fields.len(), usize::from(index == 0));
+        }
+        assert!(!checker.errors.iter().any(|error| error.message.contains("absent")));
+        let checked = checked(source)?;
+        assert_eq!(
+            checked
+                .errors
+                .iter()
+                .filter(|error| error.message.contains("Result source must name"))
+                .count(),
+            1,
+            "{:?}",
+            checked.errors,
+        );
+        Ok(())
+    }
+
+    /// Direct input annotations constrain access instead of becoming generic value wrappers. Body typing can use
+    /// arithmetic and stored fields, but this does not enable execution or permit a shared input to be mutated.
+    #[test]
+    fn explicit_inputs_have_value_types_without_granting_execution() -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "def add(value: Borrowed[int]) -> int:\n    return value + 1\n",
+            "type View = Borrowed[int]\ndef add(value: View) -> int:\n    return value + 1\n",
+            "model Page:\n    title: str\ndef read(page: Borrowed[Page]) -> int:\n    return len(page.title)\n",
+            "def increment(mut value: BorrowedMut[int]) -> None:\n    value = value + 1\n",
+            "def owned(value: Owned[int]) -> int:\n    return value + 1\n",
+            "def add(Borrowed: int, value: Borrowed[int]) -> int:\n    return value + Borrowed\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(!checker.errors.is_empty(), "execution gate unexpectedly open: {source}");
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .all(|error| error.stable_code() == Some("INCAN-T0123")),
+                "unexpected value typing failure: {source}\n{:?}",
+                checker.errors
+            );
+        }
+        let checker = checked("def overwrite(mut value: Borrowed[int]) -> None:\n    value = 2\n")?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() != Some("INCAN-T0123")),
+            "shared input mutation was not refused: {:?}",
+            checker.errors
+        );
+        Ok(())
+    }
 
     /// Check source directly so ownership diagnostics cannot be supplied by a native compiler failure.
     fn checked(source: &str) -> Result<TypeChecker, Box<dyn std::error::Error>> {

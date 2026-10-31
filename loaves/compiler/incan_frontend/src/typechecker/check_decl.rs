@@ -6841,8 +6841,8 @@ impl TypeChecker {
             &func.params,
             &resolved_param_types,
         );
-        for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
-            self.bind_checked_callable_parameter(param, resolved_ty);
+        for (slot, (param, resolved_ty)) in func.params.iter().zip(resolved_param_types).enumerate() {
+            self.bind_checked_callable_parameter(param, resolved_ty, slot);
         }
 
         // ---- Yield and native-call contexts ----
@@ -7056,19 +7056,40 @@ impl TypeChecker {
         fixture_args
     }
 
-    /// Publish one execution-frame parameter after all declaration-owned defaults have checked. Retain its checked
-    /// mutability marker before converting rest carriers, then record the same read/write binding facts for bodies.
-    fn bind_checked_callable_parameter(&mut self, param: &Spanned<Param>, resolved_ty: ResolvedType) {
-        self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
-        let ty = local_type_for_param(param.node.kind, resolved_ty);
+    /// Publish one execution-frame parameter after all declaration-owned defaults have checked. Explicit input
+    /// obligations retain their declaration metadata while the body sees the underlying value. A `mut` binding
+    /// cannot upgrade shared access; executable storage remains separately gated until lowering honors the mode.
+    fn bind_checked_callable_parameter(&mut self, param: &Spanned<Param>, resolved_ty: ResolvedType, slot: usize) {
+        let input = self
+            .current_body_identity()
+            .and_then(|identity| self.checked_input_contract(identity, slot))
+            .cloned();
+        if param.node.is_mut && param.node.kind == ParamKind::Normal {
+            if let Some(contract) = &input {
+                self.type_info.declarations.mut_param_markers.insert(
+                    (param.span, param.node.name.clone()),
+                    contract.mode == incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut,
+                );
+            } else {
+                self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
+            }
+        }
+        let writable = param.node.is_mut
+            && !input
+                .as_ref()
+                .is_some_and(|contract| contract.mode == incan_lang::lang::types::ownership::OwnershipMode::Borrowed);
+        let value_type = input.map_or(resolved_ty, |contract| contract.underlying);
+        let ty = local_type_for_param(param.node.kind, value_type);
         self.validate_protected_builtin_binding(&param.node.name, param.span);
-        self.bind_mut_param_as_mutable(&param.node);
+        if writable {
+            self.bind_mut_param_as_mutable(&param.node);
+        }
         self.symbols.define_with_target_kind(
             Symbol {
                 name: param.node.name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
                     ty,
-                    is_mutable: param.node.is_mut,
+                    is_mutable: writable,
                     is_used: false,
                 }),
                 span: param.span,
@@ -7076,7 +7097,7 @@ impl TypeChecker {
             },
             SemanticSourceTargetKind::Parameter,
         );
-        self.record_read_only_binding(param.node.is_mut, param.span);
+        self.record_read_only_binding(writable, param.span);
         self.record_write_target_identity(param.span, &param.node.name);
     }
 
@@ -7505,14 +7526,14 @@ impl TypeChecker {
             &method.params,
             &resolved_param_types,
         );
-        for (param, resolved_ty) in method.params.iter().zip(resolved_param_types) {
+        for (slot, (param, resolved_ty)) in method.params.iter().zip(resolved_param_types).enumerate() {
             checked_params.push(CallableParam::named_with_default(
                 param.node.name.clone(),
                 resolved_ty.clone(),
                 param.node.kind,
                 param.node.default.is_some(),
             ));
-            self.bind_checked_callable_parameter(param, resolved_ty);
+            self.bind_checked_callable_parameter(param, resolved_ty, slot);
         }
 
         self.type_info.declarations.method_bindings_by_span.insert(

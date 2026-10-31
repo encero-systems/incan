@@ -7279,6 +7279,7 @@ impl TypeChecker {
         // Every signature is collected, so the function-typed parameters and returns that hold capturing closures
         // can be decided before any call or body is checked (#1561).
         self.plan_closure_holding_callables(program);
+        self.collect_function_ownership_headers(program);
     }
 
     /// Publish declaration-owned identity, import and alias bindings once collection has settled them. Body checking
