@@ -904,6 +904,9 @@ impl TypeChecker {
     /// do for a module checked without a module path. Giving it the current module left `value.__str__()` through
     /// `T with Display` without a dispatch in every project module (#1561).
     pub fn trait_bound_module_path(&self, name: &str) -> Option<Vec<String>> {
+        if let Some((owner, _)) = self.checked_trait_source_target(name) {
+            return Some(owner);
+        }
         if let Some(path) = self.import_binding_path(name) {
             return path
                 .len()
@@ -934,6 +937,9 @@ impl TypeChecker {
 
     /// Return the defining source trait name for imported or module-qualified trait bounds.
     pub fn trait_bound_source_name(&self, name: &str) -> Option<String> {
+        if let Some((_, original)) = self.checked_trait_source_target(name) {
+            return Some(original);
+        }
         if let Some(path) = self.import_binding_path(name) {
             return path.last().cloned();
         }
@@ -1046,14 +1052,22 @@ impl TypeChecker {
                     let Some(info) = self.lookup_imported_module_trait(&module_path, &trait_name) else {
                         continue;
                     };
+                    let identity = self.derivable_trait_identity(&module_path, &trait_name);
+                    let (owner, source_name) = identity
+                        .as_ref()
+                        .and_then(|identity| self.canonical_trait_source_target(identity))
+                        .unwrap_or_else(|| (module_path.clone(), trait_name.clone()));
                     let canonical = format!("{}.{}", derive_name, trait_name);
-                    self.define_hidden_trait_symbol(&canonical, info, Span::default());
-                    if !out.iter().any(|existing: &TypeBoundInfo| existing.name == canonical) {
+                    self.define_hidden_trait_symbol_with_identity(&canonical, info, identity, Span::default());
+                    if !out.iter().any(|existing: &TypeBoundInfo| {
+                        existing.module_path.as_ref() == Some(&owner)
+                            && Self::type_bound_source_name(existing) == source_name
+                    }) {
                         out.push(TypeBoundInfo {
                             name: canonical,
-                            source_name: Some(trait_name.clone()),
+                            source_name: Some(source_name),
                             type_args: Vec::new(),
-                            module_path: Some(module_path.clone()),
+                            module_path: Some(owner),
                             implementation_type_params: Vec::new(),
                             inferred: false,
                         });
@@ -1068,13 +1082,22 @@ impl TypeChecker {
                 if self.imported_trait_is_derivable(module_segments, trait_name)
                     && let Some(info) = self.lookup_imported_module_trait(module_segments, trait_name)
                 {
-                    self.define_hidden_trait_symbol(derive_name, info, Span::default());
-                    if !out.iter().any(|existing: &TypeBoundInfo| existing.name == *derive_name) {
+                    let identity = self.derivable_trait_identity(module_segments, trait_name);
+                    let (owner, source_name) = identity
+                        .as_ref()
+                        .and_then(|identity| self.canonical_trait_source_target(identity))
+                        .unwrap_or_else(|| (module_segments.to_vec(), trait_name.clone()));
+                    let canonical = derive_name.clone();
+                    self.define_hidden_trait_symbol_with_identity(&canonical, info, identity, Span::default());
+                    if !out.iter().any(|existing: &TypeBoundInfo| {
+                        existing.module_path.as_ref() == Some(&owner)
+                            && Self::type_bound_source_name(existing) == source_name
+                    }) {
                         out.push(TypeBoundInfo {
-                            name: derive_name.clone(),
-                            source_name: Some(trait_name.clone()),
+                            name: canonical,
+                            source_name: Some(source_name),
                             type_args: Vec::new(),
-                            module_path: Some(module_segments.to_vec()),
+                            module_path: Some(owner),
                             implementation_type_params: Vec::new(),
                             inferred: false,
                         });
@@ -1092,6 +1115,57 @@ impl TypeChecker {
             }
         }
         out
+    }
+
+    /// Resolve a derive entry to the original checked trait rather than synthesizing a declaration in its facade.
+    fn derivable_trait_identity(&self, module: &[String], name: &str) -> Option<CanonicalSymbolId> {
+        self.dependency_derivable_trait_identities
+            .get(&format!("{}.{name}", module.join(".")))
+            .cloned()
+            .or_else(|| self.dependency_member_identity(&ImportPath::simple(module.to_vec()), name))
+    }
+
+    /// Retain the declaration selected by a visible trait binding before a lexical facade spelling is recorded in a
+    /// bound.
+    fn checked_trait_source_target(&self, name: &str) -> Option<(Vec<String>, String)> {
+        let symbol = self.symbols.lookup(name)?;
+        let identity = self.symbols.identity_of(symbol)?;
+        self.canonical_trait_source_target(identity)
+    }
+
+    /// Project a checked trait identity into the source-owner form consumed by existing adoption and native-derive
+    /// relations. Standard namespace ownership is checked against the admitted provider; other packages keep their
+    /// explicit public package root. Equal-spelled user modules cannot acquire standard trait semantics.
+    pub(in crate::typechecker) fn canonical_trait_source_target(
+        &self,
+        identity: &CanonicalSymbolId,
+    ) -> Option<(Vec<String>, String)> {
+        if identity.kind != SemanticSourceTargetKind::Trait {
+            return None;
+        }
+        let path = match &identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(path) => path.clone(),
+            incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
+                let standard = std::iter::once("std".to_owned())
+                    .chain(module_path.iter().cloned())
+                    .collect::<Vec<_>>();
+                if self
+                    .loaves
+                    .owner_of(&standard)
+                    .is_some_and(|owner| owner.artifact.manifest.name == *library)
+                {
+                    standard
+                } else {
+                    [
+                        vec![super::PUBLIC_LIBRARY_NAMESPACE.to_string(), library.clone()],
+                        module_path.clone(),
+                    ]
+                    .concat()
+                }
+            }
+            _ => return None,
+        };
+        (!path.is_empty()).then(|| (path, identity.declaration_name.clone()))
     }
 
     /// Return the module path and trait name a derive argument names, last segment the trait.
@@ -1125,23 +1199,11 @@ impl TypeChecker {
         if identity.kind != SemanticSourceTargetKind::Trait || identity.scope_discriminant.is_some() {
             return None;
         }
-        let mut path = match &identity.origin {
-            incan_semantics_core::SymbolOrigin::Module(path) if path.first().is_some_and(|root| root == "std") => {
-                path.clone()
-            }
-            incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
-                let path = std::iter::once("std".to_owned())
-                    .chain(module_path.iter().cloned())
-                    .collect::<Vec<_>>();
-                let owner = self.loaves.owner_of(&path)?;
-                if owner.artifact.manifest.name != *library {
-                    return None;
-                }
-                path
-            }
-            _ => return None,
-        };
-        path.push(identity.declaration_name.clone());
+        let (mut path, name) = self.canonical_trait_source_target(identity)?;
+        if path.first().map(String::as_str) != Some("std") {
+            return None;
+        }
+        path.push(name);
         Some(path)
     }
 
