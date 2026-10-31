@@ -9,7 +9,7 @@ from std.fs.locking import FileLock
 from std.hash import sha256
 from std.tempfile import TemporaryDirectory
 from pub::incan_platform.trace import Clock
-from home_paths import bakery
+from home_paths import installation_catalog
 from intake import ManifestReader, load_project
 from installation_codec import PROFILE, Installation, StandardManifest, decode, encode
 from jec import begin as begin_work, record as record_work
@@ -75,7 +75,7 @@ pub def recall(directory: Path) -> Result[Option[Installation], str]:
     """
     # 1. Only an absent selection is an unadmitted installation.
     clock = begin_work()
-    view = snapshot(bakery()?).map_err((error) => error.message())?
+    view = snapshot(installation_catalog()?).map_err((error) => error.message())?
     held = SCOPE.pin(view)?
     key = question(directory)
     match get(view, binding(key)).map_err((error) => error.message())?:
@@ -150,7 +150,7 @@ pub def retain(
     3. Recheck the inputs and atomically select that exact revision.
     """
     # 1. Concurrent first admissions recheck under the same installation claim.
-    store = bakery()?
+    store = installation_catalog()?
     key = question(directory)
     held = claim(store, key).map_err((error) => error.message())?
     if let Some(page) = recall(directory)?:

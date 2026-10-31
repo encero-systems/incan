@@ -13,6 +13,7 @@ from std.json import JsonValue
 from pub::incan_platform.trace import flush as flush_trace
 from installation_check import verify_runtime
 from installation_page import recall as recall_installation
+from home_paths import installation_catalog
 from installation_codec import decode as decode_installation, encode as encode_installation
 from trace_adapter import count_work, finish_counting
 from page_codec import Reader, put_texts
@@ -1804,7 +1805,7 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
     verify_page_refusals(fixture, encoded)?
     verify_page_vectors(fixture)?
     digest = fingerprint_page(encoded)
-    canonical = payload_path(bakery()?, digest)
+    canonical = payload_path(installation_catalog()?, digest)
     canonical.chmod(false).map_err((error) => error.message())?
     canonical.write_bytes(b"damaged page").map_err((error) => error.message())?
     match recall_installation(directory):
