@@ -30,6 +30,7 @@
 #   Type mismatch: expected 'i64', found 'Str'
 #   Rust parameter requires a mutable borrow of 'shared_socket'
 #   does not satisfy bound `std::convert::AsRef<std::ffi::OsStr>`
+#   Rust callback cannot return a borrowed scalar without a retained lifetime contract
 # expect-exit: 1
 
 """A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
@@ -49,6 +50,7 @@ from rust::std::rc import Rc
 from rust::std::sync import Mutex
 from rust::std::string import String as RustString
 from rust::std::thread import spawn
+from rust::std::vec import Vec
 
 
 type Lock = rusttype Mutex[int]:
@@ -203,6 +205,13 @@ def read_through_a_shared_binding() -> None:
         Err(_) => pass
 
 
+def borrowed_scalar_key() -> None:
+    """Refuse a native callback that would return its borrowed scalar input without a lifetime contract."""
+    mut values: Vec[int] = Vec.new()
+    values.push(1)
+    values.sort_by_key((value) => value)
+
+
 def main() -> None:
     """
     Request refused native calls before anything can execute.
@@ -234,4 +243,5 @@ def main() -> None:
     # `mut` binding lends its shared reference exclusively.
     unselected_callees()
     conflicting_first_use()
+    borrowed_scalar_key()
     read_through_a_shared_binding()
