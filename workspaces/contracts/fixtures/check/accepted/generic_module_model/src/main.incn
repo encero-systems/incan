@@ -1,4 +1,5 @@
 # behavior: explicit module-qualified generic model checking remains accepted while enum constructors retain their checked owner (#2518)
+# expect-accepted
 
 from pub::shapes import Holder
 import pub::shapes as shapes
