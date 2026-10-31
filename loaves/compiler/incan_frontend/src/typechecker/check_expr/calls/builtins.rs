@@ -510,7 +510,10 @@ impl TypeChecker {
         if self.is_user_operator_receiver(&arg_ty) {
             let _ = self.resolve_len_dunder(&arg_ty, call_span);
         } else if self.retain_native_length_call(arg_expr, &arg_ty, call_span) {
+            self.retain_open_rust_length_use(arg_expr, call_span);
             return ResolvedType::Int;
+        } else if matches!(arg_ty, ResolvedType::Generic(_, _)) {
+            self.defer_open_rust_read(arg_expr, None);
         } else if matches!(
             arg_ty,
             ResolvedType::Int

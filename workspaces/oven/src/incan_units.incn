@@ -34,7 +34,6 @@ from bakery import (
     unit_name,
     view,
     Fact,
-    canonical_payload,
     fact_file,
     has_files_under,
 )
@@ -47,6 +46,7 @@ from unit_freshness import Key, unit_key
 from unit_rust import compile_library_unit, prepare_native
 from shared_link import development_link, library_witness, linkage_key, witness_current
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
@@ -82,7 +82,7 @@ pub model Made:
 
     # The compiler's exit code; zero when the output exists.
     pub code: i32
-    # The executable to start: the baked payload while a development view is an unchanged clone of it, else the output.
+    # The executable view to start, also reported by the host's executable-path lookup.
     pub launch: Path
     # Whole-unit producer evaluations and published native units of an executable; a bakery hit evaluates and bakes
     # nothing.
@@ -153,8 +153,7 @@ pub def obtain_executable(
 
     The caller reconciled the unit's inputs into `key`, so a resident owner can answer from what it retains.
     Development linkage has its own identity, and every shared library is validated before its fact is used.
-    The platform assesses each new executable file on its first launch, so an unchanged development view is started
-    from the baked payload it was cloned from (see `viewed`).
+    Execution starts the requested view, so the host's executable-path lookup and the program name agree.
 
     1. A sealed fact of the identity is viewed, and no compiler starts.
     2. Otherwise claim the identity: one bake of it at a time, in any project or process.
@@ -227,17 +226,8 @@ pub def obtain_executable(
 
 
 def viewed(store: Path, fact: Fact, output: Path, kind: str, shared: bool) -> Result[Made, str]:
-    """
-    Make `output` a view of the executable fact, and name what starts it.
-
-    A development executable with shared linkage finds its libraries through absolute search paths, so its baked
-    payload runs where it is stored. While the view is an unchanged clone, the payload starts in its place: the
-    platform assessed that file at its first launch in this home, and a new view would be assessed again.
-    """
+    """Make `output` the executable view and launch it, preserving the program's observable location."""
     view_executable(store, fact, output, kind, shared)?
-    if shared:
-        if let Some(payload) = canonical_payload(store, fact, output.name(), output):
-            return Ok(Made(code=0, launch=payload, fact=Some(fact)))
     return Ok(Made(code=0, launch=output, fact=Some(fact)))
 
 
@@ -336,7 +326,7 @@ pub def run_program(
     for argument in arguments:
         command.arg(argument)
     trace_launch(program)
-    record_work("program_prepare", program, preparing)
+    record_work(Operation.ProgramPrepare, program, preparing)
     _ = flush_trace()
     if wait:
         status = command.status().map_err((error) => f"cannot run {program}: {error}")?

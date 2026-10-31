@@ -29,8 +29,11 @@ from engine_programs import read_program, program_handle
 from engine_messages import Resolve, Resolution
 from engine_messages import Submit
 from engine_wire import Refusal, RefusalKind, zero_id
+from bakery import forget_verified, verification_entries
+from observation import trace
 from files import discard_file
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation, flush as flush_trace
 
 const MAX_CLIENTS: int = 16
 
@@ -103,11 +106,12 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
                         Ok(client) => clients.append(client)
                         Err(_) => pass
             None => pass
-        for index in range(len(clients)):
-            mut client = clients[index]
-            service_client(client, state)
-            clients[index] = client
-        clients = [client for client in clients if not client.closed]
+        if len(clients) > 0:
+            for index in range(len(clients)):
+                mut client = clients[index]
+                service_client(client, state)
+                clients[index] = client
+            clients = [client for client in clients if not client.closed]
         state.clients = len(clients)
         if state.stopping or state.exits(int(clock.elapsed().as_millis()), idle * 1000):
             return Ok(None)
@@ -142,6 +146,10 @@ def service_client(mut client: Client, mut state: ServiceState) -> None:
     match poll_client(client, state):
         Ok(_) => pass
         Err(_) => close_client(client, state)
+    if len(client.pending) == 0 and verification_entries() > 0:
+        released = verification_entries()
+        forget_verified()
+        trace(f"engine request released: captures=0 verification={verification_entries()} released={released}")
 
 
 def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
@@ -160,7 +168,7 @@ def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Ref
 
 
 def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Result[None, Refusal]:
-    """Handle the E1 control families; producer and query families have schemas but refuse execution."""
+    """Handle E1 controls and drain observations before acknowledging Stop; unsupported execution families refuse."""
     request = frame.header.request
     match frame.message:
         Message.Ack(_) => return Ok(None)
@@ -212,6 +220,7 @@ def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Resu
             return send(client.channel, request, Message.Event(Event(status="Draining", trace_handle="")))
         Message.Stop(_) =>
             state.stopping = true
+            _ = flush_trace()
             return send(client.channel, request, Message.Event(Event(status="Stopping", trace_handle="")))
         _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
 
@@ -225,7 +234,7 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
     send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
     capturing = begin_work()
     captured_request = prepare_submit(state.store, submit)
-    record_work("engine_capture", submit.requested_roots, capturing)
+    record_work(Operation.EngineCapture, submit.requested_roots, capturing)
     match captured_request:
         Err(reason) =>
             state.detach(request, token)?
@@ -281,6 +290,8 @@ def close_client(mut client: Client, mut state: ServiceState) -> None:
         state.detach(pending.request, pending.token)
     for held in client.pins:
         state.release(held.token)
+    client.pending = []
+    client.pins = []
     client.closed = true
 
 

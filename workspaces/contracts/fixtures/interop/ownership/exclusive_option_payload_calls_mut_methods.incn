@@ -1,0 +1,33 @@
+# behavior: the exclusive payload that Option.as_mut() binds calls a Rust `&mut self` method twice without a `mut` binding, because each call changes the referent, never the binding (#2481)
+# expect-stdout:
+#   written
+#   true
+
+"""Write twice through the exclusive socket reference a guarded Option lends, then read what the peer received."""
+
+from rust::std::cell import RefCell
+from rust::std::io import Read, Write
+from rust::std::os::unix::net import UnixStream
+from rust::std::rc import Rc
+
+
+def main() -> None:
+    match UnixStream.pair():
+        Ok(pair) =>
+            left, right = pair
+            cell = Rc.new(RefCell.new(Some(left)))
+            match cell.borrow_mut().as_mut():
+                Some(open) =>
+                    match open.write_all(b"h"):
+                        Ok(_) => pass
+                        Err(error) => println(f"{error}")
+                    match open.write_all(b"i"):
+                        Ok(_) => println("written")
+                        Err(error) => println(f"{error}")
+                None => println("closed")
+            mut reader = right
+            mut got = b"xx"
+            match reader.read_exact(got):
+                Ok(_) => println(got == b"hi")
+                Err(error) => println(f"{error}")
+        Err(error) => println(f"{error}")

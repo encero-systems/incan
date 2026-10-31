@@ -1,5 +1,7 @@
 //! Complete per-body cold comparisons with the original shared-output checker.
 
+use super::super::canonical_nodes::{NodeBindingError, SemanticNodeBindings};
+use super::oracle_compare::canonical_debug;
 use super::{AnchorFault, BodyLocal, CheckedBodyView, DiagnosticPositions, TypeChecker};
 use crate::ast::Span;
 
@@ -76,6 +78,8 @@ impl TypeChecker {
         let first = program.declarations.iter().find(|declaration|
             matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == "first"))
             .ok_or("missing accepted warning control")?;
+        assert_canonical_node_bindings()?;
+        assert_canonical_record_fields()?;
         assert_warning_only_inputs(&checker, &program, first.span)?;
         for body in &checker.checked_bodies {
             assert!(
@@ -160,55 +164,6 @@ impl TypeChecker {
         );
         self.body_local_observations.push((span, canonical_debug(&value)));
     }
-}
-
-/// Sort unordered Debug containers while preserving variants, sequences, scalars and quoted bytes. This exact test
-/// comparator is never used for production identity, storage or semantic projection.
-fn canonical_debug(value: &str) -> String {
-    debug_container(&mut value.chars().peekable(), None, false)
-}
-
-/// Consume one delimited Debug container, sorting maps, sets and named fields while retaining every payload value.
-fn debug_container(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, close: Option<char>, sort: bool) -> String {
-    let mut parts = Vec::new();
-    let mut part = String::new();
-    while let Some(character) = chars.next() {
-        match character {
-            '"' | '\'' => {
-                part.push(character);
-                while let Some(quoted) = chars.next() {
-                    part.push(quoted);
-                    if quoted == '\\' {
-                        if let Some(escaped) = chars.next() {
-                            part.push(escaped);
-                        }
-                    } else if quoted == character {
-                        break;
-                    }
-                }
-            }
-            '{' | '[' | '(' => {
-                let ending = match character {
-                    '{' => '}',
-                    '[' => ']',
-                    _ => ')',
-                };
-                part.push(character);
-                part.push_str(&debug_container(chars, Some(ending), character == '{'));
-                part.push(ending);
-            }
-            ',' if close.is_some() => parts.push(std::mem::take(&mut part).trim().to_owned()),
-            ending if Some(ending) == close => break,
-            _ => part.push(character),
-        }
-    }
-    if !part.is_empty() {
-        parts.push(part.trim().to_owned());
-    }
-    if sort {
-        parts.sort();
-    }
-    parts.join(",")
 }
 
 impl TypeChecker {
@@ -579,5 +534,137 @@ fn assert_warning_only_inputs(
         );
         warning_only.reference_inputs(declaration)?;
     }
+    Ok(())
+}
+
+/// Canonical nodes and binding owners survive comments and changed-length sibling edits; invalid anchors fail closed.
+fn assert_canonical_node_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    let source = |prefix: &str, inside: &str, value: &str| {
+        format!(
+            "def first() -> int:\n    return {prefix}1\ndef second(value: int) -> int:\n{inside}    return {value}\ndef main() -> None:\n    println(second(2))\n"
+        )
+    };
+    let parse = |source: &str| -> Result<crate::ast::Program, String> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))
+    };
+    let before = parse(&source("", "", "value"))?;
+    let after = parse(&source("100 + ", "    # a moved return\n", "value"))?;
+    let changed = parse(&source("", "", "value + 1"))?;
+    let prepare = |program: &crate::ast::Program| {
+        let mut checker = TypeChecker::new();
+        checker.prepare_body_edit_program(program);
+        checker
+    };
+    let checker = prepare(&before);
+    let moved_checker = prepare(&after);
+    let changed_checker = prepare(&changed);
+    let old = SemanticNodeBindings::new(&checker, &before, before.declarations[1].span)?;
+    let moved = SemanticNodeBindings::new(&moved_checker, &after, after.declarations[1].span)?;
+    let changed = SemanticNodeBindings::new(&changed_checker, &changed, changed.declarations[1].span)?;
+    let anchor = old.anchor(before.declarations[1].span)?;
+    assert_eq!(anchor, moved.anchor(after.declarations[1].span)?);
+    assert_eq!(moved.resolve(&anchor)?, after.declarations[1].span);
+    assert_ne!(moved.resolve(&anchor)?, before.declarations[1].span);
+    assert_eq!(changed.resolve(&anchor), Err(NodeBindingError::ChangedBody));
+    let wrong = SemanticNodeBindings::new(&checker, &before, before.declarations[0].span)?;
+    assert_eq!(wrong.resolve(&anchor), Err(NodeBindingError::WrongOwner));
+    let mut malformed = anchor.clone();
+    malformed.path.push_str("/missing");
+    assert_eq!(moved.resolve(&malformed), Err(NodeBindingError::MissingNode));
+    assert_eq!(
+        checker.check_work().body_local_checks,
+        0,
+        "source owner and nodes precede body checking"
+    );
+    let mut checked_before = TypeChecker::new();
+    let mut checked_after = TypeChecker::new();
+    assert!(checked_before.check_program(&before).is_ok());
+    assert!(checked_after.check_program(&after).is_ok());
+    let before_bindings = checked_before
+        .checked_declaration(before.declarations[1].span)
+        .ok_or("missing parameter writer")?;
+    let after_bindings = checked_after
+        .checked_declaration(after.declarations[1].span)
+        .ok_or("missing moved parameter writer")?;
+    let before_ids = old.binding_identities(before_bindings.local.nested.values())?;
+    let after_ids = moved.binding_identities(after_bindings.local.nested.values())?;
+    assert!(!before_ids.is_empty(), "the parameter has an owner-relative identity");
+    assert_eq!(
+        before_ids.values().collect::<Vec<_>>(),
+        after_ids.values().collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+/// Native reconstruction consumes primitive fields after the original checker is gone, retaining every field.
+fn assert_canonical_record_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def main() -> None:\n    println(\"hello\")\n";
+    let moved = "# above\n\ndef main() -> None:\n    # inside\n    println(\"hello\")\n";
+    for declaration in [true, false] {
+        let fields = super::records::fixture_projection(source, "main", declaration)?;
+        let edited = super::records::fixture_projection(moved, "main", declaration)?;
+        assert_eq!(
+            fields, edited,
+            "the native primitive projection excludes every position"
+        );
+        super::records::verify_fixture(moved, "main", fields.clone())?;
+        if !declaration {
+            let mut corrupted = fields;
+            let field = corrupted
+                .iter_mut()
+                .find(|row| row[0] == "type" && row[2] == "expr" && row[3] == "str")
+                .ok_or("missing scalar type negative control")?;
+            field[3] = "int".into();
+            assert!(
+                matches!(
+                    super::records::verify_fixture(moved, "main", corrupted),
+                    Err(NodeBindingError::OracleDifference(_))
+                ),
+                "the oracle compares native facts, not just their keys"
+            );
+        }
+    }
+    assert_canonical_record_controls()?;
+    Ok(())
+}
+
+/// Refused and warning-only owners retain their own status, recipe fields and current rendered source positions;
+/// a match's unrepresented loan-free-subject fact refuses the initial canonical profile.
+fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> {
+    let refused = "def main() -> int:\n    return \"wrong\"\n";
+    let warning = "def main() -> None:\n    println(\"hello\")\n    return\n    println(\"unreachable\")\n";
+    for source in [refused, warning] {
+        let moved = format!("# moved owner\n{source}");
+        let fields = super::records::fixture_projection(source, "main", false)?;
+        let status = fields.iter().find(|row| row[0] == "status").ok_or("missing status")?;
+        assert_eq!(status[3], (source == refused).to_string());
+        assert_eq!(fields, super::records::fixture_projection(&moved, "main", false)?);
+        let before = super::records::verify_fixture(source, "main", fields.clone())?;
+        let after = super::records::verify_fixture(&moved, "main", fields.clone())?;
+        assert!(!before.is_empty());
+        assert_ne!(before, after, "rendering follows the current source revision");
+        let mut wrong_owner = fields.clone();
+        wrong_owner[0][1].push_str("wrong");
+        assert!(super::records::verify_fixture(source, "main", wrong_owner).is_err());
+        let mut wrong_profile = fields.clone();
+        wrong_profile[0][4].push_str("wrong");
+        assert!(super::records::verify_fixture(source, "main", wrong_profile).is_err());
+        let changed = source.replace("hello", "different").replace("wrong", "different");
+        assert!(super::records::verify_fixture(&changed, "main", fields.clone()).is_err());
+        let mut malformed = fields;
+        let field = malformed
+            .iter_mut()
+            .skip(1)
+            .find(|row| !row[1].is_empty())
+            .ok_or("missing anchored field")?;
+        field[1].push_str("/missing");
+        assert!(super::records::verify_fixture(source, "main", malformed).is_err());
+    }
+    let matched = "def main() -> int:\n    match 1:\n        1 => return 2\n        _ => return 3\n";
+    assert!(matches!(
+        super::records::fixture_projection(matched, "main", false),
+        Err(NodeBindingError::Unsupported("ProtocolArtifacts.loan_free_scrutinees"))
+    ));
     Ok(())
 }

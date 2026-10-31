@@ -3,9 +3,9 @@
 use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
 use crate::ast::{Expr, Span, Spanned};
 use crate::symbols::{CallableParam, ResolvedType};
+use crate::typechecker::IdentKind;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::RustCheckedCall;
-use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, RustTypeInfo};
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_lang::lang::types::numerics::NumericTypeId;
@@ -201,8 +201,7 @@ impl TypeChecker {
             return Some(ResolvedType::Unknown);
         }
         if mutable {
-            self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
-            self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+            self.validate_exclusive_rust_receiver(call.receiver_expr, call.span);
         }
         let errors_before = self.errors.len();
         let result = self.validate_rust_method_call(
@@ -343,8 +342,7 @@ impl TypeChecker {
                 return Some(ResolvedType::Unknown);
             };
             if mutable {
-                self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
-                self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+                self.validate_exclusive_rust_receiver(call.receiver_expr, call.span);
             }
             let errors_before = self.errors.len();
             let result = self.validate_rust_method_call_with_expected(

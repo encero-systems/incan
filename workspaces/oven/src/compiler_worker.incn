@@ -26,6 +26,7 @@ from owner_protocol import receive_document, send_document
 from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command
+from pub::incan_platform.trace import Operation
 from jec import begin, record, invocation_key
 
 const READINESS_POLLS: int = 7500
@@ -168,7 +169,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
     # 1. Unsupported observations and failed startup retain the existing one-process compilation path.
     connecting = begin()
     found_connection = connection_for(toolchain)
-    record("worker_connect", toolchain.driver, connecting)
+    record(Operation.WorkerConnect, toolchain.driver, connecting)
     match found_connection:
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
@@ -191,7 +192,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             send_document(connected, document)?
             # 3. A completed request grants only its actual exit code, never a retained checking result.
             reply = receive_document(connected)?
-            record("driver_request", invocation_key(arguments), clock)
+            record(Operation.DriverRequest, invocation_key(arguments), clock)
             # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
             if retired(reply):
                 trace("compiler worker: retired after its request")
@@ -372,10 +373,10 @@ def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     command.process_group(0)
     clock = begin()
     child = command.spawn().map_err((error) => f"cannot start compiler worker: {error}")?
-    record("driver_spawn", toolchain.driver, clock)
+    record(Operation.DriverSpawn, toolchain.driver, clock)
     waiting = begin()
     started = await_ready(listener, child, endpoint)
-    record("worker_ready", toolchain.driver, waiting)
+    record(Operation.WorkerReady, toolchain.driver, waiting)
     discard_file(Path(endpoint.ready))
     return started
 

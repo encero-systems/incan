@@ -1,6 +1,6 @@
 """Keep the existing JEC call surface as an adapter over platform observations."""
 
-from pub::incan_platform.trace import Clock
+from pub::incan_platform.trace import Clock, Operation
 from trace_adapter import work_clock, work
 
 
@@ -9,16 +9,16 @@ pub def begin() -> Option[Clock]:
     return work_clock()
 
 
-pub def record(category: str, input: str, clock: Option[Clock], bytes: int = 0) -> None:
+pub def record(category: Operation, input: str, clock: Option[Clock], bytes: int = 0) -> None:
     """Record measured work through the platform; the JEC switch selects its compatibility export."""
     work(category, input, clock, bytes)
 
 
-pub def text_size(content: str, clock: Option[Clock]) -> int:
+pub def text_size(content: &str, clock: Option[Clock]) -> int:
     """Count UTF-8 payload bytes only for an enabled observation."""
     match clock:
         None => return 0
-        Some(_) => return len(content.encode("utf-8"))
+        Some(_) => return int(content.len())
 
 
 pub def invocation_key(arguments: list[str]) -> str:

@@ -27,6 +27,7 @@ from owner_client import owned, status_code
 from owner_protocol import Reply
 from owner_endpoint import stop_owners
 from observation import trace_boundary
+from installation_page import begin_command as begin_installation_command
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
 from graph_mcp import serve_graph, parse_path
@@ -35,6 +36,7 @@ from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
 from pub::incan_platform.trace import flush as flush_trace
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 
 pub model Options:
@@ -87,7 +89,7 @@ def command_line() -> None:
             return
         None => pass
     # 3. Each command keeps its own parsing and execution boundary.
-    record_work("cli_start", command, starting)
+    record_work(Operation.CliStart, command, starting)
     dispatch(command, rest)
 
 
@@ -97,6 +99,8 @@ def dispatch(command: str, rest: list[str]) -> None:
         require_no_arguments(command, rest)
         println(f"incan {TOOLCHAIN}")
         return
+    if command in ["run", "check", "test", "build", "describe-unit", "fmt", "inspect"]:
+        begin_installation_command()
     if command == "--internal-engine":
         match serve_engine(rest):
             Ok(_) => return
@@ -110,9 +114,6 @@ def dispatch(command: str, rest: list[str]) -> None:
         Ok(Engine.Legacy) => pass
     if command == "run":
         run(rest)
-        return
-    if command == "_run-built":
-        run_built(rest)
         return
     if command == "check":
         check(rest)
@@ -305,21 +306,6 @@ def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
     return (own, passed)
 
 
-def run_built(arguments: list[str]) -> None:
-    """
-    Execute a program the calling build just verified, through run's canonical process policy.
-
-    This internal caller owns input freshness.
-    """
-    own, passed = program_arguments(arguments)
-    match parse_options(own):
-        Err(reason) => fail(f"incan run: {reason}", 2)
-        Ok(options) =>
-            if len(options.program_entries) > 0:
-                fail("a built program already has its selected entries", 2)
-            finish("run", run_program(Path(options.path), passed, options.argv0))
-
-
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     """
     Make the unit's executable, through its owner or in this process, and become it; a refused compile is the run's
@@ -332,7 +318,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     # 1. When the project's owner serves the unit, it made the executable, and a refused compile is the run's result.
     requesting = begin_work()
     owned = via_owner("run", options, Path(options.path))
-    record_work("legacy_request", options.path, requesting)
+    record_work(Operation.LegacyRequest, options.path, requesting)
     match owned:
         Some(reply) =>
             if reply.exit != 0:
@@ -346,7 +332,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
     made = make_unit(unit, toolchain, binary, true)?
-    record_work("legacy_prepare", options.path, preparing)
+    record_work(Operation.LegacyPrepare, options.path, preparing)
     if made.code != 0:
         return Ok(made.code)
     # 3. The process becomes the program, so its exit status is the run's; it keeps the view's name as its own.

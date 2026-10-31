@@ -12,6 +12,7 @@ from segment_store import begin as begin_selection
 from segment_store import Transaction, commit_pinned
 from observation import trace
 from jec import begin, record
+from pub::incan_platform.trace import Operation
 
 
 pub model Pending:
@@ -64,7 +65,7 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(pending.capture.epoch),
         pending.producer,
     )?
-    record("engine_unit", pending.capture.revision, producing)
+    record(Operation.EngineUnit, pending.capture.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
     match produced.unit:
@@ -108,10 +109,10 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
                     f"bakery {unit.identity[:12]}: baked program {Path(unit.binary).name()} (generation {selected.generation})",
                 )
 
-            record("engine_select", pending.view, selecting)
+            record(Operation.EngineSelect, pending.view, selecting)
             pinning = begin()
             held = required_pin(published.pin)?
-            record("engine_lease", pending.view, pinning)
+            record(Operation.EngineLease, pending.view, pinning)
             handle = pending.handle
             pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=held)
             return Ok(

@@ -124,8 +124,11 @@ run_oven_tests() {
     done
     for file in "$ROOT"/loaves/*/*/tests/test_*.incn; do
         [[ -f "$file" ]] || continue
+        # The record contracts' canonical controls need the frontend's native adapter, which their manifest omits.
+        [[ $file == "$ROOT"/loaves/compiler/internal_models/tests/* ]] && continue
         (cd "${file%/tests/*}" && "$oven" test "$file") >> "$run/oven-tests.log" 2>&1 || status=1
     done
+    "$ROOT/scripts/test-checker-records.sh" "$oven" "$run/checker-records" >> "$run/oven-tests.log" 2>&1 || status=1
     passed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {n++} END {print n+0}' "$run/oven-tests.log")
     failed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ (FAILED|XPASS)( |$)/ {n++} END {print n+0}' "$run/oven-tests.log")
     awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {print $1}' "$run/oven-tests.log" \

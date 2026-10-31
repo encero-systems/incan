@@ -24,13 +24,13 @@ pub def mutable_argument(
     a loop variable, or a value the checker reads by copy reaches the callee as a fresh owned copy, as legacy passes
     `&mut value.clone()`; the copy drops when its scope ends.
     """
-    source = argument_source(builder, value, referent(reference)?, span)?
+    source = argument_source(builder, value, exclusive_referent(reference)?, span)?
     exclusive = temporary(builder, reference, span)
     builder.emit(plan_assign(exclusive, RvalueKind.MutBorrow(source), span))
     return Ok(read_place(exclusive, true, span))
 
 
-def referent(reference: PlanType) -> Result[PlanType, str]:
+pub def exclusive_referent(reference: PlanType) -> Result[PlanType, str]:
     """The value type an exclusive parameter reference names."""
     match reference:
         PlanType.StringMutRef => return Ok(PlanType.String)

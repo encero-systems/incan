@@ -1,0 +1,141 @@
+"""The canonical codec survives comment/move edits and reconstructs the complete selected native owner."""
+
+from checker_records import (
+    CHECKER_PROFILE, CanonicalField, CheckedFamily, CheckedRecord, CodecFault,
+    encode_record, decode_record, semantic_digest, from_native_fields, native_fields,
+)
+from rust::incan_frontend::checker_records import fixture_projection, verify_fixture, fixture_local_projection, verify_local_fixture
+
+
+pub def canonical_record_controls() -> Result[None, str]:
+    """Keep the existing scoped-reader case responsible for canonical bytes, native teardown and stale bindings."""
+    source = "def main() -> None:\n    println(\"hello\")\n"
+    moved = "# changed-length comment\n\ndef main() -> None:\n    # inside comment\n    println(\"hello\")\n"
+    for declaration in [true, false]:
+        base = from_native_fields(fixture_projection(source, "main", declaration).map_err((error) => error.to_string())?).map_err((_) => "projection")?
+        changed = from_native_fields(fixture_projection(moved, "main", declaration).map_err((error) => error.to_string())?).map_err((_) => "moved projection")?
+        before = encode_record(base).map_err((_) => "encode")?
+        after = encode_record(changed).map_err((_) => "moved encode")?
+        assert before == after
+        assert semantic_digest(base).map_err((_) => "digest")? == semantic_digest(changed).map_err((_) => "digest")?
+        # The source checker and native owner were destroyed inside fixture_projection before encoding.
+        decoded = decode_record(before, CHECKER_PROFILE, changed.owner, changed.root).map_err((_) => "decode")?
+        assert decoded == base
+        rows = native_fields(decoded).map_err((_) => "native fields")?
+        assert rows == fixture_projection(moved, "main", declaration).map_err((error) => error.to_string())?
+        verify_fixture(moved, "main", rows).map_err((error) => "hello: " + error.to_string())?
+        println(f"canonical-record declaration={declaration} fields={len(base.fields)} bytes={len(before)} stable=true")
+        codec_fault_controls(before, base)
+    local_record_controls(source, moved)?
+    edited_owner_controls()?
+    diagnostic_record_controls()?
+    default_record_controls()?
+    final_value_controls()?
+    return Ok(None)
+
+
+def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
+    """Wrong profile, owner, body and malformed bytes must not become supported records."""
+    assert fault_is(decode_record(encoded, "wrong", record.owner, record.root), "profile")
+    assert fault_is(decode_record(encoded, CHECKER_PROFILE, "wrong", record.root), "owner")
+    assert fault_is(decode_record(encoded, CHECKER_PROFILE, record.owner, "wrong"), "body")
+    match encoded.decode():
+        Ok(text) => assert fault_is(decode_record((text + "x").encode(), CHECKER_PROFILE, record.owner, record.root), "malformed")
+        Err(_) => assert false
+    assert fault_is(decode_record(encoded[:len(encoded) - 1], CHECKER_PROFILE, record.owner, record.root), "malformed")
+    assert fault_is(decode_record(b"01:x", CHECKER_PROFILE, record.owner, record.root), "malformed")
+    assert fault_is(decode_record(b"1:\xff", CHECKER_PROFILE, record.owner, record.root), "malformed")
+    unsupported = CheckedRecord(
+        profile=record.profile, owner=record.owner, root=record.root, family=record.family,
+        fields=[CanonicalField(family="future", node="", selector="", values=[])],
+    )
+    match encode_record(unsupported):
+        Err(CodecFault.Unsupported(name)) => assert name == "future"
+        _ => assert false
+
+
+def local_record_controls(source: str, moved: str) -> Result[None, str]:
+    """Pending local fields have their own stage and never masquerade as settled checked-body evidence."""
+    before = from_native_fields(fixture_local_projection(source, "main").map_err((error) => error.to_string())?).map_err((_) => "local projection")?
+    after = from_native_fields(fixture_local_projection(moved, "main").map_err((error) => error.to_string())?).map_err((_) => "moved local projection")?
+    encoded = encode_record(before).map_err((_) => "local encode")?
+    assert encoded == encode_record(after).map_err((_) => "moved local encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "local decode")?
+    assert decoded.family == CheckedFamily.Local
+    verify_local_fixture(moved, "main", native_fields(decoded).map_err((_) => "local fields")?).map_err((error) => "local: " + error.to_string())?
+    println(f"canonical-record local fields={len(before.fields)} bytes={len(encoded)} stable=true")
+    return Ok(None)
+
+
+def edited_owner_controls() -> Result[None, str]:
+    """A changed-length private body leaves both sibling records equal and rebound to their current positions."""
+    source = "def changed() -> int:\n    return 1\ndef sibling() -> int:\n    return 2\ndef main() -> None:\n    println(sibling())\n"
+    moved = source.replace("return 1", "return 100001")
+    for name in ["changed", "sibling", "main"]:
+        for declaration in [true, false]:
+            if name == "changed" and not declaration:
+                continue
+            before = from_native_fields(fixture_projection(source, name, declaration).map_err((error) => error.to_string())?).map_err((_) => "sibling projection")?
+            after = from_native_fields(fixture_projection(moved, name, declaration).map_err((error) => error.to_string())?).map_err((_) => "sibling moved")?
+            encoded = encode_record(before).map_err((_) => "sibling encode")?
+            assert encoded == encode_record(after).map_err((_) => "sibling moved encode")?
+            decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "sibling decode")?
+            verify_fixture(moved, name, native_fields(decoded).map_err((_) => "sibling fields")?).map_err((error) => f"sibling {name} declaration={declaration}: " + error.to_string())?
+    return Ok(None)
+
+
+def diagnostic_record_controls() -> Result[None, str]:
+    """Refusal and advisory recipes retain canonical bytes; only their rendered positions move with comments."""
+    refused = "def main() -> int:\n    return \"wrong\"\n"
+    advisory = "def main() -> None:\n    println(\"hello\")\n    return\n    println(\"unreachable\")\n"
+    for source in [refused, advisory]:
+        moved = "# a moved diagnostic\n" + source
+        before = from_native_fields(fixture_projection(source, "main", false).map_err((error) => error.to_string())?).map_err((_) => "diagnostic projection")?
+        after = from_native_fields(fixture_projection(moved, "main", false).map_err((error) => error.to_string())?).map_err((_) => "diagnostic moved")?
+        encoded = encode_record(before).map_err((_) => "diagnostic encode")?
+        assert encoded == encode_record(after).map_err((_) => "diagnostic moved encode")?
+        assert semantic_digest(before).map_err((_) => "diagnostic digest")? == semantic_digest(after).map_err((_) => "diagnostic moved digest")?
+        decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "diagnostic decode")?
+        rows = native_fields(decoded).map_err((_) => "diagnostic fields")?
+        first = verify_fixture(source, "main", rows).map_err((error) => "diagnostic before: " + error.to_string())?
+        second = verify_fixture(moved, "main", rows).map_err((error) => "diagnostic after: " + error.to_string())?
+        assert len(first) > 0
+        assert first != second
+    return Ok(None)
+
+
+def default_record_controls() -> Result[None, str]:
+    """Parameter writes and defaults remain with their selected declaration writer, separate from the statement body."""
+    source = "def value(item: int = 3) -> int:\n    return item\ndef main() -> None:\n    println(value())\n"
+    moved = "# a moved declaration\n" + source
+    for declaration in [true, false]:
+        before = from_native_fields(fixture_projection(source, "value", declaration).map_err((error) => error.to_string())?).map_err((_) => "default projection")?
+        after = from_native_fields(fixture_projection(moved, "value", declaration).map_err((error) => error.to_string())?).map_err((_) => "default moved")?
+        encoded = encode_record(before).map_err((_) => "default encode")?
+        assert encoded == encode_record(after).map_err((_) => "default moved encode")?
+        decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "default decode")?
+        verify_fixture(moved, "value", native_fields(decoded).map_err((_) => "default fields")?).map_err((error) => "default: " + error.to_string())?
+    return Ok(None)
+
+
+def fault_is(value: Result[CheckedRecord, CodecFault], expected: str) -> bool:
+    """Different failed bindings retain their exact typed variant; payload faults use pattern matching."""
+    match value:
+        Err(CodecFault.ProfileMismatch) => return expected == "profile"
+        Err(CodecFault.OwnerMismatch) => return expected == "owner"
+        Err(CodecFault.BodyChanged) => return expected == "body"
+        Err(CodecFault.Malformed) => return expected == "malformed"
+        _ => return false
+
+
+def final_value_controls() -> Result[None, str]:
+    """A selected empty-list result carries finalized expression types separately from pending local facts."""
+    source = "def values() -> list[int]:\n    return []\ndef main() -> None:\n    println(\"hello\")\n"
+    moved = "# moved empty-list owner\n" + source
+    before = from_native_fields(fixture_projection(source, "values", false).map_err((error) => error.to_string())?).map_err((_) => "empty-list projection")?
+    after = from_native_fields(fixture_projection(moved, "values", false).map_err((error) => error.to_string())?).map_err((_) => "empty-list moved")?
+    encoded = encode_record(before).map_err((_) => "empty-list encode")?
+    assert encoded == encode_record(after).map_err((_) => "empty-list moved encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "empty-list decode")?
+    verify_fixture(moved, "values", native_fields(decoded).map_err((_) => "empty-list fields")?).map_err((error) => "empty-list: " + error.to_string())?
+    return Ok(None)

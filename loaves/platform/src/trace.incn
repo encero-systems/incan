@@ -1,4 +1,4 @@
-"""Bounded engine observations over a separate append-only channel, with process-monotonic span clocks."""
+"""Bounded engine observations over a separate append-only channel, with shared raw host-clock spans."""
 
 from rust::std::env import var_os
 from rust::std::fs import File, OpenOptions
@@ -11,7 +11,8 @@ from rust::serde import Serialize as RustSerialize
 from rust::std::string import String as RustString
 from rust::std::process import id
 from rust::std::thread import current
-from rust::std::time import Instant, SystemTime, UNIX_EPOCH
+from rust::std::time import SystemTime, UNIX_EPOCH
+from rust::incan_platform_clock import raw_uptime_ns
 
 pub const SCHEMA: str = "incan.engine.trace/1"
 pub const MAX_TEXT: int = 4096
@@ -34,7 +35,7 @@ pub enum TraceError:
 
 
 pub model Clock:
-    """An enabled operation's identity and start on this process's monotonic origin."""
+    """An enabled operation's identity and start on the shared raw host clock."""
 
     pub span: int
     pub start_ns: int
@@ -42,31 +43,218 @@ pub model Clock:
 
 
 model Origin:
-    """One clock origin and sequence, protected by the language's static guard."""
+    """One process lifetime identity and span sequence, protected by the language's static guard."""
 
-    clock: Option[Instant] = None
     sequence: int = 0
     identity: str = ""
 
-    def begin(mut self) -> Clock:
-        """Allocate a span identity only for an enabled observer."""
-        self.sequence += 1
+    def begin(mut self) -> Option[Clock]:
+        """Allocate a span only for an enabled observer with an available host clock."""
         started = self.now()
-        return Clock(span=self.sequence, start_ns=started, origin=self.identity)
+        if started < 0:
+            return None
+        self.sequence += 1
+        return Some(Clock(span=self.sequence, start_ns=started, origin=self.identity))
 
     def now(mut self) -> int:
-        """Nanoseconds since the first enabled observation; wall time never enters durations."""
-        match self.clock:
-            Some(origin) => return int(origin.elapsed().as_nanos())
-            None =>
-                self.clock = Some(Instant.now())
-                match SystemTime.now().duration_since(UNIX_EPOCH):
-                    Ok(epoch) => self.identity = f"{id()}-{epoch.as_nanos()}"
-                    Err(_) => self.identity = f"{id()}-{self.clock:?}"
-                return 0
+        """Read host nanoseconds; a failed or out-of-range clock refuses an observation."""
+        match raw_uptime_ns():
+            Err(_) => return -1
+            Ok(value) =>
+                match value.try_resize[int]():
+                    None => return -1
+                    Some(started) =>
+                        if self.identity == "":
+                            match SystemTime.now().duration_since(UNIX_EPOCH):
+                                Ok(epoch) => self.identity = f"{id()}-{epoch.as_nanos()}"
+                                Err(_) => self.identity = f"{id()}-{started}"
+                        return started
 
 
 static ORIGIN: Origin = Origin()
+
+
+pub enum Operation:
+    """Fixed operation keys checked at call sites; dynamic locators remain bounded data."""
+
+    FileRead
+    JsonRead
+    JsonDecode
+    FileHash
+    ManifestParse
+    ArtifactIdentity
+    FeatureResolution
+    GraphResolution
+    UnitDescription
+    RegistryIndex
+    RegistryCompletion
+    WorkerReady
+    WorkerConnect
+    DriverRequest
+    DriverSpawn
+    OwnerRequest
+    BakeryFind
+    BakeryClaim
+    BakerySeal
+    BakeryView
+    ProgramPrepare
+    GraphExport
+    EngineCapture
+    StoreLock
+    StoreFileSync
+    StoreFileWrite
+    StoreFileRename
+    StoreDirectorySync
+    StoreDurableSync
+    EngineUnit
+    EngineSelect
+    EngineLease
+    EngineEpoch
+    EnginePrepare
+    CliStart
+    LegacyRequest
+    LegacyPrepare
+    EngineCaptureInputs
+    EngineCaptureEncode
+    EngineConnect
+    EngineRequest
+    EngineChild
+    EngineAdmission
+    RegistryPage
+    ArchiveInventory
+    ArchiveUnpack
+    ToolchainAdmission
+    CompilerFacts
+    RegistryMetadata
+    InstallationRuntime
+    InstallationPayload
+    InstallationDocument
+    InstallationPageReuse
+    InstallationPage
+    FileStat
+    Reason
+
+    def key(self) -> str:
+        """The stable schema spelling of this operation, with exhaustive compile-time coverage."""
+        match self:
+            Operation.FileRead => return "file_read"
+            Operation.JsonRead => return "json_read"
+            Operation.JsonDecode => return "json_decode"
+            Operation.FileHash => return "file_hash"
+            Operation.ManifestParse => return "manifest_parse"
+            Operation.ArtifactIdentity => return "artifact_identity"
+            Operation.FeatureResolution => return "feature_resolution"
+            Operation.GraphResolution => return "graph_resolution"
+            Operation.UnitDescription => return "unit_description"
+            Operation.RegistryIndex => return "registry_index"
+            Operation.RegistryCompletion => return "registry_completion"
+            Operation.WorkerReady => return "worker_ready"
+            Operation.WorkerConnect => return "worker_connect"
+            Operation.DriverRequest => return "driver_request"
+            Operation.DriverSpawn => return "driver_spawn"
+            Operation.OwnerRequest => return "owner_request"
+            Operation.BakeryFind => return "bakery_find"
+            Operation.BakeryClaim => return "bakery_claim"
+            Operation.BakerySeal => return "bakery_seal"
+            Operation.BakeryView => return "bakery_view"
+            Operation.ProgramPrepare => return "program_prepare"
+            Operation.GraphExport => return "graph_export"
+            Operation.EngineCapture => return "engine_capture"
+            Operation.StoreLock => return "store_lock"
+            Operation.StoreFileSync => return "store_file_sync"
+            Operation.StoreFileWrite => return "store_file_write"
+            Operation.StoreFileRename => return "store_file_rename"
+            Operation.StoreDirectorySync => return "store_directory_sync"
+            Operation.StoreDurableSync => return "store_durable_sync"
+            Operation.EngineUnit => return "engine_unit"
+            Operation.EngineSelect => return "engine_select"
+            Operation.EngineLease => return "engine_lease"
+            Operation.EngineEpoch => return "engine_epoch"
+            Operation.EnginePrepare => return "engine_prepare"
+            Operation.CliStart => return "cli_start"
+            Operation.LegacyRequest => return "legacy_request"
+            Operation.LegacyPrepare => return "legacy_prepare"
+            Operation.EngineCaptureInputs => return "engine_capture_inputs"
+            Operation.EngineCaptureEncode => return "engine_capture_encode"
+            Operation.EngineConnect => return "engine_connect"
+            Operation.EngineRequest => return "engine_request"
+            Operation.EngineChild => return "engine_child"
+            Operation.EngineAdmission => return "engine_admission"
+            Operation.RegistryPage => return "registry_page"
+            Operation.ArchiveInventory => return "archive_inventory"
+            Operation.ArchiveUnpack => return "archive_unpack"
+            Operation.ToolchainAdmission => return "toolchain_admission"
+            Operation.CompilerFacts => return "compiler_facts"
+            Operation.RegistryMetadata => return "registry_metadata"
+            Operation.InstallationRuntime => return "installation_runtime"
+            Operation.InstallationPayload => return "installation_payload"
+            Operation.InstallationDocument => return "installation_document"
+            Operation.InstallationPageReuse => return "installation_page_reuse"
+            Operation.InstallationPage => return "installation_page"
+            Operation.FileStat => return "file_stat"
+            Operation.Reason => return "reason"
+
+
+pub model Emitter:
+    """A fixed producer and channel validated once; each event goes straight to its wire record."""
+
+    writer: Writer
+    producer: str
+    run: str
+    request: str
+    process: int
+
+    @staticmethod
+    def open(destination: str, producer: str, run: str = "", request: str = "") -> Result[Emitter, TraceError]:
+        """Retain a writer and invariant fields once; a refused configuration never changes console output."""
+        if not bounded(producer) or not bounded(run) or not bounded(request):
+            return Err(TraceError.FieldBound)
+        return Ok(
+            Emitter(writer=CHANNELS.writer(destination)?, producer=producer, run=run, request=request, process=int(id())),
+        )
+
+    def emit(self, clock: Clock, operation: Operation, key: str, bytes: int = 0) -> Result[None, TraceError]:
+        """
+        Complete a typed operation directly into the bounded native serializer.
+
+        Only dynamic data is validated per event. Configuration was bounded at open and operation keys are an enum.
+        No intermediate EngineSpan or JSON value is allocated, and the writer is already retained.
+        """
+        if not bounded(key):
+            return Err(TraceError.FieldBound)
+        ended = ORIGIN.now()
+        if bytes < 0 or clock.span <= 0 or clock.start_ns < 0 or ended < clock.start_ns:
+            return Err(TraceError.InvalidSpan)
+        mut run = self.run
+        if run == "":
+            run = clock.origin
+        if not bounded(clock.origin):
+            return Err(TraceError.FieldBound)
+        row = TraceRecord(
+            schema=SCHEMA,
+            kind="span",
+            run=run,
+            request=self.request,
+            work=f"{self.process}:{clock.span}",
+            producer=self.producer,
+            operation=operation.key(),
+            key=key,
+            snapshot="",
+            thread=f"{current().id():?}",
+            outcome="done",
+            clock="host-monotonic-raw",
+            clock_id=clock.origin,
+            span=clock.span,
+            parent=0,
+            process=self.process,
+            start_ns=clock.start_ns,
+            end_ns=ended,
+            bytes=bytes,
+            records=0,
+            calls=1,
+            cpu_ns=None,
+        )
+        return self.writer.write_record(row)
 
 
 pub model Writer:
@@ -93,6 +281,10 @@ pub model Writer:
     def record(self, span: &EngineSpan) -> Result[None, TraceError]:
         """Encode into the retained fixed slice; only a complete, bounded record reaches the file buffer."""
         row = wire_record(span)?
+        return self.write_record(row)
+
+    def write_record(self, row: &TraceRecord) -> Result[None, TraceError]:
+        """Encode an admitted typed record into fixed scratch before publishing any of its bytes."""
         mut scratch = self.scratch.lock().map_err((_) => TraceError.Channel)?
         used = fill(scratch.deref_mut(), row)?
         mut output = self.output.lock().map_err((_) => TraceError.Channel)?
@@ -183,7 +375,7 @@ pub model EngineSpan:
     pub counters: Counters = Counters()
     # An unavailable CPU clock is null on the wire, never an invented zero.
     pub cpu_ns: Option[int] = None
-    # Distinguishes monotonic origins even when a process id is reused.
+    # Distinguishes process lifetimes for span identities; timestamps share the host epoch.
     pub clock_id: str = ""
 
 
@@ -198,7 +390,7 @@ pub def begin(observing: bool) -> Option[Clock]:
     """Start only an enabled operation; the disabled branch does not touch the clock or static state."""
     if not observing:
         return None
-    return Some(ORIGIN.begin())
+    return ORIGIN.begin()
 
 
 pub def complete(
@@ -306,7 +498,7 @@ def wire_record(span: &EngineSpan) -> Result[TraceRecord, TraceError]:
         snapshot=span.snapshot,
         thread=span.thread,
         outcome=span.outcome,
-        clock="process-monotonic",
+        clock="host-monotonic-raw",
         clock_id=span.clock_id,
         span=span.span,
         parent=span.parent,

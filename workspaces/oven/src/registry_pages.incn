@@ -7,6 +7,7 @@ from std.hash import sha256
 from std.tempfile import TemporaryDirectory
 from bakery import bakery
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 from observation import Observation, SETTLE_SECONDS, now_seconds, observe
 from registry_codec import Catalog, decode, encode
 from registry_units import RegistryUnit, sole_library
@@ -43,7 +44,7 @@ pub def recall_catalog(key: str) -> Result[Option[Catalog], str]:
             mapped = mapped_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?
             catalog = decode(mapped).map_err((detail) => f"registry page {digest}: {detail}")?
             # 3. The caller validates observations within its separately measured completion boundary.
-            record_work("registry_page", key, clock, mapped.len())
+            record_work(Operation.RegistryPage, key, clock, mapped.len())
             return Ok(Some(catalog))
 
 

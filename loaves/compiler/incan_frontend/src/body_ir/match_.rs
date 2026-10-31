@@ -31,13 +31,32 @@ impl PatternReadScope<'_> {
     }
 }
 
+/// Whether storage of type `ty` can hold a reference at any depth; a type still open counts, since it may become one.
+fn storage_names_reference(ty: &IncanType) -> bool {
+    match ty {
+        IncanType::Ref(_)
+        | IncanType::RefMut(_)
+        | IncanType::Function { .. }
+        | IncanType::TypeVar(_)
+        | IncanType::SelfType
+        | IncanType::Infer
+        | IncanType::Unknown
+        | IncanType::Unsupported(_) => true,
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args.iter().any(storage_names_reference),
+        IncanType::NativeArray { element, .. } => storage_names_reference(element),
+        _ => false,
+    }
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a match expression into one structured [`bir::Rvalue::Match`] with arm-scoped bindings and results.
     ///
-    /// The scrutinee is borrowed; each payload read retains its checked ownership fact. Guards and bodies see only
-    /// their arm's bindings. Range-layout facts after the match are the intersection of the arm outcomes, since
-    /// textual arm order does not establish which arm executes. Source reads in an arm preserve enclosing owners
-    /// across alternative paths; arm-local payload transfers remain governed by their checked pattern facts.
+    /// The scrutinee is borrowed; each payload read retains its checked ownership fact. The temporaries made while
+    /// evaluating it end before the arms when its value holds no loan ([`Self::end_scrutinee_temporaries`]). Guards
+    /// and bodies see only their arm's bindings. Range-layout facts after the match are the intersection of the arm
+    /// outcomes, since textual arm order does not establish which arm executes. Source reads in an arm preserve
+    /// enclosing owners across alternative paths; arm-local payload transfers remain governed by their checked
+    /// pattern facts.
     ///
     /// A byte-string literal pattern is outside the supported pattern vocabulary. Refuse the whole expression
     /// before lowering its scrutinee so an unsupported pattern cannot leave partially lowered effects.
@@ -62,6 +81,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
+        let first_temporary = self.locals.len();
         let scrutinee_place = self.lower_expr_to_place(subject, scope, out);
         let scrutinee_ty = if scrutinee_place.projection.is_empty() {
             scrutinee_place
@@ -72,6 +92,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.resolve_ty(subject.span)
         };
         let in_place = self.matches_in_place(subject.span, &scrutinee_ty);
+        self.end_scrutinee_temporaries(subject.span, &scrutinee_place, in_place, first_temporary, scope, out);
         // Always read as `Borrow` -- see `bir::Rvalue::Match::scrutinee`'s own docs for why the overall scrutinee
         // read must not risk an unconditional move while individual pattern bindings below compute their own,
         // more precise facts against projected places rooted at this same scrutinee.
@@ -157,6 +178,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// End the temporaries that evaluating a scrutinee made, except the scrutinee's own value, before its arms run.
+    ///
+    /// They would otherwise end with the enclosing statement, keeping their loans across the arms: in
+    /// `match connected.stream.borrow_mut().write_all(sent):` the `RefMut` guard would still borrow `connected` when
+    /// an arm returns, and so moves, `connected`. Only a whole local whose value the checker proved holds no loan
+    /// ([`TypeCheckInfo::scrutinee_holds_no_loan`]), and whose storage names no reference, is independent of them. A
+    /// projected or in-place scrutinee keeps its temporaries until the statement ends.
+    ///
+    /// [`TypeCheckInfo::scrutinee_holds_no_loan`]: crate::typechecker::TypeCheckInfo::scrutinee_holds_no_loan
+    pub(super) fn end_scrutinee_temporaries(
+        &mut self,
+        subject: ast::Span,
+        scrutinee: &bir::Place,
+        in_place: bool,
+        first_temporary: usize,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        if in_place || !scrutinee.projection.is_empty() || !self.type_info.scrutinee_holds_no_loan(subject) {
+            return;
+        }
+        let Some(kept) = scrutinee.local_id() else {
+            return;
+        };
+        if self
+            .locals
+            .get(kept.index())
+            .is_none_or(|local| storage_names_reference(&local.ty))
+        {
+            return;
+        }
+        self.insert_statement_temporary_drops(out, scope, first_temporary, Some(kept), hir_span(subject));
     }
 
     /// Transfer a single owned payload from an unguarded match on a carrier no later read can reuse: a fresh enum

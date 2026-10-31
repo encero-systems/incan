@@ -6,9 +6,175 @@ use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, R
 use incan_lang::lang::types::numerics::NumericTypeId;
 
 use super::{TypeChecker, first_open_type_param};
+use crate::ast::{Expr, Span, Spanned};
+use crate::diagnostics::CompileError;
 use crate::symbols::ResolvedType;
+use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 
 impl TypeChecker {
+    /// Reject a closed scalar's unsatisfied parameterized native bound before retaining an executable call.
+    /// Callable and marker obligations keep their existing admission path. Concrete primitive carriers have no
+    /// downstream inference left: retained impl templates must match both Self and the bound's type arguments.
+    pub(super) fn validate_rust_scalar_predicates(
+        &mut self,
+        signature: &RustFunctionSig,
+        bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        for predicate in &signature.bounds {
+            if predicate.type_arguments.is_empty()
+                || incan_lang::interop::rust_callable_trait(&predicate.path).is_some()
+            {
+                continue;
+            }
+            let subject = self.instantiate_rust_signature_type(
+                &self.native_rust_signature_type(&predicate.self_type, ""),
+                &signature.type_params,
+                bindings,
+            );
+            if !matches!(
+                subject,
+                ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool
+            ) {
+                continue;
+            }
+            let expected = predicate
+                .type_arguments
+                .iter()
+                .map(|argument| {
+                    let argument = self.instantiate_rust_signature_type(
+                        &self.native_rust_signature_type(argument, ""),
+                        &signature.type_params,
+                        bindings,
+                    );
+                    let display = render_resolved_type_as_rust_arg(&argument);
+                    if display.contains(" as ") {
+                        self.rust_projected_type(&display, 0)
+                    } else {
+                        Some(argument)
+                    }
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(expected) = expected else { continue };
+            if expected
+                .iter()
+                .any(|argument| Self::mentions_foreign_type_variable(argument, &[]))
+            {
+                continue;
+            }
+            let Some(metadata) = self.rust_item_metadata_for_path(&predicate.path) else {
+                continue;
+            };
+            let RustItemKind::Trait(info) = &metadata.kind else {
+                continue;
+            };
+            if info.implementations.iter().any(|implementation| {
+                self.rust_impl_predicate_arguments(implementation, &subject, &expected, &[])
+                    .is_some()
+                    && self.rust_impl_may_apply(implementation, &subject)
+            }) {
+                continue;
+            }
+            let arguments = expected
+                .iter()
+                .map(render_resolved_type_as_rust_arg)
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Rust type `{}` does not satisfy bound `{}<{}>`",
+                    render_resolved_type_as_rust_arg(&subject),
+                    predicate.path,
+                    arguments,
+                ),
+                span,
+            ));
+        }
+    }
+
+    /// Infer a literal native carrier's element destination from the selected parameter's declared trait arguments.
+    /// Only unsuffixed range endpoints take this context. Matching impl self constructors must agree, and all impl
+    /// binders must close from the bound itself; a default i64 endpoint is never evidence against that destination.
+    pub(super) fn rust_range_bound_destination(
+        &self,
+        signature: &RustFunctionSig,
+        parameter: &str,
+        expression: &Spanned<Expr>,
+        native: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        if let Expr::Paren(inner) = &expression.node {
+            return self.rust_range_bound_destination(signature, parameter, inner, native);
+        }
+        let Expr::Range {
+            start,
+            end,
+            inclusive: false,
+        } = &expression.node
+        else {
+            return None;
+        };
+        if !super::super::ops::is_unsuffixed_integer_literal(start)
+            || !super::super::ops::is_unsuffixed_integer_literal(end)
+        {
+            return None;
+        }
+        let native = self.rust_inference_type(native, &[]);
+        let ResolvedType::Generic(base, _) = &native else {
+            return None;
+        };
+        let mut selected = None;
+        for bound in &signature.bounds {
+            if bound.self_type != parameter || bound.type_arguments.is_empty() {
+                continue;
+            }
+            let metadata = self.rust_item_metadata_for_path(&bound.path)?;
+            let RustItemKind::Trait(info) = &metadata.kind else {
+                continue;
+            };
+            for implementation in &info.implementations {
+                let template = self.rust_inference_type(
+                    &self.native_rust_signature_type(&implementation.self_type, ""),
+                    &implementation.type_params,
+                );
+                if !matches!(&template, ResolvedType::Generic(owner, _) if owner == base)
+                    || implementation.type_arguments.len() != bound.type_arguments.len()
+                {
+                    continue;
+                }
+                let mut inferred = HashMap::new();
+                for (template, destination) in implementation.type_arguments.iter().zip(&bound.type_arguments) {
+                    self.infer_type_param_bindings(
+                        &self.rust_inference_type(
+                            &self.native_rust_signature_type(template, ""),
+                            &implementation.type_params,
+                        ),
+                        &self.native_rust_signature_type(destination, ""),
+                        &mut inferred,
+                    );
+                }
+                let target = self.instantiate_rust_signature_type(&template, &implementation.type_params, &inferred);
+                if !matches!(&target, ResolvedType::Generic(_, arguments)
+                    if matches!(arguments.as_slice(), [ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_)]))
+                {
+                    continue;
+                }
+                if first_open_type_param(&target, &implementation.type_params).is_some()
+                    || first_open_type_param(&target, &signature.type_params).is_some()
+                {
+                    continue;
+                }
+                if selected
+                    .as_ref()
+                    .is_some_and(|previous| !self.rust_trait_carriers_match(previous, &target))
+                {
+                    return None;
+                }
+                selected = Some(target);
+            }
+        }
+        selected
+    }
+
     /// Close missing callable binders from a bound whose subject is already known, repeating only while new bindings
     /// appear. Conditional implementations supply inference candidates rather than proof that their predicates
     /// hold.

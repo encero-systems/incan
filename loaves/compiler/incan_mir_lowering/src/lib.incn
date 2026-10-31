@@ -8,13 +8,14 @@ from numerics import numeric_carrier as checked_numeric_carrier
 pub from closures import owned_capture
 pub from lowering import BodyIrModule
 from lowering import unit_plan as checked_unit_plan, program_refusals as checked_program_refusals
-pub from records import (
+# The record contracts live in internal_models; these names remain importable from the lowering as before.
+pub from pub::internal_models import (
     RecordKey, ReadScope, PayloadSelection, MemberSelection, RecordSelection,
     RecordRequest, RevisionEvidence,
     SelectedFact, AbsentFact, ReadFault, RecordRead, ReadWitness, RecordSource, RecordReads,
     ReadReceipt, ReadCounters, PreparationEvidence, READ_SCHEMA,
 )
-pub from record_service import (
+pub from pub::internal_models import (
     RECORD_SERVICE_SCHEMA,
     prepared_reader,
     CompilerRecordService,

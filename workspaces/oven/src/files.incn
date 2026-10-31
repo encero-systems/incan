@@ -3,7 +3,9 @@
 from rust::std::fs import File, OpenOptions
 from std.fs import Path
 from std.json import JsonValue, parse
+from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
+from frozen_inputs import read as frozen_document
 
 
 pub def read(path: Path) -> Result[str, str]:
@@ -12,8 +14,8 @@ pub def read(path: Path) -> Result[str, str]:
     result = path.read_text("utf-8", "strict").map_err((error) => error.message())
     if clock is not None:
         match result:
-            Ok(content) => record("file_read", path.0, clock, text_size(content, clock))
-            Err(_) => record("file_read", path.0, clock)
+            Ok(content) => record(Operation.FileRead, path.0, clock, text_size(content, clock))
+            Err(_) => record(Operation.FileRead, path.0, clock)
     return result
 
 
@@ -47,10 +49,12 @@ pub def make_directory(path: Path) -> Result[None, str]:
 
 pub def read_json(path: Path) -> Result[JsonValue, str]:
     """A JSON document from a file; a failure names the file."""
+    if let Some(document) = frozen_document(path)?:
+        return Ok(document)
     text = read(path).map_err((error) => f"{path.0}: {error}")?
     clock = begin()
     result = parse(text).map_err((error) => f"{path.0}: {error.message()}")
-    record("json_decode", path.0, clock, text_size(text, clock))
+    record(Operation.JsonDecode, path.0, clock, text_size(text, clock))
     return result
 
 

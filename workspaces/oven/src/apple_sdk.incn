@@ -7,7 +7,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, read_json
-from home import home
+from home_paths import home
 from json_fields import required_text
 from observation import observe
 from publication import publish

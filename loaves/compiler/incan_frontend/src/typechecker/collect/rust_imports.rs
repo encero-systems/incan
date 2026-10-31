@@ -95,6 +95,14 @@ impl TypeChecker {
         if info.binding != RustImportBindingKind::CrateRoot && !self.admit_source_rust_item(&name, &info.path, span) {
             return;
         }
+        // rustc read the crate and found no public item at the path, so the import names nothing. The binding still
+        // stands, so its uses are not also refused as unknown names, but it grants no callable, value or trait
+        // authority.
+        let absent = info.metadata.is_none() && self.loaves.rust_path_is_absent(&info.path);
+        if absent {
+            self.errors
+                .push(errors::rust_item_not_in_crate(&info.crate_name, &info.path, span));
+        }
         let mut trait_methods = HashSet::new();
         let mut trait_method_signatures = std::collections::HashMap::new();
         if let Some(metadata) = &info.metadata
@@ -111,7 +119,7 @@ impl TypeChecker {
             }
         }
         let symbol_id = self.define_rust_import_symbol(name.clone(), info.clone(), span);
-        if !self.symbols.is_active_lookup_binding(symbol_id) {
+        if absent || !self.symbols.is_active_lookup_binding(symbol_id) {
             return;
         }
         // An import with a declared method surface is a trait Rust method lookup can use. An import with no
@@ -137,8 +145,9 @@ impl TypeChecker {
         );
     }
 
-    /// Refuse known restricted imports, including unused imports and paths under a private namespace. Missing
-    /// metadata keeps the existing deferred import binding and grants no callable or construction authority.
+    /// Refuse known restricted imports, including unused imports and paths under a private namespace. Metadata that
+    /// is missing because no source was asked keeps the existing deferred import binding and grants no callable or
+    /// construction authority; a path rustc was asked about and found absent is refused by the import binding.
     pub(in crate::typechecker) fn admit_source_rust_item(&mut self, name: &str, path: &str, span: Span) -> bool {
         let mut prefix = path;
         loop {

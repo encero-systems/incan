@@ -1,5 +1,6 @@
 """Pack the installed toolchain's named closure, rewriting paths at the archive boundary."""
 
+from pub::incan_platform.trace import Operation
 from rust::std::fs import create_dir, remove_dir_all, rename
 from rust::std::os::unix::fs import symlink
 from rust::std::process import Command, id
@@ -15,15 +16,20 @@ from toolchain import (
     NativeCrate,
     TOOLCHAIN_SCHEMA,
     Toolchain,
+    InstallationAdmission,
     load_toolchain,
     located,
-    read_toolchain,
+    prepare_installation,
+    finish_installation,
     toolchain_directory,
 )
 from rust_units import decoded, read_registry_units
+from registry_units import RegistryUnit
 from observation import file_digest
 from unit_publication import publication, published_identity, record_path, record_payload
 from cli_help import render, unknown_option
+from jec import begin, record
+from installation_check import verify_installed_runtime
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -240,14 +246,40 @@ def stage_registry(toolchain: Toolchain, stage: Path) -> Result[None, str]:
     for name in table.keys():
         value = table.require(name).map_err((error) => error.message())?
         artifact = required_text(value, "path")?
-        relative = stage_artifact(Path(located(source.parent(), artifact)), stage)?
-        externs[name] = replaced(value, "path", JsonValue.string(from_registry(relative)))?
+        path = Path(located(source.parent(), artifact))
+        relative = stage_artifact(path, stage)?
+        _, payload = publication(path)?
+        portable = replaced(value, "path", JsonValue.string(from_registry(relative)))?
+        externs[name] = replaced(portable, "payload_digest", JsonValue.string(payload))?
     mut units: list[JsonValue] = []
-    for unit in required_items(document, "units")?:
-        units.append(portable_unit(source, unit, stage)?)
+    records = required_items(document, "units")?
+    for index in range(len(records)):
+        completed = registry.units[index]
+        if required_text(records[index], "entry")? != completed.entry:
+            return Err("registry closure changed while packing")
+        units.append(portable_unit(source, baked_registry_unit(records[index], completed)?, stage)?)
     portable = replaced(document, "externs", JsonValue.object(externs))?
     write_json(stage.joinpath("registry/closure.json"), replaced(portable, "units", JsonValue.array(units))?)?
     return Ok(None)
+
+
+def baked_registry_unit(document: JsonValue, unit: RegistryUnit) -> Result[JsonValue, str]:
+    """Ship the native facts already established by the producer, including exact legacy dependency completion."""
+    mut baked = document
+    for name, value in [
+        ("name", unit.name),
+        ("crate_hash", unit.crate_hash),
+        ("kind", unit.kind),
+        ("artifact", unit.artifact),
+        ("refusal", unit.refusal),
+    ]:
+        baked = replaced(baked, name, JsonValue.string(value))?
+    if unit.artifact == "":
+        baked = replaced(baked, "artifact", JsonValue.null())?
+    if unit.recorded:
+        dependencies = [JsonValue.object({"entry": JsonValue.string(entry)}) for entry in unit.dependencies]
+        baked = replaced(baked, "dependencies", JsonValue.array(dependencies))?
+    return Ok(baked)
 
 
 def portable_unit(source: Path, unit: JsonValue, stage: Path) -> Result[JsonValue, str]:
@@ -559,12 +591,16 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     6. Publish the installation.
     """
     # 1. Nothing in the archive can land outside the stage or plant the machine's sysroot link.
+    mut clock = begin()
     listing = command_text("tar", ["-tf", archive.0])?
+    record(Operation.ArchiveInventory, archive.0, clock)
     for entry in listing.split("\n"):
         if entry != "" and not safe_member(entry):
             return Err(f"unsafe toolchain archive member: {entry}")
     # 2. The archive is unpacked into the stage.
+    clock = begin()
     run_command("tar", ["-xf", archive.0, "-C", stage.0])?
+    record(Operation.ArchiveUnpack, archive.0, clock)
     # 3. The archive is a toolchain of this Oven, and every path its manifest names stays inside the toolchain.
     document = read_json(stage.joinpath("toolchain.json"))?
     name = required_text(document, "name")?
@@ -572,14 +608,16 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
         return Err(f"archive toolchain {name} does not match this Oven's {TOOLCHAIN}")
     validate_paths(document)?
     # 4. Every artifact and directory the manifest names is in the archive, so the installation is complete.
-    toolchain = read_toolchain(stage)?
+    clock = begin()
+    toolchain, admission = prepare_installation(stage)?
+    record(Operation.ToolchainAdmission, stage.0, clock)
     verify_contents(toolchain)?
     # 5. The machine's Rust installation is linked in, and the driver proves it is the compiler it was built against.
     sysroot = local_sysroot()?
     symlink(sysroot.0, stage.joinpath("sysroot").0).map_err((error) => str(error))?
     run_command(toolchain.driver, ["--identity", toolchain.sysroot])?
     # 6. Only a verified toolchain replaces the installed one.
-    publish_install(stage, target)?
+    publish_install(stage, target, admission)?
     println(f"installed {TOOLCHAIN}: {target.0}")
     return Ok(None)
 
@@ -648,19 +686,26 @@ def local_sysroot() -> Result[Path, str]:
             return Path(output.strip()).resolve().map_err((error) => error.message())
 
 
-def publish_install(stage: Path, target: Path) -> Result[None, str]:
+def publish_install(stage: Path, target: Path, admission: InstallationAdmission) -> Result[None, str]:
     """
     Publish a verified directory with rollback on rename failure; remove the previous installation only afterward.
 
     1. With no installation yet, the stage becomes it.
     2. Move the previous installation aside.
     3. Move the stage into place; if that fails, restore the previous installation.
-    4. Remove the previous installation.
+    4. Finish preparation at the installed location, restoring the previous installation on failure.
+    5. Remove the previous installation.
     """
     # 1. With nothing installed yet, the stage simply becomes the installation.
     if not target.is_dir():
         rename(stage.0, target.0).map_err((error) => str(error))?
-        return Ok(None)
+        match prepare_published(target, admission):
+            Ok(_) => return Ok(None)
+            Err(error) =>
+                rename(target.0, stage.0).map_err(
+                    (failed) => f"{error}; cannot return failed installation to staging: {failed}",
+                )?
+                return Err(error)
     # 2. The previous installation is moved aside, not deleted, until the new one is in place.
     previous = target.parent().joinpath(f".previous-{TOOLCHAIN}-{id()}")
     if previous.exists():
@@ -670,8 +715,26 @@ def publish_install(stage: Path, target: Path) -> Result[None, str]:
     match rename(stage.0, f"{target.0}"):
         Ok(_) => pass
         Err(error) => return Err(restored_after(f"{error}", previous, target))
-    # 4. Only an installation that is in place makes the previous one disposable.
+    # 4. A failed preparation preserves the previous installation, just as a failed rename does.
+    match prepare_published(target, admission):
+        Ok(_) => pass
+        Err(error) =>
+            rename(target.0, stage.0).map_err(
+                (failed) => f"{error}; cannot return failed installation to staging: {failed}",
+            )?
+            return Err(restored_after(error, previous, target))
+    # 5. Only a fully prepared installation makes the previous one disposable.
     remove_dir_all(previous.0).map_err((error) => str(error))?
+    return Ok(None)
+
+
+def prepare_published(target: Path, admission: InstallationAdmission) -> Result[None, str]:
+    """Bind verified payloads and prepare legacy metadata at final paths before installation returns."""
+    finish_installation(target, admission)?
+    # Legacy bundles need native metadata once on this machine; current bundles already carry it.
+    installed = load_toolchain()?
+    read_registry_units(Path(installed.registry_units))?
+    verify_installed_runtime(target)?
     return Ok(None)
 
 
