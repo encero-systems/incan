@@ -37,6 +37,7 @@ impl TypeChecker {
     /// Close native output binders from an already bound subject's retained associated equalities. Source generic
     /// subjects use their active checked bounds; a caller's binder may have the same name as the callee's binder.
     /// Metadata supplies the associated value, and rustc still verifies the specialized native predicate.
+    /// A source collection subject answers through its native owner: `I = list[str]` closes `I::Item` as String.
     fn infer_rust_associated_bindings(
         &self,
         predicate: &RustTraitBound,
@@ -47,7 +48,7 @@ impl TypeChecker {
             return;
         };
         for associated in &predicate.associated_type_bindings {
-            let Some(actual) = self.rust_associated_type(&subject, &predicate.path, &associated.name) else {
+            let Some(actual) = self.rust_binding_associated_type(&subject, &predicate.path, &associated.name) else {
                 continue;
             };
             let expected =

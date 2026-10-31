@@ -1,4 +1,4 @@
-# behavior: native cursor loans, guard reads and boxed enum pattern loans preserve their actual referents (#2256)
+# behavior: native cursor loans, guard reads and boxed enum pattern loans preserve their actual referents, and Write.write_all takes borrowed and owned byte vectors as its slice (#2256, #2432)
 # expect-stdout:
 #   2
 #   0
@@ -10,15 +10,19 @@
 #   1
 #   2
 #   2
+#   A
+#   BC
 
 """Observe one native cursor through every receiver, ownership and trait shape the area cases cover."""
 
 from rust::std::cell import RefCell
 from rust::std::boxed import Box
 from rust::std::cmp import Ordering
-from rust::std::io import Cursor, Read, Seek, SeekFrom
+from rust::std::fs import File, read_to_string
+from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
 from rust::std::ops import Bound
 from rust::std::rc import Rc
+from rust::std::vec import Vec
 
 
 class Buffer:
@@ -111,12 +115,41 @@ def contains_bound(values: list[Bound[Box[Ordering]]], value: &Bound[Box[Orderin
     return value in values
 
 
+def write_borrowed(mut file: File, data: &Vec[u8]) -> None:
+    """Write a borrowed byte vector, which the trait method takes as its native slice."""
+    _ = file.write_all(data)
+
+
+def write_owned(mut file: File, data: Vec[u8]) -> None:
+    """Write an owned byte vector through the same trait method."""
+    _ = file.write_all(data)
+
+
+def show_vector_writes() -> None:
+    """Read back the bytes each write stored."""
+    match File.create("borrowed.out"):
+        Ok(file) => write_borrowed(file, [65u8])
+        Err(_) =>
+            assert false
+    data: Vec[u8] = [66u8, 67u8]
+    match File.create("owned.out"):
+        Ok(file) => write_owned(file, data)
+        Err(_) =>
+            assert false
+    for path in ["borrowed.out", "owned.out"]:
+        match read_to_string(path):
+            Ok(text) => println(text)
+            Err(_) =>
+                assert false
+
+
 def main() -> None:
     """
     Observe native loans.
 
     1. Observe cursor methods, traits and guard reads.
     2. Inspect a borrowed boxed enum without changing its owner.
+    3. Write borrowed and owned byte vectors through a native trait method.
     """
     # 1. Observe cursor methods, traits and guard reads.
     show_owned_clone()
@@ -133,3 +166,6 @@ def main() -> None:
     bounds = [bound]
     assert contains_bound(bounds, bound)
     assert contains_bound(bounds, bound)
+
+    # 3. Write borrowed and owned byte vectors through a native trait method.
+    show_vector_writes()

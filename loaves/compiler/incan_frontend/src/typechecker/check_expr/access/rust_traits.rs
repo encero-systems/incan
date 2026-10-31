@@ -1067,7 +1067,8 @@ impl TypeChecker {
 
     /// Resolve one trait method only when its self template, inputs, and expected output close every native binder.
     /// Impl predicates remain native obligations: this selects an exact trait reference, and the adapter verifies
-    /// that rustc can satisfy it before emitting MIR. Competing equally ranked trait references remain ambiguous.
+    /// that rustc can satisfy it before emitting MIR. A method bound whose closed associated equality contradicts the
+    /// value its subject supplies excludes the reference; other competing equally ranked references remain ambiguous.
     fn retained_trait_candidate(
         &self,
         implementation: &RustImplementedTrait,
@@ -1134,6 +1135,9 @@ impl TypeChecker {
             let closed = self.instantiate_rust_signature_type(&template, &variables, &bindings);
             storage = self.rust_storage_owner(&closed, info, call.rust_path);
         }
+        if !self.rust_associated_equalities_hold(&signature, &variables, &bindings) {
+            return None;
+        }
         let owner_display = Self::rust_owner_display(&storage, call.rust_path);
         let displays = bindings
             .iter()
@@ -1173,6 +1177,34 @@ impl TypeChecker {
             self_type: storage,
             borrow_cost,
             returns_self: original.return_type.trim() == "Self",
+        })
+    }
+
+    /// Whether each associated equality a candidate's method bounds state agrees with the value its bound subject
+    /// supplies: `Extend<&T>` requires `I: IntoIterator<Item = &T>`, which a vector of owned items contradicts. An
+    /// equality that is still open or whose value no impl supplies decides nothing; rustc verifies the rest.
+    fn rust_associated_equalities_hold(
+        &self,
+        signature: &RustFunctionSig,
+        variables: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> bool {
+        let closed = |display: &str| {
+            let template = self.native_rust_signature_type(display, "");
+            let ty = self.instantiate_rust_signature_type(&template, variables, bindings);
+            (!Self::contains_unbound_rust_type_var(&ty)).then_some(ty)
+        };
+        signature.bounds.iter().all(|bound| {
+            let Some(subject) = closed(&bound.self_type) else {
+                return true;
+            };
+            bound.associated_type_bindings.iter().all(|binding| {
+                let Some(expected) = closed(&binding.value_path) else {
+                    return true;
+                };
+                self.rust_binding_associated_type(&subject, &bound.path, &binding.name)
+                    .is_none_or(|actual| self.rust_trait_carriers_match(&expected, &actual))
+            })
         })
     }
 
@@ -1245,15 +1277,28 @@ impl TypeChecker {
                 cost += 1;
                 continue;
             }
-            let target = match &target {
-                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+            let (target, exclusive) = match &target {
+                ResolvedType::Ref(inner) => {
                     cost += 1;
-                    inner.as_ref()
+                    (inner.as_ref(), Some(false))
                 }
-                _ => &target,
+                ResolvedType::RefMut(inner) => {
+                    cost += 1;
+                    (inner.as_ref(), Some(true))
+                }
+                _ => (&target, None),
             };
-            let view =
-                parameter.type_display.trim().starts_with('&') && self.rust_borrowed_view_matches(target, argument);
+            // A loan argument offers its referent's view as an owner does: `&Vec<u8>` reaches `&[u8]` like `Vec<u8>`.
+            // A shared parameter views either loan; an exclusive parameter views only an exclusive one.
+            let lent = match (exclusive, argument) {
+                (Some(false), ResolvedType::Ref(referent) | ResolvedType::RefMut(referent))
+                | (Some(true), ResolvedType::RefMut(referent)) => Some(referent.as_ref()),
+                _ => None,
+            };
+            let view = parameter.type_display.trim().starts_with('&')
+                && std::iter::once(argument)
+                    .chain(lent)
+                    .any(|offered| self.rust_borrowed_view_matches(target, offered));
             if !view && !self.rust_trait_carriers_match(target, argument) {
                 return None;
             }

@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners (#2256)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, and close binders projected from source collections, as for Command.args, Command.envs and Vec.extend (#2256, #2432)
 # expect-stdout:
 #   7
 #   leaf
@@ -15,6 +15,9 @@
 #   typed channel
 #   thread 42
 #   stored 3
+#   3
+#   2
+#   3
 #   false
 
 """Retain generic instantiations, scalar and text loans, and a nonreturning native result in one case."""
@@ -26,11 +29,12 @@ from rust::std::hash import DefaultHasher, Hash, Hasher
 from rust::std::iter import Iterator as NativeIterator
 from rust::std::mem import size_of_val, swap
 from rust::std::path import Path
-from rust::std::process import exit
+from rust::std::process import Command, exit
 from rust::std::string import String as RustString
 from rust::std::sync import Arc, Mutex
 from rust::std::sync::mpsc import Sender as NativeSender, Receiver as NativeReceiver, channel as native_channel
 from rust::std::thread import panicking, spawn
+from rust::std::vec import Vec
 
 
 model Pair:
@@ -199,6 +203,18 @@ def retained_first[T, U](left: T, right: U) -> T:
     return left
 
 
+def show_projected_binders() -> None:
+    """Pass source collections to binders a native bound projects: each item type closes from the collection."""
+    mut command = Command.new("true")
+    command.args(["one", "two", "three"])
+    command.envs({"FIRST": "1", "SECOND": "2"})
+    println(command.get_args().len())
+    println(command.get_envs().len())
+    mut values: Vec[int] = Vec.new()
+    values.extend([1, 2, 3])
+    println(values.len())
+
+
 def show_nonreturning_call() -> None:
     """Print the result of the selected Rust function, then end the program through a nonreturning one."""
     println(panicking())
@@ -216,7 +232,8 @@ def main() -> None:
     1. Exercise generic instantiations and scalar references.
     2. Exercise text references and typed native factories.
     3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
-    4. Observe a native nonreturning call, which ends the program.
+    4. Observe binders projected from source collections.
+    5. Observe a native nonreturning call, which ends the program.
     """
     # 1. Exercise generic instantiations and scalar references.
     show_generic_instantiations()
@@ -228,5 +245,7 @@ def main() -> None:
     check_foreign_values()
     show_thread_capture()
     check_native_cursor_forwarding()
-    # 4. Observe a native nonreturning call, which ends the program.
+    # 4. Observe binders projected from source collections.
+    show_projected_binders()
+    # 5. Observe a native nonreturning call, which ends the program.
     show_nonreturning_call()
