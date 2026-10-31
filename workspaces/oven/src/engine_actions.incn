@@ -10,6 +10,7 @@ from engine_messages import BindingOutcome, Complete, CompletionStatus
 from engine_programs import obtain, program_handle, select_program
 from engine_proofs import retain
 from segment_store import lease
+from jec import begin, record
 
 
 pub model Pending:
@@ -50,11 +51,15 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     3. Select successful results in the caller's virtual view and hold an execution lease before replying.
     """
     # 1. The compiler owns whole-unit production; the engine holds no semantic closure after this activation.
+    opening = begin()
     epoch = load_epoch(store, pending.revision)?
+    record("engine_epoch", pending.revision, opening)
     run = hexlify(pending.request)
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => error.message())?
+    producing = begin()
     produced = obtain(store, epoch, directory.joinpath(run).0, pending.producer)?
+    record("engine_unit", pending.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
     if pending.proofs:
@@ -76,8 +81,12 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
             )
         Some(unit) =>
             # 3. A completed native descriptor is selected independently for each caller.
+            selecting = begin()
             selected = select_program(store, pending.view, unit)?
+            record("engine_select", pending.view, selecting)
+            pinning = begin()
             held = lease(selected).map_err((error) => error.message())?
+            record("engine_lease", pending.view, pinning)
             handle = program_handle(epoch, pending.producer)?
             pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=Rc.new(held))
             return Ok(

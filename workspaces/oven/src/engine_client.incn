@@ -11,7 +11,7 @@ from compiler_worker import relay_console
 from engine_channel import Channel, SendOutcome
 from engine_endpoint import connect, owner_uid
 from engine_epochs import record_text
-from engine_messages import Complete, CompletionStatus, Event, Message, Pin, Release, Submit
+from engine_messages import Complete, CompletionStatus, Message, Release, Submit
 from engine_programs import read_program
 from engine_proofs import report
 from engine_state import Identity
@@ -25,6 +25,7 @@ from toolchain import load_toolchain, toolchain_file
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
+from jec import begin as begin_work, record as record_work
 
 
 pub def execute(
@@ -43,10 +44,12 @@ pub def execute(
     3. Hold the selected execution pin until the program exits, then release it.
     """
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
+    connecting = begin_work()
     store = bakery()?
     store.mkdir(true, true).map_err((error) => error.message())?
     identity = service_identity(store)?
     mut channel = connect(store, identity).map_err(detail)?
+    record_work("engine_connect", source.0, connecting)
     channel.transport.wait_at_most(600)
     request = session_id()?
     absolute = source.absolute().map_err((error) => error.message())?
@@ -54,6 +57,7 @@ pub def execute(
     mut policy = ""
     if proofs:
         policy = "proofs"
+    submitted = begin_work()
     send(
         channel,
         request,
@@ -70,6 +74,7 @@ pub def execute(
     )?
     # 2. Execution is impossible before a real captured epoch and a successful selected native result.
     complete, interest = await_completion(channel, request)?
+    record_work("engine_request", source.0, submitted)
     if complete.observation_handle != "":
         println(report(store, complete.observation_handle)?)
     if complete.status != CompletionStatus.Success:
@@ -81,25 +86,15 @@ pub def execute(
             if unit.identity != complete.admission_proof:
                 return Err("engine completion and admitted native identity disagree")
             binary = unit.binary
-    send(
-        channel,
-        request,
-        Message.Pin(
-            Pin(
-                snapshot=complete.snapshot,
-                allowed_roots=complete.result_handles,
-                lease_id=interest,
-                purpose="execution",
-            ),
-        ),
-    )?
-    await_event(channel, request, "Pinned", interest)?
-    # 3. The waiting CLI owns the pin and child; the engine never runs or retries user code.
+    # 3. Complete already holds this caller's execution lease; the engine never runs or retries user code.
+    executing = begin_work()
     mut code: Result[i32, str] = Ok(0)
     if command == "run":
         code = run_program(Path(binary), arguments, argv0, true)
-    send(channel, request, Message.Release(Release(lease_id=interest)))?
-    await_event(channel, request, "Released", interest)?
+    record_work("engine_child", source.0, executing)
+    # Execution has ended. Cleanup cannot replace its outcome, and disconnect releases the lease if delivery fails.
+    _ = send(channel, request, Message.Release(Release(lease_id=interest)))
+    _ = channel.transport.close()
     return code
 
 
@@ -140,7 +135,6 @@ def installed_compiler(store: Path) -> Result[str, str]:
     stamp = observe(pin)?.stamp
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
     key = f"incan.engine.installation\t{fingerprint([pin.0] + configuration)?}"
-    held = claim(store, key).map_err((error) => error.message())?
     selected = snapshot(store).map_err((error) => error.message())?
     match record_text(selected, key)?:
         Some(text) =>
@@ -148,9 +142,17 @@ def installed_compiler(store: Path) -> Result[str, str]:
             if required_text(previous, "pin")? == stamp:
                 return required_text(previous, "compiler")
         None => pass
+    held = claim(store, key).map_err((error) => error.message())?
+    checked = snapshot(store).map_err((error) => error.message())?
+    match record_text(checked, key)?:
+        Some(text) =>
+            previous = parse(text).map_err((error) => error.message())?
+            if required_text(previous, "pin")? == stamp:
+                return required_text(previous, "compiler")
+        None => pass
     compiler = compiler_fingerprint(load_toolchain()?)?
     value = json_text(JsonValue.object({"pin": JsonValue.string(stamp), "compiler": JsonValue.string(compiler)}))?
-    _ = commit(put(begin(selected), key, value.encode("utf-8"))).map_err((error) => error.message())?
+    _ = commit(put(begin(checked), key, value.encode("utf-8"))).map_err((error) => error.message())?
     return Ok(compiler)
 
 
@@ -182,24 +184,6 @@ def await_completion(mut channel: Channel, request: bytes) -> Result[tuple[Compl
             Message.Refused(value) => return Err(value.detail)
             Message.Ack(_) => pass
             _ => return Err("unexpected engine reply while awaiting completion")
-        channel.acknowledge(frame).map_err(detail)?
-
-
-def await_event(mut channel: Channel, request: bytes, status: str, handle: str) -> Result[None, str]:
-    """Finish one correlated pin transition, consuming only acknowledgments before its exact event."""
-    while true:
-        frame = channel.receive().map_err(detail)?
-        if frame.header.request != request:
-            return Err("engine pin reply belongs to another request")
-        match frame.message:
-            Message.Ack(_) => pass
-            Message.Refused(value) => return Err(value.detail)
-            Message.Event(event) =>
-                if event.status != status or event.trace_handle != handle:
-                    return Err("engine replied with a different pin transition")
-                channel.acknowledge(frame).map_err(detail)?
-                return Ok(None)
-            _ => return Err("unexpected engine reply during pin transition")
         channel.acknowledge(frame).map_err(detail)?
 
 
