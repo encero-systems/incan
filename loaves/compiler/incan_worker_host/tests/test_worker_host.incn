@@ -207,6 +207,17 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
     )
     expected = f"{{\"arguments\":[\"--fmt\",\"/p/unit.json\",\"src/main.incn\",\"--check\"],\"cwd\":\"/p\",\"generation\":\"{GENERATION}\",\"schema\":\"{SCHEMA}\",\"stderr\":\"/p/r.err\",\"stdout\":\"/p/r.out\"}}"
     assert request.to_json().map_err((error) => error.message())? == expected
+    # Only a request that requires teardown after its activation names that lifetime.
+    retiring = request_document(
+        GENERATION,
+        ["--fmt", "/p/unit.json", "src/main.incn", "--check"],
+        "/p",
+        "/p/r.out",
+        "/p/r.err",
+        true,
+    )
+    retiring_text = expected.replace(",\"schema\"", ",\"retire_after\":true,\"schema\"")
+    assert retiring.to_json().map_err((error) => error.message())? == retiring_text
     return Ok(None)
 
 

@@ -246,7 +246,8 @@ pub def request_document(
 ) -> JsonValue:
     """
     The original compiler invocation plus its owner's current working directory, request-local console sinks and
-    activation lifetime.
+    activation lifetime. An ordinary request keeps its wire bytes: only a required teardown writes `retire_after`,
+    whose absence the worker reads as `false`.
     """
     mut fields: Dict[str, JsonValue] = {}
     fields["schema"] = JsonValue.string(SCHEMA)
@@ -255,7 +256,8 @@ pub def request_document(
     fields["cwd"] = JsonValue.string(directory)
     fields["stdout"] = JsonValue.string(stdout)
     fields["stderr"] = JsonValue.string(stderr)
-    fields["retire_after"] = JsonValue.bool(retire_after)
+    if retire_after:
+        fields["retire_after"] = JsonValue.bool(true)
     return JsonValue.object(fields)
 
 
