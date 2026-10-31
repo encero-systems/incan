@@ -71,6 +71,7 @@ mod native_newtype_facts;
 mod native_storage;
 mod nominal_identities;
 mod nominal_type_param_bounds;
+mod open_native_owners;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
@@ -435,9 +436,9 @@ pub struct CAbiRawCallResult {
 /// A Rust associated call whose owner type arguments the call itself left open (#1720).
 ///
 /// `HashMap.new()` on `rust::std::collections::HashMap` names neither `K` nor `V`, and nothing at the call fixes
-/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. A later reader of the value does
-/// not fix them either; the checker keeps this record only long enough to learn whether one exists, which decides how
-/// the call is refused.
+/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. A local bound to the value can
+/// still have them fixed by its first use (#2481); the checker keeps this record until it knows whether such a use
+/// exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenRustGenericCall {
     /// The receiver as the source spells it (`HashMap`), for the diagnostic.
@@ -446,13 +447,19 @@ pub struct OpenRustGenericCall {
     pub method: String,
     /// The owner's type parameters the call left open, in declaration order (`K`, `V`).
     pub type_params: Vec<String>,
+    /// The call's native result with those parameters open, once callee retention has computed it. A local bound to
+    /// the call holds it as its native carrier until a use fixes the parameters.
+    pub native: Option<ResolvedType>,
+    /// The native result's nominal item (`std::collections::HashMap`), which selects the local's native methods.
+    pub native_item: Option<String>,
 }
 
-/// A local bound to an [`OpenRustGenericCall`] that no later statement has read yet (#1720).
+/// A local bound to an [`OpenRustGenericCall`], watched until its first use fixes the call's open parameters (#1720).
 ///
-/// Dropped on the first read of the name, which refuses a call without a retained callee for its open parameters;
-/// whatever is left when the declaring block ends is refused with the binding to annotate.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The first read must be a use that determines them, and the binding takes the type that use fixes at once. When
+/// the statement holding a first read that fixed nothing ends, the call is refused for its open parameters (#2481). A
+/// binding nothing reads is refused when its declaring block ends, naming the binding to annotate.
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpenRustGenericBinding {
     /// The local's name.
     pub name: String,
@@ -462,6 +469,14 @@ pub struct OpenRustGenericBinding {
     pub span: Span,
     /// The call whose open parameters the binding carries.
     pub call: OpenRustGenericCall,
+    /// The declaring assignment, checked again against the type the first use fixes.
+    pub assignment: crate::ast::AssignmentStmt,
+    /// The declaring statement's span, which keys the binding's checked type.
+    pub statement: Span,
+    /// The binding's canonical identity: only a read of this binding can fix it.
+    pub identity: Option<CanonicalSymbolId>,
+    /// The statement block of the first read, once something read the binding.
+    pub read_in: Option<usize>,
 }
 
 impl Drop for TypeCompatibilityDepthGuard<'_> {
@@ -609,7 +624,7 @@ pub struct TypeChecker {
     /// span, waiting for the statement to say whether a local receives the value (#1720). When the statement ends,
     /// one left nested somewhere else is refused unless its callee was retained.
     open_rust_generic_calls: HashMap<crate::ast::Span, OpenRustGenericCall>,
-    /// Locals bound to open Rust associated calls that nothing has read yet (#1720).
+    /// Locals bound to open Rust associated calls that no use has fixed yet (#1720, #2481).
     open_rust_generic_bindings: Vec<OpenRustGenericBinding>,
     /// Equally ranked trait callees of a native method call, by call span, kept for that call's refusal when no later
     /// selection step chooses a callee (#2481).

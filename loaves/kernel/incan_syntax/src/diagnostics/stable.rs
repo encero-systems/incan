@@ -351,7 +351,7 @@ const RUST_CALLEE_NOT_SELECTED: DiagnosticCatalogEntry = DiagnosticCatalogEntry 
     severity: "error",
     phase: "typecheck",
     summary: "A Rust method call's arguments check, but no single native callee can be selected for it, so it cannot be compiled.",
-    explanation: "A native method call compiles only through the one Rust function the compiler selects for it: an inherent method of the receiver's type, or the method of one trait implementation. Selection fails in three ways. A type parameter of the callee stays open, because nothing in the receiver, the arguments or the type the result is expected to have fixes it. No admitted implementation applies, as when an imported trait declares the method but the receiver's type does not implement that trait. Or several implementations apply equally and nothing in the call chooses one. The message names the callee and which of the three it is.",
+    explanation: "A native method call compiles only through the one Rust function the compiler selects for it: an inherent method of the receiver's type, or the method of one trait implementation. Selection fails in three ways. A type parameter of the callee stays open, because nothing in the receiver, the arguments, the type the result is expected to have or the first use of the local the result is bound to fixes it. No admitted implementation applies, as when an imported trait declares the method but the receiver's type does not implement that trait. Or several implementations apply equally and nothing in the call chooses one. The message names the callee and which of the three it is.",
     examples: &[
         "from rust::std::io import Write\nfrom rust::std::string import String as RustString\n\ndef main() -> None:\n    mut text = RustString.from(\"a\")\n    text.flush()",
         "from rust::std::convert import AsRef\nfrom rust::std::path import PathBuf\n\ndef main() -> None:\n    path = PathBuf.from(\"a\")\n    path.as_ref()",
@@ -375,7 +375,7 @@ const RUST_OWNER_TYPE_ARGS_NOT_INFERRED: DiagnosticCatalogEntry = DiagnosticCata
     severity: "error",
     phase: "typecheck",
     summary: "A Rust associated call leaves its owner's type arguments open and nothing later in the program fixes them.",
-    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open unless the call writes them, or an annotation or the type its position expects names them. A later use of the value does not fix them. This check refuses such a call whose result is not bound at all, or is bound to a local that is never read again, and names the binding to annotate. A call whose binding is read is refused with `INCAN-T0122`.",
+    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. A later use of the binding fixes them: its first use, such as an insert, passing it to a typed parameter, a typed return, or assigning it to an annotated place. A binding that is never read again, or a result that is not bound at all, gives nothing to fix them, and the call is refused here, naming the binding to annotate. The check fires only when the compiler can see the owner's type parameters and the value has no later reader. A binding whose first use fixes nothing, such as `len(m)`, is refused with `INCAN-T0122`.",
     examples: &["from rust::std::collections import HashMap\n\ndef main() -> None:\n    mut untyped = HashMap.new()"],
     common_causes: &["A collection constructed and then never used."],
     fixes: &[

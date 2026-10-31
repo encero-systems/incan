@@ -2435,9 +2435,10 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
 
 /// Report a Rust associated call whose owner type arguments nothing in the program fixes (#1720).
 ///
-/// `HashMap.new()` leaves `K` and `V` open unless the call writes them or an annotation names them, and a later use
-/// does not fix them. This refusal covers a result that is discarded or bound to a local nothing reads; a read binding
-/// is refused with `INCAN-T0122` instead. `owner` is the receiver as the source spells it (`HashMap`), `method` the
+/// `HashMap.new()` leaves `K` and `V` open; a later use of the binding fixes them, such as an insert, a typed parameter
+/// or a typed return, but a binding that is never read again gives nothing to fix them. This refusal covers a result
+/// that is discarded or bound to a local nothing reads; a binding whose first use fixes nothing is refused with
+/// `INCAN-T0122` instead. `owner` is the receiver as the source spells it (`HashMap`), `method` the
 /// associated function, `type_params` the owner's open parameters, and `binding` the local the result was bound to,
 /// or `None` when the value was discarded. The hint shows both spellings that close the parameters, with example
 /// types sized to the parameter count. `INCAN-T0105` is its stable code.
@@ -2536,8 +2537,9 @@ pub fn rust_callee_not_selected(callee: &str, gap: NativeCalleeGap<'_>, span: Sp
                 [_] => format!("its type parameter {} is not fixed by the call", quoted(names)),
                 _ => format!("its type parameters {} are not fixed by the call", quoted(names)),
             },
-            "Nothing in the receiver, the arguments or the type the result is expected to have fixes them, and a \
-             native call compiles only through a callee whose type arguments are all known",
+            "Nothing in the receiver, the arguments, the type the result is expected to have or the first use of the \
+             local it is bound to fixes them, and a native call compiles only through a callee whose type arguments \
+             are all known",
             "Write the type arguments in the call, annotate the type the result is bound to, or pass an argument \
              whose type fixes them",
         ),
