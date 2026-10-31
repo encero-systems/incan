@@ -36,8 +36,8 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
 }
 
 /// Run one admitted request with its caller's console files and working directory. The reported status is the one
-/// the short-lived command exits with: its own status, or one for a returned error (printed as `main` prints it). A
-/// panic is contained and reported as such once the adapter's state is usable again.
+/// the short-lived command exits with: its own status, or the status of a returned error, which [`crate::report`]
+/// prints as `main` does. A panic is contained and reported as such once the adapter's state is usable again.
 fn activate(request: &CompileRequest) -> ActivationOutcome {
     let console = match console::Capture::open(
         Path::new(&request.stdout),
@@ -52,10 +52,7 @@ fn activate(request: &CompileRequest) -> ActivationOutcome {
     }));
     let ended = match outcome {
         Ok(Ok(code)) => ActivationOutcome::Exited(code.into()),
-        Ok(Err(error)) => {
-            eprintln!("Error: {error:?}");
-            ActivationOutcome::Exited(1)
-        }
+        Ok(Err(error)) => ActivationOutcome::Exited(crate::report(error.as_ref()).into()),
         Err(_) => {
             crate::adapter::recover();
             ActivationOutcome::Panicked
