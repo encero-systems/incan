@@ -1,5 +1,7 @@
 # behavior: commands refuse options they cannot apply before preparing any unit
 # cli-commands:
+#   explain
+#   explain INCAN-T0001 extra
 #   run src/main.incn --substitute missing=absent
 #   check src/main.incn --substitute missing=absent
 #   test src/main.incn --substitute missing=absent

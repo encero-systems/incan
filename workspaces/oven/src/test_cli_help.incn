@@ -15,6 +15,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
     commands: list[tuple[str, str]] = [
         ("run", "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
         ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
+        ("explain", "incan explain CODE"),
         ("test", "incan test PATH [UNIT OPTIONS]"),
         ("describe-unit", "incan describe-unit PATH [UNIT OPTIONS]"),
         ("build", "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
