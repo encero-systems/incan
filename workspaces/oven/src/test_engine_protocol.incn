@@ -291,6 +291,7 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
     prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
     mut events = 0
     mut reads = 0
+    mut reused = 0
     for file in directory.iterdir().map_err((error) => error.message())?:
         for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
             if line == "":
@@ -298,11 +299,14 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
             event = parse(line).map_err((error) => error.message())?
             events += 1
             category = trace_text(event, "category")?
+            if category == "installation_page_reuse":
+                reused += 1
             if category == "file_read":
                 reads += 1
                 input = trace_text(event, "input")?
                 assert not input.startswith(prefix), f"new work bakery reopened frozen input {input}"
     assert events > 0 and reads > 0, "the cold invocation must record its actual file reads"
+    assert reused == 0, "one request repeated its installation page selection"
     return Ok(None)
 
 
