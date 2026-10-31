@@ -1061,6 +1061,26 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     )?
     assert read_registry_units(baked_closure)?.units[0].name == "baked_native_name"
     assert read_registry_units(baked_closure)?.units[1].refusal == "producer recorded an unavailable alternative"
+    # Relative artifacts belong to the closure's directory, including a closure outside its artifact store.
+    relative = artifact.expect_str().map_err((error) => error.message())?
+    relocated_path = JsonValue.string("../../registry/" + relative)
+    mut outside = published
+    outside["artifact"] = relocated_path
+    outside_externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": relocated_path})})
+    outside_closure = scratch.joinpath("published/deep/closure.json")
+    write(
+        outside_closure,
+        json_text(
+            JsonValue.object(
+                {"schema": JsonValue.string("incan.oven.closure/1"), "externs": outside_externs, "units": JsonValue.array(
+                    [JsonValue.object(outside)],
+                )},
+            ),
+        )?,
+    )?
+    selected = read_registry_units(outside_closure)?.units[0]
+    assert selected.artifact == directory.joinpath(relative).0
+    assert Path(selected.artifact).is_file()
     # 2. The exact typed page answers without a closure or completion JSON document.
     selection = completion_selection(rust_compiler(toolchain))?
     observed = observe(closure)?
