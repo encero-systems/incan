@@ -131,8 +131,9 @@ pub def read_registry_units(
     # 3. Each unit knows its own artifact directory, and every such directory is searched for dependencies.
     mut units: list[RegistryUnit] = []
     mut search: list[str] = []
+    closure_directory = path.parent()
     for item in required_items(document, "units")?:
-        unit = registry_unit(item, entries)?
+        unit = registry_unit(item, entries, closure_directory)?
         units.append(unit)
         if unit.directory not in search:
             search.append(unit.directory)
@@ -212,7 +213,7 @@ def entries_directory(document: JsonValue, path: Path) -> Result[str, str]:
     return Err(f"{path.0} names no compiled unit")
 
 
-def registry_unit(item: JsonValue, entries: str) -> Result[RegistryUnit, str]:
+def registry_unit(item: JsonValue, entries: str, closure_directory: Path) -> Result[RegistryUnit, str]:
     """One compiled unit of a closure, with the artifact directory its store entry holds."""
     entry = required_text(item, "entry")?
     directory = Path(entries).joinpath(entry.replace(":", "-")).joinpath("artifacts").0
@@ -230,20 +231,20 @@ def registry_unit(item: JsonValue, entries: str) -> Result[RegistryUnit, str]:
             name=registry_text(item, "name")?,
             kind=registry_text(item, "kind")?,
             crate_hash=registry_text(item, "crate_hash")?,
-            artifact=registry_artifact_path(item, entries)?,
+            artifact=registry_artifact_path(item, closure_directory)?,
             refusal=registry_text(item, "refusal")?,
         ),
     )
 
 
-def registry_artifact_path(item: JsonValue, entries: str) -> Result[str, str]:
+def registry_artifact_path(item: JsonValue, closure_directory: Path) -> Result[str, str]:
     """Locate optional baked native metadata relative to its closure, preserving legacy null artifacts."""
     match item.get("artifact"):
         None => return Ok("")
         Some(value) =>
             if value.is_null():
                 return Ok("")
-            return Ok(located(Path(entries).parent(), value.expect_str().map_err((error) => error.message())?))
+            return Ok(located(closure_directory, value.expect_str().map_err((error) => error.message())?))
 
 
 def registry_text(item: JsonValue, key: str) -> Result[str, str]:
