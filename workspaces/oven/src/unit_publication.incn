@@ -13,6 +13,45 @@ from home import home
 const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
 
 
+pub model PayloadAdmission:
+    """Verified bytes and their producer, transferable only to the same filesystem generation after a rename."""
+
+    pub identity: str
+    pub payload: str
+    pub observation: str
+    pub provenance: list[str]
+
+
+pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
+    """Capture an admitted payload's proof before publishing its containing installation by rename."""
+    identity, payload = publication(path)?
+    document = read_json(available_record(path)?)?
+    return Ok(
+        PayloadAdmission(
+            identity=identity,
+            payload=payload,
+            observation=required_text(document, "observation")?,
+            provenance=source_provenance(document)?,
+        ),
+    )
+
+
+pub def relocate_payload(path: Path, admission: PayloadAdmission) -> Result[None, str]:
+    """Bind a verified generation at its published location without rehashing; changed bytes require fresh admission."""
+    if observe(path)?.stamp != admission.observation:
+        return Err(f"{path.0}: payload changed while publishing installation")
+    destination = imported_record(path)?
+    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    return publish_record(
+        destination,
+        path,
+        admission.identity,
+        admission.payload,
+        admission.observation,
+        admission.provenance,
+    )
+
+
 pub def record_payload(path: Path, identity: str, provenance: list[str] = [], refusal: str = "") -> Result[None, str]:
     """
     Publish the identity a completed artifact was baked under, independently of its bytes and location.
@@ -112,6 +151,7 @@ def registry_entry(path: Path) -> Option[str]:
         if character not in "0123456789abcdef":
             return None
     return Some(f"sha256:{digest}")
+
 
 pub def import_payload(path: Path, identity: str, expected_payload: str = "") -> Result[None, str]:
     """
