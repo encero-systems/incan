@@ -71,7 +71,8 @@ pub fn verify_module(
 }
 
 /// Keep the complete native and publication comparisons independent; serde intentionally omits native attributes.
-/// The invocation-local report name prevents concurrent compiler processes from interleaving JSON rows.
+/// Each completed report is published by rename; an interrupted compiler can leave only an unselected temporary
+/// file, never a truncated JSON row among the oracle's accepted observations.
 fn compare_inputs(
     function: &ast::FunctionDecl,
     span: ast::Span,
@@ -116,7 +117,10 @@ pub(super) fn record_comparison(
     let same = expected == actual && difference.is_none() && expected_bytes == actual_bytes;
     let sequence = COMPARISON.fetch_add(1, Ordering::Relaxed);
     std::fs::create_dir_all(directory)?;
-    let prefix = format!("{}-{sequence:06}", std::process::id());
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let prefix = format!("{}-{sequence:06}-{timestamp}", std::process::id());
 
     // ---- Differences: retain both complete streams ----
     if !same {
@@ -144,11 +148,13 @@ pub(super) fn record_comparison(
         "publication_sha256": hex::encode(Sha256::digest(&expected_bytes)),
         "first_difference": difference,
     });
-    let mut report = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(directory.join(format!("{}.jsonl", std::process::id())))?;
-    writeln!(report, "{row}")?;
+    let temporary = directory.join(format!("{prefix}.tmp"));
+    let mut report = OpenOptions::new().create_new(true).write(true).open(&temporary)?;
+    let encoded = serde_json::to_vec(&row)?;
+    report.write_all(&encoded)?;
+    report.write_all(b"\n")?;
+    drop(report);
+    std::fs::rename(temporary, directory.join(format!("{prefix}.jsonl")))?;
     if !same {
         return Err(format!("free-function {phase} comparison: {row}").into());
     }

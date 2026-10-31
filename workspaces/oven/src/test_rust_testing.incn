@@ -5,13 +5,18 @@ from std.environ import get_or
 from std.testing import fail
 from codegen import compiled_arguments, rust_incremental_arguments, rust_iteration_enabled
 from files import make_directory, read, write
+from graph_dependencies import prepare_graph
+from graph_rust import inspect_rust
+from features import FeatureRequest
 from rust_testing import build_rust_tests
 from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, facet_slot, ordered, read_registry_units, rust_output
+from rust_units import build_rust, RustBuild, facet_slot, ordered, read_registry_units, rust_output
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
-from toolchain import load_toolchain, rust_compiler
+from toolchain import Toolchain, load_toolchain, rust_compiler
+from unit_rust import compile_incan_library
+from rust::std::process import Command
 
 
 pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]:
@@ -20,7 +25,7 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
 
     1. Create a Rust library with a passing test and a failing test using a test-only helper, and a module of its own.
     2. Compile and run both tests, requiring a failing command outcome; rediscover an unavailable old witness.
-    3. Repair the failing assertion, removing the module and its file, and require the same harness path to rebuild
+    3. Repair the failing assertion, remove and add a module with its file, and require the same harness path to rebuild
        and pass.
     4. Compile procedural macro unit and integration harnesses in their producer's host domain.
     5. Require optimized qualification and iteration to preserve the same edit/revert behavior.
@@ -86,6 +91,15 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     assert rebuilt == programs
     for program in rebuilt:
         assert run_rust_harness(Path(program), project)? == 0
+    # Adding a module refreshes dep-info before the producer is keyed, just as removing one does.
+    write(removed, "/// The added module's fixture value.\npub const VALUE: u32 = 7;\n")?
+    write(source, module + in_module + rust_tests(7))?
+    assert build_rust_tests(request)? == programs
+    for program in programs:
+        assert run_rust_harness(Path(program), project)? == 0
+    write(source, rust_tests(7))?
+    removed.unlink().map_err((error) => error.message())?
+    assert build_rust_tests(request)? == programs
     verify_incremental_revert(request, helper, helper_source, project)?
     # 4. A procedural macro retains its crate kind and sysroot proc_macro binding.
     macro = root.joinpath("macro")
@@ -118,6 +132,75 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     verify_incremental_revert(optimized, helper, helper_source, project)?
     # 6. The bakery's dependency evidence remains valid in a second checkout.
     verify_relocated_harnesses(optimized, project, root.joinpath("relocated"))?
+    verify_native_graph_publication(helper, toolchain)?
+    verify_mixed_provider(optimized, root.joinpath("mixed-consumer"))?
+    return Ok(None)
+
+
+def verify_native_graph_publication(helper: Path, toolchain: Toolchain) -> Result[None, str]:
+    """A cached native preparation returns a complete graph publication, restoring a lost filename binding."""
+    provider = helper.resolve().map_err((error) => error.message())?
+    root = provider.parent().joinpath("graph_consumer")
+    make_directory(root.joinpath("src"))?
+    manifest = "[project]\nname='graph_consumer'\nversion='0.1.0'\n[dependencies]\nhelper={path='../helper'}\n"
+    write(root.joinpath("loaf.toml"), manifest)?
+    write(root.joinpath("src/main.incn"), "def main() -> None:\n    pass\n")?
+    facet = local_facet(provider.0, DependencyDomain.Target, "helper")
+    prepared = prepare_graph(root, "debug", FeatureRequest(), {}, toolchain, [], true)?
+    unit = prepared.built[facet.key()]
+    graph = Path(unit.directory).joinpath("helper.incngraph")
+    original = graph.read_bytes().map_err((error) => error.message())?
+    _ = inspect_rust(root, "debug", FeatureRequest(), {}, toolchain, true)?
+    # Losing a filename is not losing a fact, and a cached preparation must not return a partial publication.
+    Path(unit.artifact).unlink().map_err((error) => error.message())?
+    restored = inspect_rust(root, "debug", FeatureRequest(), {}, toolchain, true)?
+    assert len(restored) > 0
+    assert Path(unit.artifact).is_file(), "cached native preparation returned an incomplete library publication"
+    assert graph.read_bytes().map_err((error) => error.message())? == original
+    return Ok(None)
+
+
+def verify_mixed_provider(request: RustBuild, root: Path) -> Result[None, str]:
+    """A Rust root consumes an Incan provider whose mixed dependency keeps its facade and native facet distinct."""
+    bridge = root.joinpath("bridge")
+    mixed = bridge.joinpath("deps/mixed")
+    for project in [root, bridge, mixed]:
+        make_directory(project.joinpath("src"))?
+    make_directory(mixed.joinpath("rust/src"))?
+    write(
+        root.joinpath("loaf.toml"),
+        "[project]\nname='mixed_consumer'\nversion='1.0.0'\n[rust]\nedition='2024'\n[[rust.bin]]\nname='mixed_consumer'\npath='src/main.rs'\n[dependencies]\nbridge={path='bridge'}\n",
+    )?
+    write(root.joinpath("src/main.rs"), "fn main() { println!(\"{}\", bridge::value()); }\n")?
+    write(
+        bridge.joinpath("loaf.toml"),
+        "[project]\nname='bridge'\nversion='1.0.0'\n[dependencies]\nmixed={path='deps/mixed'}\n",
+    )?
+    write(
+        bridge.joinpath("src/lib.incn"),
+        "from pub::mixed import amount\n\npub def value() -> int:\n    return amount()\n",
+    )?
+    write(
+        mixed.joinpath("loaf.toml"),
+        "[project]\nname='mixed'\nversion='1.0.0'\n[rust]\nname='mixed_native'\nedition='2024'\n[rust.source]\nroot='rust'\n",
+    )?
+    write(
+        mixed.joinpath("src/lib.incn"),
+        "from rust::mixed_native import native_value\n\npub def amount() -> int:\n    return native_value()\n",
+    )?
+    write(
+        mixed.joinpath("rust/src/lib.rs"),
+        "/// The value exposed through the Incan facade.\npub fn native_value() -> i64 { 7 }\n",
+    )?
+    mut selected = request
+    selected.project = root.0
+    selected.rust_facet_dependencies = true
+    selected.incan_compiler = Some(compile_incan_library)
+    programs = build_rust(selected)?
+    assert len(programs) == 1
+    output = Command.new(programs[0]).output().map_err((error) => str(error))?
+    assert output.status.success() and output.stdout == b"7\x0a" and output.stderr == b""
+    assert build_rust(selected)? == programs
     return Ok(None)
 
 

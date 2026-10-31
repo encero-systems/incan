@@ -5,10 +5,31 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from files import json_text, read_json
-from home import home
+from home_paths import home
 from json_fields import required_text
 from observation import file_digest, observe
 from publication import publish
+
+
+pub model FactAdmission:
+    """A verified compiler fact generation, independent of its staging location."""
+
+    pub digest: str
+    pub observation: str
+
+
+pub def verified_fact(path: Path) -> Result[FactAdmission, str]:
+    """Capture an admitted compiler fact before its containing installation is renamed."""
+    digest = fact_identity(path)?
+    document = read_json(fact_record(path)?)?
+    return Ok(FactAdmission(digest=digest, observation=required_text(document, "observation")?))
+
+
+pub def relocate_fact(path: Path, admission: FactAdmission) -> Result[None, str]:
+    """Retain a compiler fact after rename only when the exact verified filesystem generation survives."""
+    if observe(path)?.stamp != admission.observation:
+        return Err(f"{path.0}: compiler fact changed while publishing installation")
+    return record_fact(path, admission.digest, admission.observation)
 
 
 pub def admit_fact(path: Path) -> Result[None, str]:
@@ -31,9 +52,15 @@ pub def admit_fact(path: Path) -> Result[None, str]:
     if observe(path)?.stamp != before:
         return Err(f"{path.0}: compiler fact changed during admission")
     # 3. A replacement compiler or ABI cache is a new fact, identified by its content.
+    return record_fact(path, digest, before)
+
+
+def record_fact(path: Path, digest: str, observation: str) -> Result[None, str]:
+    """Publish admission evidence at the fact's current physical location."""
+    location = fact_record(path)?
     location.parent().mkdir(true, true).map_err((error) => error.message())?
     record = JsonValue.object(
-        {"digest": JsonValue.string(digest), "observation": JsonValue.string(before), "provenance": JsonValue.string(
+        {"digest": JsonValue.string(digest), "observation": JsonValue.string(observation), "provenance": JsonValue.string(
             path.0,
         )},
     )

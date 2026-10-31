@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from rust::std::string import String as RustString
+from compiler_worker import captured_resident
 from driver_command import driver_command
 from files import parse_json
 from json_fields import strings
@@ -119,13 +120,31 @@ def needs_vocabulary(unit: UnitDescription) -> Result[bool, str]:
 
 
 def sources(path: Path, toolchain: Toolchain) -> Result[list[str], str]:
-    """Ask the installed compiler for its single deterministic authored-file discovery result."""
+    """
+    Ask the installed compiler for its single deterministic authored-file discovery result.
+
+    The resident worker that formats the files answers it, so discovery starts no compiler process of its own; the
+    one-process driver answers it only when no worker can start.
+    """
+    arguments = ["--source-files", path.0]
+    match captured_resident(toolchain, arguments)?:
+        Some(found) =>
+            if found.code != 0:
+                return Err(decode(found.error)?)
+            return discovered(found.output)
+        None => pass
     mut command = driver_command(toolchain)?
-    command.arg("--source-files").arg(path.0)
+    for argument in arguments:
+        command.arg(argument)
     output = command.output().map_err((error) => f"{path.0}: {error}")?
     if not output.status.success():
         return Err(decode(output.stderr)?)
-    paths = parse_json(decode(output.stdout)?)?
+    return discovered(output.stdout)
+
+
+def discovered(listing: bytes) -> Result[list[str], str]:
+    """The path list the compiler's discovery printed."""
+    paths = parse_json(decode(listing)?)?
     return strings(paths, []).map_err((_) => "compiler source discovery must be a path list")
 
 

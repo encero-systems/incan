@@ -1,4 +1,4 @@
-# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, and a later use that conflicts with the owner arguments a local's first use fixed are refused (#2256, #2481)
+# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields, unsafe callback storage, native calls without a selectable callee, numeric arguments that violate a parameterized Rust bound, method results with unfixed parameters, borrowed scalar callback returns, a later use that conflicts with the owner arguments a local's first use fixed, and an exclusive borrow of an immutable binding that holds a shared socket reference are refused (#2256, #2481)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
@@ -28,6 +28,10 @@
 #   Cannot select the Rust callee of `HashMap.new`: its type parameters `K` and `V` are not fixed by the call
 #   Type mismatch: expected 'String', found 'Int'
 #   Type mismatch: expected 'i64', found 'Str'
+#   Rust parameter requires a mutable borrow of 'shared_socket'
+#   does not satisfy bound `std::convert::AsRef<std::ffi::OsStr>`
+#   sum`: its type parameter `S` is not fixed by the call
+#   Rust callback cannot return a borrowed scalar without a retained lifetime contract
 # expect-exit: 1
 
 """A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
@@ -37,8 +41,10 @@ from rust::std::cmp import Ordering
 from rust::std::collections import HashMap
 from rust::std::convert import AsRef, identity
 from rust::std::env import VarError, set_var
-from rust::std::io import Write
+from rust::std::io import Read, Write
+from rust::std::iter import Iterator as NativeIterator
 from rust::std::mem import MaybeUninit, size_of_val
+from rust::std::os::unix::net import UnixStream
 from rust::std::os::unix::process import CommandExt
 from rust::std::path import Path, PathBuf
 from rust::std::process import Command
@@ -46,6 +52,7 @@ from rust::std::rc import Rc
 from rust::std::sync import Mutex
 from rust::std::string import String as RustString
 from rust::std::thread import spawn
+from rust::std::vec import Vec
 
 
 type Lock = rusttype Mutex[int]:
@@ -174,8 +181,9 @@ def unselected_callees() -> None:
     path.as_ref()
     mut command = Command.new("true")
     command.args(("one", "two"))
+    command.args(range(3))
     unfixed = HashMap.new()
-    println(len(unfixed))
+    println(unfixed)
 
 
 def conflicting_first_use() -> None:
@@ -183,6 +191,33 @@ def conflicting_first_use() -> None:
     mut table = HashMap.new()
     table.insert("a", 1)
     table.insert(2, "b")
+
+
+def unfixed_method_result() -> None:
+    """Refuse a method's own open result parameter with its open-parameter reason."""
+    values: Vec[int] = Vec.new()
+    total = values.into_iter().sum()
+
+
+def borrowed_scalar_key() -> None:
+    """Refuse a native callback that would return its borrowed scalar input without a lifetime contract."""
+    mut values: Vec[int] = Vec.new()
+    values.push(1)
+    values.sort_by_key((value) => value)
+
+
+def read_through_a_shared_binding() -> None:
+    """Refuse `Read for &UnixStream`, which lends the shared reference itself exclusively, on an immutable binding."""
+    match UnixStream.pair():
+        Ok(pair) =>
+            left, _right = pair
+            cell = RefCell.new(Some(left))
+            match cell.borrow().as_ref():
+                Some(shared_socket) =>
+                    mut got = b"x"
+                    _ = shared_socket.read_exact(got)
+                None => pass
+        Err(_) => pass
 
 
 def main() -> None:
@@ -193,7 +228,8 @@ def main() -> None:
     2. Check that C acknowledgment does not authorize unsafe Rust calls.
     3. Check captured callbacks against retained native storage bounds.
     4. Check that foreign tuple fields require a borrow or retained Clone evidence.
-    5. Check that a native call needs one selectable callee, and that later uses agree with a fixed local.
+    5. Check that a native call needs one selectable callee, that later uses agree with a fixed local, and that only a
+       `mut` binding lends its shared reference exclusively.
     """
     # 1. Check native owners, mutation, numeric boundaries, and unavailable constructors.
     println(classify(Ordering.Equal))
@@ -211,6 +247,10 @@ def main() -> None:
     # 4. Check that foreign tuple fields require a borrow or retained Clone evidence.
     owned_tuple_fields()
     borrowed_tuple_owner((Mutex.new(3), 7))
-    # 5. Check that a native call needs one selectable callee, and that later uses agree with a fixed local.
+    # 5. Check that a native call needs one selectable callee, that later uses agree with a fixed local, and that only a
+    # `mut` binding lends its shared reference exclusively.
     unselected_callees()
     conflicting_first_use()
+    unfixed_method_result()
+    borrowed_scalar_key()
+    read_through_a_shared_binding()

@@ -9,7 +9,7 @@ from files import json_text, parse_json, read
 from graph_cache import GraphUnit, cache_file, is_unchecked, tree_inputs
 from graph_incan import inspect_incan, interface_directory
 from graph_queries import nested, text
-from bakery import viewed_fact
+from bakery import bakery, find, reached, viewed_fact
 from home import dependency_artifact_dir
 from intake import ManifestReader, library_source, read_project
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
@@ -23,7 +23,6 @@ from rust_units import (
     build_dependencies,
     facet_bindings,
     compile_rust_library,
-    facet_slot,
     ordered,
     read_receipt,
     read_registry_units,
@@ -33,6 +32,7 @@ from rust_units import (
     selected_registry,
     rust_facet,
     rust_output,
+    stored_library,
     target_configuration,
 )
 from toml_fields import optional_strings, read_manifest
@@ -97,13 +97,44 @@ def native_units(
     # 2. The key covers the compiler, the sources, the registry artifacts and the recorded libraries.
     digest = fingerprint(native_inputs(facets, request, toolchain, previous)?)?
     entry = Path(f"{cache_file(digest)?.0}.native")
-    # 3. A preparation done before for this very key is read back, not repeated.
+    # 3. A cached preparation must still supply every required graph before it can be returned.
     if entry.is_file():
-        return read_receipt(entry, true)
+        if let Some(complete) = complete_native_units(root, facets, request, read_receipt(entry, true)?)?:
+            return Ok(complete)
     # 4. What is prepared is cached under the key, with each library's unit key, for the next inspection.
     built = build_native_units(root, facets, request, toolchain, previous)?
     publish(entry, json_text(receipt_document(built, true))?)?
     return Ok(built)
+
+
+def complete_native_units(
+    root: Path,
+    facets: list[LocalFacet],
+    request: RustBuild,
+    cached: Dict[str, BuiltUnit],
+) -> Result[Option[Dict[str, BuiltUnit]], str]:
+    """
+    Restore each cached library's store-owned filename bindings and require every selected Rust dependency's graph.
+    A receipt with absent members is a preparation miss, never a successful partial dependency graph.
+    """
+    store = bakery()?
+    for identity in reached(store, [cached[key].directory for key in cached.keys()])?:
+        if find(store, identity)? is None:
+            return Ok(None)
+    mut complete: Dict[str, BuiltUnit] = {}
+    for key in cached.keys():
+        complete[key] = stored_library(cached[key])?
+    for facet in facets:
+        declared = rust_facet(facet.project, false, request.manifests)?
+        own = facet.project == root.0 and facet.domain == DependencyDomain.Target
+        if declared.kind == "" or own and len(declared.binaries) == 0:
+            continue
+        key = facet.key()
+        if key not in complete:
+            return Ok(None)
+        if not Path(complete[key].directory).joinpath(f"{declared.package}.incngraph").is_file():
+            return Ok(None)
+    return Ok(Some(complete))
 
 
 def native_inputs(
@@ -281,8 +312,7 @@ def build_native_units(
     1. A facet with no Rust library of its own binds the native artifact its crate was recorded with, or the
        toolchain's, if there is one.
     2. The project's own Rust facet is built only when it has binaries to link.
-    3. Another Rust facet keeps the library recorded for this very unit, and is otherwise compiled after the units it
-       links, which must exist already.
+    3. Every other Rust facet asks the ordinary bakery route after the units it links, which must exist already.
     """
     mut built: Dict[str, BuiltUnit] = {}
     # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
@@ -301,14 +331,7 @@ def build_native_units(
         own = facet.project == root.0 and facet.domain == DependencyDomain.Target
         if own and len(declared.binaries) == 0:
             continue
-        # 3. A library already built for this very unit is kept; any other is compiled after the libraries it links.
-        if not own:
-            match current_library(facet, declared.crate_name, previous, request.profile):
-                Some(library) =>
-                    built[facet.key()] = library
-                    search.append(library.directory)
-                    continue
-                None => pass
+        # 3. Every Rust producer asks the ordinary bakery route after the libraries it links are ready.
         require_native_links(facet, declared.package, built)?
         output = rust_output(root, request.profile)
         unit = compile_rust_library(facet, declared, output, request, built, search)?
@@ -327,16 +350,6 @@ def recorded_native(name: str, previous: Dict[str, BuiltUnit], externs: list[Nat
             directory = Path(native.path).parent().0
             found = Some(BuiltUnit(crate_name=native.name, artifact=native.path, directory=directory))
     return found
-
-
-def current_library(facet: LocalFacet, name: str, previous: Dict[str, BuiltUnit], profile: str) -> Option[BuiltUnit]:
-    """The library recorded in this project's selected target slot, independently of its portable unit identity."""
-    if name not in previous:
-        return None
-    published = previous[name]
-    if Path(published.directory).name() == f"{name}-{facet_slot(facet, profile)}":
-        return Some(published)
-    return None
 
 
 def require_native_links(facet: LocalFacet, package: str, built: Dict[str, BuiltUnit]) -> Result[None, str]:

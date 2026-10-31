@@ -1,9 +1,10 @@
-# behavior: Unknown top-level and nested commands report an error and point to help with exit status two.
+# behavior: Unknown top-level and nested commands, including the retired internal `_run-built`, report an error and point to help with exit status two.
 # cli-commands:
 #   nonexistent
 #   inspect nonexistent
 #   owner nonexistent
 #   toolchain nonexistent
+#   _run-built target/incan/debug/bin/unknown_command
 # expect-stdout:
 # expect-stderr-contains:
 #   unknown command

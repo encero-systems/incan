@@ -25,6 +25,8 @@ pub enum WorkerCommand:
     Check
     # `--fmt UNIT PATH ...`: format sources with the unit's vocabulary.
     Format
+    # `--source-files PATH`: list the authored sources a formatting run selects under a path.
+    SourceFiles
 
 
 pub model CompileRequest:
@@ -131,10 +133,11 @@ def retirement_requested(document: JsonValue) -> Result[bool, str]:
 def command_of(arguments: list[str]) -> Result[WorkerCommand, str]:
     """
     The served command of an argument list whose required paths are absolute: `--unit UNIT CRATE OUTPUT SYSROOT ...`,
-    `--check UNIT SYSROOT ...` and `--fmt UNIT PATH ...`. A formatted path resolves against the caller's directory.
+    `--check UNIT SYSROOT ...`, `--fmt UNIT PATH ...` and `--source-files PATH`. A formatted or listed path resolves
+    against the caller's directory.
     """
     if len(arguments) == 0:
-        return Err("a compiler worker accepts only --unit, --check and --fmt requests")
+        return Err("a compiler worker accepts only --unit, --check, --fmt and --source-files requests")
     mut command = WorkerCommand.Unit
     mut minimum = 5
     mut absolute: list[int] = [1, 3, 4]
@@ -146,8 +149,12 @@ def command_of(arguments: list[str]) -> Result[WorkerCommand, str]:
         command = WorkerCommand.Format
         minimum = 3
         absolute = [1]
+    elif arguments[0] == "--source-files":
+        command = WorkerCommand.SourceFiles
+        minimum = 2
+        absolute = []
     elif arguments[0] != "--unit":
-        return Err("a compiler worker accepts only --unit, --check and --fmt requests")
+        return Err("a compiler worker accepts only --unit, --check, --fmt and --source-files requests")
     if len(arguments) < minimum:
         return Err(f"a compiler worker {arguments[0]} request is incomplete")
     for index in absolute:

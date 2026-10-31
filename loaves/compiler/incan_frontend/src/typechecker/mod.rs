@@ -42,13 +42,16 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
-mod body_check;
+pub(crate) mod body_check;
 mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
-pub(crate) use body_check::{BodyIrOracleInputs, CheckedBodyInputError, CheckedBodyView};
+pub(crate) use body_check::BodyIrOracleInputs;
+#[cfg(test)]
+pub(crate) use body_check::CheckedBodyInputError;
 pub use check_work::CheckWork;
+pub(crate) mod canonical_nodes;
 mod check_expr;
 mod check_stmt;
 mod collect;
@@ -433,7 +436,7 @@ pub struct CAbiRawCallResult {
     pub slots_by_parameter: HashMap<String, String>,
 }
 
-/// A Rust associated call whose owner type arguments the call itself left open (#1720).
+/// A native call whose result carries type arguments the call itself left open (#1720, #2481).
 ///
 /// `HashMap.new()` on `rust::std::collections::HashMap` names neither `K` nor `V`, and nothing at the call fixes
 /// them: no explicit `[str, int]`, no expected type, no argument that mentions them. A local bound to the value can
@@ -443,10 +446,12 @@ pub struct CAbiRawCallResult {
 pub struct OpenRustGenericCall {
     /// The receiver as the source spells it (`HashMap`), for the diagnostic.
     pub owner: String,
-    /// The associated function called (`new`).
+    /// The associated function or method called (`new`, `sum`).
     pub method: String,
-    /// The owner's type parameters the call left open, in declaration order (`K`, `V`).
+    /// The owner or method parameters the call left open, in declaration order (`K`, `V`, or `S`).
     pub type_params: Vec<String>,
+    /// Whether these are the associated constructor's owner parameters; method-result parameters use T0122.
+    pub owner_parameters: bool,
     /// The call's native result with those parameters open, once callee retention has computed it. A local bound to
     /// the call holds it as its native carrier until a use fixes the parameters.
     pub native: Option<ResolvedType>,
@@ -456,9 +461,9 @@ pub struct OpenRustGenericCall {
 
 /// A local bound to an [`OpenRustGenericCall`], watched until its first use fixes the call's open parameters (#1720).
 ///
-/// The first read must be a use that determines them, and the binding takes the type that use fixes at once. When
-/// the statement holding a first read that fixed nothing ends, the call is refused for its open parameters (#2481). A
-/// binding nothing reads is refused when its declaring block ends, naming the binding to annotate.
+/// The first read whose checking needs the parameters must determine them, and the binding takes that type at once.
+/// Independent reads leave it watched. A type-dependent read that fixes nothing refuses the call at the statement's
+/// end; no fixing use refuses it at the declaring block's end (#2481).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenRustGenericBinding {
     /// The local's name.
@@ -475,8 +480,24 @@ pub struct OpenRustGenericBinding {
     pub statement: Span,
     /// The binding's canonical identity: only a read of this binding can fix it.
     pub identity: Option<CanonicalSymbolId>,
-    /// The statement block of the first read, once something read the binding.
+    /// The statement block of the first read whose checking needs the open parameters.
     pub read_in: Option<usize>,
+    /// Reads in the current fixing statement that still require the open parameters.
+    pub active_reads: Vec<Span>,
+    /// Earlier operations whose own checking needs no open parameter, rechecked once the initializer is fixed.
+    pub passive_uses: Vec<OpenRustPassiveUse>,
+}
+
+/// An operation whose checking needs no open owner argument, retained until its native layout can be fixed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpenRustPassiveUse {
+    /// Recheck an ordinary native method expression with its original source argument shape.
+    Expression(crate::ast::Spanned<crate::ast::Expr>),
+    /// Keep builtin length's native call shape, whose receiver is an ordinary argument rather than a method slot.
+    Length {
+        receiver: crate::ast::Spanned<crate::ast::Expr>,
+        span: Span,
+    },
 }
 
 impl Drop for TypeCompatibilityDepthGuard<'_> {

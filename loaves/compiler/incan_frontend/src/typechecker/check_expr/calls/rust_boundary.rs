@@ -389,7 +389,13 @@ impl TypeChecker {
         }
         match &expression.node {
             Expr::Paren(inner) => self.rust_argument_native_type(inner),
-            Expr::Range { inclusive: false, .. } => Some(self.native_rust_signature_type("std::ops::Range<i64>", "")),
+            Expr::Range { inclusive: false, .. } => self
+                .type_info
+                .calls
+                .body_ir_constructor_types
+                .get(&expression.span)
+                .cloned()
+                .or_else(|| Some(self.native_rust_signature_type("std::ops::Range<i64>", ""))),
             _ => self.rust_native_value_type(expression),
         }
     }
@@ -597,6 +603,10 @@ impl TypeChecker {
             );
             let target = self.rust_inference_type(&target, parameters);
             let native_actual = self.rust_argument_native_type(Self::call_arg_expr(argument));
+            let native_actual = native_actual.map(|native| {
+                self.rust_range_bound_destination(sig, &parameter.type_display, Self::call_arg_expr(argument), &native)
+                    .unwrap_or(native)
+            });
             let actual = self.rust_inference_type(native_actual.as_ref().unwrap_or(actual), parameters);
             let (target, actual) = match (&target, &actual) {
                 (ResolvedType::Ref(_) | ResolvedType::RefMut(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
@@ -1286,6 +1296,19 @@ impl TypeChecker {
         true
     }
 
+    /// Require write access to the receiver of a Rust method that takes `&mut self`.
+    ///
+    /// A receiver that already is an exclusive reference, such as the payload `Option.as_mut()` binds, lends its
+    /// referent again: the method changes the referent, never the binding, so the binding needs no `mut`. Any other
+    /// receiver is borrowed exclusively, which a binding declared without `mut` does not allow.
+    pub(in crate::typechecker) fn validate_exclusive_rust_receiver(&mut self, receiver: &Spanned<Expr>, span: Span) {
+        if matches!(self.type_info.expr_type(receiver.span), Some(ResolvedType::RefMut(_))) {
+            return;
+        }
+        self.refuse_write_through_read_only_binding(receiver, span);
+        self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, receiver);
+    }
+
     /// Validate one expression used at a Rust value boundary and record the exact coercion lowering must preserve.
     ///
     /// This is the shared Rust-boundary argument plan for free functions, methods, and named-field Rust constructors.
@@ -1860,6 +1883,7 @@ impl TypeChecker {
         }
         let callable_returns =
             self.infer_rust_signature_bindings(sig, owner_path, &sig.type_params, args, arg_types, expected_return_ty);
+        self.validate_rust_scalar_predicates(sig, &callable_returns, span);
         self.record_inferred_rust_arguments(callable_display, &sig.type_params, &callable_returns, span);
         let declared_sig = sig;
         let declared_params = if Self::rust_signature_has_receiver(sig) {
@@ -1993,6 +2017,7 @@ impl TypeChecker {
 
         let callable_returns =
             self.infer_rust_signature_bindings(sig, path, &sig.type_params, args, &arg_types, expected_return_ty);
+        self.validate_rust_scalar_predicates(sig, &callable_returns, span);
         self.record_inferred_rust_arguments(path, &sig.type_params, &callable_returns, span);
         let effective_sig = self.specialize_inferred_rust_signature(sig, path, &callable_returns);
         self.record_rust_call_site_params(span, &effective_sig.params, path);
@@ -2156,6 +2181,7 @@ mod validate_rust_function_call_tests {
     fn canonical_rust_collection_namespaces_keep_structural_boundary_identity() {
         let mut loaves = crate::loaf_index::LoafIndex::default();
         loaves.add_rust_facts(
+            &Default::default(),
             [("std::primitive::str", "str"), ("native::Text", "str")]
                 .into_iter()
                 .map(|(path, target)| {
@@ -2224,6 +2250,7 @@ mod validate_rust_function_call_tests {
         for imports in [&[first][..], &[second][..], &[first, second][..]] {
             let mut loaves = crate::loaf_index::LoafIndex::default();
             loaves.add_rust_facts(
+                &Default::default(),
                 definitions
                     .iter()
                     .map(|(path, definition, visibility)| {

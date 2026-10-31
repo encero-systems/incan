@@ -375,7 +375,7 @@ const RUST_OWNER_TYPE_ARGS_NOT_INFERRED: DiagnosticCatalogEntry = DiagnosticCata
     severity: "error",
     phase: "typecheck",
     summary: "A Rust associated call leaves its owner's type arguments open and nothing later in the program fixes them.",
-    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. A later use of the binding fixes them: its first use, such as an insert, passing it to a typed parameter, a typed return, or assigning it to an annotated place. A binding that is never read again, or a result that is not bound at all, gives nothing to fix them, and the call is refused here, naming the binding to annotate. The check fires only when the compiler can see the owner's type parameters and the value has no later reader. A binding whose first use fixes nothing, such as `len(m)`, is refused with `INCAN-T0122`.",
+    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. The first use whose checking needs those parameters must fix them: an insert, passing the binding to a typed parameter, a typed return, or assigning it to an annotated place. Reads whose checking needs no open parameter, such as `len(m)` or `m.is_empty()`, leave the binding available for a later fixing use. A discarded result or a binding with no type-determining use is refused here, naming the binding to annotate. A first use that needs the parameters but fixes nothing is refused with `INCAN-T0122`.",
     examples: &["from rust::std::collections import HashMap\n\ndef main() -> None:\n    mut untyped = HashMap.new()"],
     common_causes: &["A collection constructed and then never used."],
     fixes: &[

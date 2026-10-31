@@ -1,0 +1,28 @@
+# behavior: a `const` str is an `Err` payload of a `Result[T, str]` and a `Some` payload of an `Option[str]`, as owned text (#2481)
+# expect-stdout:
+#   the connection is closed
+#   the connection is closed!
+
+"""Refuse with a constant message and keep a constant default."""
+
+const CLOSED: str = "the connection is closed"
+
+
+def refuse() -> Result[int, str]:
+    return Err(CLOSED)
+
+
+def fallback() -> Option[str]:
+    return Some(CLOSED)
+
+
+def main() -> None:
+    match refuse():
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match fallback():
+        Some(text) =>
+            mut owned = text
+            owned += "!"
+            println(owned)
+        None => println("none")

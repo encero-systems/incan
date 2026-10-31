@@ -1,0 +1,30 @@
+# behavior: a socket reached through a shared reference reads through `Read for &UnixStream`, the one impl a shared reference can serve; `Read for UnixStream` needs the socket exclusively (#2481)
+# expect-stdout:
+#   true
+
+"""Read from a socket that a guarded Option lends only as a shared reference."""
+
+from rust::std::cell import RefCell
+from rust::std::io import Read, Write
+from rust::std::os::unix::net import UnixStream
+from rust::std::rc import Rc
+
+
+def main() -> None:
+    match UnixStream.pair():
+        Ok(pair) =>
+            left, right = pair
+            mut writer = left
+            match writer.write_all(b"hi"):
+                Ok(_) => pass
+                Err(error) => println(f"{error}")
+            cell = Rc.new(RefCell.new(Some(right)))
+            match cell.borrow().as_ref():
+                Some(open) =>
+                    mut reading = open
+                    mut got = b"xx"
+                    match reading.read_exact(got):
+                        Ok(_) => println(got == b"hi")
+                        Err(error) => println(f"{error}")
+                None => println("closed")
+        Err(error) => println(f"{error}")

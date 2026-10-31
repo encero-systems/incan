@@ -10,6 +10,7 @@ from std.graph import Dag, NodeId
 from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
 from toolchain_access import BINARY_SEPARATOR, BUILD_SEPARATOR, ToolchainAccess, access_keys, read_access
+from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
 from observation import observe
 from rust::std::rc import Rc
@@ -216,7 +217,7 @@ pub def parse_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     """Parse effective intent and retain source spans for literal diagnostic key paths."""
     clock = begin()
     result = parse_raw_intent(source, manifest).map_err((error) => error.with_source(source))
-    record("manifest_parse", manifest, clock, text_size(source, clock))
+    record(Operation.ManifestParse, manifest, clock, text_size(source, clock))
     return result
 
 
@@ -258,11 +259,11 @@ def decoded_manifest(raw: bytes, manifest: str) -> Result[ManifestSnapshot, Inta
     source = str(from_utf8(raw).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, str(error)))?)
     mut clock = begin()
     parsed = toml.parse(source)
-    record("manifest_parse", manifest, clock, len(raw))
+    record(Operation.ManifestParse, manifest, clock, len(raw))
     document = parsed.map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
     clock = begin()
     digest = sha256.digest(raw)
-    record("file_hash", manifest, clock, len(raw))
+    record(Operation.FileHash, manifest, clock, len(raw))
     evidence = ManifestEvidence(path=manifest, raw_bytes=raw, source=source, sha256_digest=digest)
     return Ok(ManifestSnapshot(evidence=evidence, parsed=document))
 
@@ -902,7 +903,7 @@ def snapshot_in(root: Path, mut store: &mut ManifestStore) -> Result[ManifestSna
             return Ok(previous.snapshot)
     clock = begin()
     raw = manifest.read_bytes().map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error.message()))?
-    record("file_read", manifest.0, clock, len(raw))
+    record(Operation.FileRead, manifest.0, clock, len(raw))
     snapshot = decoded_manifest(raw, manifest.0)?
     current = observe(manifest).map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error))?
     if current.stamp == observed.stamp:

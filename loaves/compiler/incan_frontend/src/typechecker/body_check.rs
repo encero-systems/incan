@@ -472,6 +472,7 @@ fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
         item_taking_iterations,
         comprehension_source_consumption,
         in_place_match_scrutinees,
+        loan_free_scrutinees,
     } = local;
     target.body_ir_truthiness_receivers.extend(body_ir_truthiness_receivers);
     target.body_ir_iterations.extend(body_ir_iterations);
@@ -481,6 +482,7 @@ fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
         .comprehension_source_consumption
         .extend(comprehension_source_consumption);
     target.in_place_match_scrutinees.extend(in_place_match_scrutinees);
+    target.loan_free_scrutinees.extend(loan_free_scrutinees);
 }
 
 /// Consume all rust fields into the compatibility view; field additions require an explicit ownership choice.
@@ -749,6 +751,8 @@ impl TypeChecker {
     }
 }
 
+mod oracle_compare;
+pub(crate) mod records;
 #[cfg(test)]
 mod tests;
 

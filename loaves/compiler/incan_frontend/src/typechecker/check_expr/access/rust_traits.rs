@@ -9,15 +9,15 @@ use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
 use crate::ast::{Expr, Spanned};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type};
 use crate::symbols::ResolvedType;
+use crate::typechecker::IdentKind;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
-use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{
     RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
 };
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics;
 
-/// A closed trait reference and the signature it contributes to one method call.
+/// A selected trait reference and signature, with closed impl binders and any still-open method result parameters.
 struct TraitCandidate {
     path: String,
     signature: RustFunctionSig,
@@ -26,6 +26,8 @@ struct TraitCandidate {
     borrow_cost: usize,
     /// Whether the trait declares its result as `Self`, which a rusttype receiver keeps as the rusttype.
     returns_self: bool,
+    /// Method binders still requiring a typed use, distinct from equally named enclosing source binders.
+    open_parameters: Vec<String>,
 }
 
 impl TypeChecker {
@@ -273,8 +275,7 @@ impl TypeChecker {
         if signature.params.first().is_some_and(|parameter| {
             Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
         }) {
-            self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
-            self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+            self.validate_exclusive_rust_receiver(call.receiver_expr, call.span);
         }
         let selected = TraitCandidate {
             path: format!("{}::{}", call.rust_path, call.method),
@@ -283,6 +284,7 @@ impl TypeChecker {
             self_type: owner,
             borrow_cost: 0,
             returns_self: false,
+            open_parameters: Vec::new(),
         };
         let errors_before = self.errors.len();
         let result = self.validate_rust_method_call(
@@ -563,6 +565,7 @@ impl TypeChecker {
                 self_type: source,
                 borrow_cost: 0,
                 returns_self: false,
+                open_parameters: Vec::new(),
             },
         )?;
         self.type_info.rust.checked_calls.get_mut(&call.span)?.has_receiver = false;
@@ -591,8 +594,8 @@ impl TypeChecker {
         matches!(metadata.kind, RustItemKind::Type(_)).then(|| metadata.canonical_path.clone())
     }
 
-    /// Read a native value's retained item from its public field, call or canonical local binding, never from a method
-    /// spelling.
+    /// Read a native value's retained item from its field, call, propagated success payload or canonical binding,
+    /// never from a method spelling. Propagation selects the payload's owner rather than the Result container.
     pub(in crate::typechecker::check_expr) fn rust_value_item_path(
         &self,
         expression: &Spanned<Expr>,
@@ -602,6 +605,16 @@ impl TypeChecker {
         }
         if let Expr::Paren(inner) = &expression.node {
             return self.rust_value_item_path(inner);
+        }
+        if let Expr::Try(inner) = &expression.node {
+            if !self.type_info.rust.checked_calls.contains_key(&inner.span)
+                && self.rust_value_item_path(inner).is_none()
+            {
+                return None;
+            }
+            return self
+                .rust_native_value_type(expression)
+                .and_then(|native| self.rust_adjusted_owner_path(&native));
         }
         if let Expr::Ident(name) = &expression.node {
             let symbol = self.symbols.lookup(name)?;
@@ -660,8 +673,8 @@ impl TypeChecker {
     }
 
     /// Recover the exact native carrier of a public Rust field, selected call, checked source view, or local alias for
-    /// generic inference. A source view's flattened public type must not replace its already retained executable
-    /// borrow.
+    /// generic inference, including the success edge of a Result. A source view's flattened public type must not
+    /// replace its already retained executable borrow.
     pub(in crate::typechecker::check_expr) fn rust_native_value_type(
         &self,
         expression: &Spanned<Expr>,
@@ -674,6 +687,11 @@ impl TypeChecker {
         }
         if let Expr::Paren(inner) = &expression.node {
             return self.rust_native_value_type(inner);
+        }
+        if let Expr::Try(inner) = &expression.node {
+            return self
+                .rust_native_value_type(inner)
+                .and_then(|result| result.result_ok_type().cloned());
         }
         if let Expr::Ident(name) = &expression.node {
             let symbol = self.symbols.lookup(name)?;
@@ -1065,7 +1083,9 @@ impl TypeChecker {
         Some(scoped)
     }
 
-    /// Resolve one trait method only when its self template, inputs, and expected output close every native binder.
+    /// Resolve one trait method only when its self template, inputs, and expected output close every impl binder.
+    /// A method's own result parameters may stay open for the local's first typed use, recorded explicitly so an
+    /// equally named source binder cannot supply an accidental binding.
     /// Impl predicates remain native obligations: this selects an exact trait reference, and the adapter verifies
     /// that rustc can satisfy it before emitting MIR. A method bound whose closed associated equality contradicts the
     /// value its subject supplies excludes the reference; other competing equally ranked references remain ambiguous.
@@ -1161,12 +1181,18 @@ impl TypeChecker {
             arguments.push(self.instantiate_rust_signature_type(&template, &variables, &bindings));
         }
         for parameter in &original.type_params {
-            arguments.push(bindings.get(parameter)?.clone());
+            arguments.push(
+                bindings
+                    .get(parameter)
+                    .cloned()
+                    .unwrap_or_else(|| ResolvedType::TypeVar(parameter.clone())),
+            );
         }
         if variables.iter().any(|name| {
-            bindings
-                .get(name)
-                .is_none_or(|ty| matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+            !original.type_params.contains(name)
+                && bindings
+                    .get(name)
+                    .is_none_or(|ty| matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
         }) {
             return None;
         }
@@ -1177,7 +1203,27 @@ impl TypeChecker {
             self_type: storage,
             borrow_cost,
             returns_self: original.return_type.trim() == "Self",
+            open_parameters: self.open_rust_trait_method_parameters(&original.type_params, &bindings),
         })
+    }
+
+    /// Keep unresolved method binders explicit, so an unbound `S` never resolves by matching a source binder's name.
+    fn open_rust_trait_method_parameters(
+        &self,
+        parameters: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Vec<String> {
+        let source = self.native_call_type_parameters();
+        parameters
+            .iter()
+            .filter(|name| {
+                bindings.get(*name).is_none_or(|argument| {
+                    matches!(argument, ResolvedType::Unknown | ResolvedType::CallSiteInfer)
+                        || Self::mentions_foreign_type_variable(argument, &source)
+                })
+            })
+            .cloned()
+            .collect()
     }
 
     /// Whether each associated equality a candidate's method bounds state agrees with the value its bound subject
@@ -1375,13 +1421,15 @@ impl TypeChecker {
         if has_receiver != value_receiver {
             return None;
         }
+        if let Some(result) = self.watch_open_rust_trait_result(&call, &selected) {
+            return Some(result);
+        }
         if has_receiver
             && selected.signature.params.first().is_some_and(|parameter| {
                 Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
             })
         {
-            self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
-            self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+            self.validate_exclusive_rust_receiver(call.receiver_expr, call.span);
         }
         let errors_before = self.errors.len();
         let result = self.validate_rust_method_call(
@@ -1400,6 +1448,45 @@ impl TypeChecker {
         if returns_self && let Some(rusttype) = self.rusttype_associated_receiver(&call) {
             return Some(rusttype);
         }
+        Some(result)
+    }
+
+    /// Watch a uniquely selected method's own open result parameters using the associated-call first-use rule.
+    /// Impl binders are already fixed by candidate selection. No executable callee is retained until a typed use
+    /// rechecks this initializer with a closed destination; an unused or unconstrained result is refused normally.
+    fn watch_open_rust_trait_result(
+        &mut self,
+        call: &RustPathMethodCall<'_>,
+        selected: &TraitCandidate,
+    ) -> Option<ResolvedType> {
+        let parameters = &selected.signature.type_params;
+        let open = &selected.open_parameters;
+        if open.is_empty() {
+            return None;
+        }
+        let result = self.rust_inference_type(
+            &self.native_rust_signature_type(&selected.signature.return_type, call.rust_path),
+            parameters,
+        );
+        if !Self::native_result_carries_parameters(&result, open) {
+            self.errors.push(crate::diagnostics::errors::rust_callee_not_selected(
+                &format!("rust::{}.{}", call.rust_path, call.method),
+                crate::diagnostics::errors::NativeCalleeGap::OpenTypeParameters(open),
+                call.span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        self.open_rust_generic_calls.insert(
+            call.span,
+            crate::typechecker::OpenRustGenericCall {
+                owner: call.rust_path.to_owned(),
+                method: call.method.to_owned(),
+                type_params: open.clone(),
+                owner_parameters: false,
+                native: Some(result.clone()),
+                native_item: None,
+            },
+        );
         Some(result)
     }
 
@@ -1452,6 +1539,8 @@ impl TypeChecker {
 
     /// Match native value and reference impl templates before adding an automatic receiver borrow. A consuming
     /// method on an exclusive reference takes that reference; a borrowing method may directly reborrow its referent.
+    /// A referent reached through a shared reference is never lent exclusively, so its `&mut self` methods are no
+    /// candidates there: `Read for &UnixStream` serves a shared socket, `Read for UnixStream` does not.
     /// Iteration filters callable bounds before selecting its item; ordinary native calls leave full obligations to
     /// rustc, including source collection views whose native implementations are not nominal checker owners.
     fn retained_rust_trait_candidates(
@@ -1466,6 +1555,7 @@ impl TypeChecker {
         let selected = trait_path.map(|path| self.rust_trait_identity(path));
         let imported = self.rust_imported_trait_templates(info, trait_path);
         let mut current = source;
+        let mut behind_shared_reference = false;
         loop {
             let owner = self.rust_trait_owner(current, info, call.rust_path);
             for (implementation, external) in info
@@ -1492,6 +1582,9 @@ impl TypeChecker {
                     else {
                         continue;
                     };
+                    if behind_shared_reference && matches!(receiver.ty, ResolvedType::RefMut(_)) {
+                        continue;
+                    }
                     if !self.rust_trait_carriers_match(&receiver.ty, source) {
                         candidate.borrow_cost += 1;
                     }
@@ -1499,7 +1592,11 @@ impl TypeChecker {
                 candidates.push(candidate);
             }
             match current {
-                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => current = inner,
+                ResolvedType::Ref(inner) => {
+                    behind_shared_reference = true;
+                    current = inner;
+                }
+                ResolvedType::RefMut(inner) => current = inner,
                 _ => break,
             }
         }

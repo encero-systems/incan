@@ -157,7 +157,8 @@ impl TypeChecker {
 
     /// Validate a source callable directly against its instantiated native predicate. Return whether this argument
     /// has a retained callable bound, including a diagnosed mismatch, so callers never validate it a second time
-    /// against a rendered function-pointer display. Other native argument kinds keep ordinary boundary validation.
+    /// against a rendered function-pointer display. A borrowed scalar result has no admitted lifetime contract and
+    /// is refused here rather than reaching native plan validation. Other arguments keep ordinary boundary validation.
     pub(super) fn validate_rust_bound_callable_argument(
         &mut self,
         signature: &RustFunctionSig,
@@ -174,6 +175,16 @@ impl TypeChecker {
         };
         let actual_storage = self.rust_inference_type(actual, &[]);
         let expected_storage = self.rust_inference_type(&expected, &[]);
+        if let ResolvedType::Function(_, result) = &actual_storage
+            && matches!(result.as_ref(), ResolvedType::Ref(inner) | ResolvedType::RefMut(inner)
+                if matches!(inner.as_ref(), ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool))
+        {
+            self.errors.push(crate::diagnostics::CompileError::type_error(
+                "Rust callback cannot return a borrowed scalar without a retained lifetime contract".into(),
+                expression.span,
+            ));
+            return true;
+        }
         if !self.types_compatible(&actual_storage, &expected_storage) {
             self.errors.push(errors::type_mismatch(
                 &expected.to_string(),

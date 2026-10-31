@@ -1945,3 +1945,36 @@ impl MutBodyLocal {
         self.pending.len()
     }
 }
+
+impl MutBodyLocal {
+    /// Expose the known-body contribution only when every other mutation capability is empty. This temporary native
+    /// profile never turns an unrepresented obligation into an empty effect or a successful source result.
+    pub(super) fn plain_bodies(&self) -> Option<&HashSet<CanonicalSymbolId>> {
+        let Self {
+            bodies_checked,
+            changed,
+            forwards,
+            function_values,
+            loop_variables,
+            reassigned_locals,
+            pending,
+            current,
+        } = self;
+        (changed.is_empty()
+            && forwards.is_empty()
+            && function_values.is_empty()
+            && loop_variables.is_empty()
+            && reassigned_locals.is_empty()
+            && pending.is_empty()
+            && current.is_none())
+        .then_some(bodies_checked)
+    }
+
+    /// Restore an explicitly witnessed empty-effect body contribution without running mutation settlement.
+    pub(super) fn from_plain_bodies(bodies: Vec<CanonicalSymbolId>) -> Self {
+        Self {
+            bodies_checked: bodies.into_iter().collect(),
+            ..Self::default()
+        }
+    }
+}

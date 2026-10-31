@@ -1,0 +1,88 @@
+"""Borrow the selected installation page's parsed documents within a process, preserving generation checks."""
+
+from pub::incan_platform.trace import Operation
+from std.fs import Path
+from std.json import JsonValue
+from observation import observe
+from jec import begin, record
+from payload_types import InstalledPayload, PayloadAdmission
+
+
+pub model Document:
+    """One parsed installed record and the exact filesystem generation admitted with it."""
+
+    pub path: str
+    pub stamp: str
+    pub value: JsonValue
+
+
+model Selection:
+    """Only the current installation's decoded documents, never a second persisted cache or an older fallback."""
+
+    documents: Dict[str, Document] = {}
+    payloads: Dict[str, InstalledPayload] = {}
+
+    def select(mut self, documents: list[Document], payloads: list[InstalledPayload]) -> None:
+        """Replace the current read scope with the exact documents decoded from its admitted page."""
+        self.documents = {document.path: document for document in documents}
+        self.payloads = {payload.path: payload for payload in payloads}
+
+    def payload(self, path: Path) -> Result[Option[PayloadAdmission], str]:
+        """Name an admitted installed payload with one generation check, without reopening either producer record."""
+        if path.0 not in self.payloads:
+            return Ok(None)
+        clock = begin()
+        selected = self.payloads[path.0]
+        match observe(Path(selected.record)):
+            Err(_) => return Ok(None)
+            Ok(found) =>
+                if found.stamp != selected.record_stamp:
+                    return Ok(None)
+        admission = selected.admission
+        if observe(path)?.stamp != admission.observation:
+            return Err(f"{path.0}: published payload changed; admission is required")
+        record(Operation.InstallationPayload, path.0, clock)
+        return Ok(
+            Some(
+                PayloadAdmission(
+                    identity=admission.identity,
+                    payload=admission.payload,
+                    observation=admission.observation,
+                    provenance=admission.provenance,
+                ),
+            ),
+        )
+
+    def read(self, path: Path) -> Result[Option[JsonValue], str]:
+        """Return admitted fields only while their original installed input has the same generation."""
+        if path.0 not in self.documents:
+            return Ok(None)
+        clock = begin()
+        document = self.documents[path.0]
+        if observe(path)?.stamp != document.stamp:
+            return Ok(None)
+        record(Operation.InstallationDocument, path.0, clock)
+        return Ok(Some(document.value.clone()))
+
+
+static SELECTED: Selection = Selection()
+
+
+pub def select(documents: list[Document], payloads: list[InstalledPayload]) -> None:
+    """Install a single verified page's document projection for its ordinary readers."""
+    SELECTED.select(documents, payloads)
+
+
+pub def clear() -> None:
+    """End the selection before re-admission so producers cannot accidentally read the preceding generation."""
+    SELECTED.select([], [])
+
+
+pub def payload(path: Path) -> Result[Option[PayloadAdmission], str]:
+    """Read producer identity from the selected page; project-produced payloads keep their publication reader."""
+    return SELECTED.payload(path)
+
+
+pub def read(path: Path) -> Result[Option[JsonValue], str]:
+    """Read a selected installed document; other project and publication files keep their ordinary reader."""
+    return SELECTED.read(path)

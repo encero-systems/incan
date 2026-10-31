@@ -1,0 +1,292 @@
+"""Admit one installation's normalized frozen inputs through sealed bakery pages and reconcile their generations."""
+
+from pub::incan_platform.trace import Operation
+from rust::std::string import String as RustString
+from rust::std::sync import Arc
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.fs.locking import FileLock
+from std.hash import sha256
+from std.tempfile import TemporaryDirectory
+from pub::incan_platform.trace import Clock
+from home_paths import bakery
+from intake import ManifestReader, load_project
+from installation_codec import PROFILE, Installation, StandardManifest, decode, encode
+from jec import begin as begin_work, record as record_work
+from observation import observe
+from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value, selected_value
+from segment_store import Snapshot, begin, claim, commit, get, lease, put, snapshot
+from toolchain_types import Toolchain
+from installation_documents import capture as capture_documents
+from frozen_inputs import clear as clear_documents, select as select_documents
+
+# One current installation scope; later selections replace it rather than retaining a history of decoded pages.
+static pages: Dict[str, Installation] = {}
+static generations: Dict[str, str] = {}
+
+
+model ReadScope:
+    """One pinned bakery revision and, for a short CLI command, its reconciled installation observation."""
+
+    revision: str = ""
+    held: Option[Arc[FileLock]] = None
+    command: bool = false
+    validated: str = ""
+
+    def pin(mut self, view: Snapshot) -> Result[Arc[FileLock], str]:
+        """Share one lease across readers of the same immutable view; a different view replaces its guard."""
+        revision = f"{view.root.0}\n{view.generation}\n{view.digest}\n{view.view}"
+        if self.revision != revision:
+            self.held = Some(Arc.new(lease(view).map_err((error) => error.message())?))
+            self.revision = revision
+        match self.held:
+            None => return Err("installation read scope has no lease")
+            Some(guard) => return Ok(guard.clone())
+
+    def begin_command(mut self) -> None:
+        """Select one capture for a short ordinary command; servers and direct library callers reconcile each ask."""
+        self.command = true
+        self.validated = ""
+
+    def reconciled(self, key: str) -> bool:
+        """Whether this command already reconciled the exact selected page generation."""
+        return self.command and self.validated == key
+
+    def remember(mut self, key: str) -> None:
+        """Record completion only after all input generations have been checked."""
+        self.validated = key
+
+
+static SCOPE: ReadScope = ReadScope()
+
+
+pub def begin_command() -> None:
+    """Start the frozen-input capture of one short command, independently of editable project capture."""
+    SCOPE.begin_command()
+
+
+pub def recall(directory: Path) -> Result[Option[Installation], str]:
+    """
+    Read the selected admitted page; changed inputs are a miss and damaged selected bytes are a refusal.
+
+    1. Lease the current bakery snapshot and read the installation binding.
+    2. Decode its exact typed revision through an integrity-checked mapping.
+    3. Reconcile every recorded generation before returning any admitted facts.
+    """
+    # 1. Only an absent selection is an unadmitted installation.
+    clock = begin_work()
+    view = snapshot(bakery()?).map_err((error) => error.message())?
+    held = SCOPE.pin(view)?
+    key = question(directory)
+    match get(view, binding(key)).map_err((error) => error.message())?:
+        None =>
+            clear_documents()
+            return Ok(None)
+        Some(value) =>
+            digest = RustString
+                .from_utf8(value)
+                .map((value) => str(value))
+                .map_err((_) => "invalid installation page binding")?
+            # 2. A selected corrupt page must never become a miss and silently reproduce itself.
+            spec = specification(key, digest)
+            payload = selected_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?
+            generation = observe(payload)?.stamp
+            cache_key = f"{view.root.0}\n{digest}"
+            page = recalled_page(cache_key, generation, view, spec, digest, directory, clock)?
+            # 3. In-place edits and replacements cannot retain admission through a directory timestamp alone.
+            reading = f"{cache_key}\n{generation}"
+            if not SCOPE.reconciled(reading) and not current(page):
+                clear_documents()
+                return Ok(None)
+            SCOPE.remember(reading)
+            select_documents(page.documents, page.payloads)
+            return Ok(Some(page))
+
+
+def recalled_page(
+    key: str,
+    generation: str,
+    view: Snapshot,
+    spec: SetSpec,
+    digest: str,
+    directory: Path,
+    clock: Option[Clock],
+) -> Result[Installation, str]:
+    """Decode once per selected immutable value generation; changed bytes always pass through integrity validation."""
+    if "current" in pages and generations.get("key", "") == key and generations.get("generation", "") == generation:
+        record_work(Operation.InstallationPageReuse, directory.0, clock)
+        page = pages["current"]
+        return Ok(
+            Installation(
+                toolchain=page.toolchain,
+                manifests=page.manifests,
+                paths=page.paths,
+                stamps=page.stamps,
+                documents=page.documents,
+                payloads=page.payloads,
+            ),
+        )
+    mapped = mapped_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?
+    page = decode(mapped).map_err((detail) => f"installation page {digest}: {detail}")?
+    if observe(selected_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?)?.stamp != generation:
+        return Err("installation page changed while decoding")
+    pages["current"] = page
+    generations["key"] = key
+    generations["generation"] = generation
+    record_work(Operation.InstallationPage, directory.0, clock, mapped.len())
+    return Ok(page)
+
+
+pub def retain(
+    directory: Path,
+    producer: (Path) -> Result[Toolchain, str],
+    prepared: Option[Tuple[Toolchain, str]] = None,
+) -> Result[Installation, str]:
+    """
+    Parse and admit one complete installation generation while holding its bakery claim.
+
+    1. Capture the normalized standard manifests and all observations that bracket their reads.
+    2. Seal and admit one deterministic typed page through the shared record-set mechanism.
+    3. Recheck the inputs and atomically select that exact revision.
+    """
+    # 1. Concurrent first admissions recheck under the same installation claim.
+    store = bakery()?
+    key = question(directory)
+    held = claim(store, key).map_err((error) => error.message())?
+    if let Some(page) = recall(directory)?:
+        return Ok(page)
+    clear_documents()
+    generation = match prepared:
+        Some((_toolchain, stamp)) => stamp
+        None => observe(directory.joinpath("toolchain.json"))?.stamp
+
+    toolchain = match prepared:
+        Some((value, _stamp)) => value
+        None => producer(directory)?
+
+    page = capture(directory, toolchain, generation)?
+    data = encode(page)?
+    digest = hexlify(sha256.digest(data))
+    # 2. Local production uses the same portable admission as a supplied sealed set.
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    source = temporary.path().joinpath("source")
+    view = snapshot(source).map_err((error) => error.message())?
+    staged = commit(put(begin(view), key, data)).map_err((error) => error.message())?
+    spec = specification(key, digest)
+    transport = temporary.path().joinpath("set")
+    root = export_set(staged, spec, transport).map_err((error) => error.message())?
+    admitted = admit(store, transport, root, spec.profile).map_err((error) => error.message())?
+    # 3. An installation changed during admission cannot select facts from either partial generation.
+    if not current(page):
+        return Err(f"{directory.0}: installation changed during admission")
+    commit(put(begin(admitted), binding(key), digest.encode("utf-8"))).map_err((error) => error.message())?
+    select_documents(page.documents, page.payloads)
+    return Ok(page)
+
+
+pub def current(page: Installation) -> bool:
+    """Reconcile recorded metadata without reading or hashing any original installed input."""
+    for index in range(len(page.paths)):
+        path = Path(page.paths[index])
+        match observe(path):
+            Err(_) => return false
+            Ok(found) =>
+                if found.stamp != page.stamps[index]:
+                    return false
+    for document in page.documents:
+        match observe(Path(document.path)):
+            Err(_) => return false
+            Ok(found) =>
+                if found.stamp != document.stamp:
+                    return false
+    for payload in page.payloads:
+        match observe(Path(payload.record)):
+            Err(_) => return false
+            Ok(found) =>
+                if found.stamp != payload.record_stamp:
+                    return false
+        match observe(Path(payload.path)):
+            Err(_) => return false
+            Ok(found) =>
+                if found.stamp != payload.admission.observation:
+                    return false
+    return true
+
+
+def capture(directory: Path, toolchain: Toolchain, generation: str) -> Result[Installation, str]:
+    """Capture manifest membership, complete normalized intent and exact content identities at one generation."""
+    mut paths = [directory.joinpath("toolchain.json").0, directory.0]
+    mut stamps = [generation, observe(directory)?.stamp]
+    mut manifests: list[StandardManifest] = []
+    standard = directory.joinpath("stdlib")
+    if standard.is_dir():
+        paths.append(standard.0)
+        stamps.append(observe(standard)?.stamp)
+        reader = ManifestReader()
+        entries = {entry.0: entry for entry in standard.iterdir().map_err((error) => error.message())?}
+        for entry_path in sorted([path for path in entries.keys()]):
+            entry = entries[entry_path]
+            # Directory observations also notice a previously absent manifest becoming present.
+            paths.append(entry.0)
+            stamps.append(observe(entry)?.stamp)
+            manifest = entry.joinpath("loaf.toml")
+            if not manifest.is_file():
+                continue
+            paths.append(manifest.0)
+            stamps.append(observe(manifest)?.stamp)
+            project = load_project(entry, reader).map_err((error) => error.message())?
+            manifests.append(
+                StandardManifest(
+                    root=project.root,
+                    digest=hexlify(project.evidence.sha256_digest),
+                    intent=project.intent,
+                ),
+            )
+    by_name = {manifest.intent.name: manifest for manifest in manifests}
+    if len(by_name) != len(manifests):
+        return Err("installation has duplicate standard package names")
+    captured = capture_documents(directory, toolchain)?
+    paths.extend(captured.paths)
+    stamps.extend(captured.stamps)
+    mut observations: Dict[str, str] = {}
+    for index in range(len(paths)):
+        path = paths[index]
+        if path in observations and observations[path] != stamps[index]:
+            return Err(f"{path}: installation membership changed during admission")
+        observations[path] = stamps[index]
+    paths = sorted([path for path in observations.keys()])
+    page = Installation(
+        toolchain=toolchain.installed(),
+        manifests=[by_name[name] for name in sorted([name for name in by_name.keys()])],
+        paths=paths,
+        stamps=[observations[path] for path in paths],
+        documents=captured.documents,
+        payloads=captured.payloads,
+    )
+    if not current(page):
+        return Err(f"{directory.0}: installation changed while reading its manifests")
+    return Ok(page)
+
+
+def question(directory: Path) -> str:
+    """Name the local installation selection; a location is never a compiled-unit identity."""
+    return hexlify(sha256.digest(f"{PROFILE}\n{directory.0}".encode("utf-8")))
+
+
+def binding(key: str) -> str:
+    """The one mutable selection of an installation's admitted immutable revision."""
+    return f"installation/page/{key}"
+
+
+def specification(key: str, digest: str) -> SetSpec:
+    """The installation adapter's exact identity, schema and codec contract."""
+    record = Record(key=key, revision=digest, payloads=[], references=[])
+    return SetSpec(
+        profile=Profile(identity=PROFILE, schema=PROFILE, codec="little-endian/1"),
+        origin="oven.installation",
+        producer=PROFILE,
+        receipt=key,
+        records=[record],
+        namespaces=[],
+        dependencies=[],
+    )

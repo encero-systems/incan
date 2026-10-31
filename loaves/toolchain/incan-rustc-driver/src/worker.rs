@@ -12,10 +12,9 @@
 //! a native `Clone`, and shared carriers (`Arc`, channels, the platform's `Connection`) lack retained `Send` evidence.
 //! What a departed caller means is the host's decision (`incan_worker_host::abandon`).
 
-use std::os::fd::RawFd;
+use std::io::PipeWriter;
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerCommand};
 
@@ -80,6 +79,7 @@ fn run(command: &WorkerCommand, arguments: &[String]) -> Result<i32, Box<dyn std
         WorkerCommand::Unit => crate::frontend::compile_resident(arguments).map(|()| 0),
         WorkerCommand::Check => crate::check(arguments),
         WorkerCommand::Format => crate::format(arguments),
+        WorkerCommand::SourceFiles => crate::source_files(arguments),
     }
 }
 
@@ -152,43 +152,60 @@ fn release_free_memory() {
 fn release_free_memory() {}
 
 /// Observes an activation's caller while the compiler runs and hands a caller that left to the host's `abandon`,
-/// which withdraws the worker's socket and ends the process.
+/// which withdraws the worker's socket and ends the process. Ending the watch closes its wake pipe, which ends the
+/// observing thread at once, so an activation's reply never waits on the observer.
 struct Abandonment {
-    done: Arc<AtomicBool>,
+    wake: Option<PipeWriter>,
     thread: Option<std::thread::JoinHandle<()>>,
-    /// The host requires process teardown after this activation; no observer can outlive that process.
+    /// A one-activation process ends its observer with itself after disarming it.
     retiring: bool,
 }
 
 impl Abandonment {
-    /// Observe the activation's caller, ending with the process only when the host requires one-activation teardown.
+    /// Start observing the caller the host lent for this activation.
     fn watch(watch: CallerWatch, retiring: bool) -> Self {
-        let done = Arc::new(AtomicBool::new(false));
-        let watching = done.clone();
+        let Ok(descriptor) = RawFd::try_from(watch.descriptor) else {
+            return Self::unobserved();
+        };
+        let mut observer = Self::observe(descriptor, move || incan_worker_host::abandon(watch));
+        observer.retiring = retiring;
+        observer
+    }
+
+    /// Run `left` on an observing thread once the caller's side of `caller` closes, until the watch ends. Without a
+    /// wake pipe the activation runs unobserved, as one whose descriptor cannot be watched does.
+    fn observe(caller: RawFd, left: impl FnOnce() + Send + 'static) -> Self {
+        let Ok((woken, wake)) = std::io::pipe() else {
+            return Self::unobserved();
+        };
         let thread = std::thread::spawn(move || {
-            let Ok(descriptor) = RawFd::try_from(watch.descriptor) else {
-                return;
-            };
-            while !watching.load(Ordering::Acquire) {
-                if caller_left(descriptor) && !watching.load(Ordering::Acquire) {
-                    incan_worker_host::abandon(watch);
-                    return;
-                }
+            if caller_left(caller, woken.as_raw_fd()) {
+                left();
             }
         });
         Self {
-            done,
+            wake: Some(wake),
             thread: Some(thread),
-            retiring,
+            retiring: false,
+        }
+    }
+
+    /// A watch that observes nothing.
+    fn unobserved() -> Self {
+        Self {
+            wake: None,
+            thread: None,
+            retiring: false,
         }
     }
 }
 
 impl Drop for Abandonment {
-    /// Disarm before the reply. Resident workers join before reusing descriptors; retiring workers end every thread
-    /// with their process, so waiting for the observer's polling timeout serves no purpose.
+    /// Stop observing once the activation has ended, before its reply is sent: closing the wake pipe ends the
+    /// observing thread's wait at once. Resident workers join before descriptor reuse; retiring workers end the
+    /// disarmed observer with their process.
     fn drop(&mut self) {
-        self.done.store(true, Ordering::Release);
+        drop(self.wake.take());
         if let Some(thread) = self.thread.take()
             && !self.retiring
         {
@@ -197,25 +214,86 @@ impl Drop for Abandonment {
     }
 }
 
-/// Wait up to 100 ms for the caller's side of the connection to close; a caller sends nothing more while it waits.
-fn caller_left(caller: RawFd) -> bool {
-    let mut descriptor = libc::pollfd {
-        fd: caller,
+/// Wait until the caller's side of the connection closes (true) or the watch ends and closes the wake pipe (false).
+/// A caller sends nothing more while it waits; bytes it sends anyway stay for the host, and the observer then waits on
+/// the wake pipe alone for 100 ms at a time, so readable bytes do not keep this thread busy.
+fn caller_left(caller: RawFd, wake: RawFd) -> bool {
+    loop {
+        let mut descriptors = [readable(caller), readable(wake)];
+        // SAFETY: both descriptors are initialized and open for this call: the host keeps the caller's connection open
+        // until the watch ends, and the observing thread owns the wake pipe's reading end.
+        if unsafe { libc::poll(descriptors.as_mut_ptr(), 2, -1) } < 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return false;
+        }
+        if descriptors[1].revents != 0 {
+            return false;
+        }
+        if descriptors[0].revents & libc::POLLHUP != 0 {
+            return true;
+        }
+        let mut byte = [0_u8; 1];
+        // SAFETY: the buffer is one writable byte and the descriptor is the caller's open connection.
+        if unsafe { libc::recv(caller, byte.as_mut_ptr().cast(), 1, libc::MSG_PEEK) } == 0 {
+            return true;
+        }
+        let mut wake_only = [readable(wake)];
+        // SAFETY: the observing thread owns the wake pipe's reading end for the duration of this call.
+        if unsafe { libc::poll(wake_only.as_mut_ptr(), 1, 100) } > 0 {
+            return false;
+        }
+    }
+}
+
+/// A poll entry that waits for `descriptor` to become readable or hang up.
+fn readable(descriptor: RawFd) -> libc::pollfd {
+    libc::pollfd {
+        fd: descriptor,
         events: libc::POLLIN,
         revents: 0,
-    };
-    // SAFETY: the descriptor is initialized and the host keeps the connection open for the duration of this call.
-    if unsafe { libc::poll(&mut descriptor, 1, 100) } <= 0 {
-        return false;
     }
-    if descriptor.revents & libc::POLLHUP != 0 {
-        return true;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use super::Abandonment;
+
+    /// Ending an active watch wakes its observer before replying to the connected caller.
+    #[test]
+    fn ending_a_watch_does_not_wait_for_the_connected_caller() -> Result<(), Box<dyn std::error::Error>> {
+        let (caller, _peer) = UnixStream::pair()?;
+        let (left, reported) = mpsc::channel();
+        let watch = Abandonment::observe(caller.as_raw_fd(), move || {
+            let _ = left.send(());
+        });
+        // The observer is now waiting on the caller, which stays connected, as during a short activation.
+        std::thread::sleep(Duration::from_millis(20));
+        let ending = Instant::now();
+        drop(watch);
+        let waited = ending.elapsed();
+        assert!(waited < Duration::from_millis(50), "ending the watch waited {waited:?}");
+        assert!(reported.try_recv().is_err(), "a connected caller was reported as gone");
+        Ok(())
     }
-    let mut byte = [0_u8; 1];
-    // SAFETY: the buffer is one writable byte and the descriptor is the caller's open connection.
-    let read = unsafe { libc::recv(caller, byte.as_mut_ptr().cast(), 1, libc::MSG_PEEK) };
-    if read > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+
+    /// A departed caller is reported while the activation is still running.
+    #[test]
+    fn a_caller_that_leaves_during_the_activation_is_reported() -> Result<(), Box<dyn std::error::Error>> {
+        let (caller, peer) = UnixStream::pair()?;
+        let (left, reported) = mpsc::channel();
+        let watch = Abandonment::observe(caller.as_raw_fd(), move || {
+            let _ = left.send(());
+        });
+        drop(peer);
+        reported.recv_timeout(Duration::from_secs(5))?;
+        drop(watch);
+        Ok(())
     }
-    read == 0
 }

@@ -30,6 +30,7 @@ from publication import publish_binary
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_freshness import Key, artifact_files, fingerprint, unit_key
+from pub::incan_platform.trace import Operation
 from jec import begin, record, invocation_key
 
 const RECORD_SCHEMA: str = "incan.oven.outcome/2"
@@ -179,7 +180,7 @@ def cold_completion(toolchain: Toolchain, arguments: list[str]) -> Result[Comple
         command.arg(argument)
     clock = begin()
     result = command.output().map_err((error) => f"cannot run {toolchain.driver}: {error}")?
-    record("driver_spawn", invocation_key(arguments), clock)
+    record(Operation.DriverSpawn, invocation_key(arguments), clock)
     mut code: i32 = 1
     mut exited = false
     if let Some(status) = result.status.code():

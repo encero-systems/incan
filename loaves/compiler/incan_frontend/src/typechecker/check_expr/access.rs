@@ -3526,8 +3526,8 @@ impl TypeChecker {
     /// The selecting caller supplies written method binders; associated owner arguments never occupy those slots.
     /// A callee that cannot be retained returns the call's refusal, which the caller reports unless the call is already
     /// refused: no accepted call leaves checking without a callee. Argument validation refuses an unsafe method, and
-    /// an associated call whose owner arguments the enclosing statement watches is retained again once its binding's
-    /// first use fixes them, or refused (#1720, #2481).
+    /// an associated call with open owner arguments or a method with open result parameters is retained again once
+    /// its binding's first typed use fixes them, or refused (#1720, #2481).
     #[allow(clippy::too_many_arguments)]
     fn retain_checked_rust_method(
         &mut self,
@@ -3646,9 +3646,9 @@ impl TypeChecker {
         Ok(())
     }
 
-    /// Refuse a native call whose binders stay open, unless it is an associated call whose owner arguments the
-    /// enclosing statement watches. That call keeps its open native result, so a local bound to it dispatches its
-    /// methods to the native owner, and its first use can fix the arguments (#1720, #2481).
+    /// Refuse a native call whose binders stay open, unless the statement watches its associated owner arguments or
+    /// its method's result parameters. The open native result lets a later typed use fix those arguments. Input-only
+    /// method binders cannot be determined from a result and keep their immediate refusal (#1720, #2481).
     #[allow(clippy::too_many_arguments)]
     fn refuse_open_rust_method(
         &mut self,
@@ -3676,6 +3676,25 @@ impl TypeChecker {
                 call.native = Some(native);
                 call.native_item = native_item;
             }
+            return Ok(());
+        }
+        let native = self.native_method_result(method, path, native_parameters, bindings, receiver, result);
+        if Self::native_result_carries_parameters(&native, open)
+            && open
+                .iter()
+                .all(|parameter| method.signature.type_params.contains(parameter))
+        {
+            self.open_rust_generic_calls.insert(
+                span,
+                crate::typechecker::OpenRustGenericCall {
+                    owner: path.to_owned(),
+                    method: method.name.clone(),
+                    type_params: open.to_vec(),
+                    owner_parameters: false,
+                    native: Some(native),
+                    native_item: None,
+                },
+            );
             return Ok(());
         }
         let callee = format!("rust::{path}.{}", method.name);
