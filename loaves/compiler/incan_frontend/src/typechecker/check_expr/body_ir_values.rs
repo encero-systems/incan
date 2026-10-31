@@ -327,10 +327,11 @@ impl TypeChecker {
                 .cloned(),
             Expr::Paren(inner) => self.body_ir_checked_value_type(inner.span).cloned(),
             Expr::List(entries) => self.body_ir_list_value_type(entries, recorded),
-            Expr::Try(inner) => self
-                .body_ir_checked_value_type(inner.span)
-                .and_then(ResolvedType::result_ok_type)
-                .cloned(),
+            Expr::Try(inner) => self.rust_native_value_type(expression).or_else(|| {
+                self.body_ir_checked_value_type(inner.span)
+                    .and_then(ResolvedType::result_ok_type)
+                    .cloned()
+            }),
             Expr::ListComp(comprehension) => self
                 .body_ir_checked_value_type(comprehension.expr.span)
                 .map(|element| ResolvedType::Generic("List".into(), vec![element.clone()])),
@@ -366,9 +367,12 @@ impl TypeChecker {
         let Some(actual) = actual else {
             return;
         };
-        // Canonical lexical reads and projections keep the selected owner's nominal leaves.
+        // Canonical lexical reads, projections and a Result's success edge keep the selected owner's nominal leaves
+        // and reference carrier. Source projection may expose a referent, but `?` does not take ownership of it.
         if Self::is_settled_type_argument(&actual)
             && (matches!(expression.node, Expr::Field(_, _) | Expr::Index(_, _))
+                || matches!(expression.node, Expr::Try(_))
+                    && matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
                 || matches!(expression.node, Expr::Ident(_)) && same_retained_value_shape(self, recorded, &actual))
         {
             self.type_info
