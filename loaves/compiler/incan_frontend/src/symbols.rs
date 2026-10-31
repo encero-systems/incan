@@ -474,6 +474,9 @@ impl SymbolTable {
             builtin_types.push((t.canonical, t.canonical));
             builtin_types.extend(t.aliases.iter().map(|alias| (*alias, t.canonical)));
         }
+        for mode in incan_lang::lang::types::ownership::OWNERSHIP_MODES {
+            builtin_types.push((mode.as_str(), mode.as_str()));
+        }
         for t in surface_types::SURFACE_TYPES {
             // RFC 022: stdlib-scoped types must be explicitly imported (e.g. `from std.web import App`).
             // Only truly global surface types (Rust interop helpers) are injected here.
@@ -2259,6 +2262,7 @@ impl ResolvedType {
             BuiltinTypeName::Numeric(id) => ResolvedType::from_numeric_id(id),
             BuiltinTypeName::StringLike(id) => ResolvedType::from_string_like_id(id),
             BuiltinTypeName::Collection(id) => ResolvedType::Named(collections::as_str(id).to_string()),
+            BuiltinTypeName::Ownership(mode) => ResolvedType::Named(mode.as_str().to_string()),
         })
     }
 

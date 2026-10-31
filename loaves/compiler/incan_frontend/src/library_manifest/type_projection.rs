@@ -59,7 +59,10 @@ impl VisitTypeRefs for TypeRef {
                 params.visit_type_refs(visit);
                 return_type.visit_type_refs(visit);
             }
-            Self::TypeToken { inner } | Self::Ref { inner } | Self::MutParam { inner } => inner.visit_type_refs(visit),
+            Self::Ownership { inner, .. }
+            | Self::TypeToken { inner }
+            | Self::Ref { inner }
+            | Self::MutParam { inner } => inner.visit_type_refs(visit),
             Self::Tuple { elements } => elements.visit_type_refs(visit),
             Self::Named { .. } | Self::TypeParam { .. } | Self::SelfType | Self::RustPath { .. } | Self::Unknown => {}
         }
@@ -99,8 +102,8 @@ type_fields! {
     ParamDefaultCallSignatureExport => [params, return_type];
     ParamDefaultCallArgExport => [value];
     ParamDefaultDictEntryExport => [key, value];
-    FunctionExport => [type_params, params, return_type];
-    MethodExport => [type_params, params, return_type];
+    FunctionExport => [type_params, params, return_type, ownership];
+    MethodExport => [type_params, params, return_type, ownership];
     FieldExport => [ty, default];
     PropertyExport => [return_type];
     FieldRequirementExport => [ty];
@@ -118,9 +121,9 @@ type_fields! {
     StaticExport => [ty];
     CheckedApiMetadataPackage => [modules];
     CheckedApiMetadata => [declarations];
-    ApiFunction => [decorators, type_params, params, return_type];
-    ApiMethod => [decorators, type_params, params, return_type];
-    ApiCallableMetadata => [type_params, params, return_type];
+    ApiFunction => [decorators, type_params, params, return_type, ownership];
+    ApiMethod => [decorators, type_params, params, return_type, ownership];
+    ApiCallableMetadata => [type_params, params, return_type, ownership];
     ApiProjectedFunction => [callable, decorators];
     ApiModel => [decorators, type_params, trait_adoptions, fields, properties, methods];
     ApiClass => [decorators, type_params, trait_adoptions, fields, properties, methods];
@@ -375,4 +378,15 @@ pub fn with_native_nominal_origins<T: VisitTypeRefs>(
     }
     value.visit_type_refs(&mut |ty| attach(ty, origins));
     value
+}
+
+impl VisitTypeRefs for super::ownership::OwnershipExport {
+    /// Ownership metadata uses the same nominal origin and route visitor as the callable signature.
+    fn visit_type_refs(&mut self, visit: &mut impl FnMut(&mut TypeRef)) {
+        if let Self::Checked(contract) = self {
+            for mode in &mut contract.modes {
+                mode.underlying.visit_type_refs(visit);
+            }
+        }
+    }
 }

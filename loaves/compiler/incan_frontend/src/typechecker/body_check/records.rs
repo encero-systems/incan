@@ -1,6 +1,7 @@
 //! Selected owner projections for the Incan checker-record codec. This is a bootstrap conversion, not a store.
 
 mod diagnostics;
+mod ownership;
 mod types;
 use diagnostics::{project_diagnostics, read_diagnostic};
 mod unsupported;
@@ -119,6 +120,7 @@ pub(crate) fn project(
     .ok_or(NodeBindingError::MissingOwner)?;
     validate(view)?;
     let mut fields = local_fields(&positions, &view.local)?;
+    ownership::project(checker, owner, &positions, &mut fields)?;
     if declaration {
         project_signature(checker, program, owner, &positions, &mut fields)?;
     }
@@ -138,7 +140,7 @@ pub(crate) fn project(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             if declaration { "declaration" } else { "final" }.into(),
-            "incan.checker-free-functions/1".into(),
+            "incan.checker-free-functions/2".into(),
         ],
     );
     Ok(fields)
@@ -156,7 +158,7 @@ fn restore(
         .first()
         .filter(|header| header.len() == 5)
         .ok_or(NodeBindingError::MissingOwner)?;
-    if header[0] != "header" || header[4] != "incan.checker-free-functions/1" {
+    if header[0] != "header" || header[4] != "incan.checker-free-functions/2" {
         return Err(NodeBindingError::Unsupported("record profile"));
     }
     if header[1] != positions.nodes.owner().render_compact() {
@@ -208,6 +210,7 @@ struct Rebinding {
     binding: Option<super::super::type_info::FunctionBindingInfo>,
     defaults: BTreeMap<Span, (Span, String)>,
     final_types: FinalTypes,
+    ownership: Option<crate::ownership_metadata::CheckedOwnershipContract>,
 }
 
 impl Rebinding {
@@ -234,6 +237,12 @@ impl Rebinding {
             }
             "effect" if row[1].is_empty() && row[3] == "checked" && row.len() == 4 => {
                 self.bodies.push(positions.canonical(&row[2])?)
+            }
+            "ownership" if row[2] == "contract" && header[3] != "local" => {
+                if self.ownership.is_some() || row[1] != positions.nodes.anchor(self.local.owner)?.path {
+                    return Err(NodeBindingError::MissingNode);
+                }
+                self.ownership = Some(ownership::read(positions, &row[3..])?);
             }
             "signature" if row[2] == "declaration" => self.signature(positions, header, row)?,
             "default" if row.len() == 4 && row[3] == header[1] => {
@@ -327,6 +336,7 @@ impl Rebinding {
                 || !self.diagnostics.is_empty()
                 || !self.warnings.is_empty()
                 || self.binding.is_some()
+                || self.ownership.is_some()
                 || !self.defaults.is_empty()
             {
                 return Err(NodeBindingError::MissingNode);
@@ -352,6 +362,7 @@ impl Rebinding {
             binding: self.binding,
             defaults: self.defaults,
             final_types: self.final_types,
+            ownership: self.ownership,
         }))
     }
 }
@@ -629,11 +640,24 @@ pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result
     let positions = Positions::new(&checker, &program, owner, declaration)?;
     let expected_binding = checker.declaration_view().function(owner).cloned();
     let expected_types = final_type_values(&checker, &expected);
+    let expected_ownership = expected_binding
+        .as_ref()
+        .and_then(|binding| binding.identity.as_ref())
+        .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
+        .cloned();
     drop(checker);
     let NativeOwner::Settled(restored) = restore(&positions, &program, owner, &fields)? else {
         return Err(NodeBindingError::MissingNode);
     };
     compare_native(&expected, &restored.view)?;
+    if restored.ownership != expected_ownership {
+        return Err(NodeBindingError::OracleDifference("ownership contract".into()));
+    }
+    if let (Some(contract), Some(binding)) = (&restored.ownership, &expected_binding) {
+        contract
+            .validate(binding.params.len(), false)
+            .map_err(|message| NodeBindingError::InvalidField(message.into()))?;
+    }
     if declaration && restored.binding != expected_binding {
         return Err(NodeBindingError::OracleDifference("declaration signature".into()));
     }
@@ -709,6 +733,7 @@ struct RestoredOwner {
     binding: Option<super::super::type_info::FunctionBindingInfo>,
     defaults: BTreeMap<Span, (Span, String)>,
     final_types: FinalTypes,
+    ownership: Option<crate::ownership_metadata::CheckedOwnershipContract>,
 }
 
 /// Declaration-owned source signatures and exact default-writer references are independent from statement outputs.
@@ -785,7 +810,7 @@ pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Field
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             "local".into(),
-            "incan.checker-free-functions/1".into(),
+            "incan.checker-free-functions/2".into(),
         ],
     );
     Ok(fields)

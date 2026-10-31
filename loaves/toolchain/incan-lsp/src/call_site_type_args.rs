@@ -555,6 +555,17 @@ pub(crate) fn call_site_type_argument_completion_items(ast: Option<&Program>) ->
         );
     }
 
+    for mode in incan_lang::lang::types::ownership::OWNERSHIP_MODES {
+        push_registry_type_completions(
+            &mut items,
+            &mut seen,
+            mode.as_str(),
+            &[],
+            mode.description(),
+            CompletionItemKind::CLASS,
+        );
+    }
+
     for name in [conventions::UNIT_TYPE_NAME, conventions::NONE_TYPE_NAME] {
         push(
             &mut items,

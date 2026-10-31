@@ -770,7 +770,61 @@ const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/"),
 };
 
+const OWNERSHIP_BOUNDARY_UNPROVABLE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0123",
+    title: "Ownership boundary cannot be proved",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An explicit ownership obligation at this boundary cannot be expressed or proved, so the program is refused instead of copying, retaining or weakening the access.",
+    explanation: "Borrowed, BorrowedMut, Owned and Reference are canonical prelude contracts, and an explicit mode is an obligation for both the caller and the implementation. A stored field cannot declare an ownership mode, an annotation is not a constructor, a borrow cannot outlive its source, and a callable annotation or native lifetime relationship must be able to represent each dependency it carries. A user declaration shadowing a mode name remains an ordinary declaration.",
+    examples: &[
+        "model Page:\n    title: Borrowed[str]",
+        "def main() -> None:\n    value = Owned(\"text\")",
+    ],
+    common_causes: &[
+        "Declaring a stored field with an ownership mode.",
+        "Returning or storing a closure, task or view that keeps a borrow after its source ends.",
+        "Calling a native function whose result borrows from more than one input.",
+    ],
+    fixes: &[
+        "Store an owned value, or expose the field through a method whose result names its source with `from`.",
+        "End the borrow before its source ends, or transfer an owned value explicitly with `Owned[T]` or a clone.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/explicit_ownership/"),
+};
+
+const RESULT_SOURCE_INVALID: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0124",
+    title: "Borrowed result source is missing or invalid",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An explicit borrowed result must name its source parameter or receiver.",
+    explanation: "The from clause names one parameter or receiver followed by static field projections. It is required even with a single possible input; a global, local, call or index cannot stand in for that declaration relationship.",
+    examples: &["def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value"],
+    common_causes: &["Omitting the source or naming a binding outside the callable signature."],
+    fixes: &["Add from followed by the source parameter or receiver and any static field path."],
+    docs_url: None,
+};
+
+const PLACE_BINDING_MIGRATION: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0125",
+    title: "Local binding copies a place that a place binding borrows",
+    severity: "warning",
+    phase: "typecheck",
+    summary: "This local receives an independent value from a place that a read-only or writable place binding borrows.",
+    explanation: "Under place bindings, bare and let declarations from a place borrow it read-only and mut declarations borrow it with write-through replacement. This declaration receives an independent value, and the warning does not change runtime behavior. Type annotations do not request copies; an explicit clone states an independent value.",
+    examples: &["mut title: str = page.title", "let saved = page.title"],
+    common_causes: &["Creating a local from an existing local, parameter, stored field or collection element."],
+    fixes: &[
+        "Use an explicit clone for an independent snapshot, or preserve the source through the borrow's last use.",
+    ],
+    docs_url: None,
+};
+
 const CATALOG: &[DiagnosticCatalogEntry] = &[
+    OWNERSHIP_BOUNDARY_UNPROVABLE,
+    RESULT_SOURCE_INVALID,
+    PLACE_BINDING_MIGRATION,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

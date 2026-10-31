@@ -283,6 +283,9 @@ fn collect_declaration_regions(decl: &Declaration, out: &mut RegionCollector) {
                 out.param(param);
             }
             out.ty(&function.return_type);
+            if let Some(source) = &function.result_source {
+                out.push(source.node.binding.span, RegionKind::Parameter);
+            }
             collect_body_regions(&function.body, out);
         }
         Declaration::Model(model) => {
@@ -399,6 +402,9 @@ fn collect_method_regions(method: &incan_syntax::ast::MethodDecl, out: &mut Regi
         out.param(param);
     }
     out.ty(&method.return_type);
+    if let Some(source) = &method.result_source {
+        out.push(source.node.binding.span, RegionKind::Parameter);
+    }
     if let Some(body) = &method.body {
         collect_body_regions(body, out);
     }
