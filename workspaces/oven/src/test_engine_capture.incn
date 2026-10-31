@@ -19,6 +19,8 @@ from engine_capture import (
     capture_with,
     decoded_epoch,
 )
+from engine_epochs import capture_submit
+from engine_messages import Submit
 
 const PIN: str = """{"schema": "incan.toolchain/1", "driver": "bin/driver", "sysroot": "sysroot",
 "rust_abi": ["rust-abi/std.rustabi"], "externs": [{"name": "runtime", "path": "native/runtime-1/libruntime.rlib"}],
@@ -116,6 +118,21 @@ pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[Non
     assert epoch_of(second)? == epoch
     # The test fixture beside the program is in nobody's reach.
     assert not touched(epoch, app.joinpath("tests/fixture.incn"))
+    # Persisted unchanged capture borrows its revision without encoding it or opening a publication transaction.
+    store = scratch.path().joinpath("engine-store")
+    submit = Submit(
+        command="run",
+        view="project",
+        input_selection="debug",
+        requested_roots=app.joinpath("src/main.incn").0,
+        options="",
+        observation_policy="",
+    )
+    persisted = capture_submit(store, submit)?
+    repeated = capture_submit(store, submit)?
+    assert persisted.encodings == 1 and persisted.commits == 1
+    assert repeated.encodings == 0 and repeated.commits == 0
+    assert repeated.revision == persisted.revision and repeated.epoch == persisted.epoch
     return Ok(None)
 
 
