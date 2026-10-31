@@ -1,7 +1,7 @@
 """Record opt-in work observations without granting caching or build authority."""
 
 from rust::std::process import id
-from rust::std::time import Instant
+from rust::std::time import Instant, SystemTime, UNIX_EPOCH
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
@@ -24,12 +24,16 @@ pub def record(category: str, input: str, clock: Option[Instant], bytes: int = 0
     match clock:
         None => return
         Some(started) =>
+            elapsed = int(started.elapsed().as_nanos())
+            mut ended = 0
+            if let Ok(now) = SystemTime.now().duration_since(UNIX_EPOCH):
+                ended = int(now.as_nanos())
             fields = JsonValue.object(
                 {"schema": JsonValue.string("incan.jec/1"), "process": JsonValue.int(int(id())), "category": JsonValue.string(
                     category,
-                ), "input": JsonValue.string(input), "nanoseconds": JsonValue.int(int(started.elapsed().as_nanos())), "bytes": JsonValue.int(
-                    bytes,
-                ), "allocations": JsonValue.null()},
+                ), "input": JsonValue.string(input), "nanoseconds": JsonValue.int(elapsed), "ended_ns": JsonValue.int(
+                    ended,
+                ), "bytes": JsonValue.int(bytes), "allocations": JsonValue.null()},
             )
             match fields.to_json():
                 Err(_) => return
