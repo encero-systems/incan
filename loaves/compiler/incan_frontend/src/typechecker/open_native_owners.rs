@@ -1,4 +1,4 @@
-//! Fix a native associated call's open owner arguments from the first use of the local bound to it (#1720, #2481).
+//! Fix a native call's open result arguments from the first use of the local bound to it (#1720, #2481).
 //!
 //! `mut table = HashMap.new()` leaves `K` and `V` open, and the local is watched from its declaration. Its first read
 //! must be a use that determines them: a native method call whose retained callee fixes the receiver, such as
@@ -16,6 +16,24 @@ use crate::symbols::{ResolvedType, SymbolKind};
 use incan_lang::interop::{RustItemKind, RustTypeInfo};
 
 impl TypeChecker {
+    /// Whether every open callee parameter occurs structurally in its native result. Only those parameters can
+    /// be determined by a later destination of that result; an input-only binder must be refused at the call.
+    pub(in crate::typechecker) fn native_result_carries_parameters(
+        result: &ResolvedType,
+        parameters: &[String],
+    ) -> bool {
+        parameters.iter().all(|parameter| {
+            let present = std::cell::Cell::new(false);
+            map_resolved_type_leaves(result, &|leaf| {
+                if matches!(leaf, ResolvedType::TypeVar(name) | ResolvedType::RustPath(name) | ResolvedType::Named(name) if name == parameter) {
+                    present.set(true);
+                }
+                None
+            });
+            present.get()
+        })
+    }
+
     /// Fix a watched binding from the receiver its native method call retained: `table.insert("a", 1)` retains
     /// `&mut HashMap<str, int>` as its receiver, whose owner arguments close `K` and `V`.
     pub(in crate::typechecker) fn fix_open_rust_binding_by_receiver(
