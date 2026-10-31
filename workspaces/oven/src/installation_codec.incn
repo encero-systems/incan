@@ -1,0 +1,180 @@
+"""One versioned typed page holds the installed toolchain, normalized standard manifests and their generations."""
+
+from std.fs import MappedView
+from std.io import BytesIO, _BytesIO
+from intake import ProjectIntent
+from installation_intent import read_intent, write_intent
+from page_codec import Reader, put_number, put_text, put_texts
+from toolchain_types import NativeCrate, InstalledCompiler
+from frozen_inputs import Document
+from page_values import read_value, write_value
+from payload_types import InstalledPayload, PayloadAdmission
+
+pub const PROFILE: str = "incan.installation-page/4"
+
+
+pub model StandardManifest:
+    """A standard package's validated authored intent and exact manifest identity, at its admitted location."""
+
+    pub root: str
+    pub digest: str
+    pub intent: ProjectIntent
+
+
+pub model Installation:
+    """One installation's frozen facts and the input generations that justified admitting them."""
+
+    pub toolchain: InstalledCompiler
+    pub manifests: list[StandardManifest]
+    pub paths: list[str]
+    pub stamps: list[str]
+    pub documents: list[Document] = []
+    pub payloads: list[InstalledPayload] = []
+
+
+pub def encode(page: Installation) -> Result[bytes, str]:
+    """Encode complete normalized facts in deterministic field order, excluding request-local mutable readings."""
+    if len(page.paths) != len(page.stamps):
+        return Err("installation page observations differ from its paths")
+    buffer = BytesIO(b"")
+    put_text(buffer, PROFILE)?
+    write_toolchain(buffer, page.toolchain)?
+    put_number(buffer, len(page.manifests))?
+    for manifest in page.manifests:
+        put_text(buffer, manifest.root)?
+        put_text(buffer, manifest.digest)?
+        write_intent(buffer, manifest.intent)?
+    put_texts(buffer, page.paths)?
+    put_texts(buffer, page.stamps)?
+    put_number(buffer, len(page.documents))?
+    for document in page.documents:
+        put_text(buffer, document.path)?
+        put_text(buffer, document.stamp)?
+        write_value(buffer, document.value)?
+    put_number(buffer, len(page.payloads))?
+    for payload in page.payloads:
+        write_payload(buffer, payload)?
+    return Ok(buffer.getvalue())
+
+
+pub def decode(view: MappedView) -> Result[Installation, str]:
+    """Refuse unknown versions, truncated or duplicate rows, malformed identities and trailing bytes."""
+    mut reader = Reader(view=view)
+    if reader.text()? != PROFILE:
+        return Err("unsupported installation page version")
+    toolchain = read_toolchain(reader)?
+    mut manifests: list[StandardManifest] = []
+    mut roots: set[str] = set()
+    mut names: set[str] = set()
+    for _index in range(reader.count(32)?):
+        root = reader.text()?
+        digest = reader.text()?
+        intent = read_intent(reader)?
+        if root in roots or intent.name in names or len(digest) != 64:
+            return Err("installation page has duplicate manifests or invalid identities")
+        roots.add(root)
+        names.add(intent.name)
+        manifests.append(StandardManifest(root=root, digest=digest, intent=intent))
+    paths = reader.texts()?
+    stamps = reader.texts()?
+    mut documents: list[Document] = []
+    mut document_paths: set[str] = set()
+    for _index in range(reader.count(24)?):
+        path = reader.text()?
+        if path in document_paths:
+            return Err("installation page has duplicate document paths")
+        document_paths.add(path)
+        documents.append(Document(path=path, stamp=reader.text()?, value=read_value(reader)?))
+    mut payloads: list[InstalledPayload] = []
+    mut payload_paths: set[str] = set()
+    for _index in range(reader.count(56)?):
+        payload = read_payload(reader)?
+        if payload.path in payload_paths or len(payload.admission.payload) != 64:
+            return Err("installation page has duplicate payload paths or invalid digests")
+        payload_paths.add(payload.path)
+        payloads.append(payload)
+    if len(paths) != len(stamps) or reader.offset != view.len():
+        return Err("installation page has inconsistent observations or trailing bytes")
+    if len(set(paths)) != len(paths):
+        return Err("installation page has duplicate observation paths")
+    return Ok(
+        Installation(
+            toolchain=toolchain,
+            manifests=manifests,
+            paths=paths,
+            stamps=stamps,
+            documents=documents,
+            payloads=payloads,
+        ),
+    )
+
+
+def read_payload(mut reader: Reader) -> Result[InstalledPayload, str]:
+    """Read the producer identity and exact admitted payload generation without reconstructing publication JSON."""
+    return Ok(
+        InstalledPayload(
+            path=reader.text()?,
+            record=reader.text()?,
+            record_stamp=reader.text()?,
+            admission=PayloadAdmission(
+                identity=reader.text()?,
+                payload=reader.text()?,
+                observation=reader.text()?,
+                provenance=reader.texts()?,
+            ),
+        ),
+    )
+
+
+def write_payload(buffer: _BytesIO, payload: InstalledPayload) -> Result[None, str]:
+    """Keep producer, payload digest, provenance and filesystem observations distinct in the typed page."""
+    admission = payload.admission
+    for value in [
+        payload.path,
+        payload.record,
+        payload.record_stamp,
+        admission.identity,
+        admission.payload,
+        admission.observation,
+    ]:
+        put_text(buffer, value)?
+    return put_texts(buffer, admission.provenance)
+
+
+def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:
+    """Read installed compiler fields without reconstructing the description's JSON tree."""
+    driver = reader.text()?
+    sysroot = reader.text()?
+    abi = reader.texts()?
+    mut externs: list[NativeCrate] = []
+    for _index in range(reader.count(16)?):
+        externs.append(NativeCrate(name=reader.text()?, path=reader.text()?))
+    return Ok(
+        InstalledCompiler(
+            driver=driver,
+            sysroot=sysroot,
+            rust_abi=abi,
+            externs=externs,
+            search=reader.texts()?,
+            registry_units=reader.text()?,
+            registry_lock=reader.text()?,
+            c_compiler=reader.text()?,
+            target=reader.text()?,
+        ),
+    )
+
+
+def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[None, str]:
+    """Persist installed fields only; console, worker selection and closure memoization belong to each request."""
+    put_text(buffer, toolchain.driver)?
+    put_text(buffer, toolchain.sysroot)?
+    put_texts(buffer, toolchain.rust_abi)?
+    put_number(buffer, len(toolchain.externs))?
+    for native in toolchain.externs:
+        put_text(buffer, native.name)?
+        put_text(buffer, native.path)?
+    put_texts(buffer, toolchain.search)?
+    put_text(buffer, toolchain.registry_units)?
+    put_text(buffer, toolchain.registry_lock)?
+    put_text(buffer, toolchain.c_compiler)?
+    return put_text(buffer, toolchain.target)

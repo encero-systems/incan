@@ -208,6 +208,18 @@ pub def mapped_value(view: Snapshot, spec: SetSpec, record: Record, digest: str)
     while consuming it. The envelope must match that exact contract. Missing envelopes or payloads and damaged bytes
     are errors, never absence. The returned view retains its immutable inode; no whole-value copy is made.
     """
+    path = selected_value(view, spec, record, digest)?
+    mapped = path.map_read().map_err((error) => problem("integrity", path.0, error.message()))?
+    match mapped.view(0, mapped.len()):
+        None => return Err(problem("integrity", path.0, "value has no whole mapped range"))
+        Some(value) =>
+            if hexlify(view_digest(value)) != digest:
+                return Err(problem("integrity", path.0, "value differs from its content name"))
+            return Ok(value)
+
+
+pub def selected_value(view: Snapshot, spec: SetSpec, record: Record, digest: str) -> Result[Path, StoreError]:
+    """Check an exact admitted revision envelope and locate its value; callers must still verify value integrity."""
     check_digest(digest)?
     key = record_key(spec, record)?
     expected = envelope_bytes(spec, Entry(record=record, value=digest))?
@@ -216,13 +228,7 @@ pub def mapped_value(view: Snapshot, spec: SetSpec, record: Record, digest: str)
     path = payload_path(view.root, digest)
     if path.is_symlink():
         return Err(problem("integrity", path.0, "a canonical value is a symbolic link"))
-    mapped = path.map_read().map_err((error) => problem("integrity", path.0, error.message()))?
-    match mapped.view(0, mapped.len()):
-        None => return Err(problem("integrity", path.0, "value has no whole mapped range"))
-        Some(value) =>
-            if hexlify(view_digest(value)) != digest:
-                return Err(problem("integrity", path.0, "value differs from its content name"))
-            return Ok(value)
+    return Ok(path)
 
 
 def verify_transport(directory: Path, root: str, supported: Profile) -> Result[VerifiedSet, StoreError]:

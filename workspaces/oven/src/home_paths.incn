@@ -1,0 +1,35 @@
+"""Canonical home and bakery locations, independent of installation admission and compiler policy."""
+
+from std.environ import get_or
+from std.fs import Path
+
+pub const TOOLCHAIN: str = "0.6.0-dev.8"
+
+
+pub def home() -> Result[Path, str]:
+    """Oven's canonical absolute home, so every spelling uses the same local admission evidence."""
+    configured = get_or("INCAN_HOME", "")
+    if configured != "":
+        return resolved_home(Path(configured))
+    for name in ["HOME", "USERPROFILE"]:
+        user = get_or(name, "")
+        if user != "":
+            return resolved_home(Path(user).joinpath(".incan"))
+    return Err("no home directory: set INCAN_HOME, or HOME")
+
+
+def resolved_home(path: Path) -> Result[Path, str]:
+    """Resolve existing ancestors without creating a home that a first installation has yet to populate."""
+    absolute = path.absolute().map_err((error) => error.message())?
+    if absolute.exists():
+        return absolute.resolve().map_err((error) => error.message())
+    parent = resolved_home(absolute.parent())?
+    return Ok(parent.joinpath(absolute.name()))
+
+
+pub def bakery() -> Result[Path, str]:
+    """The one physical bakery selected by the home or its explicit storage override."""
+    configured = get_or("INCAN_BAKERY", "")
+    if configured != "":
+        return Path(configured).absolute().map_err((error) => error.message())
+    return Ok(home()?.joinpath("bakery"))

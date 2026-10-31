@@ -4,6 +4,7 @@ from rust::std::fs import File, OpenOptions
 from std.fs import Path
 from std.json import JsonValue, parse
 from jec import begin, record, text_size
+from frozen_inputs import read as frozen_document
 
 
 pub def read(path: Path) -> Result[str, str]:
@@ -47,6 +48,8 @@ pub def make_directory(path: Path) -> Result[None, str]:
 
 pub def read_json(path: Path) -> Result[JsonValue, str]:
     """A JSON document from a file; a failure names the file."""
+    if let Some(document) = frozen_document(path)?:
+        return Ok(document)
     text = read(path).map_err((error) => f"{path.0}: {error}")?
     clock = begin()
     result = parse(text).map_err((error) => f"{path.0}: {error.message()}")
