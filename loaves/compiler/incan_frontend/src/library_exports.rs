@@ -256,6 +256,8 @@ pub struct CheckedProperty {
 
 #[derive(Debug, Clone)]
 pub struct CheckedMethod {
+    /// Checked explicit access and result-source metadata; absence leaves the ordinary inferred contract.
+    pub ownership: Option<crate::ownership_metadata::CheckedOwnershipContract>,
     pub name: String,
     pub canonical: Option<CanonicalSymbolId>,
     pub alias_of: Option<String>,
@@ -270,6 +272,8 @@ pub struct CheckedMethod {
 
 #[derive(Debug, Clone)]
 pub struct CheckedFunctionExport {
+    /// Checked explicit access and result-source metadata; absence leaves the ordinary inferred contract.
+    pub ownership: Option<crate::ownership_metadata::CheckedOwnershipContract>,
     pub name: String,
     pub emitted_name: Option<String>,
     pub type_params: Vec<CheckedTypeParam>,
@@ -778,9 +782,46 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
     let type_origins = checker.checked_nominal_type_origins();
     for export in &mut exports {
         export.identity.type_origins.clone_from(&type_origins);
+        attach_ownership_contracts(export, checker);
     }
     exports.sort_by(|a, b| a.name.cmp(&b.name));
     exports
+}
+
+/// Attach the declaration-owned contract after resolving aliases and members, never by guessing a displayed name.
+fn attach_ownership_contracts(export: &mut CheckedNamedExport, checker: &TypeChecker) {
+    let contracts = &checker.type_info.declarations.ownership_contracts;
+    let direct = export
+        .identity
+        .canonical
+        .as_ref()
+        .and_then(|identity| contracts.get(identity))
+        .cloned();
+    let methods = match &mut export.kind {
+        CheckedExportKind::Function(function) => {
+            function.ownership = direct;
+            return;
+        }
+        CheckedExportKind::Alias(alias) => {
+            if let Some(function) = &mut alias.projected_function {
+                function.ownership = direct;
+            }
+            return;
+        }
+        CheckedExportKind::Model(owner) => &mut owner.methods,
+        CheckedExportKind::Class(owner) => &mut owner.methods,
+        CheckedExportKind::Trait(owner) => &mut owner.methods,
+        CheckedExportKind::Enum(owner) => &mut owner.methods,
+        CheckedExportKind::Newtype(owner) => &mut owner.methods,
+        _ => return,
+    };
+    for method in methods {
+        method.ownership = method
+            .canonical
+            .as_ref()
+            .and_then(|identity| contracts.get(identity))
+            .cloned();
+    }
 }
 
 /// Return the source identity path for one public binding in the currently exported module.
@@ -967,6 +1008,7 @@ fn checked_overload_function_exports(
 /// Build manifest-ready callable metadata for an alias that projects a function.
 fn checked_alias_function_export(name: &str, info: &FunctionInfo) -> CheckedFunctionExport {
     CheckedFunctionExport {
+        ownership: None,
         name: name.to_string(),
         emitted_name: info.emitted_name.clone(),
         type_params: checked_function_type_params(info),
@@ -985,6 +1027,7 @@ fn checked_projected_function_export(name: &str, kind: &SymbolKind) -> Option<Ch
             ty: ResolvedType::Function(params, return_type),
             ..
         }) => Some(CheckedFunctionExport {
+            ownership: None,
             name: name.to_string(),
             emitted_name: None,
             type_params: Vec::new(),
@@ -1389,6 +1432,7 @@ fn checked_function_export(
 
     let default_context = DefaultPathContext::for_callable_parameters(checker);
     Some(CheckedFunctionExport {
+        ownership: None,
         name: function.name.clone(),
         emitted_name,
         type_params: checked_type_params(&function.type_params, checker)
@@ -2062,6 +2106,7 @@ fn is_registry_description_method(info: &MethodInfo) -> bool {
 /// Convert one semantic method entry into the checked export shape.
 fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
     CheckedMethod {
+        ownership: None,
         name: name.to_string(),
         canonical: info.identity.clone(),
         alias_of: info.alias_of.clone(),
@@ -2302,6 +2347,7 @@ mod tests {
     #[test]
     fn a_renamed_export_keeps_its_kind_and_renames_the_projected_callable_issue1298() -> Result<(), String> {
         let function = CheckedFunctionExport {
+            ownership: None,
             name: "compute".to_string(),
             emitted_name: Some("compute".to_string()),
             type_params: Vec::new(),

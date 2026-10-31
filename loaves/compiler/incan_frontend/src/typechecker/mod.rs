@@ -75,6 +75,7 @@ mod native_storage;
 mod nominal_identities;
 mod nominal_type_param_bounds;
 mod open_native_owners;
+mod ownership_contracts;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
@@ -6114,6 +6115,7 @@ impl TypeChecker {
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
         self.resolve_qualified_type_annotations(ty);
         if self.validate_source_type_names {
+            self.refuse_unimplemented_ownership_annotation(ty);
             self.validate_source_type_annotation_names(&ty.node, ty.span);
             self.record_type_reference_identities(ty);
         }

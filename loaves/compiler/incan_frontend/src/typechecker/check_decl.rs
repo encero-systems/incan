@@ -6827,6 +6827,7 @@ impl TypeChecker {
         // ---- Signature defaults and frame bindings ----
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
         let return_type = self.resolve_callable_return_annotation(&func.return_type);
+        self.record_function_ownership(func, decl_span, &resolved_param_types, &return_type);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
@@ -7469,8 +7470,9 @@ impl TypeChecker {
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
-
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params);
+        let return_type = self.resolve_callable_return_annotation(&method.return_type);
+        self.record_method_ownership(method, method_span, &resolved_param_types, &return_type, &self_ty);
 
         // Define the source receiver with its exact declaration token. Classmethod `cls` remains absent from the
         // legacy receiver enum because it emits as an associated function, but it is still a source binding with a
@@ -7513,7 +7515,6 @@ impl TypeChecker {
             self.bind_checked_callable_parameter(param, resolved_ty);
         }
 
-        let return_type = self.resolve_callable_return_annotation(&method.return_type);
         self.type_info.declarations.method_bindings_by_span.insert(
             method_span,
             FunctionBindingInfo {

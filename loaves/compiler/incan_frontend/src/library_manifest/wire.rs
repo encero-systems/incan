@@ -99,7 +99,13 @@ impl RawLibraryManifest {
             name: semantic.name.clone(),
             version: semantic.version.clone(),
             incan_version: semantic.incan_version.clone(),
-            manifest_format: semantic.manifest_format,
+            manifest_format: if semantic.manifest_format == super::LIBRARY_MANIFEST_FORMAT
+                && semantic.has_explicit_ownership_contracts()
+            {
+                super::OWNERSHIP_MANIFEST_FORMAT
+            } else {
+                semantic.manifest_format
+            },
             exports: RawLibraryExports {
                 aliases: semantic.exports.aliases.clone(),
                 partials: semantic.exports.partials.clone(),

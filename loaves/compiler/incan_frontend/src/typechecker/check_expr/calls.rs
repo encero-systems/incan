@@ -590,6 +590,10 @@ impl TypeChecker {
         call: &DirectCallSite<'_>,
     ) -> ResolvedType {
         let (callee, type_args, args, span) = (call.callee, call.type_args, call.args, call.span);
+        if self.refuse_explicit_ownership_constructor(name, span) {
+            self.check_call_args(args);
+            return ResolvedType::Unknown;
+        }
         if let Some(ret) = self.check_type_constructor_hook_call(name, type_info, type_args, args, span) {
             self.record_direct_callee_identity(name, callee.span);
             self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
