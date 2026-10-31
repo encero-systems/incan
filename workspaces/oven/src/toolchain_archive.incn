@@ -23,6 +23,7 @@ from toolchain import (
     toolchain_directory,
 )
 from rust_units import decoded, read_registry_units
+from registry_units import RegistryUnit
 from observation import file_digest
 from unit_publication import publication, published_identity, record_path, record_payload
 from cli_help import render, unknown_option
@@ -243,14 +244,40 @@ def stage_registry(toolchain: Toolchain, stage: Path) -> Result[None, str]:
     for name in table.keys():
         value = table.require(name).map_err((error) => error.message())?
         artifact = required_text(value, "path")?
-        relative = stage_artifact(Path(located(source.parent(), artifact)), stage)?
-        externs[name] = replaced(value, "path", JsonValue.string(from_registry(relative)))?
+        path = Path(located(source.parent(), artifact))
+        relative = stage_artifact(path, stage)?
+        _, payload = publication(path)?
+        portable = replaced(value, "path", JsonValue.string(from_registry(relative)))?
+        externs[name] = replaced(portable, "payload_digest", JsonValue.string(payload))?
     mut units: list[JsonValue] = []
-    for unit in required_items(document, "units")?:
-        units.append(portable_unit(source, unit, stage)?)
+    records = required_items(document, "units")?
+    for index in range(len(records)):
+        completed = registry.units[index]
+        if required_text(records[index], "entry")? != completed.entry:
+            return Err("registry closure changed while packing")
+        units.append(portable_unit(source, baked_registry_unit(records[index], completed)?, stage)?)
     portable = replaced(document, "externs", JsonValue.object(externs))?
     write_json(stage.joinpath("registry/closure.json"), replaced(portable, "units", JsonValue.array(units))?)?
     return Ok(None)
+
+
+def baked_registry_unit(document: JsonValue, unit: RegistryUnit) -> Result[JsonValue, str]:
+    """Ship the native facts already established by the producer, including exact legacy dependency completion."""
+    mut baked = document
+    for name, value in [
+        ("name", unit.name),
+        ("crate_hash", unit.crate_hash),
+        ("kind", unit.kind),
+        ("artifact", unit.artifact),
+        ("refusal", unit.refusal),
+    ]:
+        baked = replaced(baked, name, JsonValue.string(value))?
+    if unit.artifact == "":
+        baked = replaced(baked, "artifact", JsonValue.null())?
+    if unit.recorded:
+        dependencies = [JsonValue.object({"entry": JsonValue.string(entry)}) for entry in unit.dependencies]
+        baked = replaced(baked, "dependencies", JsonValue.array(dependencies))?
+    return Ok(baked)
 
 
 def portable_unit(source: Path, unit: JsonValue, stage: Path) -> Result[JsonValue, str]:
