@@ -7,7 +7,7 @@ from rust::std::time import SystemTime, UNIX_EPOCH
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
-from pub::incan_platform.trace import Clock, Counters, EngineSpan, append, begin, complete, record
+from pub::incan_platform.trace import Clock, Counters, Emitter, EngineSpan, Operation, append, begin, complete, record
 
 
 pub model WorkCounts:
@@ -34,6 +34,7 @@ model ObservationChannels:
     # A scoped contract observer uses this same producer boundary without opening an output channel.
     counting_prefix: str = ""
     counts: Dict[str, int] = {}
+    emitter: Option[Emitter] = None
 
     def load(mut self) -> None:
         """Read observation configuration once, before the invocation's first enabled operation."""
@@ -50,24 +51,39 @@ model ObservationChannels:
             self.canonical = Path(directory).joinpath(f"engine-oven-{self.process}.jsonl").0
         self.run = get_or("INCAN_ENGINE_RUN", "")
         self.request = get_or("INCAN_ENGINE_REQUEST", f"oven-{self.process}")
+        if self.canonical != "":
+            match Emitter.open(self.canonical, "oven", self.run, self.request):
+                Ok(emitter) => self.emitter = Some(emitter)
+                Err(_) => pass
 
     def work_clock(mut self) -> Option[Clock]:
         """Start only a requested JEC or canonical engine observation."""
         self.load()
         return begin(self.canonical != "" or self.legacy_work != "" or self.counting_prefix != "")
 
-    def work(mut self, category: str, key: str, clock: Option[Clock], bytes: int) -> None:
+    def work(mut self, category: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
         """Publish a completed operation and its requested compatibility projection."""
         match clock:
             None => return
             Some(started) =>
                 self.load()
                 if self.counting_prefix != "" and key.startswith(self.counting_prefix):
-                    self.counts[category] = self.counts.get(category, 0) + 1
-                span = self.completed(started, category, key, Counters(bytes=bytes))
-                self.publish(span)
+                    name = category.key()
+                    self.counts[name] = self.counts.get(name, 0) + 1
                 if self.legacy_work != "":
-                    compatibility_work(self.legacy_work, span)
+                    self.export_work(started, category, key, bytes)
+                else:
+                    self.publish(started, category, key, bytes)
+
+    def export_work(self, clock: Clock, operation: Operation, key: str, bytes: int) -> None:
+        """Project one completion into both requested formats with identical timing and counters."""
+        span = complete(
+            clock, "oven", operation.key(), key, Counters(bytes=bytes, calls=1), run=self.run, request=self.request,
+            work=f"{self.process}:{clock.span}",
+        )
+        if self.canonical != "":
+            _ = record(self.canonical, span)
+        compatibility_work(self.legacy_work, span)
 
     def count_work(mut self, prefix: str) -> None:
         """Start a bounded contract observation of operations whose input lies under this prefix."""
@@ -96,7 +112,7 @@ model ObservationChannels:
         line = f"oven: {message}"
         if self.canonical != "":
             match begin(true):
-                Some(clock) => self.publish(self.completed(clock, "reason", line, Counters()))
+                Some(clock) => self.publish(clock, Operation.Reason, line, 0)
                 None => pass
         self.relay([line])
 
@@ -108,23 +124,11 @@ model ObservationChannels:
         for line in lines:
             compatibility_line(self.legacy_reason, line + "\n")
 
-    def publish(self, span: &EngineSpan) -> None:
-        """An unavailable observer cannot change build results or write program streams."""
-        if self.canonical != "":
-            _ = record(self.canonical, span)
-
-    def completed(self, clock: Clock, operation: str, key: str, counters: Counters) -> EngineSpan:
-        """Keep caller correlation separate from the process's monotonic clock identity."""
-        return complete(
-            clock,
-            "oven",
-            operation,
-            key,
-            counters,
-            run=self.run,
-            request=self.request,
-            work=f"{self.process}:{clock.span}",
-        )
+    def publish(self, clock: Clock, operation: Operation, key: str, bytes: int) -> None:
+        """Use the retained typed emitter; unavailable observation never writes a program stream."""
+        match self.emitter:
+            Some(emitter) => _ = emitter.emit(clock, operation, key, bytes)
+            None => pass
 
 
 static CHANNELS: ObservationChannels = ObservationChannels()
@@ -145,7 +149,7 @@ pub def work_clock() -> Option[Clock]:
     return CHANNELS.work_clock()
 
 
-pub def work(category: str, key: str, clock: Option[Clock], bytes: int) -> None:
+pub def work(category: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
     """Publish one completed platform span and its requested legacy JEC projection."""
     CHANNELS.work(category, key, clock, bytes)
 

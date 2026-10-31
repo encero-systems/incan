@@ -1,5 +1,6 @@
 """Qualify the installed development runtime through the ordinary run route before installation returns."""
 
+from pub::incan_platform.trace import Operation
 from rust::std::env import current_exe
 from rust::std::fs import create_dir, remove_dir_all
 from rust::std::process import Command, id
@@ -46,7 +47,7 @@ def check_program(oven: str, source: Path) -> Result[None, str]:
     command.env_remove("RUSTC_BOOTSTRAP")
     clock = begin()
     output = command.output().map_err((error) => str(error))?
-    record("installation_runtime", source.0, clock)
+    record(Operation.InstallationRuntime, source.0, clock)
     if not output.status.success():
         return Err(f"installed runtime verification failed: {decoded(output.stderr)}")
     if decoded(output.stdout) != GREETING + "\n":

@@ -1,5 +1,6 @@
 """Borrow the selected installation page's parsed documents within a process, preserving generation checks."""
 
+from pub::incan_platform.trace import Operation
 from std.fs import Path
 from std.json import JsonValue
 from observation import observe
@@ -40,7 +41,7 @@ model Selection:
         admission = selected.admission
         if observe(path)?.stamp != admission.observation:
             return Err(f"{path.0}: published payload changed; admission is required")
-        record("installation_payload", path.0, clock)
+        record(Operation.InstallationPayload, path.0, clock)
         return Ok(
             Some(
                 PayloadAdmission(
@@ -60,7 +61,7 @@ model Selection:
         document = self.documents[path.0]
         if observe(path)?.stamp != document.stamp:
             return Ok(None)
-        record("installation_document", path.0, clock)
+        record(Operation.InstallationDocument, path.0, clock)
         return Ok(Some(document.value.clone()))
 
 

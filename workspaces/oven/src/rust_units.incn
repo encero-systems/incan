@@ -24,6 +24,7 @@ from intake import library_source, read_project, ManifestReader
 from native_closure_input import NativeClosureInput
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from observation import Observation, observe, trace
+from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from rust_activation import DependencyDomain
@@ -128,11 +129,11 @@ pub def read_registry_units(
     selection = completion_selection(rust_compiler(load_toolchain()?))?
     key = question(path, observed, selection)?
     if let Some(catalog) = recall_catalog(key)?:
-        record_work("registry_index", path.0, clock)
+        record_work(Operation.RegistryIndex, path.0, clock)
         # 2. Directory membership and artifact rewrites invalidate independently of the closure file.
         completion_clock = begin()
         if catalog_current(catalog):
-            record_work("registry_completion", path.0, completion_clock)
+            record_work(Operation.RegistryCompletion, path.0, completion_clock)
             return project_registry(catalog_registry(catalog.units, path)?, project, reader)
     # 3. Only one caller completes a missing generation; waiters recheck after taking its claim.
     held = claim(bakery()?, f"registry/catalog/{key}")?
@@ -157,12 +158,12 @@ def read_registry_catalog(path: Path, key: str, observed: Observation) -> Result
     for item in required_items(document, "units")?:
         unit = registry_unit(item, entries, closure_directory)?
         units.append(unit)
-    record_work("registry_index", path.0, clock)
+    record_work(Operation.RegistryIndex, path.0, clock)
     completion_clock = begin()
     listings = directory_stamps(units)
     artifacts = artifact_stamps(units)
     completed = complete_legacy(units)?
-    record_work("registry_completion", path.0, completion_clock)
+    record_work(Operation.RegistryCompletion, path.0, completion_clock)
     retain_catalog(key, path, observed, completed, listings, artifacts)?
     return catalog_registry(completed, path)
 

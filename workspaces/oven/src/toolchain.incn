@@ -22,6 +22,7 @@ Every path is relative to the toolchain directory, which is what makes a toolcha
 used as written (a bootstrap home that has not been packed).
 """
 
+from pub::incan_platform.trace import Operation
 from std.fs import Path
 from std.encoding.hex import hexlify
 from std.hash import sha256
@@ -116,7 +117,7 @@ pub def installation(directory: Path) -> Result[Installation, str]:
     clock = begin()
     page = retain_installation(directory, unprepared_toolchain)?
     retire_legacy_admission(directory)?
-    record("toolchain_admission", directory.0, clock)
+    record(Operation.ToolchainAdmission, directory.0, clock)
     return Ok(page)
 
 
@@ -197,7 +198,7 @@ pub def admit_compiler_facts(toolchain: Toolchain) -> Result[None, str]:
         sdk = get_or("SDKROOT", "")
     if sdk != "":
         admit_fact(Path(sdk).joinpath("SDKSettings.json"))?
-    record("compiler_facts", toolchain.driver, clock)
+    record(Operation.CompilerFacts, toolchain.driver, clock)
     return Ok(None)
 
 

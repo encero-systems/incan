@@ -20,6 +20,7 @@ from unit_freshness import fingerprint, unit_key
 from observation import FileMetadata, file_metadata
 from shared_link import development_link, linkage_key, library_witness, witness_current
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 const SCHEMA: str = "incan.engine.native-unit/1"
 
@@ -93,7 +94,7 @@ pub def obtain(
     if captured is None:
         epoch_reads = 1
     epoch = request_epoch(store, revision, captured, handle)?
-    record_work("engine_epoch", revision, opening)
+    record_work(Operation.EngineEpoch, revision, opening)
     if len(epoch.roots) != 1:
         return Err("unit records require exactly one program root")
     selector = standalone_selector(epoch, producer)?
@@ -128,7 +129,7 @@ pub def obtain(
     # Build and run ask for the same debug program, including its existing shared native linkage policy.
     key = linkage_key(compiled_key, development_link(ready, true))?
     binary = program_binary(ready)
-    record_work("engine_prepare", epoch.roots[0], preparing)
+    record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit.
     produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true)?
     if produced.code != 0:

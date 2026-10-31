@@ -36,6 +36,7 @@ and live lock precede that switch. A transaction whose writes are all already pr
 from rust::std::process import id, exit as process_exit
 from rust::std::rc import Rc
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.environ import get_or
@@ -578,7 +579,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     ensure_directory(root.joinpath("locks"))?
     locking = begin_work()
     held = root.joinpath("locks/publication").lock_exclusive().map_err((error) => io_failure(root, error))?
-    record_work("store_lock", root.0, locking)
+    record_work(Operation.StoreLock, root.0, locking)
     mut selected_view = first.view
     if execution_view != "":
         selected_view = execution_view
@@ -1064,7 +1065,7 @@ def sync_file(path: Path) -> Result[None, StoreError]:
     """Order one staged file's contents; the publication barriers perform the full durable drive flush."""
     clock = begin_work()
     result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
-    record_work("store_file_sync", path.0, clock)
+    record_work(Operation.StoreFileSync, path.0, clock)
     return result
 
 
@@ -1074,14 +1075,14 @@ def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
     temporary = Path(f"{target.0}.{id()}.tmp")
     writing = begin_work()
     temporary.write_bytes(data).map_err((error) => io_failure(temporary, error))?
-    record_work("store_file_write", target.0, writing)
+    record_work(Operation.StoreFileWrite, target.0, writing)
     boundary = publication_kind(target)
     publication_boundary(f"{boundary}-written")
     sync_file(temporary)?
     publication_boundary(f"{boundary}-synced")
     renaming = begin_work()
     temporary.replace(target).map_err((error) => io_failure(target, error))?
-    record_work("store_file_rename", target.0, renaming)
+    record_work(Operation.StoreFileRename, target.0, renaming)
     publication_boundary(f"{boundary}-replaced")
     return Ok(None)
 
@@ -1234,7 +1235,7 @@ def sync_directory(path: Path) -> Result[None, StoreError]:
     """Synchronize directory entries, measuring OS durability separately from record encoding and locks."""
     clock = begin_work()
     result = sync_ordered(path.0).map_err((error) => failure("io", path.0, error))
-    record_work("store_directory_sync", path.0, clock)
+    record_work(Operation.StoreDirectorySync, path.0, clock)
     return result
 
 
@@ -1244,7 +1245,7 @@ def sync_durable(path: Path) -> Result[None, StoreError]:
     handle = path.open("rb").map_err((error) => io_failure(path, error))?
     handle.sync().map_err((error) => io_failure(path, error))?
     counted["durable_syncs"] = counted.get("durable_syncs", 0) + 1
-    record_work("store_durable_sync", path.0, clock)
+    record_work(Operation.StoreDurableSync, path.0, clock)
     return Ok(None)
 
 
