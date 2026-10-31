@@ -11,6 +11,9 @@
     - RFC 114 (compiled providers and package features)
     - RFC 117 (Loaf project model)
     - RFC 124 (store unit identity and cross-plan artifact sharing)
+    - RFC 131 (typed errors)
+    - RFC 142 (async iteration and structured execution)
+    - RFC 160 (Incan-authored vocabulary)
     - RFC 164 (explicit ownership and borrowing contracts)
     - RFC 165 (typed embedded storage)
 - **Issue:** —
@@ -20,104 +23,158 @@
 
 ## Summary
 
-Introduce `std.primitives`, an ordinary standard package for the low-level value and host facilities that both user programs and the platform storage substrate need. It depends on no other standard package. Existing standard modules retain their public APIs and delegate to the same primitive definitions, preserving type identity. Platform code may import `std.primitives` and no other standard package.
+Introduce `std.primitives` as the foundational Incan package beneath the higher-level standard library. It provides the value, resource, error, trait, asynchronous execution and vocabulary-authoring building blocks needed by compiler, platform and library code without dependencies on higher-level standard packages. Higher-level modules compose or re-export these facilities rather than duplicate their implementations. This RFC establishes the architectural direction and compatibility obligations; exact APIs and implementation organization are determined during implementation.
+
+## Core model
+
+A primitive provides a foundational operation or contract with explicit ownership and observable behavior. Higher-level libraries supply convenience, composition and domain policy. Using Rust interop does not by itself make an entire API primitive, and an implementation written entirely in Incan can still be primitive.
 
 ## Motivation
 
-A reusable storage substrate needs paths, bounded byte cursors, content digests, locks and mapped immutable files. Giving each subsystem its own versions duplicates behavior and makes their values incompatible. Placing the common definitions beneath the higher-level standard modules lets the platform use them without importing those modules, while keeping the same supported facilities available to ordinary users.
+Compiler and platform code need to read files, process bytes, coordinate resources and express asynchronous behavior without depending on application-oriented standard-library APIs. Vocabulary authoring also needs foundational contracts beneath the surfaces it defines. Private implementations duplicate those facilities; importing their convenience modules introduces dependencies in the wrong direction.
+
+One foundational package lets Incan author both its language surfaces and its libraries. Applications keep convenient APIs, while low-level consumers use the underlying operations directly.
 
 ## Goals
 
-- Give each primitive one definition and one type identity.
-- Preserve all existing standard import paths and observable behavior.
-- Make low-level facilities a supported public surface, with explicit ownership, bounds and error contracts.
-- Keep the package independent of all other standard packages.
+- Establish a dependency direction from higher-level libraries to foundational operations, with no reverse dependency.
+- Keep primitive implementations simple and Incan-authored, using existing native libraries through explicit interop boundaries where needed.
+- Make ownership, borrowing, resource lifetime and failure behavior explicit at low-level boundaries.
+- Preserve existing higher-level imports and observable contracts through delegation or re-export.
+- Include foundational errors, traits, async vocabulary and vocabulary-definition contracts.
 
 ## Non-Goals
 
-- A database, query language, serialization format or build policy.
-- New hashing, encoding, locking or filesystem semantics.
-- Removing existing standard modules or requiring users to change imports.
-- A guarantee of safe mappings while another writer mutates or truncates their backing inode.
+- Specify every function, private type, platform module or implementation step before development begins.
+- Replace higher-level standard libraries or require ordinary applications to use primitive APIs.
+- Introduce class subtyping or require primitive and convenience types to be interchangeable.
+- Move entire domain-specific native backends into primitives merely because they use Rust.
+- Define a database, compiler pipeline, task orchestration policy or build engine.
 
 ## Guide-level explanation
 
-Users may import primitive values directly:
+### Choose the appropriate layer
+
+The primitive path supplies explicit foundational operations. The higher-level path adds conveniences. These examples illustrate the intended relationship; the exact primitive join spelling remains implementation-stage API work:
 
 ```incan
-from std.primitives import Path, BytesIO, Endian, sha256, hexlify
+# Compiler or platform code.
+from std.primitives import Path
+
+path = Path("sources").join("main.incn")
 ```
 
-The familiar imports from `std.fs`, `std.io`, `std.hash` and `std.encoding.hex` remain valid. Values passed between the two surfaces have the same types; a path or mapped view does not need conversion. Higher-level standard modules remain the usual place to find their domain APIs.
+```incan
+# Application code keeps the higher-level surface.
+from std.fs import Path
+
+path = Path("sources") / "main.incn"
+```
+
+`std.fs.Path` can extend the primitive `Path` class and add conveniences such as whole-file text reading. The primitive does not need slash notation or every convenience method. Code chooses its layer; the two Path classes need not be interchangeable at parameter boundaries. Higher-level path-building operations retain the behavior their callers expect.
+
+### Read files without the higher-level filesystem library
+
+Compiler code must be able to open, read and release files through primitives alone. The following complete helper uses illustrative proposed `open_read(path: Borrowed[Path]) -> Result[Owned[File], IoError]` and `read_chunk(file: BorrowedMut[File], max_bytes: int) -> Result[bytes, IoError]` contracts; it does not freeze those API names:
+
+```incan
+from std.primitives.fs import Path, open_read, read_chunk
+from std.primitives.io import IoError
+
+def read_source_chunks(path: Borrowed[Path]) -> Result[list[bytes], IoError]:
+    mut file = open_read(path)?
+    mut chunks: list[bytes] = []
+
+    loop:
+        chunk = read_chunk(file, max_bytes=65536)?
+        if chunk == b"":
+            break
+        chunks.append(chunk)
+
+    return Ok(chunks)
+```
+
+For this example, the positive bound limits each read, short reads are permitted and an empty read means EOF. The owned handle is released on return or error propagation. This helper retains the whole source; a streaming consumer could process each chunk immediately. Decoding, source locations and compiler diagnostics are not hidden behavior of opening a file.
+
+### Compose behavior without duplicating mechanisms
+
+| Foundation | Higher-level composition |
+| --- | --- |
+| File handles and byte operations | Text reading, recursive traversal, globbing and staging workflows |
+| Borrowed read cursor and owned write buffer | Combined reading, writing and seeking through `BytesIO` |
+| Byte-level hashing and encoding algorithms | Algorithm selection, whole-file hashing and source/sink conveniences |
+| Precise environment observations | Defaults, typed configuration conversion and configuration policy |
+| Async mechanisms and vocabulary | Task groups, deadlines, concurrency limits and error policies |
+| Vocabulary descriptors and structured transformation contracts | Convenient vocabulary authoring and compiler-owned provider execution |
+
+The algorithm boundary is not restricted to SHA-256 or hexadecimal conversion. Supported algorithms can have foundational implementations without pulling file processing or application defaults down with them. Existing native libraries remain valid dependencies; implementations are not duplicated merely to move their ownership.
 
 ## Reference-level explanation
 
-### Inventory
+### Dependencies and authoring
 
-Names below are proposed public names. Every old home must re-export the same declaration or wrap it without a second primitive implementation. Existing default values, error categories, byte representations and filesystem side effects must be preserved.
+`std.primitives` must not depend on higher-level standard packages, including indirectly through helpers, trait defaults or vocabulary-definition contracts. Platform code must be able to use it as its sole standard-package dependency. Required language/runtime foundations and native dependencies must be accounted for without hiding dependencies on higher-level facades.
 
-| Primitive | Old standard home | New name | Old home after the move | Why it is a primitive |
-| --- | --- | --- | --- | --- |
-| Path value and its existing methods | `std.fs.Path`, `std.fs.path.Path` | `std.primitives.Path` | Re-export | A common filesystem locator must have one type identity. |
-| Open files and opening options | `std.fs.File`, `OpenFileMode`, `OpenOptions` | `std.primitives.File`, `OpenFileMode`, `OpenOptions` | Re-export | Path operations expose these types and bounded byte I/O. |
-| Directory entries and filesystem metadata | `std.fs.DirEntry`, `PathStat`, `DiskUsage` | `std.primitives.DirEntry`, `PathStat`, `DiskUsage` | Re-export | Path operations return these values; they are host observations. |
-| Read-only mapped file | `std.fs.MappedFile`, `std.fs.mapping.MappedFile` | `std.primitives.MappedFile` | Re-export | Retains an immutable inode's mapping. |
-| Anchored mapped byte range and scalar reads | `std.fs.MappedView`, `std.fs.mapping.MappedView` | `std.primitives.MappedView` | Re-export | A bounded owner-anchored view avoids payload copies. |
-| Open a mapping | `std.fs.mapping.map_read` | `std.primitives.map_read` | Re-export; `Path.map_read` retains its method | The mapping operation is shared with the platform. |
-| Advisory lock guard | `std.fs.FileLock`, `std.fs.locking.FileLock` | `std.primitives.FileLock` | Re-export | The descriptor's lifetime owns a cooperative host lock. |
-| Blocking and nonblocking shared/exclusive locks | `std.fs.locking.shared`, `exclusive`, `try_shared`, `try_exclusive` | `std.primitives.locking` with the same function names | Re-export; Path's lock methods retain their contracts | Publication needs host coordination without consumer policy. |
-| Binary I/O error | `std.io.IoError`, `std.fs.IoError` | `std.primitives.IoError` | Re-export | Stream and filesystem boundaries share one error value. |
-| Byte order | `std.io.Endian` | `std.primitives.Endian` | Re-export | Exact-width binary values need an explicit byte order. |
-| Memory byte cursor and its concrete type | `std.io.BytesIO`, `_BytesIO` | `std.primitives.BytesIO`, `_BytesIO` | Re-export | Bounded reads, seeking and numeric I/O are format-independent. |
-| Binary reader/writer capabilities and chunk stream | `std.io.BinaryRead`, `BinaryReader`, `BinaryWrite`, `ReaderChunks` | Same names in `std.primitives` | Re-export | File and cursor contracts expose these capabilities. |
-| SHA-256 one-shot and incremental hashing | `std.hash.sha256`, `Sha256Hasher` | `std.primitives.sha256`, `Sha256Hasher` | Re-export; other hash dispatch delegates to them | Content identity and integrity need a common digest implementation. |
-| SHA-256 path/file digest | `std.hash.file_digest` with algorithm `"sha256"` | `std.primitives.file_digest` | Wrap; SHA-256 delegates, other algorithms remain in `std.hash` | Bounded streaming content hashing needs neither a format nor domain policy. |
-| Lowercase hexadecimal encoding | `std.encoding.hex.hexlify` | `std.primitives.hexlify` | Wrap or re-export; encoding helpers delegate to the same conversion | Content names need a deterministic byte-to-text representation. |
-| Optional and defaulted environment reads | `std.environ.get_optional`, `get_or` | `std.primitives.environ.get_optional`, `get_or` | Re-export or wrap | Read-only process configuration does not require a higher-level module. |
-| Scoped temporary directory | `std.tempfile.TemporaryDirectory` | `std.primitives.TemporaryDirectory` | Re-export | Temporary staging needs one host-backed owner and cleanup contract. |
+Higher-level modules must reuse primitive implementations for foundational operations. They may compose operations, adapt their presentation or preserve existing convenience contracts. Such composition is not a duplicate implementation of the primitive operation.
 
-The inventory includes the types reached by the existing `Path` and byte-cursor APIs. It does not imply that JSON, every hash algorithm, every encoding or every temporary-file helper belongs in the package. A shared helper required by those preserved contracts must have one home; its public status must be explicit.
+Primitive behavior should use simple Incan classes, functions, types, enums and traits as appropriate. Native interop boundaries must have explicit ownership. A domain-specific native backend remains with its domain unless reusable foundational operations can be separated from it. A Rust import is an inventory signal, not an automatic placement rule.
 
-### Dependencies
+### Ownership and shared contracts
 
-`std.primitives` must not import or depend on any other standard package, including through a private helper or a trait bound. Platform code must import no standard package except `std.primitives`. Higher-level standard packages may depend on primitive declarations through the ambient standard-library mechanism; users must not declare standard packages in their manifests. Native facilities used by the primitives remain ordinary native dependencies; package placement must not create another implementation of their algorithms or OS behavior.
+Primitive boundaries must expose ownership and borrowing obligations using RFC 164 where applicable. A read cursor borrows backing bytes while owning its position; a write buffer owns its storage. Borrowed views retain checked source dependencies. Copies, transfers and independent retention must not be silently substituted for one another.
 
-### Compatibility and stability
+Foundational errors and traits belong in primitives. Existing standard modules must re-export the same declarations where they expose the same contract. Supporting definitions required to avoid reverse dependencies belong with those contracts; not every domain-specific error or derive implementation moves into the foundation. Typed error behavior follows RFC 131's direction.
 
-`std.primitives` is a supported user-facing surface. Its low-level status must not be used to waive compatibility expectations. New and old import paths must name the same nominal types. A re-export must preserve constructors, methods and trait capabilities; a wrapper must preserve defaults, failures and observable results. Changes to names, ownership requirements, byte formats or errors must follow the standard library's versioned compatibility policy.
+Host operations must report actual failures and support limits. Platform selection must not silently weaken an operation's meaning. Resource ownership must not imply guarantees about external writers, successful cleanup or durability that an operation does not provide. Exact signatures and error variants are implementation-stage API work within these obligations.
 
-Mapped views must retain their owner, reject out-of-range reads and expose copying explicitly. Their backing inode must remain unmodified and untruncated while any mapping or view lives. File locks remain advisory and cooperative. File digest helpers must bound each read and must not impose a total-file-size ceiling. Environment reads must not include observed values in errors. Temporary directories must preserve their existing ownership and cleanup behavior.
+### Async and vocabulary
+
+Foundational async vocabulary and contracts belong alongside primitive async mechanisms. `std.async` must continue to expose the same vocabulary and higher-level behavior. Importing both entry points must not create competing syntax definitions. Importing an unrelated primitive must not itself activate async vocabulary or require an async runtime.
+
+Vocabulary-definition contracts also belong in the foundation, with `std.vocab` supplying re-exports and authoring conveniences. The compiler consumes these contracts; primitives must not depend on the compiler implementation to describe syntax. Provider admission, execution, validation and semantic compilation remain compiler/toolchain responsibilities under the relevant RFCs.
+
+Relocating vocabulary ownership does not remove semantic obligations such as suspension and lifetime checking, nor require replacing an existing async runtime backend. Registration, bootstrap and backend organization are implementation details.
+
+### Organization and compatibility
+
+Definitions must be grouped by responsibility, with selected common declarations re-exported at the package root. The exact export list and private layout are implementation decisions. Platform-specific modules and compile-time re-exports are permitted approaches, not a prescribed hierarchy.
+
+Existing higher-level imports and observable behavior must remain compatible unless a semantic change is explicitly adopted separately. Shared contracts retain identity through re-exports. Convenience types may extend or wrap primitive types; identical nominal types and interchangeability are not blanket requirements. Compatibility wrappers must delegate rather than retain competing primitive implementations.
+
+Primitives are available to authors who need the low-level surface; ordinary application ergonomics remain the purpose of higher-level packages. Low-level status does not waive documentation, safety or compatibility obligations. Direct primitive use does not bypass applicable capability governance.
 
 ## Design details
 
-The dependency rule applies to the complete transitive Incan surface, including error and iteration traits. Existing public capabilities cannot disappear merely to remove a dependency. The final public inventory must settle those shared traits before adoption.
+Implementation must trace actual standard-library and native dependencies, including trait defaults and resource lifetimes, and use concrete compiler and library consumers to shape APIs. Detailed inventories, signatures, representation choices and platform adapters belong in implementation design and verification. Resolving them does not require another RFC-level design vote unless the implementation would change this architectural direction or an established semantic contract.
 
-JSON remains a format in `std.json`. A sealed-set manifest using JSON belongs above the primitive storage substrate; moving that format is not required to give the substrate its own home.
+The architectural boundary, rather than the original list of 17 facilities, governs placement. Filesystem, byte, hashing, encoding, environment and temporary-resource operations are motivating examples. Foundational async and vocabulary facilities follow the same rule. An inventory entry does not establish that an API already exists or has shipped.
 
 ## Alternatives considered
 
-- Keep the platform dependent on higher-level standard modules: obscures the intended dependency direction and makes format or domain dependencies easy to introduce.
-- Duplicate primitive types in the platform: creates conversions and multiple implementations of the same facility.
-- Replace existing user APIs with native interop types: breaks compatibility and removes Incan's shared contracts.
+- Move convenience modules wholesale: brings policy and higher-level dependencies into the foundation.
+- Keep private compiler/platform primitives: duplicates behavior and prevents sharing the same foundation.
+- Require identical types at both levels: constrains useful conveniences without being necessary for shared implementation.
+- Treat every Rust-backed API as primitive: confuses implementation language with architectural responsibility.
+- Freeze a complete API and platform-module inventory here: couples the architectural decision to details better tested with concrete consumers.
 
 ## Drawbacks
 
-The supported public surface grows. Keeping old import paths requires careful preservation of nominal identities and trait contracts. A path's existing convenience methods expose more supporting capabilities than a locator alone, so the boundary needs an explicit inventory.
+Separating existing modules requires compatibility work where types currently combine resource access, shared state and convenience policy. Relocating traits or vocabulary ownership also affects compiler recognition and package metadata. Implementation must verify those migrations without inventing parallel definitions or silently changing behavior.
 
 ## Layers affected
 
-- **Standard library:** shared primitive declarations, compatibility exports and wrappers, public reference contracts.
-- **Platform:** the sole allowed standard-package dependency and reusable storage interfaces.
-- **Compiler and tooling:** ordinary standard-package namespace ownership, import lookup and completion.
+- **Standard library:** foundational definitions, delegation, compatibility re-exports and authoring APIs.
+- **Platform:** direct foundational dependencies without higher-level standard packages.
+- **Compiler and tooling:** recognition of relocated contracts and vocabulary, dependency metadata and diagnostics.
 
-## Unresolved questions
+## Design Decisions
 
-- Should primitive exports be flat, grouped by facility, or both? Which supporting declarations are public?
-- What exact signature and typed error should the SHA-256-only file digest expose while the existing multi-algorithm helper keeps its contract?
-- Which error and iterator capabilities move with the primitives so the package has no dependency on another standard package without dropping existing trait adoptions?
-- Should the existing `_BytesIO` concrete type gain a public name while its old spelling remains compatible?
-- Does the existing complete Path API belong in the primitive surface, or should extension methods preserve its higher-level operations without changing type identity?
-- Which guarantees and failure categories should be portable beyond the currently supported Unix-like hosts?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Architectural scope:** direction and obligations are settled here; exact APIs and organization are implementation work.
+- **One foundation:** compiler, platform, vocabulary and library authors share primitives without reverse dependencies.
+- **Separate Path surfaces:** a simple primitive class supports a richer higher-level class; interchangeability and primitive slash notation are not required.
+- **Explicit byte ownership:** borrowed read cursors and owned write buffers underpin the combined `BytesIO` convenience surface.
+- **Algorithms below orchestration:** foundational algorithms are not restricted to SHA-256 and hex; file processing and application policy stay above them.
+- **Shared contracts:** foundational errors and traits retain identity through higher-level re-exports.
+- **Async and vocabulary foundations:** async mechanisms and vocabulary use foundational vocabulary-authoring contracts; higher-level entry points remain available.
+- **Grouped modules:** common root re-exports are supported; platform backend layout is an implementation choice.
+- **Native boundary ownership:** shared low-level interop boundaries do not make all native-backed domain behavior primitive.
