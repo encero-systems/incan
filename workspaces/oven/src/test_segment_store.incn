@@ -33,6 +33,7 @@ from segment_store import (
     snapshot,
     fork,
     read_counts,
+    lease,
     repair_current,
     quarantine_record,
 )
@@ -95,6 +96,12 @@ pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_an
     assert text(lookup(deleted, "a")) == "<deleted>"
     assert text(lookup(deleted, "b")) == "<absent>"
     assert keys(deleted).map_err((error) => error.message())? == []
+    # Repeated pins of one exact snapshot share one descriptor, without another file publication.
+    held = lease(first).map_err((error) => error.message())?
+    leases = root.joinpath("leases")
+    before = len(leases.iterdir().map_err((error) => error.message())?)
+    another = lease(first).map_err((error) => error.message())?
+    assert len(leases.iterdir().map_err((error) => error.message())?) == before
     return Ok(None)
 
 
@@ -281,8 +288,9 @@ pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, 
     for size in [1, 65536, 4194304]:
         value = repeated(size)?
         root = scratch.path().joinpath(f"value-{size}")
-        commit(put(begin(snapshot(root).map_err((error) => error.message())?), "value", value))
-            .map_err((error) => error.message())?
+        commit(put(begin(snapshot(root).map_err((error) => error.message())?), "value", value)).map_err(
+            (error) => error.message(),
+        )?
         latest = snapshot(root).map_err((error) => error.message())?
         before = read_counts()
         found = lookup(latest, "value").map_err((error) => error.message())?
@@ -296,8 +304,10 @@ pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, 
                 decoded = owned(view)
                 assert read_counts().decoded - after.decoded == size
                 assert decoded == value
-            Lookup.Deleted => assert false, "the stored value reads as deleted"
-            Lookup.Absent => assert false, "the stored value reads as absent"
+            Lookup.Deleted =>
+                assert false, "the stored value reads as deleted"
+            Lookup.Absent =>
+                assert false, "the stored value reads as absent"
         println(
             f"S2 mapped view: value_bytes={size} frame_bytes_checked={after.bytes - before.bytes} lookup_copied_bytes={after.copied - before.copied} lookup_decoded_bytes={after.decoded - before.decoded} owned_decoded_bytes={size}",
         )
