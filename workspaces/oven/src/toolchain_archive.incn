@@ -1,5 +1,6 @@
 """Pack the installed toolchain's named closure, rewriting paths at the archive boundary."""
 
+from pub::incan_platform.trace import Operation
 from rust::std::fs import create_dir, remove_dir_all, rename
 from rust::std::os::unix::fs import symlink
 from rust::std::process import Command, id
@@ -592,14 +593,14 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     # 1. Nothing in the archive can land outside the stage or plant the machine's sysroot link.
     mut clock = begin()
     listing = command_text("tar", ["-tf", archive.0])?
-    record("archive_inventory", archive.0, clock)
+    record(Operation.ArchiveInventory, archive.0, clock)
     for entry in listing.split("\n"):
         if entry != "" and not safe_member(entry):
             return Err(f"unsafe toolchain archive member: {entry}")
     # 2. The archive is unpacked into the stage.
     clock = begin()
     run_command("tar", ["-xf", archive.0, "-C", stage.0])?
-    record("archive_unpack", archive.0, clock)
+    record(Operation.ArchiveUnpack, archive.0, clock)
     # 3. The archive is a toolchain of this Oven, and every path its manifest names stays inside the toolchain.
     document = read_json(stage.joinpath("toolchain.json"))?
     name = required_text(document, "name")?
@@ -609,7 +610,7 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     # 4. Every artifact and directory the manifest names is in the archive, so the installation is complete.
     clock = begin()
     toolchain, admission = prepare_installation(stage)?
-    record("toolchain_admission", stage.0, clock)
+    record(Operation.ToolchainAdmission, stage.0, clock)
     verify_contents(toolchain)?
     # 5. The machine's Rust installation is linked in, and the driver proves it is the compiler it was built against.
     sysroot = local_sysroot()?

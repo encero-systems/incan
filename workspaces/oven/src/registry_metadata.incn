@@ -1,5 +1,6 @@
 """Recover exact legacy producer edges from retained rustc artifact readings; registry_pages owns completed closures."""
 
+from pub::incan_platform.trace import Operation
 from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
@@ -132,7 +133,7 @@ def metadata(artifact: str, rustc: str) -> Result[str, str]:
     command.arg(artifact)
     clock = begin()
     output = command.output().map_err((error) => error.to_string())?
-    record("registry_metadata", artifact, clock)
+    record(Operation.RegistryMetadata, artifact, clock)
     if not output.status.success():
         return Err(f"cannot read registry producer metadata {artifact}: {decoded(output.stderr)}")
     printed = decoded(output.stdout)

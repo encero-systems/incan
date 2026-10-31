@@ -1,5 +1,6 @@
 """Admit one installation's normalized frozen inputs through sealed bakery pages and reconcile their generations."""
 
+from pub::incan_platform.trace import Operation
 from rust::std::string import String as RustString
 from rust::std::sync import Arc
 from std.encoding.hex import hexlify
@@ -113,7 +114,7 @@ def recalled_page(
 ) -> Result[Installation, str]:
     """Decode once per selected immutable value generation; changed bytes always pass through integrity validation."""
     if "current" in pages and generations.get("key", "") == key and generations.get("generation", "") == generation:
-        record_work("installation_page_reuse", directory.0, clock)
+        record_work(Operation.InstallationPageReuse, directory.0, clock)
         page = pages["current"]
         return Ok(
             Installation(
@@ -132,7 +133,7 @@ def recalled_page(
     pages["current"] = page
     generations["key"] = key
     generations["generation"] = generation
-    record_work("installation_page", directory.0, clock, mapped.len())
+    record_work(Operation.InstallationPage, directory.0, clock, mapped.len())
     return Ok(page)
 
 

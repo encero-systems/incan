@@ -36,6 +36,7 @@ from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
 from pub::incan_platform.trace import flush as flush_trace
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 
 pub model Options:
@@ -88,7 +89,7 @@ def command_line() -> None:
             return
         None => pass
     # 3. Each command keeps its own parsing and execution boundary.
-    record_work("cli_start", command, starting)
+    record_work(Operation.CliStart, command, starting)
     dispatch(command, rest)
 
 
@@ -317,7 +318,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     # 1. When the project's owner serves the unit, it made the executable, and a refused compile is the run's result.
     requesting = begin_work()
     owned = via_owner("run", options, Path(options.path))
-    record_work("legacy_request", options.path, requesting)
+    record_work(Operation.LegacyRequest, options.path, requesting)
     match owned:
         Some(reply) =>
             if reply.exit != 0:
@@ -331,7 +332,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
     made = make_unit(unit, toolchain, binary, true)?
-    record_work("legacy_prepare", options.path, preparing)
+    record_work(Operation.LegacyPrepare, options.path, preparing)
     if made.code != 0:
         return Ok(made.code)
     # 3. The process becomes the program, so its exit status is the run's; it keeps the view's name as its own.

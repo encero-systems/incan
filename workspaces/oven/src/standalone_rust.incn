@@ -17,6 +17,7 @@ from toml_fields import optional_string, optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain, located
 from unit import UnitDescription
 from unit_freshness import fingerprint, unit_key
+from pub::incan_platform.trace import Operation
 from jec import begin, record
 
 const IMPORTS_SCHEMA: str = "incan.oven.rust-imports/1"
@@ -129,7 +130,7 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     command.arg(path.0)
     clock = begin()
     output = command.output().map_err((error) => error.to_string())?
-    record("driver_spawn", f"--rust-imports {path.0}", clock)
+    record(Operation.DriverSpawn, f"--rust-imports {path.0}", clock)
     if not output.status.success():
         return Err(decoded(output.stderr))
     records = array(parse_json(decoded(output.stdout))?, []).map_err((_) => "invalid Rust import records")?

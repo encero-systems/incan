@@ -11,6 +11,7 @@ from intake import LocalIntake, LocalProject, ManifestReader, intake, source_roo
 from loaf_local_graph import LocalFacet
 from toolchain import NativeCrate, Toolchain
 from toolchain_access import ToolchainAccess
+from pub::incan_platform.trace import Operation
 from jec import begin, record
 
 pub const UNIT_DESCRIPTION_SCHEMA: str = "incan.unit/1"
@@ -169,7 +170,7 @@ pub def describe(
     clock = begin()
     result = described(source, profile, request, reader, selected_toolchain, selected_facets)
     key = f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|{request.all_features}"
-    record("unit_description", key, clock)
+    record(Operation.UnitDescription, key, clock)
     return result
 
 

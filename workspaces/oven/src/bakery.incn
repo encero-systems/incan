@@ -28,6 +28,7 @@ from std.json import JsonValue
 from files import json_text, make_directory, read_json
 from home_paths import home
 pub from home_paths import bakery
+from pub::incan_platform.trace import Operation
 from jec import begin as begin_work, record as record_work
 from json_fields import required_items, required_text, string_value
 from observation import observe, trace
@@ -129,7 +130,7 @@ pub def find(store: Path, identity: str) -> Result[Option[Fact], str]:
     """The baked unit of `identity`, or nothing; see `find_unit`."""
     clock = begin_work()
     found = find_unit(store, identity)
-    record_work("bakery_find", identity, clock)
+    record_work(Operation.BakeryFind, identity, clock)
     return found
 
 
@@ -181,7 +182,7 @@ pub def claim(store: Path, identity: str) -> Result[FileLock, str]:
     """Claim `identity` for baking; see `claim_unit`."""
     clock = begin_work()
     held = claim_unit(store, identity)
-    record_work("bakery_claim", identity, clock)
+    record_work(Operation.BakeryClaim, identity, clock)
     return held
 
 
@@ -224,7 +225,7 @@ pub def seal(
     prepared = prepare_seal(store, identity, staged, kind, name, reaches, provenance)?
     published = commit(prepared.transaction).map_err(store_failure)?
     trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
-    record_work("bakery_seal", identity, clock)
+    record_work(Operation.BakerySeal, identity, clock)
     return Ok(prepared.fact)
 
 
@@ -408,7 +409,7 @@ pub def view(store: Path, fact: Fact, relative: str, destination: Path) -> Resul
     """Make `destination` a view of one file of `fact`; see `view_unit_file`."""
     clock = begin_work()
     viewed = view_unit_file(store, fact, relative, destination)
-    record_work("bakery_view", destination.0, clock)
+    record_work(Operation.BakeryView, destination.0, clock)
     return viewed
 
 
@@ -464,7 +465,7 @@ pub def view_directory(store: Path, fact: Fact, destination: Path, prefix: str =
     """Make `destination` a view of a whole unit, or of its files below `prefix`; see `view_unit_directory`."""
     clock = begin_work()
     viewed = view_unit_directory(store, fact, destination, prefix)
-    record_work("bakery_view", destination.0, clock)
+    record_work(Operation.BakeryView, destination.0, clock)
     return viewed
 
 

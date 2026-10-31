@@ -31,6 +31,7 @@ from engine_messages import Submit
 from engine_wire import Refusal, RefusalKind, zero_id
 from files import discard_file
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 const MAX_CLIENTS: int = 16
 
@@ -225,7 +226,7 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
     send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
     capturing = begin_work()
     captured_request = prepare_submit(state.store, submit)
-    record_work("engine_capture", submit.requested_roots, capturing)
+    record_work(Operation.EngineCapture, submit.requested_roots, capturing)
     match captured_request:
         Err(reason) =>
             state.detach(request, token)?

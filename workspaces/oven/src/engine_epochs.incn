@@ -16,6 +16,7 @@ from engine_messages import Submit
 from segment_store import Lookup, Snapshot, Transaction, begin, commit, lookup, owned, put, snapshot
 from unit_freshness import fingerprint
 from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 
 
 pub model CapturedRequest:
@@ -71,7 +72,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     # Complete nanosecond metadata guards this Unix request; no coarse timestamp grace delays unchanged reuse.
     checking = begin_work()
     captured = capture(request, previous, admitted, 0)?
-    record_work("engine_capture_inputs", source.0, checking)
+    record_work(Operation.EngineCaptureInputs, source.0, checking)
     match captured.epoch:
         None => return Err(f"capture could not settle inputs: {captured.unstable}")
         Some(epoch) =>
@@ -98,7 +99,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
             transaction = put(transaction, epoch_key(revision), encoded.encode("utf-8"))
             transaction = put(transaction, head, f"{revision} {identity}".encode("utf-8"))
 
-            record_work("engine_capture_encode", source.0, publishing)
+            record_work(Operation.EngineCaptureEncode, source.0, publishing)
             return Ok(
                 CapturedRequest(
                     epoch=epoch,
