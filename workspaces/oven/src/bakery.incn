@@ -11,8 +11,9 @@ progress, and `roots/<project>/<identity>` for the identities each project's bui
 
 Asking is one path for cold and warm builds: find the record, or claim its identity, look again, bake into a private
 staging directory, store the payloads and publish the record. Concurrent askers wait on the claim and then find the
-record. The store reports a damaged record or payload; lookup refuses damage until an explicit repair or verified re-admission. Collection is
-disabled until it honors live snapshot leases; the store has no size ceiling.
+record. The store reports a damaged record or payload; lookup refuses damage until an explicit repair or verified re-admission.
+Explicit collection reclaims superseded storage layouts under live snapshot leases and keeps payloads conservatively;
+the store has no size ceiling.
 """
 
 from rust::std::fs import OpenOptions, Permissions, copy as copy_file, metadata, rename, set_permissions
@@ -55,6 +56,7 @@ from segment_store import (
     put,
     prepare_payloads,
     snapshot,
+    collect_layouts,
 )
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
@@ -89,12 +91,14 @@ pub model Fact:
 
 
 pub model Collected:
-    """What one collection did: units kept and removed, roots dropped, staging directories cleared."""
+    """Unit, root and staging counts, plus obsolete layout files and their logical bytes removed."""
 
     pub kept: int
     pub removed: int
     pub roots_dropped: int
     pub staging_cleared: int
+    pub layouts_removed: int = 0
+    pub bytes_reclaimed: int = 0
 
 
 pub def unit_identity(key: Key) -> str:
@@ -626,11 +630,26 @@ pub def register_root(store: Path, project: str, identity: str) -> Result[None, 
 
 pub def collect(store: Path, keep_days: int) -> Result[Collected, str]:
     """
-    Collection by reachability. It is disabled: removing objects is safe only once collection honors every live
-    snapshot lease and root under the store's lifecycle protocol, so until then nothing is ever removed.
+    Reclaim superseded manifests, indexes and segments without invalidating any current binding or live snapshot.
+
+    Root history, unit payloads and producer staging remain retained conservatively. Their eligibility requires the
+    owning codecs' complete reference and operation-lease contracts; age alone never authorizes deleting them.
+    `keep_days` remains accepted for CLI compatibility and does not expire a root.
     """
-    trace(f"bakery {store.0}: collection requested, keeping roots of the last {keep_days} days")
-    return Err("bakery collection is disabled until it honors live snapshot leases; nothing was removed")
+    trace(f"bakery {store.0}: explicit lease-aware layout collection (root history retained, keep-days {keep_days})")
+    collected = collect_layouts(store).map_err(store_failure)?
+    current = snapshot(store).map_err(store_failure)?
+    kept = len([key for key in keys(current).map_err(store_failure)? if key.startswith("incan.bakery.unit\t")])
+    return Ok(
+        Collected(
+            kept=kept,
+            removed=0,
+            roots_dropped=0,
+            staging_cleared=0,
+            layouts_removed=collected.files,
+            bytes_reclaimed=collected.bytes,
+        ),
+    )
 
 
 # ---- Verification ----
@@ -677,8 +696,8 @@ def verify_record(store: Path, key: str, value: bytes) -> list[str]:
 
 pub def parse_bakery(arguments: list[str]) -> Result[int, str]:
     """
-    Parse `incan bakery verify` or `incan bakery gc [--keep-days N]`: `VERIFY`, or the days of root history to keep
-    (-1 keeps every root).
+    Parse `incan bakery verify` or `incan bakery gc [--keep-days N]`: `VERIFY`, or the compatibility root-history
+    argument (-1 when omitted). Layout collection retains root history regardless of this argument.
     """
     if len(arguments) == 0:
         return Err("a subcommand is required: gc or verify")
@@ -716,7 +735,7 @@ pub def bakery_command(request: int) -> Result[i32, str]:
         return Ok(0)
     collected = collect(store, request)?
     println(
-        f"kept {collected.kept} units, removed {collected.removed}, dropped {collected.roots_dropped} roots, " + f"cleared {collected.staging_cleared} staging directories",
+        f"kept {collected.kept} units, removed {collected.removed}, dropped {collected.roots_dropped} roots, " + f"cleared {collected.staging_cleared} staging directories, reclaimed {collected.layouts_removed} layouts ({collected.bytes_reclaimed} bytes)",
     )
     return Ok(0)
 
