@@ -89,7 +89,7 @@ pub(crate) fn items(
         .any(|derive| derives::from_str(derive) == Some(DeriveId::Display))
     {
         items.push(crate::derived_display::implementation(
-            self_type(model, span),
+            applied_type(&model.name, &model.parameters, span),
             parameters_of(model, Some(&["core", "fmt", RUST_FMT_DEBUG_SYMBOL]), span),
             span,
         ));
@@ -209,17 +209,25 @@ fn marker_name(model: &GenericModelDeclaration) -> String {
 /// Preserve declared binders, bounding only parameters that occur in authored fields. The private marker must not
 /// impose Clone or Debug requirements on otherwise unused type arguments.
 fn parameters_of(model: &GenericModelDeclaration, bound: Option<&[&str]>, span: Span) -> ast::Generics {
+    let fields = model.fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
+    parameters(&model.parameters, &fields, bound, span)
+}
+
+/// Preserve ADT binders and derive only the requirements imposed by payload storage, not callable signature types.
+pub(crate) fn parameters(
+    names: &[String],
+    fields: &[&GenericLayoutType],
+    bound: Option<&[&str]>,
+    span: Span,
+) -> ast::Generics {
     ast::Generics {
-        params: model
-            .parameters
+        params: names
             .iter()
             .map(|name| ast::GenericParam {
                 id: ast::DUMMY_NODE_ID,
                 ident: ident(name, span),
                 attrs: ThinVec::new(),
-                bounds: if let Some(bound) =
-                    bound.filter(|_| model.fields.iter().any(|field| uses_parameter(&field.ty, name)))
-                {
+                bounds: if let Some(bound) = bound.filter(|_| fields.iter().any(|field| uses_parameter(field, name))) {
                     vec![trait_bound(global_path(bound, span), span)]
                 } else {
                     Vec::new()
@@ -247,7 +255,7 @@ fn uses_parameter(ty: &GenericLayoutType, parameter: &str) -> bool {
 }
 
 /// Translate the plan's structural field type to AST while retaining binder names and nominal paths exactly.
-fn layout_type(layout: &GenericLayoutType, span: Span) -> Box<ast::Ty> {
+pub(crate) fn layout_type(layout: &GenericLayoutType, span: Span) -> Box<ast::Ty> {
     match layout {
         GenericLayoutType::Concrete(ty) => declarations::ty(ty, span),
         GenericLayoutType::Parameter(name) => path_ty(ast::Path::from_ident(ident(name, span)), span),
@@ -344,19 +352,7 @@ fn clone_impl(model: &GenericModelDeclaration, span: Span) -> Box<ast::Item> {
         })),
         span,
     );
-    let receiver = ast::Param::from_self(
-        ThinVec::new(),
-        respan(span, ast::SelfKind::Region(None, ast::Mutability::Not)),
-        Ident::new(kw::SelfLower, span),
-    );
-    let signature = ast::FnSig {
-        header: ast::FnHeader::default(),
-        decl: Box::new(ast::FnDecl {
-            inputs: thin_vec![receiver],
-            output: ast::FnRetTy::Ty(path_ty(ast::Path::from_ident(Ident::new(kw::SelfUpper, span)), span)),
-        }),
-        span,
-    };
+    let signature = clone_signature(span);
     let body = block(thin_vec![expression_statement(value, span)], span);
     trait_impl(
         model,
@@ -364,6 +360,23 @@ fn clone_impl(model: &GenericModelDeclaration, span: Span) -> Box<ast::Item> {
         trait_method("clone", signature, body, span),
         span,
     )
+}
+
+/// The native Clone receiver and Self result, shared by provider-owned generic models and enums.
+pub(crate) fn clone_signature(span: Span) -> ast::FnSig {
+    let receiver = ast::Param::from_self(
+        ThinVec::new(),
+        respan(span, ast::SelfKind::Region(None, ast::Mutability::Not)),
+        Ident::new(kw::SelfLower, span),
+    );
+    ast::FnSig {
+        header: ast::FnHeader::default(),
+        decl: Box::new(ast::FnDecl {
+            inputs: thin_vec![receiver],
+            output: ast::FnRetTy::Ty(path_ty(ast::Path::from_ident(Ident::new(kw::SelfUpper, span)), span)),
+        }),
+        span,
+    }
 }
 
 /// Initialize one generic struct field with a fully constructed expression.
@@ -407,9 +420,26 @@ fn trait_impl(
     method: Box<ast::AssocItem>,
     span: Span,
 ) -> Box<ast::Item> {
+    trait_implementation(
+        applied_type(&model.name, &model.parameters, span),
+        parameters_of(model, Some(path), span),
+        path,
+        thin_vec![method],
+        span,
+    )
+}
+
+/// Wrap checked generic methods in their exact native trait implementation; source visibility stays in metadata.
+pub(crate) fn trait_implementation(
+    self_ty: Box<ast::Ty>,
+    generics: ast::Generics,
+    path: &[&str],
+    methods: ThinVec<Box<ast::AssocItem>>,
+    span: Span,
+) -> Box<ast::Item> {
     let mut implementation = declarations::item(
         ast::ItemKind::Impl(ast::Impl {
-            generics: parameters_of(model, Some(path), span),
+            generics,
             constness: ast::Const::No,
             of_trait: Some(Box::new(ast::TraitImplHeader {
                 defaultness: ast::Defaultness::Implicit,
@@ -420,8 +450,8 @@ fn trait_impl(
                     ref_id: ast::DUMMY_NODE_ID,
                 },
             })),
-            self_ty: self_type(model, span),
-            items: thin_vec![method],
+            self_ty,
+            items: methods,
         }),
         span,
     );
@@ -430,17 +460,16 @@ fn trait_impl(
 }
 
 /// Apply a provider's declared type parameters in their original order for every native trait implementation.
-fn self_type(model: &GenericModelDeclaration, span: Span) -> Box<ast::Ty> {
-    let arguments = model
-        .parameters
+pub(crate) fn applied_type(name: &str, parameters: &[String], span: Span) -> Box<ast::Ty> {
+    let arguments = parameters
         .iter()
         .map(|name| GenericLayoutType::Parameter(name.clone()))
         .collect();
-    layout_type(&GenericLayoutType::Applied(model.name.clone(), arguments), span)
+    layout_type(&GenericLayoutType::Applied(name.into(), arguments), span)
 }
 
 /// A source string literal used only by the injected Debug implementation.
-fn text(value: &str, span: Span) -> Box<ast::Expr> {
+pub(crate) fn text(value: &str, span: Span) -> Box<ast::Expr> {
     expression(
         ast::ExprKind::Lit(ast::token::Lit::new(
             ast::token::LitKind::Str,
@@ -452,7 +481,12 @@ fn text(value: &str, span: Span) -> Box<ast::Expr> {
 }
 
 /// A native method call whose receiver and arguments already carry their source-independent AST structure.
-fn method_call(receiver: Box<ast::Expr>, name: &str, args: ThinVec<Box<ast::Expr>>, span: Span) -> Box<ast::Expr> {
+pub(crate) fn method_call(
+    receiver: Box<ast::Expr>,
+    name: &str,
+    args: ThinVec<Box<ast::Expr>>,
+    span: Span,
+) -> Box<ast::Expr> {
     expression(
         ast::ExprKind::MethodCall(Box::new(ast::MethodCall {
             seg: ast::PathSegment::from_ident(ident(name, span)),
