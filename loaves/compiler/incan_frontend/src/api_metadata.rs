@@ -747,9 +747,11 @@ pub fn collect_checked_api_metadata(
 
     for declaration in &mut declarations {
         if let ApiDeclaration::Alias(alias) = declaration
-            && let Some(CheckedExportKind::Alias(checked)) = checked_kind(&checked_by_name, &alias.name)
+            && let Some(export) = checked_by_name.get(&alias.name)
+            && let CheckedExportKind::Alias(checked) = &export.kind
         {
             alias.projected_type = checked.projected_type.as_ref().map(type_ref_from_resolved);
+            alias.projected_function = checked_provider_alias_projection(alias, export, checker);
         }
     }
 
@@ -837,6 +839,44 @@ fn checked_nominal_api_declaration(
     }
 }
 
+/// Retain an imported callable's admitted API facts on its public alias before local projection materialization.
+///
+/// A provider's source declarations are deliberately absent from the consumer's API module list. Follow the checked
+/// canonical identity to the declaring Loaf instead of attempting to resolve `std` or `pub` as a local source module.
+/// The public hop remains the alias's target path; callable defaults and decorators come from the actual declaration.
+fn checked_provider_alias_projection(
+    alias: &ApiAlias,
+    export: &CheckedNamedExport,
+    checker: &TypeChecker,
+) -> Option<ApiProjectedFunction> {
+    if !alias
+        .target_path
+        .first()
+        .is_some_and(|root| matches!(root.as_str(), "pub" | "std"))
+    {
+        return None;
+    }
+    let canonical = export.identity.canonical.as_ref()?;
+    let provider = checker.loaves.declaring_loaf(canonical)?;
+    let api = provider.artifact.manifest.contract_metadata.api.as_ref()?;
+    let SymbolOrigin::Package { module_path, .. } = &canonical.origin else {
+        return None;
+    };
+    let module = api.modules.iter().find(|module| module.module_path == *module_path)?;
+    let function = module.declarations.iter().find_map(|declaration| match declaration {
+        ApiDeclaration::Function(function) if function.name == canonical.declaration_name => Some(function),
+        _ => None,
+    })?;
+    let mut callable = callable_from_function(function);
+    callable.name = alias.name.clone();
+    callable.anchor = alias.anchor.clone();
+    Some(ApiProjectedFunction {
+        source_path: alias.target_path.clone(),
+        callable,
+        decorators: function.decorators.clone(),
+    })
+}
+
 /// Collect only the checked public alias projection for one parsed module.
 ///
 /// Callers use this after the owning compilation session has successfully checked the module. Keeping this projection
@@ -893,7 +933,11 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                     let path = declaration_path(&module.module_path, &alias.name);
                     // External projections are already bound to admitted artifacts. Local aliases are refreshed
                     // from their current declaration after native representation publication updates that target.
-                    if alias.target_path.first().is_some_and(|root| root == "pub") {
+                    if alias
+                        .target_path
+                        .first()
+                        .is_some_and(|root| matches!(root.as_str(), "pub" | "std"))
+                    {
                         if let Some(function) = &alias.projected_function {
                             projections.insert(path.clone(), function.clone());
                         }

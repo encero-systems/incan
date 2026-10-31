@@ -739,6 +739,9 @@ impl TypeChecker {
     }
 
     /// Resolve one declaration from a derived public module, preserving its authored source-module identity.
+    ///
+    /// External aliases carry admitted callable or nominal projections; consume those before following a target
+    /// inside this manifest, since another provider's declaration is not present in the facade's source modules.
     pub(super) fn public_module_member(
         &mut self,
         library: &str,
@@ -778,7 +781,7 @@ impl TypeChecker {
             .iter()
             .filter_map(|declaration| match declaration {
                 ApiDeclaration::Alias(alias) => self
-                    .symbol_kind_from_nominal_projection(alias.projected_type.as_ref())
+                    .symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
                     .or_else(|| {
                         self.symbol_kind_from_api_target_path(
                             manifest,
