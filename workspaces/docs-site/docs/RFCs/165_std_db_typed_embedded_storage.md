@@ -148,6 +148,26 @@ Fallibility is declared by the scope's entry contract and checked under RFC 094.
 
 The primitive retains explicit, fallible acquisition and release operations for dev.9, independently of context-manager implementation. Public scope construction and primitive acquisition are different operations; the lazy spelling does not change when the primitive performs I/O.
 
+### Read, write and transaction scopes
+
+The fluent public surface distinguishes read consistency from write publication:
+
+| Scope | Contract |
+| --- | --- |
+| `.read()` | A read-only transaction. All reads observe one consistent snapshot; exit releases its resources without requiring commit. |
+| `.write()` | A writer whose successful modifying operations commit independently. It does not group the whole scope into one transaction. |
+| `.transaction()` | A read/write transaction. Reads see its own staged writes; explicit `commit()` publishes the grouped changes atomically. Leaving it unfinished aborts its pending changes. |
+
+These selectors compose with the lazy `db.open(path)` descriptor. They describe the public resource scope, not general forwarding of method calls through Result. The dev.9 primitive provides equivalent explicit acquisition, operation and release mechanisms without requiring `with` syntax.
+
+A transaction may read a record, inspect its current values and then update or delete it before committing. Subsequent reads inside the transaction observe those staged updates or deletions. The compare-and-publish conflict rule below protects that read/modify/write sequence: a changed base view causes conflict rather than silently publishing a decision made against stale state. Recovery starts a fresh transaction and re-evaluates the operation against its new read state; retry must not blindly replay external effects.
+
+A read in `.read()` followed by a separate operation in `.write()` does not form one protected read/modify/write operation. A caller requiring that boundary selects `.transaction()` up front. A read-only scope cannot silently upgrade to a writable transaction. Where the scope type is statically known, unsupported writes receive a diagnostic; dynamically admitted access must return a typed refusal. An explicit read/write transaction may perform only reads; it does not have to modify records merely because it permits writes.
+
+Cursors execute operations and retain scan state; they do not select commit policy. Closing a cursor releases cursor resources without committing or rolling back its enclosing transaction. Successful writes through multiple cursors in one explicit transaction remain staged together. Writes through an ordinary writer retain their independent operation boundaries, and a later failure does not undo earlier committed operations. A rejected operation must not automatically invalidate an ordinary writer when the engine can establish that the operation left it usable; underlying resource or integrity failures may still prevent continued use.
+
+Single-record reads remain available directly through a typed table without constructing a cursor. Bulk-operation boundaries must be specified by their public operation contract, never by buffer size, internal flushes or the spool threshold. Whether a failed operation leaves an explicit transaction recoverable remains separate from the settled scope distinction.
+
 ### Choose storage placement without changing the data contract
 
 The same typed Incan records and logical transaction operations are available in three explicit modes:
