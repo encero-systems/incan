@@ -1,0 +1,11 @@
+# behavior: an import of a name the selected Rust crate does not declare is refused before the program runs, even when nothing uses it (#2481)
+# expect-exit: 1
+# expect-stderr-contains:
+#   Rust crate `libc` has no public item `no_such_function`
+
+from rust::libc import no_such_function
+
+
+def main() -> None:
+    """A program whose only Rust import names nothing in its crate."""
+    println("must not run")

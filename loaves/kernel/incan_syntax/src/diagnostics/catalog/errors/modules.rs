@@ -172,6 +172,21 @@ pub fn rust_item_not_public(local_name: &str, canonical_path: &str, span: Span) 
     .with_note("RFC 041 requires visibility-aware Rust metadata for `rust::` imports")
 }
 
+/// A `rust::` import names no item of its crate: rustc read the crate version, target and features the project
+/// selects, and its public API has nothing at the path. `canonical_path` starts with `crate_name`.
+pub fn rust_item_not_in_crate(crate_name: &str, canonical_path: &str, span: Span) -> CompileError {
+    let item = canonical_path
+        .strip_prefix(crate_name)
+        .and_then(|rest| rest.strip_prefix("::"))
+        .unwrap_or(canonical_path);
+    CompileError::new(format!("Rust crate `{crate_name}` has no public item `{item}`"), span)
+        .with_note(format!(
+            "`rust::{canonical_path}` names nothing in the public API of the `{crate_name}` version, target and \
+             features this project selects"
+        ))
+        .with_hint("Check the item's spelling, or select a crate version or feature that declares it")
+}
+
 /// Rust `core`/`alloc` imports are reserved for future no_std/target work.
 pub fn unsupported_rust_core_alloc(crate_name: &str, span: Span) -> CompileError {
     CompileError::new(
