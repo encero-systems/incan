@@ -1677,7 +1677,8 @@ pub enum PartialProjectionTargetKind {
 pub struct BodyIrReexportCallInfo {
     /// The manifest's minted declaring identity, never the facade or consumer spelling.
     pub canonical: CanonicalSymbolId,
-    /// Exact fixed scalar parameters whose written arguments validated without coercion or inference.
+    /// Parameters of the selected published declaration; call-site substitutions remain in the ordinary checked call
+    /// facts.
     pub parameters: Vec<CallableParam>,
 }
 
