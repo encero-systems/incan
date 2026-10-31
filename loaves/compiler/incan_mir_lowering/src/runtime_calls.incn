@@ -509,8 +509,8 @@ def retain_runtime_redirect(
     return Ok(None)
 
 
-pub def redirect_runtime_calls(mut functions: list[Function], redirects: RuntimeRedirects) -> Result[None, str]:
-    """Rewrite each completed block once, preserving call operands and edges and refusing primitive reentry."""
+pub def redirect_runtime_calls(mut functions: list[Function], redirects: &RuntimeRedirects) -> Result[None, str]:
+    """Borrow the settled redirect inventory while rewriting blocks, preserving operands and edges and refusing reentry."""
     for function_index in range(len(functions)):
         for block_index in range(runtime_block_count(functions, function_index)):
             rewritten = redirected_runtime_terminator(functions, function_index, block_index, redirects)?
@@ -530,9 +530,9 @@ def redirected_runtime_terminator(
     functions: &list[Function],
     function_index: int,
     block_index: int,
-    redirects: RuntimeRedirects,
+    redirects: &RuntimeRedirects,
 ) -> Result[Option[TerminatorKind], str]:
-    """Select an owned replacement before mutation, retaining the call's operands, source span and successor edges."""
+    """Borrow the shared inventory to select an owned replacement before mutation, retaining operands, span and edges."""
     function = borrowed_at(functions, function_index)
     block = borrowed_at(function.blocks, block_index)
     match block.terminator.kind:
@@ -550,8 +550,8 @@ def redirected_runtime_terminator(
         _ => return Ok(None)
 
 
-def runtime_redirect(redirects: RuntimeRedirects, selected: CalleeKind) -> Option[int]:
-    """Use the authenticated path only as an index; exact native type arguments still select the binding."""
+def runtime_redirect(redirects: &RuntimeRedirects, selected: CalleeKind) -> Option[int]:
+    """Borrow the inventory and use its path index; exact native type arguments still select the binding."""
     mut path = ""
     match selected:
         CalleeKind.External(name) => path = name
