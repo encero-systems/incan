@@ -81,6 +81,9 @@ impl SemanticNodeBindings {
         let Declaration::Function(function) = &declaration.node else {
             return Err(NodeBindingError::Unsupported("free-function owner"));
         };
+        if function.result_source.is_some() {
+            return Err(NodeBindingError::Unsupported("borrowed result-source contract"));
+        }
         if !function.decorators.is_empty()
             || !function.surface_modifiers.is_empty()
             || !function.type_params.is_empty()

@@ -339,6 +339,14 @@ fn format_function_signature(func: &incan_frontend::ast::FunctionDecl, source: &
 
     sig.push_str(" -> ");
     sig.push_str(&format_type(&func.return_type.node));
+    if let Some(source) = &func.result_source {
+        sig.push_str(" from ");
+        sig.push_str(&source.node.binding.node);
+        for field in &source.node.fields {
+            sig.push('.');
+            sig.push_str(&field.node);
+        }
+    }
 
     sig
 }
@@ -4204,6 +4212,16 @@ fn push_builtin_completions(items: &mut Vec<CompletionItem>, seen: &mut HashSet<
     }
     for info in collections::COLLECTION_TYPES {
         push_registry_completion_names(info.canonical, info.aliases, CompletionItemKind::CLASS, items, seen);
+    }
+    for mode in incan_lang::lang::types::ownership::OWNERSHIP_MODES {
+        push_completion(
+            items,
+            seen,
+            mode.as_str(),
+            CompletionItemKind::CLASS,
+            Some("Explicit ownership annotation; execution is not available yet".to_string()),
+            None,
+        );
     }
 }
 

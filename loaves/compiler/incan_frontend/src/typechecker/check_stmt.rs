@@ -1013,6 +1013,8 @@ impl TypeChecker {
             return;
         }
 
+        self.warn_field_copy_migration(assign, &value_ty);
+
         // New binding
         let is_mutable = matches!(assign.binding, BindingKind::Mutable);
 

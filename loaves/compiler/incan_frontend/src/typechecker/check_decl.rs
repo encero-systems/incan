@@ -6823,6 +6823,7 @@ impl TypeChecker {
         self.validate_surface_modifier_typecheck_actions(&func.surface_modifiers, &func.return_type);
 
         let previous_annotation_owner = self.prepare_function_generic_context(func);
+        self.check_result_source_contract(func.result_source.as_ref(), &func.return_type, &func.params, None);
 
         // ---- Signature defaults and frame bindings ----
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
@@ -7469,6 +7470,12 @@ impl TypeChecker {
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
+        self.check_result_source_contract(
+            method.result_source.as_ref(),
+            &method.return_type,
+            &method.params,
+            method.receiver_binding.as_ref().map(|binding| binding.node.as_str()),
+        );
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params);
 

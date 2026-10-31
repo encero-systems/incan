@@ -770,7 +770,37 @@ const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/"),
 };
 
+const OWNERSHIP_CONTRACT_UNAVAILABLE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0123",
+    title: "Explicit ownership contract is not executable yet",
+    severity: "error",
+    phase: "typecheck",
+    summary: "The compiler recognizes an RFC 164 contract but cannot yet prove and lower its ownership behavior.",
+    explanation: "Borrowed, BorrowedMut, Owned and Reference are canonical prelude contracts. Recognition does not grant execution using old copying semantics. A user declaration shadowing a mode name remains an ordinary declaration.",
+    examples: &["def read(value: Borrowed[str]) -> None:\n    pass"],
+    common_causes: &["Using explicit ownership syntax before its executable stage is available."],
+    fixes: &[
+        "Use a toolchain implementing the required ownership contract; do not replace the borrow with an implicit copy.",
+    ],
+    docs_url: None,
+};
+
+const RESULT_SOURCE_INVALID: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0124",
+    title: "Borrowed result source is missing or invalid",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An explicit borrowed result must name its source parameter or receiver.",
+    explanation: "The from clause names one parameter or receiver followed by static field projections. It is required even with a single possible input; a global, local, call or index cannot stand in for that declaration relationship.",
+    examples: &["def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value"],
+    common_causes: &["Omitting the source or naming a binding outside the callable signature."],
+    fixes: &["Add from followed by the source parameter or receiver and any static field path."],
+    docs_url: None,
+};
+
 const CATALOG: &[DiagnosticCatalogEntry] = &[
+    OWNERSHIP_CONTRACT_UNAVAILABLE,
+    RESULT_SOURCE_INVALID,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

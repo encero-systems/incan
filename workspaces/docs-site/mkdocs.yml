@@ -173,6 +173,7 @@ nav:
           - Feature inventory (generated): language/reference/feature_inventory.md
           - Code style guide: language/reference/code_style.md
           - Assignments: language/reference/assignments.md
+          - Explicit ownership (recognition stage): language/reference/explicit_ownership.md
           - Functions and calls: language/reference/functions.md
           - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md

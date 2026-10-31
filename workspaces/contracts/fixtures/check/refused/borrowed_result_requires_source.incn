@@ -1,0 +1,5 @@
+# behavior: An explicit borrowed result requires its source even when only one parameter exists.
+# expect-diagnostic: INCAN-T0124
+
+def view(value: Borrowed[str]) -> Borrowed[str]:
+    return value

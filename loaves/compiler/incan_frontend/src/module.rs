@@ -1483,6 +1483,7 @@ source-root = "library"
             type_params: vec![],
             params: vec![],
             return_type: make_spanned(Type::Unit),
+            result_source: None,
             body: vec![],
         };
         let program = Program {
@@ -1699,6 +1700,7 @@ pub get = partial route(method="GET")
             type_params: vec![],
             params: vec![],
             return_type: make_spanned(Type::Unit),
+            result_source: None,
             body: vec![],
         };
         let trait_decl = TraitDecl {

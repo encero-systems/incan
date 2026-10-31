@@ -1,0 +1,8 @@
+# behavior: A global name cannot stand in for a declared result-source parameter.
+# expect-diagnostic: INCAN-T0124
+
+const external: str = "value"
+
+
+def view(value: str) -> str from external:
+    return value
