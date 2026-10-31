@@ -8,7 +8,8 @@ These boundaries keep each fact in one place: orchestration does not infer langu
 
 ## Installed-toolchain ownership
 
-The selected home contains the compiler closure and standard-package artifacts. A local Rust installation supplies the pinned sysroot. Toolchain installation verifies compiler identity before publishing a replacement.
+The selected home contains the compiler closure and standard-package artifacts. A local Rust installation supplies the pinned sysroot. Toolchain installation verifies compiler identity and transported payload digests before publishing a replacement. Publication transfers admission only when the verified filesystem generations survive the directory rename; the first command reads the completed installation admission instead of hashing the shipped closure again.
+
 
 Project-generated output belongs under the project's `target/incan/`; standard-package output belongs under the toolchain home. Reuse is an optimization over these explicit inputs, not another semantic route.
 

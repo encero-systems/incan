@@ -12,6 +12,7 @@ from retained_readings import recall, retain
 from registry_units import RegistryUnit, sole_library
 from rust_target import decoded
 from toolchain import load_toolchain, rust_compiler
+from jec import begin, record
 
 # The selection under which a closure's completion is retained, followed by the pinned compiler that read it.
 pub const COMPLETION: str = "registry-completion/1"
@@ -41,7 +42,9 @@ pub def complete_legacy(units: list[RegistryUnit], closure: Path) -> Result[list
         if let Some(completed) = retained_completion(units, listings, value):
             return Ok(completed)
     # 3. An entry that changed while it was read is read again by the next command.
+    clock = begin()
     completed = completed_units(units, rustc, toolchain.sysroot)?
+    record("registry_completion", closure.0, clock)
     if entry_listings(units) == listings:
         retain(closure, selection, observed, completion_record(completed, listings))
     return Ok(completed)
@@ -218,7 +221,9 @@ def metadata(artifact: str, rustc: str) -> Result[str, str]:
     command.env("RUSTC_BOOTSTRAP", "1")
     command.arg("-Zls=root")
     command.arg(artifact)
+    clock = begin()
     output = command.output().map_err((error) => error.to_string())?
+    record("registry_metadata", artifact, clock)
     if not output.status.success():
         return Err(f"cannot read registry producer metadata {artifact}: {decoded(output.stderr)}")
     printed = decoded(output.stdout)

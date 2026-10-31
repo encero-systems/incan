@@ -1,12 +1,13 @@
 """Reuse contracts: an unchanged unit is keyed from metadata alone, and any relevant change is a different key."""
 
-from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions
+from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions, rename
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
+from pub::incan_platform.trace import flush as flush_trace
 from files import json_text, make_directory, read, read_json, remove, write as write_file
 from json_fields import required_items, required_text
 from registry_metadata import completion_selection
@@ -47,13 +48,30 @@ from rust_units import (
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
 from rust_target import compiler_version, deployment_target
-from toolchain import NativeCrate, Toolchain, admit_compiler_facts, load_toolchain, read_toolchain, rust_compiler
+from toolchain import (
+    NativeCrate,
+    Toolchain,
+    admit_compiler_facts,
+    load_toolchain,
+    read_toolchain,
+    rust_compiler,
+    prepare_installation,
+    finish_installation,
+    load_toolchain_at,
+)
 from toolchain_access import ToolchainAccess
-from compiler_facts import admit_fact
+from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
 from unit import UnitDescription, UnitLoaf
 from unit_rust import add_extern, compile_library_unit
 from unit_compiler import described_by, write_unit
-from unit_publication import admit_payload, published_identity, record_path, record_payload
+from unit_publication import (
+    admit_payload,
+    published_identity,
+    record_path,
+    record_payload,
+    verified_payload,
+    relocate_payload,
+)
 from unit_freshness import (
     Key,
     artifact_files,
@@ -1015,6 +1033,7 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     # 3. Another closure generation is completed again from the producer's metadata.
     rewrite_in_place(closure, read(closure)?)?
     assert read_registry_units(closure)?.units[0].name == first.name
+    _ = flush_trace()
     return Ok(None)
 
 
@@ -1073,7 +1092,8 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     # A view replaced behind Oven's back is the user's; the next view restores the fact's executable.
     write(tests.joinpath("app"), "someone else's binary")?
     match fact_file(store, fact, "app"):
-        Some(payload) => assert read(payload)? == "first build"
+        Some(payload) =>
+            assert read(payload)? == "first build"
         None => return Err("the baked executable is absent")
     view_executable(store, fact, tests.joinpath("app"), "test")?
     assert read(tests.joinpath("app"))? == "first build"
@@ -1532,6 +1552,8 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
     )
     write(directory.joinpath("toolchain.json"), json_text(document)?)?
     read_toolchain(directory)?
+    verify_renamed_admission(scratch, original)?
+    verify_published_installation(scratch, original)?
     assert published_identity(copied)? == "runtime producer"
     assert published_identity(standard)? == "runtime producer"
     assert published_identity(registry)? == "registry producer"
@@ -1542,6 +1564,62 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
                 assert false, "a changed payload cannot retain its transported producer identity"
             Err(_) => pass
         write(payload, read(original)?)?
+    return Ok(None)
+
+
+def verify_renamed_admission(scratch: Path, original: Path) -> Result[None, str]:
+    """A published installation retains verified generations and refuses replacements without reading payload bytes again."""
+    stage = scratch.joinpath("admission-stage")
+    payload = stage.joinpath("library.rlib")
+    compiler = stage.joinpath("driver")
+    write(payload, read(original)?)?
+    record_payload(payload, "renamed producer")?
+    write(compiler, "compiler generation")?
+    admit_fact(compiler)?
+    admitted_payload = verified_payload(payload)?
+    admitted_compiler = verified_fact(compiler)?
+    target = scratch.joinpath("admission-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    installed_payload = target.joinpath("library.rlib")
+    installed_compiler = target.joinpath("driver")
+    relocate_payload(installed_payload, admitted_payload)?
+    relocate_fact(installed_compiler, admitted_compiler)?
+    assert published_identity(installed_payload)? == "renamed producer"
+    assert fact_identity(installed_compiler)? == admitted_compiler.digest
+    write(installed_payload, "damaged payload")?
+    write(installed_compiler, "damaged compiler")?
+    match relocate_payload(installed_payload, admitted_payload):
+        Ok(_) =>
+            assert false, "changed payload retained installation admission"
+        Err(_) => pass
+    match relocate_fact(installed_compiler, admitted_compiler):
+        Ok(_) =>
+            assert false, "changed compiler retained installation admission"
+        Err(_) => pass
+    return Ok(None)
+
+
+def verify_published_installation(scratch: Path, original: Path) -> Result[None, str]:
+    """Installation verifies each staged payload once; first selection reads only the admission marker and description."""
+    stage = scratch.joinpath("installation-stage")
+    write(stage.joinpath("driver"), "fixture compiler")?
+    write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
+    write(stage.joinpath("library.rlib"), read(original)?)?
+    record_payload(stage.joinpath("library.rlib"), "installed producer")?
+    write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
+    write(
+        stage.joinpath("toolchain.json"),
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\"}",
+    )?
+    _, admission = prepare_installation(stage)?
+    assert len(admission.payloads) == 1 and len(admission.facts) == 2
+    target = scratch.joinpath("installation-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    finish_installation(target, admission)?
+    installed = load_toolchain_at(target)?
+    assert installed.driver == target.joinpath("driver").0
+    assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
+    _ = flush_trace()
     return Ok(None)
 
 
