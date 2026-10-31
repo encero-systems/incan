@@ -173,12 +173,14 @@ def catalog_registry(units: list[RegistryUnit], path: Path) -> Result[RegistryUn
     for unit in units:
         if unit.directory not in search:
             search.append(unit.directory)
-    return Ok(RegistryUnits(
-        units=units,
-        search=search,
-        anchors=[],
-        installation_bindings=recorded_registry_bindings(units, path)?,
-    ))
+    return Ok(
+        RegistryUnits(
+            units=units,
+            search=search,
+            anchors=[],
+            installation_bindings=recorded_registry_bindings(units, path)?,
+        ),
+    )
 
 
 pub def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
@@ -1216,7 +1218,18 @@ def compile_local_rust_library(
         outputs = [artifact, graph, dependencies]
         record_portable(directory, key, outputs)?
         portable = directory.joinpath("library.portable-inputs")
-        seal_rust(store, identity, name, key.digest, key.provenance, directory, outputs, [portable], facet.project, linked)?
+        seal_rust(
+            store,
+            identity,
+            name,
+            key.digest,
+            key.provenance,
+            directory,
+            outputs,
+            [portable],
+            facet.project,
+            linked,
+        )?
     match library_artifact(directory, declared.crate_name, context, declared.kind)?:
         None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
         Some(viewed) =>
@@ -1322,18 +1335,19 @@ def compile_incan_library(
     2. Compile its complete Loaf artifact through the ordinary Incan unit compiler.
     3. Return its exact rlib to the Rust consumer.
     """
-    # 1. The graph's selected profile and features identify the provider's artifact.
+    # 1. The graph's profile and features identify the provider; its dependencies must expose Incan facades.
     root = Path(request.project).resolve().map_err((error) => error.message())?
     directory = dependency_artifact_dir(root.0, declared.package, request.profile)
     compiled_name = declared.package.replace("-", "_")
     artifact = directory.joinpath(f"lib{compiled_name}.rlib")
-    mut bindings = facet_bindings(facet, built, request.registry)?
-    mut dependency_search = facet_search(facet, built)?
+    providers = provider_dependencies(facet, request, built)?
+    mut bindings = facet_bindings(facet, providers, request.registry)?
+    mut dependency_search = facet_search(facet, providers)?
     if declared.kind != "incan":
-        native = compile_rust_library(facet, declared, output, request, built, search)?
+        native = compile_rust_library(facet, declared, output, request, providers, search)?
         bindings.append(NativeCrate(name=native.crate_name, path=native.artifact))
         dependency_search = dependency_search + [native.directory] + native.search
-    loaves = incan_artifacts(built)
+    loaves = incan_artifacts(providers)
     # 2. The graph already prepared every dependency; the source compiler only binds these selected artifacts.
     mut code: i32 = 1
     mut readings = NativeClosureInput()
@@ -1364,10 +1378,37 @@ def compile_incan_library(
             crate_name=compiled_name,
             artifact=artifact.0,
             directory=directory.0,
-            search=native_search(directory.joinpath(f"{declared.package}.native.json"), readings)?,
+            search=native_search(directory.joinpath(f"{declared.package}.native.json"), readings)? + dependency_search,
             loaf=declared.package,
         ),
     )
+
+
+def provider_dependencies(
+    facet: LocalFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+) -> Result[Dict[str, BuiltUnit], str]:
+    """An Incan provider consumes complete Loaf facades even when its outer Rust graph selects native facets."""
+    if not request.rust_facet_dependencies:
+        return Ok(built)
+    mut needs_facade = false
+    for edge in facet.local:
+        if edge.key() in built and built[edge.key()].loaf == "":
+            if library_source(Path(edge.project), request.manifests)?.is_file():
+                needs_facade = true
+    if not needs_facade:
+        return Ok(built)
+    # The same graph producer prepares the provider's ordinary Incan dependency closure; compiled units are shared.
+    mut provider = request
+    provider.project = facet.project
+    provider.features = facet.features
+    provider.default_features = false
+    provider.all_features = false
+    provider.rust_facet_dependencies = false
+    demand = LocalDemand(project=facet.project, domain=facet.domain, features=facet.features, defaults=false)
+    dependencies = local_facets(demand, target_configuration(request.rustc)?, request.substitutes, request.manifests)?
+    return build_dependencies(provider, dependencies, false)
 
 
 pub def native_search(closure: Path, readings: NativeClosureInput = NativeClosureInput()) -> Result[list[str], str]:
@@ -1489,7 +1530,15 @@ pub def compile_binary(
         return Ok(binary.0)
     # Baked evidence is interpreted in each consumer's checkout, just as a library's dependency evidence is.
     relocate_dependencies(staged_dependencies, Path(facet.project))?
-    fact = seal(store, current.digest, staged, "rust binary", rust_unit_name("binary", output_name, ""), [], "rust binary")?
+    fact = seal(
+        store,
+        current.digest,
+        staged,
+        "rust binary",
+        rust_unit_name("binary", output_name, ""),
+        [],
+        "rust binary",
+    )?
     register_root(store, facet.project, current.digest)?
     view(store, fact, output_name, binary)?
     view(store, fact, f"{output_name}.d", dependencies)?

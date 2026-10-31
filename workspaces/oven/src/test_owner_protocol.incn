@@ -157,6 +157,8 @@ def trace_contract(directory: str) -> Result[None, str]:
     assert trace_value(decoded, "records")?.expect_int().map_err((error) => error.message())? == 2
     assert trace_value(decoded, "calls")?.expect_int().map_err((error) => error.message())? == 3
     assert trace_value(decoded, "cpu_ns")?.is_null()
+    assert trace_value(decoded, "clock")?.expect_str().map_err((error) => error.message())? == "host-monotonic-raw"
+    assert parent.start_ns > 0
     assert child.clock_id == parent.clock_id and child.clock_id != ""
     for key in ["run", "request", "work", "producer", "operation", "snapshot", "thread", "outcome", "clock_id"]:
         assert trace_value(decoded, key)?.expect_str().map_err((error) => error.message())? != ""
@@ -211,6 +213,7 @@ def typed_trace_contract(directory: str) -> Result[None, str]:
     clock = match trace_begin(true):
         Some(value) => value
         None => return Err("enabled emitter did not start")
+
     key = "quote\"\\\n\tλ"
     emitter.emit(clock, Operation.JsonRead, key, 17).map_err((_) => "typed emit failed")?
     flush_trace().map_err((_) => "typed flush failed")?
@@ -231,7 +234,7 @@ def typed_trace_contract(directory: str) -> Result[None, str]:
     flush_trace().map_err((_) => "refused flush failed")?
     assert Path(destination).read_text("utf-8", "strict").map_err((error) => error.message())? == saved
     # Escaping can overflow fixed scratch even though every source field fits its own bound.
-    control = parse("\"\u0001\"").map_err((error) => error.message())?
+    control = parse("\"\\u0001\"").map_err((error) => error.message())?
     mut quoted = control.expect_str().map_err((error) => error.message())?
     while len(quoted) < MAX_TEXT:
         quoted += quoted
@@ -245,6 +248,7 @@ def typed_trace_contract(directory: str) -> Result[None, str]:
         next_clock = match trace_begin(true):
             Some(value) => value
             None => return Err("enabled drain did not start")
+
         emitter.emit(next_clock, Operation.FileRead, f"read-{index}", index).map_err((_) => "typed drain failed")?
     flush_trace().map_err((_) => "typed drain flush failed")?
     drained = Path(destination).read_text("utf-8", "strict").map_err((error) => error.message())?
