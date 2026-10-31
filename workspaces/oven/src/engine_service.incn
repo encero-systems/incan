@@ -23,7 +23,7 @@ from engine_messages import (
     EffectDisposition,
 )
 from engine_state import Identity, ServiceState
-from engine_epochs import capture_submit
+from engine_epochs import prepare_submit
 from engine_actions import Pending, ExecutionLease, finish_request
 from engine_programs import read_program, program_handle
 from engine_messages import Resolve, Resolution
@@ -224,19 +224,20 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
     state.accept(request, submit.requested_roots, token)?
     send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
     capturing = begin_work()
-    captured_request = capture_submit(state.store, submit)
+    captured_request = prepare_submit(state.store, submit)
     record_work("engine_capture", submit.requested_roots, capturing)
     match captured_request:
         Err(reason) =>
             state.detach(request, token)?
             return Err(transport(reason))
         Ok(captured) =>
-            selected = captured.snapshot.digest
+            selected = captured.revision
             client.pending.append(
                 Pending(
                     request=request,
                     token=token,
                     revision=captured.revision,
+                    capture=captured,
                     view=submit.view,
                     proofs=submit.observation_policy == "proofs",
                     counters=captured.counters,

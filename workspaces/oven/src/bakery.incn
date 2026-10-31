@@ -37,6 +37,7 @@ from segment_store import (
     Lookup,
     StoreError,
     Snapshot,
+    Transaction,
     begin,
     claim as claim_key,
     commit,
@@ -227,27 +228,41 @@ pub def seal(
     3. Remove the staging directory.
     """
     clock = begin_work()
-    # 1. Payload files are stored before any record names them.
+    prepared = prepare_seal(store, identity, staged, kind, name, reaches, provenance)?
+    published = commit(prepared.transaction).map_err(store_failure)?
+    trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
+    record_work("bakery_seal", identity, clock)
+    return Ok(prepared.fact)
+
+
+pub model PreparedFact:
+    """Durable immutable payloads and an unpublished record transaction; the producer still holds its claim."""
+
+    pub fact: Fact
+    pub transaction: Transaction
+
+
+pub def prepare_seal(
+    store: Path,
+    identity: str,
+    staged: Path,
+    kind: str,
+    name: str,
+    reaches: list[str],
+    provenance: str,
+) -> Result[PreparedFact, str]:
+    """Store immutable payloads before preparing their records; only the caller's commit makes the unit visible."""
     relatives = staged_files(staged, "")?
     digests = put_payloads(store, [staged.joinpath(relative) for relative in relatives]).map_err(store_failure)?
     mut files: list[FactFile] = []
     for index in range(len(relatives)):
         files.append(stored_file(staged, relatives[index], digests[index])?)
     fact = Fact(identity=identity, kind=kind, name=name, reaches=reaches, files=files)
-    # 2. A reader's snapshot holds either no record or the whole unit; a damaged older record is replaced.
-    base = snapshot(store).map_err(store_failure)?
-    mut transaction = begin(base)
-    record = encode_fact(fact, provenance)?.encode("utf-8")
-    # The caller holds the claim and bakes only after judging any existing record unusable: absent, damaged, or no
-    # longer current for its linked libraries. So this record may repair or replace it.
-    transaction = put(transaction, record_key(identity), record, EXPECT_REPAIR)
+    mut transaction = begin(snapshot(store).map_err(store_failure)?)
+    transaction = put(transaction, record_key(identity), encode_fact(fact, provenance)?.encode("utf-8"), EXPECT_REPAIR)
     transaction = put(transaction, name_key(name), identity.encode("utf-8"))
-    published = commit(transaction).map_err(store_failure)?
-    # 3. Staging belongs to this bake only.
     _ = staged.remove_tree()
-    trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
-    record_work("bakery_seal", identity, clock)
-    return Ok(fact)
+    return Ok(PreparedFact(fact=fact, transaction=transaction))
 
 
 def stored_file(staged: Path, relative: str, digest: str) -> Result[FactFile, str]:

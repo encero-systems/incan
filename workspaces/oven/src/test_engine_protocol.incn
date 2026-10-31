@@ -7,6 +7,7 @@ from std.environ import get_or
 from std.fs import Path
 from files import write
 from engine_programs import read_program, select_program, program_handle, NativeUnit
+from engine_epochs import prepare_submit
 from engine_client import service_identity
 from segment_store import snapshot
 from engine_proofs import report
@@ -141,9 +142,9 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     store = admission.path().joinpath("store")
     store.mkdir(true, true).map_err((error) => error.message())?
     installed = service_identity(store)?
-    assert snapshot(store).map_err((error) => error.message())?.generation == 1
+    assert snapshot(store).map_err((error) => error.message())?.generation == 0
     assert service_identity(store)?.compiler_generation == installed.compiler_generation
-    assert snapshot(store).map_err((error) => error.message())?.generation == 1
+    assert snapshot(store).map_err((error) => error.message())?.generation == 0
     native = NativeUnit(identity="unit", payload="payload", binary="program")
     handle = program_handle("epoch", "compiler", "selection")?
     first_selection = select_program(store, "selection", native, handle)?
@@ -445,9 +446,9 @@ def process_lifecycle() -> Result[None, str]:
                 assert value.binding_outcome == BindingOutcome.Selected
                 assert value.status == CompletionStatus.Success
                 assert value.admission_proof.startswith("sha256:")
-                # Capture, the shared unit and this caller's selection each publish once.
+                # Capture, the shared unit and this caller's selection publish atomically once.
                 publications = snapshot(root).map_err((error) => error.message())?.generation
-                assert publications == 3, f"native request published {publications} generations instead of 3"
+                assert publications == 1, f"native request published {publications} generations instead of 1"
                 completed = true
             Message.Refused(value) =>
                 assert value.code == 13
@@ -464,10 +465,43 @@ def process_lifecycle() -> Result[None, str]:
     # A fresh service with a one-second timeout exits after its last client disconnects, without Drain.
     mut idle = launch_service(binary, root, identity)?
     mut idle_channel = await_service(root, identity)?
+    check_unchanged_request(idle_channel, root, source)?
     for turn in range(2):
         check_service_reuse(idle_channel, root, source, turn)?
     idle_channel.transport.close()?
     await_exit(idle, true)?
+    return Ok(None)
+
+
+def check_unchanged_request(mut channel: Channel, root: Path, source: Path) -> Result[None, str]:
+    """The first rerun after projection publishes zero durable generations and performs zero capture encodings."""
+    before = snapshot(root).map_err((error) => error.message())?
+    request = joined([scalar(20, 8), scalar(0, 8)])
+    submit = Submit(
+        command="run",
+        view="view",
+        input_selection="debug",
+        requested_roots=source.0,
+        options="",
+        observation_policy="",
+    )
+    captured = prepare_submit(root, submit)?
+    assert captured.encodings == 0 and captured.commits == 0 and captured.identity_encodings == 0
+    _ = channel.send(request, Message.Submit(submit)).map_err(detail)?
+    mut complete = false
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        match frame.message:
+            Message.Complete(value) =>
+                assert value.status == CompletionStatus.Success
+                assert snapshot(root).map_err((error) => error.message())?.generation == before.generation
+                complete = true
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+        channel.acknowledge(frame).map_err(detail)?
+        if complete:
+            break
+    assert complete
     return Ok(None)
 
 
@@ -506,7 +540,7 @@ def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: in
                 else:
                     assert proof.require("epoch_reads").map_err((error) => error.message())?.expect_int().map_err(
                         (error) => error.message(),
-                    )? == 1, "the new virtual view did not activate exactly one captured epoch"
+                    )? == 0, "the new virtual view reread its already captured epoch"
                 for name in counters:
                     assert proof.require(name).map_err((error) => error.message())?.expect_int().map_err(
                         (error) => error.message(),

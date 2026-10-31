@@ -1,4 +1,4 @@
-"""Persist request capture through the record store; idle services retain only descriptor handles."""
+"""Prepare request captures for atomic publication; idle services retain no decoded inputs."""
 
 from rust::std::str import from_utf8
 from std.fs import Path
@@ -13,13 +13,13 @@ from engine_capture import (
     decoded_epoch,
 )
 from engine_messages import Submit
-from segment_store import Lookup, Snapshot, begin, commit, lookup, owned, put, snapshot
+from segment_store import Lookup, Snapshot, Transaction, begin, commit, lookup, owned, put, snapshot
 from unit_freshness import fingerprint
 from jec import begin as begin_work, record as record_work
 
 
 pub model CapturedRequest:
-    """The committed capture and its measured work, scoped to this activation."""
+    """A captured input set and its staged publication, scoped to this activation."""
 
     pub epoch: BuildEpoch
     pub revision: str
@@ -30,15 +30,25 @@ pub model CapturedRequest:
     pub encodings: int = 1
     pub commits: int = 1
     pub identity_encodings: int = 1
+    pub head: str = ""
+    pub transaction: Option[Transaction] = None
 
 
 pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
+    """Commit a standalone capture through the same preparation boundary the engine request uses."""
+    mut captured = prepare_submit(store, submit)?
+    if let Some(transaction) = captured.transaction:
+        captured.snapshot = commit(transaction).map_err((error) => error.message())?
+    return Ok(captured)
+
+
+pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, str]:
     """
-    Capture a file request and persist its revision without holding decoded inputs between requests.
+    Capture a file request and prepare its revision without publishing any part of the request.
 
     1. Validate the supported request selection and read its previous captured revision.
     2. Capture through the single metadata-first capture implementation.
-    3. Commit the epoch and the request head together; unchanged requests commit no bytes.
+    3. Stage the epoch and request head together; unchanged requests encode and publish nothing.
     """
     # 1. This stage accepts one program file and one profile, with no implicit option fallbacks.
     if submit.command not in ["run", "build"]:
@@ -76,6 +86,7 @@ pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
                         encodings=0,
                         commits=0,
                         identity_encodings=0,
+                        head=head,
                     ),
                 )
             # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
@@ -86,17 +97,43 @@ pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
             mut transaction = begin(before)
             transaction = put(transaction, epoch_key(revision), encoded.encode("utf-8"))
             transaction = put(transaction, head, f"{revision} {identity}".encode("utf-8"))
-            published = commit(transaction).map_err((error) => error.message())?
-            record_work("engine_capture_publish", source.0, publishing)
+
+            record_work("engine_capture_encode", source.0, publishing)
             return Ok(
                 CapturedRequest(
                     epoch=epoch,
                     revision=revision,
                     identity=identity,
-                    snapshot=published,
+                    snapshot=before,
+                    head=head,
+                    transaction=Some(transaction),
                     counters=captured.counters,
                 ),
             )
+
+
+pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, str]:
+    """Capture post-projection metadata before the atomic commit; refuse semantic changes during production."""
+    if captured.commits == 0:
+        return Ok(captured)
+    request = CaptureRequest(roots=captured.epoch.roots, selection=captured.epoch.selection, whole_unit=true)
+    checked = capture(request, Some(captured.epoch), admitted_home()?, 0)?
+    match checked.epoch:
+        None => return Err("inputs did not settle before request publication")
+        Some(epoch) =>
+            if checked.outcome == CaptureOutcome.Changed:
+                return Err("captured inputs changed before request publication")
+            if checked.outcome == CaptureOutcome.Unchanged:
+                return Ok(captured)
+            mut refreshed = captured
+            encoded = epoch.encoded()?
+            refreshed.epoch = epoch
+            refreshed.revision = fingerprint([encoded])?
+            mut transaction = begin(captured.snapshot)
+            transaction = put(transaction, epoch_key(refreshed.revision), encoded.encode("utf-8"))
+            transaction = put(transaction, captured.head, f"{refreshed.revision} {captured.identity}".encode("utf-8"))
+            refreshed.transaction = Some(transaction)
+            return Ok(refreshed)
 
 
 def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, str, Option[BuildEpoch]], str]:

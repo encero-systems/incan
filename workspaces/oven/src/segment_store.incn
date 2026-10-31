@@ -33,6 +33,8 @@ in that order. A transaction whose writes are all already present commits nothin
 """
 
 from rust::std::process import id, exit as process_exit
+from rust::std::rc import Rc
+from jec import begin as begin_work, record as record_work
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.environ import get_or
@@ -197,6 +199,26 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
     match natural(fields[0]):
         None => return Err(failure("format", pointer.0, "malformed generation"))
         Some(generation) => return read_manifest(root, generation, fields[1], view)
+
+
+pub def view_snapshot(selected: Snapshot, name: str) -> Result[Snapshot, StoreError]:
+    """Select another virtual view of the same immutable generation without rereading CURRENT."""
+    check_view_key(name)?
+    mut index = ""
+    for entry in selected.views:
+        if entry.view == name:
+            index = entry.root
+    return Ok(
+        Snapshot(
+            root=selected.root,
+            generation=selected.generation,
+            digest=selected.digest,
+            view=name,
+            index=index,
+            segments=selected.segments,
+            views=selected.views,
+        ),
+    )
 
 
 pub def current(view: Snapshot) -> Result[Snapshot, StoreError]:
@@ -517,45 +539,103 @@ pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
 
 
 pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
-    """
-    Publish a transaction's writes to its view and return the generation that holds them, seen through that view.
+    """Publish one view through the same atomic group boundary used by multi-view requests."""
+    return commit_group([transaction])
 
-    1. Acquire the publication lock and read the selected committed generation.
-    2. Validate every precondition against that generation; a write already present
-       is dropped, and a conflicting one refuses the whole transaction.
-    3. With nothing left to write, return the latest generation before creating staging or writing bytes.
-    4. Install the segment, then the index pages on changed paths, then the manifest, then `CURRENT`, each synced.
+
+pub model Publication:
+    """One atomic generation and its optional already-held execution pin."""
+
+    pub snapshot: Snapshot
+    pub pin: Option[Rc[FileLock]] = None
+
+
+pub def commit_group(transactions: list[Transaction]) -> Result[Snapshot, StoreError]:
+    """Publish all requested views in one durable generation without an execution pin."""
+    return publish_group(transactions, "").map((published) => published.snapshot)
+
+
+pub def commit_pinned(transactions: list[Transaction], view: str) -> Result[Publication, StoreError]:
+    """Publish a request and its durable execution descriptor under one switch, with its pin held before visibility."""
+    check_view_key(view)?
+    return publish_group(transactions, view)
+
+
+def publish_group(transactions: list[Transaction], execution_view: str) -> Result[Publication, StoreError]:
     """
-    root = transaction.root
+    Publish all views in one durable generation, or none of them.
+
+    1. Lock publication and validate every write before staging any bytes.
+    2. Stage each changed view's records and index; no view becomes visible yet.
+    3. Switch one manifest and CURRENT after every referenced object is durable.
+    """
+    if len(transactions) == 0:
+        return Err(failure("format", "transaction", "an empty group has no selected view"))
+    first = transactions[0]
+    root = first.root
     ensure_directory(root.joinpath("locks"))?
-    staged = root.joinpath("staging").joinpath(transaction.id)
-    held = root.joinpath("locks").joinpath("publication").lock_exclusive().map_err((error) => io_failure(root, error))?
-    latest = snapshot(root, transaction.view)?
-    if transaction.fork != "":
-        return publish_fork(root, latest, transaction, staged)
-    # 2. and 3. Only what is not already committed is written.
-    remaining = pending_writes(latest, transaction.writes)?
-    if len(remaining) == 0:
-        return Ok(latest)
+    locking = begin_work()
+    held = root.joinpath("locks/publication").lock_exclusive().map_err((error) => io_failure(root, error))?
+    record_work("store_lock", root.0, locking)
+    mut selected_view = first.view
+    if execution_view != "":
+        selected_view = execution_view
+    latest = snapshot(root, selected_view)?
+    staged = root.joinpath("staging").joinpath(first.id)
+    if len(transactions) == 1 and first.fork != "":
+        return publish_fork(root, latest, first, staged).map((view) => Publication(snapshot=view))
+    # 1. Duplicate views are combined before their preconditions are checked.
+    mut writes: Dict[str, list[Write]] = {}
+    for transaction in transactions:
+        if transaction.root.0 != root.0 or transaction.fork != "":
+            return Err(failure("format", "transaction", "a group needs one store and no forks"))
+        check_view_key(transaction.view)?
+        mut combined = writes.get(transaction.view, [])
+        combined.extend(transaction.writes)
+        writes[transaction.view] = combined
+    mut changed: Dict[str, list[Write]] = {}
+    for view in sorted([name for name in writes.keys()]):
+        remaining = pending_writes(view_snapshot(latest, view)?, writes[view])?
+        if len(remaining) > 0:
+            changed[view] = remaining
+    if len(changed) == 0:
+        return pinned_publication(latest, execution_view)
+
     ensure_directory(staged)?
     publication_boundary("staging-created")
-    # 4. Each step is durable before the next one names it.
-    encoded = encoded_frames(remaining)?
+    # 2. The old manifest remains selected until all views have been staged.
+    mut segments = latest.segments
+    mut views = latest.views
+    for name in sorted([view for view in changed.keys()]):
+        index, segment = stage_view(root, view_snapshot(latest, name)?, changed[name], staged.joinpath(name))?
+        if segment not in segments:
+            segments.append(segment)
+        views = with_view(views, name, index)
+    # 3. One switch is the only visibility and durability boundary for the entire request.
+    published = publish_switch(root, latest, segments, views, first.id, execution_view)?
+    counted["durable_commits"] = counted.get("durable_commits", 0) + 1
+    remove_tree(staged)
+    return Ok(published)
+
+
+pub def durable_commits() -> int:
+    """Successful durable generation switches in this process; no-op commits add zero."""
+    return counted.get("durable_commits", 0)
+
+
+def stage_view(root: Path, latest: Snapshot, writes: list[Write], staged: Path) -> Result[tuple[str, str], StoreError]:
+    """Install a view's immutable objects without selecting them; the caller holds publication's lock."""
+    encoded = encoded_frames(writes)?
     delta = staged.joinpath("delta.seg")
     place_synced(delta, encoded.data)?
-    name = install_segment(root, encoded.data, delta)?
+    segment = install_segment(root, encoded.data, delta)?
     publication_boundary("segment-installed")
     pages = staged.joinpath("pages")
-    index = insert(root, latest.index, pages, leaf_entries(encoded, name)).map_err(index_failure)?
+    index = insert(root, latest.index, pages, leaf_entries(encoded, segment)).map_err(index_failure)?
     publication_boundary("pages-staged")
     install_pages(root, pages)?
     publication_boundary("pages-installed")
-    mut segments = latest.segments
-    if name not in segments:
-        segments.append(name)
-    published = switch(root, latest, segments, with_view(latest.views, transaction.view, index), transaction.id)?
-    remove_tree(staged)
-    return Ok(published)
+    return Ok((index, segment))
 
 
 def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged: Path) -> Result[Snapshot, StoreError]:
@@ -627,7 +707,7 @@ def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreE
             return Err(failure("integrity", target.0, "an installed segment does not match its name"))
         return Ok(name)
     source.replace(target).map_err((error) => io_failure(target, error))?
-    target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
+    sync_directory(target.parent())?
     return Ok(name)
 
 
@@ -645,7 +725,7 @@ def install_pages(root: Path, pages: Path) -> Result[None, StoreError]:
             continue
         sync_file(page)?
         page.replace(target).map_err((error) => io_failure(target, error))?
-    target_directory.sync_directory().map_err((error) => io_failure(target_directory, error))?
+    sync_directory(target_directory)?
     return Ok(None)
 
 
@@ -656,6 +736,18 @@ def switch(
     views: list[ViewRoot],
     transaction: str,
 ) -> Result[Snapshot, StoreError]:
+    """Switch a generation through the same publication boundary, without an execution pin."""
+    return publish_switch(root, latest, segments, views, transaction, "").map((published) => published.snapshot)
+
+
+def publish_switch(
+    root: Path,
+    latest: Snapshot,
+    segments: list[str],
+    views: list[ViewRoot],
+    transaction: str,
+    execution_view: str,
+) -> Result[Publication, StoreError]:
     """Write and sync the next manifest, then replace `CURRENT`; the caller holds the publication lock."""
     following = latest.generation + 1
     mut lines = [MANIFEST_SCHEMA, f"generation {following}", f"parent {latest.generation} {latest.digest}"]
@@ -672,15 +764,33 @@ def switch(
     manifest = manifest_path(root, following, digest)
     ensure_directory(manifest.parent())?
     place_synced(manifest, document)?
-    manifest.parent().sync_directory().map_err((error) => io_failure(manifest.parent(), error))?
+    sync_directory(manifest.parent())?
     publication_boundary("manifest-directory-synced")
     marker = root.joinpath("FORMAT")
     if not marker.is_file():
         place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
+    # The pin descriptor and its live lock precede the only visibility boundary.
+    mut returned_view = latest.view
+    if execution_view != "":
+        returned_view = execution_view
+    mut selected_index = ""
+    for entry in views:
+        if entry.view == returned_view:
+            selected_index = entry.root
+    selected = Snapshot(
+        root=root,
+        generation=following,
+        digest=digest,
+        view=returned_view,
+        index=selected_index,
+        segments=segments,
+        views=views,
+    )
+    pinned = pinned_publication(selected, execution_view)?
     place_synced(root.joinpath("CURRENT"), f"{following} {digest}\n".encode("utf-8"))?
-    root.sync_directory().map_err((error) => io_failure(root, error))?
+    sync_directory(root)?
     publication_boundary("root-synced")
-    return snapshot(root, latest.view)
+    return Ok(pinned)
 
 
 pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
@@ -694,6 +804,16 @@ pub def claim(root: Path, key: str) -> Result[FileLock, StoreError]:
     ensure_directory(claims)?
     lock = claims.joinpath(hexlify(sha256.digest(key.encode("utf-8"))))
     return lock.lock_exclusive().map_err((error) => io_failure(lock, error))
+
+
+def pinned_publication(view: Snapshot, name: str) -> Result[Publication, StoreError]:
+    """Acquire a selected generation's lease before its acknowledgment; an unpinned commit retains its selected view."""
+    if name == "":
+        return Ok(Publication(snapshot=view))
+    selected = view
+    if view.view != name:
+        return Err(failure("format", name, "execution pin must name the returned view"))
+    return Ok(Publication(snapshot=selected, pin=Some(Rc.new(lease(selected)?))))
 
 
 pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
@@ -716,6 +836,7 @@ pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
             return Err(failure("integrity", path.0, "lease disagrees with its snapshot"))
     else:
         place_synced(path, descriptor)?
+        sync_directory(leases)?
     return Ok(held)
 
 
@@ -913,20 +1034,27 @@ def ensure_directory(path: Path) -> Result[None, StoreError]:
 
 def sync_file(path: Path) -> Result[None, StoreError]:
     """Sync one file's contents to storage."""
+    clock = begin_work()
     handle = path.open("rb").map_err((error) => io_failure(path, error))?
-    return handle.sync().map_err((error) => io_failure(path, error))
+    result = handle.sync().map_err((error) => io_failure(path, error))
+    record_work("store_file_sync", path.0, clock)
+    return result
 
 
 def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
     """Write a complete file beside its destination, synchronize it, then atomically publish its name."""
     ensure_directory(target.parent())?
     temporary = Path(f"{target.0}.{id()}.tmp")
+    writing = begin_work()
     temporary.write_bytes(data).map_err((error) => io_failure(temporary, error))?
+    record_work("store_file_write", target.0, writing)
     boundary = publication_kind(target)
     publication_boundary(f"{boundary}-written")
     sync_file(temporary)?
     publication_boundary(f"{boundary}-synced")
+    renaming = begin_work()
     temporary.replace(target).map_err((error) => io_failure(target, error))?
+    record_work("store_file_rename", target.0, renaming)
     publication_boundary(f"{boundary}-replaced")
     return Ok(None)
 
@@ -976,7 +1104,7 @@ pub def repair_current(committed: Snapshot) -> Result[Snapshot, StoreError]:
     # 3. Publish only after the candidate is complete and verified.
     pointer = root.joinpath("CURRENT")
     place_synced(pointer, f"{candidate.generation} {candidate.digest}\n".encode("utf-8"))?
-    root.sync_directory().map_err((error) => io_failure(root, error))?
+    sync_directory(root)?
     return snapshot(root, committed.view)
 
 
@@ -1011,7 +1139,7 @@ pub def quarantine_record(view: Snapshot, key: str, codec_damage: bool = false) 
                     .write_bytes(f"missing {source.0}\n".encode("utf-8"))
                     .map_err((error) => io_failure(target, error))?
             sync_file(target)?
-            target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
+            sync_directory(target.parent())?
     return Ok(None)
 
 
@@ -1035,8 +1163,8 @@ pub def quarantine_payload(root: Path, digest: str) -> Result[None, StoreError]:
     # 2. Preserve the damaged inode instead of editing or deleting its bytes.
     target = quarantine_path(root, digest)?
     source.replace(target).map_err((error) => io_failure(source, error))?
-    source.parent().sync_directory().map_err((error) => io_failure(source.parent(), error))?
-    target.parent().sync_directory().map_err((error) => io_failure(target.parent(), error))?
+    sync_directory(source.parent())?
+    sync_directory(target.parent())?
     return Ok(None)
 
 
@@ -1068,3 +1196,11 @@ pub def readmit_payload(root: Path, source: Path, expected: str) -> Result[None,
     if put_payload(root, source)? != expected:
         return Err(failure("integrity", source.0, "replacement changed during re-admission"))
     return Ok(None)
+
+
+def sync_directory(path: Path) -> Result[None, StoreError]:
+    """Synchronize directory entries, measuring OS durability separately from record encoding and locks."""
+    clock = begin_work()
+    result = path.sync_directory().map_err((error) => io_failure(path, error))
+    record_work("store_directory_sync", path.0, clock)
+    return result

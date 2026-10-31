@@ -20,6 +20,8 @@ from segment_store import (
     StoreError,
     begin,
     commit,
+    commit_group,
+    commit_pinned,
     compact,
     delete,
     get,
@@ -132,6 +134,18 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     assert retained_inventory(root)? == retained
     assert retained_bytes(root)? == size_before
     println("S1 unchanged commit: 0 added files, 0 changed bytes, 0 manifest writes")
+    # One request updates independent views under one CURRENT switch; a conflict changes neither view.
+    other = snapshot(root, "project").map_err((error) => error.message())?
+    group = [put(begin(landed), "group", b"home"), put(begin(other), "group", b"project")]
+    grouped = commit_group(group).map_err((error) => error.message())?
+    assert grouped.generation == landed.generation + 1
+    selected = snapshot(root, "project").map_err((error) => error.message())?
+    assert selected.generation == grouped.generation
+    assert text(lookup(grouped, "group")) == "home" and text(lookup(selected, "group")) == "project"
+    assert commit_group(group).map_err((error) => error.message())?.generation == grouped.generation
+    conflict = [put(begin(grouped), "new", b"hidden"), put(begin(selected), "group", b"wrong", EXPECT_ABSENT)]
+    assert error_kind(commit_group(conflict)) == "conflict"
+    assert text(lookup(snapshot(root).map_err((error) => error.message())?, "new")) == "<absent>"
     prove_concurrent_writers(scratch.path())?
     return Ok(None)
 
@@ -463,11 +477,12 @@ def proof_command(test: str) -> Result[Command, str]:
 
 
 def crash_child() -> Result[None, str]:
-    """Attempt one two-record transaction; the selected publication boundary terminates the process."""
+    """Attempt a pinned multi-view request; the selected publication boundary terminates the process."""
     root = Path(get_or("INCAN_STORE_PROOF_ROOT", ""))
     base = snapshot(root).map_err((error) => error.message())?
     transaction = put(put(begin(base), "b", b"two"), "c", b"three")
-    commit(transaction).map_err((error) => error.message())?
+    selected = put(begin(snapshot(root, "project").map_err((error) => error.message())?), "selected", b"unit")
+    commit_pinned([transaction, selected], "project").map_err((error) => error.message())?
     return Ok(None)
 
 
@@ -485,6 +500,9 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
         "manifest-synced",
         "manifest-replaced",
         "manifest-directory-synced",
+        "object-written",
+        "object-synced",
+        "object-replaced",
         "current-written",
         "current-synced",
         "current-replaced",
@@ -500,11 +518,14 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
         stopped: i32 = 86
         assert status.code() == Some(stopped), f"boundary {boundary} did not terminate the writer"
         reopened = snapshot(root).map_err((error) => error.message())?
+        project = snapshot(root, "project").map_err((error) => error.message())?
         assert text(lookup(reopened, "a")) == "one"
         if reopened.generation == old.generation:
+            assert text(lookup(project, "selected")) == "<absent>"
             assert text(lookup(reopened, "b")) == "<absent>"
             assert text(lookup(reopened, "c")) == "<absent>"
         else:
+            assert text(lookup(project, "selected")) == "unit"
             assert reopened.generation == old.generation + 1
             assert text(lookup(reopened, "b")) == "two"
             assert text(lookup(reopened, "c")) == "three"
