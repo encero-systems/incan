@@ -288,6 +288,8 @@ pub fn is_graph_constructor_type(name: &str) -> bool {
 pub struct StdlibNamespace {
     /// Top-level namespace name (e.g., `"web"`, `"testing"`, `"async"`).
     pub name: &'static str,
+    /// Ordinary standard Loaf permitted to publish this root; compiler-only namespaces have no issuer.
+    pub package: Option<&'static str>,
     /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::CORE`], or `None` when
     /// the core facet serves it.
     pub facet: Option<&'static str>,
@@ -410,10 +412,12 @@ pub const STDLIB_TRAIT_METHOD_MODULES: &[StdlibTraitMethodModule] = &[
 ///
 /// Submodule stub paths are derived by convention, so this list stays compact even as the stdlib grows. Adding a new
 /// submodule (e.g. `std.async.broadcast`) requires adding the `.incn` file and appending the name to the parent
-/// namespace's `submodules` array.
+/// namespace's `submodules` array. Package ownership is declared here once and projected by `standard_packages`;
+/// manifests declare dependency intent, not authority to publish reserved namespaces.
 pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "web",
+        package: Some("incan_stdlib_web"),
         facet: Some(facets::WEB),
         extra_crate_deps: &[
             StdlibExtraCrateDep {
@@ -434,6 +438,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "testing",
+        package: Some("incan_stdlib_testing"),
         facet: Some(facets::TESTING),
         extra_crate_deps: &[],
         submodules: &[],
@@ -441,6 +446,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "logging",
+        package: Some("incan_stdlib_observability"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -448,6 +454,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "registry",
+        package: Some("incan_stdlib_core"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -455,6 +462,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "telemetry",
+        package: Some("incan_stdlib_observability"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &["core"],
@@ -462,6 +470,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "environ",
+        package: Some("incan_stdlib_system"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -469,6 +478,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "async",
+        package: Some("incan_stdlib_async"),
         facet: Some(facets::ASYNC),
         extra_crate_deps: &[],
         submodules: &["time", "task", "channel", "race", "sync", "prelude"],
@@ -476,6 +486,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: STDLIB_INTEROP,
+        package: Some("incan_stdlib_interop"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -483,6 +494,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "serde",
+        package: Some("incan_stdlib_data"),
         facet: Some(facets::DATA),
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "serde",
@@ -493,6 +505,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: STDLIB_JSON,
+        package: Some("incan_stdlib_data"),
         facet: Some(facets::DATA),
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "serde",
@@ -503,6 +516,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "toml",
+        package: Some("incan_stdlib_data"),
         facet: None,
         extra_crate_deps: &[
             StdlibExtraCrateDep {
@@ -527,6 +541,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "reflection",
+        package: Some("incan_stdlib_core"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -534,6 +549,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "result",
+        package: Some("incan_stdlib_core"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -541,6 +557,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "derives",
+        package: Some("incan_stdlib_core"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &["string", "comparison", "copying", "collection"],
@@ -548,6 +565,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "traits",
+        package: Some("incan_stdlib_core"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &["convert", "ops", "error", "indexing", "callable", "prelude"],
@@ -555,6 +573,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "math",
+        package: Some("incan_stdlib_data"),
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "libm",
@@ -565,6 +584,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "fs",
+        package: Some("incan_stdlib_system"),
         facet: None,
         extra_crate_deps: &[
             StdlibExtraCrateDep {
@@ -581,6 +601,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "datetime",
+        package: Some("incan_stdlib_data"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[
@@ -596,6 +617,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "runtime",
+        package: Some("incan_stdlib_core"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[
@@ -613,6 +635,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "graph",
+        package: Some("incan_stdlib_data"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -620,6 +643,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "uuid",
+        package: Some("incan_stdlib_data"),
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "rand",
@@ -630,6 +654,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "regex",
+        package: Some("incan_stdlib_data"),
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "regex",
@@ -640,6 +665,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "collections",
+        package: Some("incan_stdlib_data"),
         // The source-level ordinal map implementation calls the xxh3 key helpers in
         // `incan_std_data::collections::__private`, so every generated program that imports `std.collections` links
         // the data facet; without it, a direct-rustc Oven unit would compile a source closure whose helpers no
@@ -651,6 +677,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "io",
+        package: Some("incan_stdlib_system"),
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "byteorder",
@@ -661,6 +688,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "encoding",
+        package: Some("incan_stdlib_codecs"),
         facet: None,
         extra_crate_deps: &[],
         submodules: &[
@@ -670,6 +698,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "checksum",
+        package: Some("incan_stdlib_codecs"),
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "crc32fast",
@@ -680,6 +709,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "hash",
+        package: Some("incan_stdlib_data"),
         facet: None,
         extra_crate_deps: &[
             StdlibExtraCrateDep {
@@ -720,6 +750,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "compression",
+        package: Some("incan_stdlib_compression"),
         facet: None,
         extra_crate_deps: &[
             StdlibExtraCrateDep {
@@ -759,6 +790,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "tempfile",
+        package: Some("incan_stdlib_system"),
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "tempfile",
@@ -769,6 +801,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "rust",
+        package: None,
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -778,6 +811,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: STDLIB_BUILTINS,
+        package: None,
         facet: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -785,26 +819,46 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         // types deliberately stay at the root surface and there is no source stub or emitted Rust module.
         typechecker_only: true,
     },
-];
-
-/// Authored stdlib Loaf manifests, embedded without duplicating their dependency facts.
-///
-/// The provider layer admits these through Oven's manifest grammar. Namespace metadata here contains ownership
-/// names only; it cannot supply requirements or features independently of these declarations.
-pub const COMPONENT_MANIFESTS: &[(&str, &str)] = &[
-    ("async", include_str!("../../../../stdlib/async/loaf.toml")),
-    ("codecs", include_str!("../../../../stdlib/codecs/loaf.toml")),
-    ("compression", include_str!("../../../../stdlib/compression/loaf.toml")),
-    ("core", include_str!("../../../../stdlib/core/loaf.toml")),
-    ("data", include_str!("../../../../stdlib/data/loaf.toml")),
-    ("interop", include_str!("../../../../stdlib/interop/loaf.toml")),
-    (
-        "observability",
-        include_str!("../../../../stdlib/observability/loaf.toml"),
-    ),
-    ("system", include_str!("../../../../stdlib/system/loaf.toml")),
-    ("testing", include_str!("../../../../stdlib/testing/loaf.toml")),
-    ("web", include_str!("../../../../stdlib/web/loaf.toml")),
+    StdlibNamespace {
+        name: "features",
+        package: Some("incan_stdlib_core"),
+        facet: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "prelude",
+        package: Some("incan_stdlib_core"),
+        facet: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "this",
+        package: Some("incan_stdlib_core"),
+        facet: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "vocab",
+        package: Some("incan_stdlib_vocab"),
+        facet: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "primitives",
+        package: Some("incan_stdlib_primitives"),
+        facet: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
 ];
 
 /// Look up a top-level stdlib namespace by name.
@@ -989,7 +1043,18 @@ mod tests {
     }
 
     #[test]
+    /// Ordinary package admission and publication ownership share the module catalog.
     fn known_stdlib_modules_cover_existing_surface_paths() {
+        assert!(is_known_stdlib_module(&segs(&["std", "primitives"])));
+        let policy = crate::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_primitives");
+        assert_eq!(
+            policy.map(|policy| policy.namespace_roots.as_slice()),
+            Some(["primitives"].as_slice())
+        );
+        assert_eq!(
+            find_namespace("primitives").and_then(|namespace| namespace.package),
+            Some("incan_stdlib_primitives")
+        );
         assert!(is_known_stdlib_module(&segs(&["std", "testing"])));
         assert!(is_known_stdlib_module(&segs(&["std", "web"])));
         assert!(is_known_stdlib_module(&segs(&["std", "web", "app"])));
@@ -1073,7 +1138,9 @@ mod tests {
     }
 
     #[test]
+    /// Unknown roots remain outside the catalog even when ordinary package ownership is projected.
     fn unknown_stdlib_modules_are_rejected() {
+        assert!(!is_known_stdlib_module(&segs(&["std", "nope"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "f64", "consts"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "web", "missing"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "math", "extra"])));
