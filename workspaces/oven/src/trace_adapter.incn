@@ -7,7 +7,8 @@ from rust::std::time import SystemTime, UNIX_EPOCH
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
-from pub::incan_platform.trace import Clock, Counters, Emitter, EngineSpan, Operation, append, begin, complete, record
+from pub::incan_platform.trace import Clock, Counters, Emitter, EngineSpan, Operation, TraceError, append, begin, complete, record
+from pub::incan_platform.trace import flush as flush_channels
 
 
 pub model WorkCounts:
@@ -22,7 +23,7 @@ pub model WorkCounts:
 
 
 model ObservationChannels:
-    """One invocation's immutable environment choices and resolved per-process destinations."""
+    """One invocation's destinations and first observer failure, reported only at command completion."""
 
     loaded: bool = false
     canonical: str = ""
@@ -35,6 +36,8 @@ model ObservationChannels:
     counting_prefix: str = ""
     counts: Dict[str, int] = {}
     emitter: Option[Emitter] = None
+    failure: Option[TraceError] = None
+    reported: bool = false
 
     def load(mut self) -> None:
         """Read observation configuration once, before the invocation's first enabled operation."""
@@ -54,7 +57,7 @@ model ObservationChannels:
         if self.canonical != "":
             match Emitter.open(self.canonical, "oven", self.run, self.request):
                 Ok(emitter) => self.emitter = Some(emitter)
-                Err(_) => pass
+                Err(error) => self.remember(Err(error))
 
     def work_clock(mut self) -> Option[Clock]:
         """Start only a requested JEC or canonical engine observation."""
@@ -75,15 +78,15 @@ model ObservationChannels:
                 else:
                     self.publish(started, category, key, bytes)
 
-    def export_work(self, clock: Clock, operation: Operation, key: str, bytes: int) -> None:
+    def export_work(mut self, clock: Clock, operation: Operation, key: str, bytes: int) -> None:
         """Project one completion into both requested formats with identical timing and counters."""
         span = complete(
             clock, "oven", operation.key(), key, Counters(bytes=bytes, calls=1), run=self.run, request=self.request,
             work=f"{self.process}:{clock.span}",
         )
         if self.canonical != "":
-            _ = record(self.canonical, span)
-        compatibility_work(self.legacy_work, span)
+            self.remember(record(self.canonical, span))
+        self.remember(compatibility_work(self.legacy_work, span))
 
     def count_work(mut self, prefix: str) -> None:
         """Start a bounded contract observation of operations whose input lies under this prefix."""
@@ -122,13 +125,39 @@ model ObservationChannels:
         if self.legacy_reason == "":
             return
         for line in lines:
-            compatibility_line(self.legacy_reason, line + "\n")
+            self.remember(compatibility_line(self.legacy_reason, line + "\n"))
 
-    def publish(self, clock: Clock, operation: Operation, key: str, bytes: int) -> None:
+    def publish(mut self, clock: Clock, operation: Operation, key: str, bytes: int) -> None:
         """Use the retained typed emitter; unavailable observation never writes a program stream."""
         match self.emitter:
-            Some(emitter) => _ = emitter.emit(clock, operation, key, bytes)
+            Some(emitter) => self.remember(emitter.emit(clock, operation, key, bytes))
             None => pass
+
+    def remember(mut self, result: Result[None, TraceError]) -> None:
+        """Keep the first typed observer failure, even if later records or flushes succeed."""
+        match result:
+            Err(error) =>
+                if self.failure is None:
+                    self.failure = Some(error)
+            Ok(_) => pass
+
+    def flush(mut self) -> bool:
+        """Drain every platform channel without reporting yet; a failed trace needs a returning launch."""
+        self.remember(flush_channels())
+        return self.failure is not None
+
+    def finish(mut self) -> None:
+        """Report a requested observation failure once, after command output and without changing its status."""
+        _ = self.flush()
+        if self.reported:
+            return
+        self.reported = true
+        match self.failure:
+            None => return
+            Some(error) =>
+                mut output = stderr()
+                message = f"incan: trace incomplete: {failure_message(error)}\n"
+                _ = output.write_all(RustString.from(message).into_bytes())
 
 
 static CHANNELS: ObservationChannels = ObservationChannels()
@@ -164,7 +193,26 @@ pub def relay(lines: list[str]) -> None:
     CHANNELS.relay(lines)
 
 
-def compatibility_work(directory: str, span: &EngineSpan) -> None:
+pub def flush() -> bool:
+    """Drain requested observations before launch; true means completion must return to report the failure."""
+    return CHANNELS.flush()
+
+
+pub def finish() -> None:
+    """Drain observations and report at most one failure after the command's own output."""
+    CHANNELS.finish()
+
+
+def failure_message(error: TraceError) -> str:
+    """Explain the platform's typed failure without discarding bound or invalid-record refusals."""
+    match error:
+        TraceError.Channel => return "output channel unavailable"
+        TraceError.FieldBound => return "text field exceeds its bound"
+        TraceError.RecordBound => return "record exceeds its bound"
+        TraceError.InvalidSpan => return "invalid span"
+
+
+def compatibility_work(directory: str, span: &EngineSpan) -> Result[None, TraceError]:
     """
     Export the old JEC keys from the same completed span for existing measurement scripts. The wall-clock end lets a
     measurement partition nested spans against its own command timestamps without double counting.
@@ -179,15 +227,14 @@ def compatibility_work(directory: str, span: &EngineSpan) -> None:
             ended,
         ), "bytes": JsonValue.int(span.counters.bytes), "allocations": JsonValue.null()},
     )
-    match fields.to_json():
-        Err(_) => return
-        Ok(text) => _ = append(Path(directory).joinpath(f"oven-{span.process}.jsonl").0, text + "\n")
+    text = fields.to_json().map_err((_) => TraceError.InvalidSpan)?
+    return append(Path(directory).joinpath(f"oven-{span.process}.jsonl").0, text + "\n")
 
 
-def compatibility_line(destination: str, text: str) -> None:
+def compatibility_line(destination: str, text: str) -> Result[None, TraceError]:
     """Export a legacy text line; only the explicit legacy `-` request selects stderr."""
     if destination == "-":
         mut output = stderr()
-        _ = output.write_all(RustString.from(text).into_bytes())
-        return
-    _ = append(destination, text)
+        output.write_all(RustString.from(text).into_bytes()).map_err((_) => TraceError.Channel)?
+        return Ok(None)
+    return append(destination, text)

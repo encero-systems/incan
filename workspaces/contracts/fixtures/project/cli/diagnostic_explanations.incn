@@ -1,0 +1,44 @@
+# behavior: Every stable diagnostic has a catalog explanation, examples, causes and fixes reachable from the CLI.
+# cli-commands:
+#   explain INCAN-P0001
+#   explain INCAN-T0001
+#   explain INCAN-T0101
+#   explain INCAN-T0106
+#   explain INCAN-T0102
+#   explain INCAN-T0103
+#   explain INCAN-T0104
+#   explain INCAN-T0121
+#   explain INCAN-T0120
+#   explain INCAN-T0122
+#   explain INCAN-T0105
+#   explain INCAN-T0107
+#   explain INCAN-T0108
+#   explain INCAN-T0109
+#   explain INCAN-T0110
+#   explain INCAN-T0116
+#   explain INCAN-T0111
+#   explain INCAN-T0112
+#   explain INCAN-T0113
+#   explain INCAN-T0114
+#   explain INCAN-T0115
+#   explain INCAN-T0117
+#   explain INCAN-T0118
+#   explain INCAN-T0119
+#   explain INCAN-I0001
+#   explain INCAN-I0101
+#   explain INCAN-I0102
+#   explain INCAN-I0103
+#   explain INCAN-C0001
+#   explain INCAN-U0001
+#   explain incan-t0001
+# environment:
+#   INCAN_ENGINE=records
+# expect-stdout-contains:
+#   Examples:
+#   Common causes:
+#   Fixes:
+# expect-exit: 0
+
+def main() -> None:
+    """Explanations read the installed catalog without compiling a project."""
+    pass

@@ -17,7 +17,7 @@ from intake import read_project, source_root_of, ManifestReader
 from unit import describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, run_program
-from unit_compiler import crate_name
+from unit_compiler import crate_name, run_compiler
 from rust_units import RustBuild, build_rust, read_registry_units, rust_facet
 from rust_testing import build_rust_tests
 from toolchain import load_toolchain, rust_compiler
@@ -34,7 +34,9 @@ from graph_mcp import serve_graph, parse_path
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
-from pub::incan_platform.trace import flush as flush_trace
+from pub::incan_platform.trace import WorkObserver
+from segment_store import observe_work
+from trace_adapter import finish as finish_trace
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
@@ -56,8 +58,9 @@ pub model Options:
 
 def main() -> None:
     """Dispatch the CLI and drain observations on normal return; explicit exits drain at their own boundary."""
+    observe_work(WorkObserver(start=Some(begin_work), finish=Some(record_work)))
     command_line()
-    _ = flush_trace()
+    finish_trace()
 
 
 def command_line() -> None:
@@ -105,6 +108,9 @@ def dispatch(command: str, rest: list[str]) -> None:
         match serve_engine(rest):
             Ok(_) => return
             Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        return
+    if command == "explain":
+        explain(rest)
         return
     match select_engine(get_or("INCAN_ENGINE", "legacy")):
         Err(reason) => fail(f"incan {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
@@ -175,6 +181,18 @@ def require_no_arguments(command: str, arguments: list[str]) -> None:
         syntax_error(command, f"unexpected argument `{arguments[0]}`")
 
 
+def explain(arguments: list[str]) -> None:
+    """Resolve one diagnostic through the installed compiler's catalog, independently of a project or engine."""
+    match unknown_option(arguments):
+        Some(reason) => syntax_error("explain", reason)
+        None => pass
+    if len(arguments) != 1:
+        syntax_error("explain", "requires exactly one CODE")
+    match load_toolchain():
+        Err(reason) => fail(f"incan explain: {reason}", 1)
+        Ok(toolchain) => finish("explain", run_compiler(toolchain, ["--explain", arguments[0]]))
+
+
 def syntax_error(command: str, reason: str) -> None:
     """Report a command parser's refusal using the CLI syntax status and common help pointer."""
     fail(f"incan {command}: {reason}", 2)
@@ -195,7 +213,7 @@ def fail(message: str, code: i32) -> None:
     if code == 2:
         text += f"{HELP_HINT}\n"
     _ = err.write_all(RustString.from(text).into_bytes())
-    _ = flush_trace()
+    finish_trace()
     exit(code)
 
 
@@ -422,7 +440,7 @@ def finish(command: str, result: Result[i32, str]) -> None:
     match result:
         Err(reason) => fail(f"incan {command}: {reason}", 1)
         Ok(code) =>
-            _ = flush_trace()
+            finish_trace()
             exit(code)
 
 

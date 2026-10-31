@@ -626,9 +626,14 @@ def safe_member(path: str) -> bool:
     """Archive members must remain inside staging and cannot supply the machine-local sysroot link."""
     if path.startswith("/"):
         return false
+    mut first_component = true
     for part in path.split("/"):
-        if part == ".." or part == "sysroot":
+        if part == "..":
             return false
+        if part != "" and part != ".":
+            if first_component and part == "sysroot":
+                return false
+            first_component = false
     return true
 
 
