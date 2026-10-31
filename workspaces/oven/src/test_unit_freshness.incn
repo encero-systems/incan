@@ -1828,6 +1828,13 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
         Err(_) => pass
     write(manifest, "[project]\nname='core'\nversion='2.0.0'\n")?
     _ = load_toolchain_at(directory)?
+    # Source preparation can publish a new producer of unchanged bytes during one command.
+    record_payload(directory.joinpath("library.rlib"), "refreshed producer")?
+    assert published_identity(directory.joinpath("library.rlib"))? == "refreshed producer"
+    native = directory.joinpath("library.native.json")
+    write(native, "{\"search\":[\"refreshed\"],\"externs\":[],\"macro_externs\":[]}")?
+    assert len(required_items(read_json(native)?, "search")?) == 1
+    _ = load_toolchain_at(directory)?
     producer = record_path(directory.joinpath("library.rlib"))
     original = read(producer)?
     write(producer, "damaged producer record")?
