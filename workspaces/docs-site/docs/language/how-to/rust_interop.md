@@ -71,9 +71,10 @@ def main() -> Result[None, JsonError]:
 
 ## Let a typed use fix a native result
 
-An unannotated local can take a native method's result type from its first use in a typed return, parameter, or annotated assignment:
+An unannotated local can leave a native call's type parameters open until its first use that needs them. Use a typed return, parameter, or annotated assignment to fix a method's result, or insert a value to fix an empty collection's element types:
 
 ```incan
+from rust::std::collections import HashMap
 from rust::std::iter import Iterator as NativeIterator
 from rust::std::vec import Vec
 
@@ -81,9 +82,17 @@ from rust::std::vec import Vec
 def total_of(values: Vec[int]) -> int:
     total = values.into_iter().sum()
     return total
+
+
+def main() -> None:
+    mut table = HashMap.new()
+    assert len(table) == 0
+    assert table.is_empty()
+    table.insert("one", 1)
+    println(len(table))
 ```
 
-If no use fixes the arguments, annotate the binding or supply the call's type arguments explicitly.
+The length and emptiness reads need none of the open element types, so the insert can still fix them. A later conflicting insert is refused. If no use fixes the arguments, annotate the binding or supply the call's type arguments explicitly.
 
 ## Select standalone versions and features
 

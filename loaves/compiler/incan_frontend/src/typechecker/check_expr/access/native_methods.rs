@@ -28,7 +28,7 @@ impl TypeChecker {
     /// Retain an imported native value's inherent length method through ordinary metadata dispatch. Builtin source
     /// collections and text keep their own length contract; native lengths return int or usize. No native identity
     /// or missing method is invented.
-    pub(in crate::typechecker::check_expr) fn retain_native_length_call(
+    pub(in crate::typechecker) fn retain_native_length_call(
         &mut self,
         receiver: &crate::ast::Spanned<crate::ast::Expr>,
         ty: &ResolvedType,
@@ -325,6 +325,7 @@ impl TypeChecker {
         // ---- Receiver contract ----
         let errors_before = self.errors.len();
         let signature = &selected.signature;
+        let passive_read = !receiver_is_type && self.defer_native_method_receiver(&call, signature);
         if !receiver_is_type
             && Self::rust_signature_has_receiver(signature)
             && signature.params.first().is_some_and(|parameter| {
@@ -401,7 +402,7 @@ impl TypeChecker {
             Ok(()) if !receiver_is_type => {
                 self.fix_open_rust_binding_by_receiver(call.receiver_expr, owner, call.rust_path, call.span)
             }
-            Err(refusal) if self.errors.len() == errors_before => self.errors.push(refusal),
+            Err(refusal) if !passive_read && self.errors.len() == errors_before => self.errors.push(refusal),
             _ => {}
         }
         let result = self
@@ -418,6 +419,21 @@ impl TypeChecker {
             return Some(rusttype);
         }
         Some(result)
+    }
+
+    /// Keep the source operation for a native receiver read whose own checking needs no open owner arguments.
+    /// Rechecking this expression after a fixing use retains the callee with its final native layout.
+    fn defer_native_method_receiver(&mut self, call: &RustPathMethodCall<'_>, signature: &RustFunctionSig) -> bool {
+        let expression = crate::ast::Spanned::new(
+            crate::ast::Expr::MethodCall(
+                Box::new(call.receiver_expr.clone()),
+                call.method.to_owned(),
+                call.type_args.to_vec(),
+                call.args.to_vec(),
+            ),
+            call.span,
+        );
+        self.defer_open_rust_receiver_read(call.receiver_expr, signature, expression)
     }
 
     /// Normalize transparent scalar reexports without flattening instantiated native owners to source collections.
