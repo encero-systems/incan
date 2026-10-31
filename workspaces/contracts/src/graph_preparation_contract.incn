@@ -22,6 +22,7 @@ pub def check_registry_preparation(incan: str, project: Path) -> Result[None, st
         return Err(f"preparation inspection failed: {outcome.stderr}")
     # 2. Registry completion is part of the same reading, rather than a second source project's reading.
     mut readings = 0
+    mut completions = 0
     for path in directory.iterdir().map_err((error) => error.message())?:
         for line in read(path)?.split("\n"):
             if line == "":
@@ -29,11 +30,15 @@ pub def check_registry_preparation(incan: str, project: Path) -> Result[None, st
             record = parse_json(line)?
             if required_text(record, "category")? == "registry_index":
                 readings += 1
+            if required_text(record, "category")? == "registry_completion":
+                completions += 1
         remove(path)?
     # 3. Observation files never become fixture inputs for a later command.
     directory.rmdir().map_err((error) => error.message())?
     if readings != 1:
         return Err(f"one inspection read the registry closure {readings} times; expected once")
+    if completions != 1:
+        return Err(f"one inspection reported {completions} registry completions; expected once")
     return Ok(None)
 
 
@@ -51,6 +56,8 @@ pub def check_source_preparation(incan: str, project: Path) -> Result[None, str]
     # 1. Restore the authored selection even when the inspection fails.
     manifest = project.joinpath("loaf.toml")
     original = read(manifest)?
+    arguments = ["inspect", "codegraph", ".", "--query", "refs", "helper"]
+    ordinary = invoke(incan, arguments, project)?
     write(manifest, original.replace('["context"]', '["context", "./context"]'))?
     directory = project.joinpath(".source-work")
     make_directory(directory)?
@@ -61,6 +68,8 @@ pub def check_source_preparation(incan: str, project: Path) -> Result[None, str]
     outcome = result?
     if outcome.code != Some(0):
         return Err(f"source preparation inspection failed: {outcome.stderr}")
+    if ordinary.code != outcome.code or ordinary.stdout != outcome.stdout:
+        return Err("equivalent source selections changed the graph answer")
     # 2. Aliases of a canonical source root contribute its graph only once.
     discoveries = [line for line in read(trace)?.split("\n")
                    if line.startswith(f"oven: graph unit discovery {context.0}:")]
