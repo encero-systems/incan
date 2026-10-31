@@ -1,11 +1,14 @@
-# behavior: std.encoding hex encoding and decoding check with their error type
+# behavior: ambient std.primitives hex encoding and the existing std.encoding surface check with the same value types
 # expect-accepted:
 
 from std.encoding import hex, EncodingError
+from std.primitives import hexlify
 
 
 def run() -> Result[None, EncodingError]:
-    encoded = hex.hexlify(b"Az\0")
+    """Check shared byte and string types through primitive and compatibility imports."""
+    encoded: str = hexlify(b"Az\0")
+    assert encoded == hex.hexlify(b"Az\0")
     println(encoded)
 
     decoded = hex.unhexlify("417A00")?

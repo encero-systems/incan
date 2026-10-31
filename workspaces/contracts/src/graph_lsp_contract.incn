@@ -4,7 +4,8 @@ from rust::std::env import var
 from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue, parse
-from protocol_peer import decode, start
+from protocol_peer import Peer, decode, start
+from files import required_text
 
 
 pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
@@ -12,7 +13,7 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     When INCAN_LSP is supplied, require real stdio navigation over the Incan graph case.
 
     1. Prepare and open the consumer in a real LSP session.
-    2. Check definitions, references and call hierarchy against its graph.
+    2. Check ambient standard completions, definitions, references and call hierarchy.
     3. Edit the buffer, reject stale items and close the session.
     """
     source_path = project.joinpath("src").joinpath("main.incn")
@@ -30,19 +31,31 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     source = source_path.read_text("utf-8", "strict").map_err((error) => error.message())?
     uri = file_uri(source_path)
     mut peer = start(binary, project)?
-    initialized = peer.request(1, "initialize", JsonValue.object({
-        "processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)),
-        "capabilities": JsonValue.object({}),
-    }))?
+    initialized = peer.request(
+        1,
+        "initialize",
+        JsonValue.object(
+            {"processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)), "capabilities": JsonValue.object(
+                {},
+            )},
+        ),
+    )?
     if "callHierarchyProvider" not in initialized.to_json().map_err((error) => error.message())?:
         return Err("LSP did not advertise graph call hierarchy")
     peer.notify("initialized", JsonValue.object({}))?
-    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
-        "uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"),
-        "version": JsonValue.int(1), "text": JsonValue.string(source),
-    })}))?
+    peer.notify(
+        "textDocument/didOpen",
+        JsonValue.object(
+            {"textDocument": JsonValue.object(
+                {"uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"), "version": JsonValue.int(1), "text": JsonValue.string(
+                    source,
+                )},
+            )},
+        ),
+    )?
     peer.diagnostics(uri, 1)?
-    # 2. Navigation projects the same declaration and proved caller relationships.
+    # 2. Checked imports and navigation share public metadata and declaration relationships.
+    check_standard_completions(peer, uri, source)?
     at_helper = cursor(uri, source, "println(helper())", "helper")?
     definition = peer.request(2, "textDocument/definition", at_helper)?
     if "/src/provider.incn" not in definition.to_json().map_err((error) => error.message())?:
@@ -71,20 +84,30 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     provider_path = project.joinpath("src").joinpath("provider.incn")
     provider_source = provider_path.read_text("utf-8", "strict").map_err((error) => error.message())?
     provider_uri = file_uri(provider_path)
-    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
-        "uri": JsonValue.string(provider_uri), "languageId": JsonValue.string("incan"),
-        "version": JsonValue.int(1), "text": JsonValue.string(f"\n{provider_source}"),
-    })}))?
+    peer.notify(
+        "textDocument/didOpen",
+        JsonValue.object(
+            {"textDocument": JsonValue.object(
+                {"uri": JsonValue.string(provider_uri), "languageId": JsonValue.string("incan"), "version": JsonValue.int(
+                    1,
+                ), "text": JsonValue.string(f"\n{provider_source}")},
+            )},
+        ),
+    )?
     peer.diagnostics(provider_uri, 1)?
     at_dependency = cursor(uri, source, "println(checked_helper())", "checked_helper")?
     dependency_definition = peer.request(10, "textDocument/definition", at_dependency)?
     if "/deps/checked/src/lib.incn" not in dependency_definition.to_json().map_err((error) => error.message())?:
         return Err("LSP lost a checked dependency definition while its graph was stale")
     # 3. An edited buffer invalidates the old hierarchy item before shutdown.
-    peer.notify("textDocument/didChange", JsonValue.object({
-        "textDocument": JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(2)}),
-        "contentChanges": JsonValue.array([JsonValue.object({"text": JsonValue.string(f"\n{source}")})]),
-    }))?
+    peer.notify(
+        "textDocument/didChange",
+        JsonValue.object(
+            {"textDocument": JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(2)}), "contentChanges": JsonValue.array(
+                [JsonValue.object({"text": JsonValue.string(f"\n{source}")})],
+            )},
+        ),
+    )?
     peer.diagnostics(uri, 2)?
     stale = peer.request(8, "callHierarchy/incomingCalls", JsonValue.object({"item": prepared[0]}))?
     if not stale.is_null():
@@ -102,15 +125,26 @@ def check_vocabulary(incan: str, binary: str, project: Path) -> Result[None, str
     source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
     uri = file_uri(path)
     mut peer = start(binary, project)?
-    peer.request(1, "initialize", JsonValue.object({
-        "processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)),
-        "capabilities": JsonValue.object({}),
-    }))?
+    peer.request(
+        1,
+        "initialize",
+        JsonValue.object(
+            {"processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)), "capabilities": JsonValue.object(
+                {},
+            )},
+        ),
+    )?
     peer.notify("initialized", JsonValue.object({}))?
-    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
-        "uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"),
-        "version": JsonValue.int(1), "text": JsonValue.string(source),
-    })}))?
+    peer.notify(
+        "textDocument/didOpen",
+        JsonValue.object(
+            {"textDocument": JsonValue.object(
+                {"uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"), "version": JsonValue.int(1), "text": JsonValue.string(
+                    source,
+                )},
+            )},
+        ),
+    )?
     peer.diagnostics(uri, 1)?
     position = cursor(uri, source, "value = query:", "query")?
     hover = peer.request(2, "textDocument/hover", position)?
@@ -145,8 +179,26 @@ def cursor(uri: str, source: str, line_fragment: str, name: str) -> Result[JsonV
             continue
         for column in range(len(lines[line])):
             if lines[line][column:column + len(name)] == name:
-                return Ok(JsonValue.object({
-                    "textDocument": JsonValue.object({"uri": JsonValue.string(uri)}),
-                    "position": JsonValue.object({"line": JsonValue.int(line), "character": JsonValue.int(column)}),
-                }))
+                return Ok(
+                    JsonValue.object(
+                        {"textDocument": JsonValue.object({"uri": JsonValue.string(uri)}), "position": JsonValue.object(
+                            {"line": JsonValue.int(line), "character": JsonValue.int(column)},
+                        )},
+                    ),
+                )
     return Err(f"fixture has no {line_fragment}")
+
+
+def check_standard_completions(mut peer: Peer, uri: str, source: str) -> Result[None, str]:
+    """An ambient standard import completes both its package root and its checked public member."""
+    for identifier, fragment, label in [(11, "primitives", "primitives"), (12, "hexlify", "hexlify")]:
+        position = cursor(uri, source, "from std.primitives import hexlify", fragment)?
+        response = peer.request(identifier, "textDocument/completion", position)?
+        items = response.expect_array().map_err((error) => error.message())?
+        mut found = false
+        for item in items:
+            if required_text(item, "label")? == label:
+                found = true
+        if not found:
+            return Err(f"LSP ambient standard completion omitted {label}")
+    return Ok(None)
