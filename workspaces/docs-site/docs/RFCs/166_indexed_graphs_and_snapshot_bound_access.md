@@ -12,6 +12,7 @@
     - RFC 115 (fallible iteration)
     - RFC 161 (semantic core IR)
     - RFC 165 (typed embedded storage)
+    - RFC 169 (typed datasets and structured streams)
 - **Issue:** —
 - **RFC PR:** —
 - **Written against:** v0.6.0-dev.9
@@ -137,6 +138,8 @@ The new in-memory read surface uses `ScopedNodeId` and `ScopedEdgeId`, combining
 Compatibility work must explicitly account for the current public model fields. Removing or privatizing a publicly exposed field is a breaking change even when direct mutation was undesirable; migration must identify and deprecate that access before removal. No implementation may silently preserve writable raw lists that can make an adjacency index stale.
 
 ### Typed relationship graph
+
+RFC 169 proposes a common dataset and structured-stream interface for heterogeneous model variants. This graph RFC retains ownership of node/edge identity, adjacency, and traversal. Multiple typed node and edge payloads do not require implementing the full dataset interface first.
 
 `RelationGraph[N, E]` must store typed node payloads `N` and edge payloads `E`, with stable node and edge identities scoped to its instance. `add_node(value)` returns a `ScopedNodeId`; `add_edge(source, target, payload)` returns `Result[ScopedEdgeId, GraphError]`. It must support parallel edges, payload lookup and replacement, node deletion with incident-edge removal, and forward/reverse adjacency. An edge update must not accidentally replace another parallel edge with the same endpoints. Removed identities must not be reused within that graph instance.
 

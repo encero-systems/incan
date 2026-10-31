@@ -17,6 +17,7 @@
     - RFC 161 (semantic core IR)
     - RFC 166 (indexed graphs and snapshot-bound graph access)
     - RFC 168 (foundational primitives and dependency direction)
+    - RFC 169 (typed datasets and structured streams)
 - **Issue:** [#2519](https://github.com/encero-systems/incan/issues/2519)
 - **RFC PR:** —
 - **Written against:** v0.6.0-dev.9
@@ -345,6 +346,8 @@ The ordinary `get` operation returns an owned `RecordVersion[T]` inside `RecordS
 Holding an idle snapshot must not load or retain all of its records, relationships or decoded payloads. Read and traversal budgets must cover visited data and retained cursor/frontier state, not only the number of values returned.
 
 ### Typed batches and storage access
+
+RFC 169 proposes the common heterogeneous dataset and structured-stream interface over these storage capabilities, including variant-aware sparse schemas and cross-variant projections. The single-family batch contract here remains independently implementable; this reference does not require the entire RFC 169 surface for the database primitive.
 
 The proposed `RecordBatch[P]` represents a bounded, typed field projection `P` from one family under one snapshot. A batch must carry its projection descriptor, row count, stable record/revision associations where requested, and explicit completion or continuation evidence. Field columns must preserve their declared value, optionality and ordering semantics; they must not be untyped dictionaries or a foreign query engine's mandatory public types.
 
