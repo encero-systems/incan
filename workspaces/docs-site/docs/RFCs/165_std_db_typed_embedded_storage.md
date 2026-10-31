@@ -1,6 +1,6 @@
 # RFC 165: Typed embedded storage with `std.db`
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-30
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -16,7 +16,8 @@
     - RFC 145 (storage lifecycle, retention and compact evidence)
     - RFC 161 (semantic core IR)
     - RFC 166 (indexed graphs and snapshot-bound graph access)
-- **Issue:** —
+    - RFC 168 (foundational primitives and dependency direction)
+- **Issue:** [#2519](https://github.com/encero-systems/incan/issues/2519)
 - **RFC PR:** —
 - **Written against:** v0.6.0-dev.9
 - **Shipped in:** —
@@ -27,7 +28,7 @@ Introduce `std.db`, an Incan-native embedded, typed, transactional database with
 
 ## Delivery boundary
 
-The primitive storage layer is targeted for the 0.6 dev.9 line. This does not move every public `std.db` convenience, RFC 166 graph surface or remaining design question into that delivery commitment. This RFC remains Draft until its outstanding contracts are settled; the target is not evidence of an implementation or a completed lifecycle transition.
+The primitive storage layer is targeted for the 0.6 dev.9 line. This does not move every public `std.db` convenience or RFC 166 graph surface into that delivery commitment. The design is settled and implementation is tracked by the linked issue. Neither Planned status nor a delivery target is evidence of implementation.
 
 The primitive must expose explicit resource acquisition/release, transaction commit/abort and cursor operations independently of RFC 094. A future `with` adaptation composes those operations: it closes a cursor, aborts an unfinished transaction and releases its resources, while never implicitly committing. Successful explicit commit remains publication; leaving an unfinished transaction cannot publish its writes. The absence of context-manager syntax is therefore not a prerequisite blocker for the primitive.
 
@@ -39,7 +40,7 @@ The public API remains Incan-native and duckborrowed. Explicit ownership and lif
 
 1. A **family** gives an Incan record model a stable storage name and a versioned schema and codec contract.
 2. A **record identity** names one logical object in that family. Equal contents do not make two objects the same object.
-3. A **revision** is an immutable, canonically encoded value or tombstone for that identity.
+3. A **revision** is an immutable value or tombstone for that identity, with a canonical Crumb representation when encoded. Keeping a checked typed value in memory does not require encoding it eagerly.
 4. A **view** selects family definitions, revisions and index roots. A **snapshot** pins one immutable selection.
 5. A **transaction** stages changes across families and indexes and publishes one successor view atomically.
 6. A **relationship** is a typed, identified record connecting declared endpoint families. It is not an arbitrary string predicate or a second authoritative graph.
@@ -53,6 +54,8 @@ Application models, producers, query and rendering libraries
            std.db typed storage and snapshots
                          |
              incan_platform.store substrate
+                         |
+        std.primitives: Crumb, bytes, file I/O
                          |
           mapping, durable I/O and coordination
 
@@ -96,7 +99,7 @@ All names introduced below are proposed by this RFC; the examples are not claims
 
 ### Store models, not storage-shaped dictionaries
 
-`Record` is a proposed standard derive using the extensible derive mechanism. It supplies the model descriptor and canonical record codec described below; it is not a new language declaration form. RFC 086 is deferred design context, not a prerequisite to implement its schema language. This proposal requires a focused record/codec contract derived from checked model declarations, not that broader adapter system.
+`Record` is a proposed standard derive using the extensible derive mechanism. It supplies the model descriptor and composes the Crumb codec described below; it is not a new language declaration form. RFC 086 is deferred design context, not a prerequisite to implement its schema language. This proposal requires a focused record/codec contract derived from checked model declarations, not that broader adapter system.
 
 ```incan
 from std import db
@@ -129,6 +132,30 @@ Family registration is explicit. Constructing a family handle does not write a s
 
 `db.memory()` creates an isolated memory store with the same logical record and transaction semantics. Its receipts report memory durability. It does not create files or silently spill to disk. `db.open(path)` constructs a lazy database scope descriptor; entering it opens or creates a local-durable store directory after validating its format and capabilities. Opening an existing unrelated directory must fail rather than adopt or overwrite its contents.
 
+### Crumble a model and reconstruct its type
+
+Crumb is the typed encoding contract in `std.primitives.crumb`. It is usable without opening a database. A model with supported fields exposes `.crumble()` and `Model.from_crumb(...)`; the checked field definitions drive encoding and reconstruction rather than requiring a handwritten serializer for each field. `Record` composes that capability with database family and retained-reference metadata. Using Crumb itself must not require importing `std.db` or registering a family.
+
+The `Page` model above provides a complete small example. `CrumbError` is the proposed primitive error umbrella; both conversion operations are fallible:
+
+```incan
+from std.primitives.crumb import CrumbError
+
+def restore_page() -> Result[Page, CrumbError]:
+    original = Page(route="/guide/", title="Guide")
+    crumb = original.crumble()?
+    restored = Page.from_crumb(crumb)?
+    assert restored.route == original.route
+    assert restored.title == original.title
+    return Ok(restored)
+```
+
+`restored` is a `Page`, not a dictionary or an untyped bag of bytes. Nested models, payload enums, supported collections and optional values retain their declared structure. Reconstruction restores data, not the identity of a former live object or its process resources. An unsupported field must produce a declaration or conversion diagnostic that identifies the field path; it must not disappear from the result.
+
+A crumb carries the typed encoded value or owns the backing handles sufficient to reconstruct it. A model representation may compose field crumbs; it is not merely an unretained hash whose bytes might already have been collected. Exporting a representation with external field references must include or explicitly retain the required contents. A hash identifies candidate contents, not their continued availability.
+
+The storage implementation may keep scalars inline, share immutable typed fields in memory, encode field values, or use a combination. Calling `.crumble()` explicitly requests an encoded representation; ordinary model access and database storage do not require repeatedly serializing and deserializing every field. Decoding and copying remain observable work. The format and physical layout must be qualified using composed application and compiler-shaped records, including distinct source locations, rather than assuming all repeated instructions have identical provenance.
+
 ### Fluent lazy resource scopes
 
 The public `db.open(path).read()` chain constructs a lazy read scope. Constructing the chain does not perform the database acquisition or begin a transaction. Entering `with` opens the database and begins a consistent read; only successful entry binds the reader. The following helper uses the `Page` model declared above and assumes an existing table with string keys and Page values:
@@ -140,7 +167,7 @@ def load_page(path: Path, route: str) -> Result[Option[Page], db.OperationError]
         return Ok(pages.get(route)?)
 ```
 
-Table lookup and owned point retrieval are ordinary fallible operations. There is no cursor requirement for a single record. `OperationError` denotes the public operation-error umbrella, retaining typed database failures and applicable RFC 094 scope-failure aggregates rather than reducing failures to text. Its complete declaration belongs to the remaining API specification.
+Table lookup and owned point retrieval are ordinary fallible operations. There is no cursor requirement for a single record. `OperationError` denotes the public operation-error umbrella, retaining typed database failures and applicable RFC 094 scope-failure aggregates rather than reducing failures to text. Its detailed variants and signatures are implementation-stage API work under this typed-failure contract.
 
 The chain's scope owns the database acquisition and read lifetime. Exit releases the reader and its owned database handle. If opening succeeds but beginning the read fails, entry must release the acquired handle before reporting failure; acquisition and cleanup failures must both survive. Independently retained batches may continue owning their backing resources after the root handle closes. Closing that handle does not promise destruction of all independently retained storage resources.
 
@@ -166,7 +193,7 @@ A read in `.read()` followed by a separate operation in `.write()` does not form
 
 Cursors execute operations and retain scan state; they do not select commit policy. Closing a cursor releases cursor resources without committing or rolling back its enclosing transaction. Successful writes through multiple cursors in one explicit transaction remain staged together. Writes through an ordinary writer retain their independent operation boundaries, and a later failure does not undo earlier committed operations. A rejected operation must not automatically invalidate an ordinary writer when the engine can establish that the operation left it usable; underlying resource or integrity failures may still prevent continued use.
 
-Single-record reads remain available directly through a typed table without constructing a cursor. Bulk-operation boundaries must be specified by their public operation contract, never by buffer size, internal flushes or the spool threshold. Whether a failed operation leaves an explicit transaction recoverable remains separate from the settled scope distinction.
+Single-record reads remain available directly through a typed table without constructing a cursor. Bulk-operation boundaries must be specified by their public operation contract, never by buffer size, internal flushes or the spool threshold. An explicit transaction must expose whether it remains usable after an operation failure. If the implementation cannot establish a valid staged state, it must refuse further work except abort or outcome resolution; it must not continue with silently partial changes.
 
 ### Choose storage placement without changing the data contract
 
@@ -186,7 +213,7 @@ Spooled mode is temporary even after data reaches disk. Normal release reclaims 
 
 Read-ahead is an access optimization that can also serve disk mode. Spooled mode describes retention and placement of temporary data, not exclusive ownership of the read-ahead mechanism. Inspection must distinguish logical stored data, working-memory use, temporary disk use and retained buffers. Buffering may improve throughput for a workload; no universal speedup is claimed.
 
-The public constructor names and tuning parameters for these modes remain part of the concrete API test drive. `db.memory()` and `db.open(path)` above are current draft spellings; the three-mode contract does not invent an already implemented spooling constructor.
+Detailed spooled-store constructor and tuning signatures are implementation-stage API work under the three-mode contract. The proposed `db.memory()` and `db.open(path)` names do not imply that these APIs already ship.
 
 ### Fork a view without copying its records
 
@@ -255,9 +282,13 @@ A bare identifier is not authority to read another store or inaccessible root. L
 
 ### Typed values, schemas and encoding
 
-`Record` must describe supported fields, their types, field identities and deterministic encoding. Primitive values, enums, supported containers, other record models and typed record references must compose. Unsupported resources, cycles through live heap references and unbound runtime state must produce a declaration or encoding error, not an opaque dump of memory.
+`Record` must describe supported fields, their types, field identities and deterministic encoding through `std.primitives.crumb`. Crumb owns encoding, typed reconstruction, schema/version checks and decoding errors. The database owns record identity, field indexes, deduplication policy, transactions and retention. Crumb must not import database or compiler implementation services. Primitive values, enums, supported containers, other record models and typed record references must compose. Unsupported resources, cycles through live heap references and unbound runtime state must produce a declaration or encoding error, not an opaque dump of memory.
 
 A stored value must decode to its declared Incan model. This does not require serialized bytes to have the layout of a native model instance. On-disk encoding must not depend on native struct padding, process addresses, hash-map iteration order or host endianness. A codec profile must define ordering, floating-point representation and canonicalization explicitly; it must not silently merge distinctions that the declared value semantics preserve.
+
+Crumb conversion must preserve declared model data and validate the requested model/schema before exposing a reconstructed value. Incompatible types or versions, missing referenced contents, malformed lengths, damaged bytes and unsupported resources must return typed failures. Decoding must be bounded and consume its declared frame exactly. Stored data must not supply executable reconstruction code. Conversion must honor the established model construction and validation contract; reconstruction is not a private bypass for producing an invalid model. Secret export and diagnostics remain governed by the language's secret-handling rules; encoding is not permission to disclose protected fields, and redaction must not be misrepresented as lossless reconstruction.
+
+Field lookup must bind the selected field identity, declared value type and equality profile. A content hash locates candidates; the implementation must verify the actual typed value before treating a candidate as equal. Forced collisions must not alias distinct values or records. Range order must follow the declared value semantics rather than arbitrary digest or encoded-byte order. Crumb's format is independent of a particular hash algorithm or mandatory per-field blob layout.
 
 Custom codecs may implement the same typed contract. Their identity, schema, determinism and resource limits must be inspectable. Executable codec code is supplied by the installed program, not loaded and executed from an imported record set.
 
@@ -293,7 +324,7 @@ Local-durable success requires the documented file-data, index, manifest and dir
 
 ### Historical reads and version-bound results
 
-Time travel means explicitly reading an identified retained historical snapshot rather than following the latest view head. The public API must support selecting a retained view revision while preserving the same typed read operations and ordinary duckborrowing. A historical read observes one coherent selection across its selected families and indexes; it must not independently choose incompatible versions of related tables. The exact fluent selector spelling belongs to the remaining concrete API specification.
+Time travel means explicitly reading an identified retained historical snapshot rather than following the latest view head. The public API must support selecting a retained view revision while preserving the same typed read operations and ordinary duckborrowing. A historical read observes one coherent selection across its selected families and indexes; it must not independently choose incompatible versions of related tables. The exact fluent selector spelling is implementation-stage API work; selecting unavailable history must never follow the latest head instead.
 
 New source or data versions do not invalidate an active read of an older snapshot. A compiler may capture snapshot A, finish checking A after snapshot B is published, and store its result together with an explicit association to A and the producer/dependency evidence. This does not grant an old transaction permission to overwrite a changed view head: result storage uses a valid publication transaction or isolated result view under the existing conflict rules. Storing a result for A and selecting it as the current result are distinct operations. Selection for B requires validation of its input/profile evidence; current-head publication remains concurrency-checked. A newer snapshot alone does not require discarding or recomputing every result produced against an older one.
 
@@ -327,7 +358,7 @@ Point reads, graph access and projected batches must agree on the same snapshot'
 
 ### Ownership of projected access
 
-RFC 164 owns explicit borrowing and returned reference contracts, targeted for 0.6. Read-only projected views use `Borrowed[T]`; `Reference[T]` denotes exclusive access, not an independently retained snapshot or lease. A projection borrowing a batch or snapshot must retain its checked source dependency. An independently retained batch or cursor may instead own buffer handles and a lease over its immutable selection; ownership of the handle does not require a complete decoded model per row or exclusive allocation of every page. A view into that batch remains bounded by the buffer owner it actually borrows. The compiler must not silently acquire a lease or materialize records to repair an escaping borrow. Concrete projection signatures must be reviewed against RFC 164 before this storage draft is treated as a complete implementation contract.
+RFC 164 owns explicit borrowing and returned reference contracts, targeted for 0.6. Read-only projected views use `Borrowed[T]`; `Reference[T]` denotes exclusive access, not an independently retained snapshot or lease. A projection borrowing a batch or snapshot must retain its checked source dependency. An independently retained batch or cursor may instead own buffer handles and a lease over its immutable selection; ownership of the handle does not require a complete decoded model per row or exclusive allocation of every page. A view into that batch remains bounded by the buffer owner it actually borrows. The compiler must not silently acquire a lease or materialize records to repair an escaping borrow. Ordinary callers infer these dependencies through duckborrowing. Primitive signatures must expose the owning or borrowed result explicitly under RFC 164; implementation must include compile-pass and compile-fail examples proving that callers cannot return a column beyond its batch, close its backing resource while a borrow remains usable, or use an exclusive reference as a retained snapshot. An explicitly retained batch owns its backing buffers and immutable-selection lease; closing the originating cursor or database handle does not revoke that ownership. Later writes create new revisions rather than mutate the retained batch. Releasing its last owner makes its storage eligible for normal reclamation only when no other retention protects it. Exact accessor names are implementation work within these fixed lifetime rules.
 
 ### Read traces, changes and invalidation
 
@@ -382,6 +413,7 @@ Inspection must expose capabilities, schemas, view and snapshot identities, inde
 | Interactive experience   | A render reads one state snapshot; a draft fork cannot mutate the published view; stale cursors and absent-selection changes are detected; no callback or effect executes inside storage operations.                                            |
 | Scale and memory         | Point reads, bounded ranges, idle snapshots and streaming compaction are measured at increasing corpus sizes; counters expose unrelated work and hidden whole-store materialization.                                                            |
 | Storage modes | Equivalent typed operations agree across disk, spooled-memory and memory modes. Cross the spool threshold during an uncommitted incremental import and with active readers; verify stable identities, no premature publication, valid borrowed buffers, observable resource bounds and temporary cleanup after retention ends. Memory exhaustion must not create spill files. |
+| Crumb reconstruction | Restore composed models, payload enums, collections, optional values and compiler-shaped records after process restart. Test schema mismatches, unavailable field contents, malformed framing, resource limits, collision candidates and protected-field diagnostics. Compare typed sharing, encoded sharing and scalar-inline layouts with allocation/copy/decode measurements; no production performance or durability claim follows from a representation spike alone. |
 | Packaging                | A consumer selecting memory graphs alone excludes storage; a storage consumer excludes analytical engines, protocol compilers and renderer runtimes unless explicitly selected.                                                                 |
 | Projected batch scans    | A narrow projection over a wide family agrees with point reads; counters prove no full-model construction on the direct-column path, disclose decoded/copied bytes and keep unsupported predicates explicit.                                    |
 
@@ -391,7 +423,7 @@ No elapsed-time improvement is established by a zero-copy counter alone. Cold, w
 
 ### Module and dependency boundaries
 
-`incan_platform.store` owns one generic substrate implementation. `std.db` owns the public typed API and does not call compiler services or a higher-level query library. `std.graph` remains storage-independent; the database supplies a graph adapter implementing RFC 166. Generic mechanisms must not contain consumer names, model families or policies.
+`incan_platform.store` owns one generic substrate implementation and consumes `std.primitives.crumb` for encoded typed values. Crumb remains available without this storage substrate, and the primitives dependency graph must not reach back into `std.db`. `std.db` owns the public typed API and does not call compiler services or a higher-level query library. `std.graph` remains storage-independent; the database supplies a graph adapter implementing RFC 166. Generic mechanisms must not contain consumer names, model families or policies.
 
 The database must be a separately selectable standard-library capability. Importing an unrelated standard module must not select it. The dependency closure must not require DataFusion, Substrait, `protoc`, SQL support or a renderer. Build receipts must make the selected closure verifiable.
 
@@ -431,10 +463,16 @@ The standard library would acquire a long-lived storage-format and recovery comm
 - **Tooling and inspection:** stable schemas, identities, read evidence, resource counters and durability qualification.
 - **Documentation and contracts:** public API reference and independent storage, graph, publishing and interactive-state conformance cases.
 
-## Unresolved questions
+## Design Decisions
 
-- Which concrete field and batch projection signatures instantiate RFC 164's borrowing contract, and which explicitly own buffer retention? RFC 164 owns the general syntax and lifetime questions. Ordinary `get` is owned; this question does not change that materialization boundary.
-- Which existing schema-descriptor facilities are sufficient for `Record`, and which require a separately specified extension before its derive can be accepted? There must be no compiler-private descriptor shortcut.
-- Which filesystem and target profiles will claim local-durable support at first adoption, and what independently reproducible power-loss evidence is required for each?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Incan-native database:** typed point reads, cursor reads/writes and projected batches compose without requiring a query engine or a cursor for a single record.
+- **Scope semantics:** `.read()` selects a read-only transaction; `.write()` commits modifying operations independently; `.transaction()` groups reads and writes with explicit commit. Cursor close does not select publication policy.
+- **Storage modes:** disk, temporary spooled-memory and memory modes preserve the same logical data contract. Spilling is not committing, and memory mode never silently spills.
+- **History:** retained historical snapshots remain coherent and readable; results can be stored against their original input snapshot. Reuse for newer inputs is a separate validation decision.
+- **Crumb:** `std.primitives.crumb` owns typed encoding and reconstruction. `.crumble()` and `Model.from_crumb(...)` are the model-facing pair. The database owns indexing, transactions, physical sharing and retention.
+- **Representation freedom:** typed sharing in memory, inline scalar values and encoded field contents are valid physical choices. No raw native struct dump, compulsory eager serialization or universal zero-copy promise is adopted.
+- **Field identity and equality:** field-scoped hashes locate candidates; typed equality confirms matches. Logical records remain distinct even when contents share storage.
+- **Ownership:** ordinary reads use duckborrowing and owned point results. Primitive contracts expose explicit borrowing; retained batches own backing resources and snapshot leases. Borrowed columns remain bounded by their actual owner.
+- **Descriptor mechanism:** reuse checked model declarations and the public extensible derive/descriptor protocols. Proving those facilities sufficient, or tracking a specific missing language capability, is an implementation prerequisite; compiler-private descriptor shortcuts are forbidden.
+- **Durability qualification:** each supported target/filesystem profile must provide reproducible publication/recovery evidence before claiming local durability. Unsupported profiles refuse that claim; the representation experiment is not power-loss qualification.
+- **Delivery:** the primitive is targeted for 0.6 dev.9 and must work through explicit lifecycle operations without waiting for RFC 094. Detailed API signatures, physical formats and platform qualification belong in implementation design and conformance work under this contract.

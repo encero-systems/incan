@@ -103,6 +103,7 @@ For this example, the positive bound limits each read, short reads are permitted
 | File handles and byte operations | Text reading, recursive traversal, globbing and staging workflows |
 | Borrowed read cursor and owned write buffer | Combined reading, writing and seeking through `BytesIO` |
 | Byte-level hashing and encoding algorithms | Algorithm selection, whole-file hashing and source/sink conveniences |
+| Crumb typed value encoding and reconstruction | Database records, field indexes, sharing policy, transactions and retention |
 | Precise environment observations | Defaults, typed configuration conversion and configuration policy |
 | Async mechanisms and vocabulary | Task groups, deadlines, concurrency limits and error policies |
 | Vocabulary descriptors and structured transformation contracts | Convenient vocabulary authoring and compiler-owned provider execution |
@@ -126,6 +127,12 @@ Primitive boundaries must expose ownership and borrowing obligations using RFC 1
 Foundational errors and traits belong in primitives. Existing standard modules must re-export the same declarations where they expose the same contract. Supporting definitions required to avoid reverse dependencies belong with those contracts; not every domain-specific error or derive implementation moves into the foundation. Typed error behavior follows RFC 131's direction.
 
 Host operations must report actual failures and support limits. Platform selection must not silently weaken an operation's meaning. Resource ownership must not imply guarantees about external writers, successful cleanup or durability that an operation does not provide. Exact signatures and error variants are implementation-stage API work within these obligations.
+
+### Crumb typed encoding
+
+`std.primitives.crumb` owns the Crumb encoding and reconstruction contract described in RFC 165: supported models provide `.crumble()` and `Model.from_crumb(...)`, preserving their declared data and model type. Type/schema compatibility, bounded decoding, version checks and typed conversion errors belong in this primitive. Checked model declarations supply the structural facts; importing the compiler implementation or a database to obtain them is forbidden.
+
+Crumb must be usable independently for encoded values, files, messages or compiler artifacts. `std.db` owns storage, field indexes, physical sharing policy, transactions and retention; those responsibilities must not move into Crumb. An in-memory value need not be encoded merely because it can be crumbled. Supported data and encoding boundaries follow RFC 165; live runtime resources and arbitrary executable reconstruction are not ordinary stored model data.
 
 ### Async and vocabulary
 
@@ -176,5 +183,6 @@ Separating existing modules requires compatibility work where types currently co
 - **Algorithms below orchestration:** foundational algorithms are not restricted to SHA-256 and hex; file processing and application policy stay above them.
 - **Shared contracts:** foundational errors and traits retain identity through higher-level re-exports.
 - **Async and vocabulary foundations:** async mechanisms and vocabulary use foundational vocabulary-authoring contracts; higher-level entry points remain available.
+- **Crumb foundation:** typed model encoding and reconstruction live in `std.primitives.crumb`, independently of database storage and transaction policy.
 - **Grouped modules:** common root re-exports are supported; platform backend layout is an implementation choice.
 - **Native boundary ownership:** shared low-level interop boundaries do not make all native-backed domain behavior primitive.
