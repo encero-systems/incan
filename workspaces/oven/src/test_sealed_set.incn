@@ -69,7 +69,7 @@ pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result
     before = inventory(home)?
     repeated = admit(home, left, root, profile).map_err((error) => error.message())?
     assert repeated.generation == selected.generation
-    assert inventory(home)? == before
+    assert inventory(home)? == before, "repeat admission changed the store inventory"
     assert get(repeated, "plan/selected").map_err((error) => error.message())? == Some(b"previous")
     assert get(admitted, "plan/selected").map_err((error) => error.message())? == None
     println(
@@ -182,7 +182,7 @@ def prove_dependencies(base: Path, view: Snapshot, spec: SetSpec, original: Path
             assert false, "a missing external set was accepted"
         Err(error) =>
             assert error.kind == "integrity", error.message()
-    assert not empty.exists()
+    assert not empty.exists(), "missing-dependency refusal created an empty store"
     home = base.joinpath("dependencies-home")
     admit(home, original, root, spec.profile).map_err((error) => error.message())?
     assert admit(home, directory, digest, spec.profile).map_err((error) => error.message())?.generation > 0

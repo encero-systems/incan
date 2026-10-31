@@ -14,6 +14,7 @@ from bakery import (
     find,
     forget_verified,
     verification_entries,
+    view,
     lookup,
     register_root,
     seal,
@@ -232,8 +233,8 @@ pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() 
     return Ok(None)
 
 
-pub def test_collection_is_refused_and_removes_nothing() -> Result[None, str]:
-    """`incan bakery gc` is refused until collection honors live snapshot leases, and nothing it could reach is removed."""
+pub def test_collection_preserves_published_units_for_cold_and_warm_readers() -> Result[None, str]:
+    """Collection between publication and view selection preserves both cold and warm unit readers and payloads."""
     scratch = scratch_directory()?
     store = scratch.path().joinpath("bakery")
     library = digest_of("d4")
@@ -241,13 +242,19 @@ pub def test_collection_is_refused_and_removes_nothing() -> Result[None, str]:
     assert bake(store, library, "library")?
     assert bake(store, orphan, "orphan")?
     register_root(store, scratch.path().joinpath("project").0, library)?
-    match collect(store, -1):
-        Ok(_) =>
-            assert false, "collection ran without its lease protocol"
-        Err(reason) =>
-            assert "disabled" in reason, reason
-    assert found(find(store, library)?)
-    assert found(find(store, orphan)?)
+    for _turn in range(2):
+        collected = collect(store, -1)?
+        assert collected.kept == 2 and collected.removed == 0
+        assert found(find(store, library)?)
+        assert found(find(store, orphan)?)
+        assert payload_text(store, library, "payload")? == "library"
+        assert payload_text(store, orphan, "payload")? == "orphan"
+        match find(store, library)?:
+            None => return Err("published unit disappeared before view selection")
+            Some(fact) =>
+                destination = scratch.path().joinpath("selected/payload")
+                view(store, fact, "payload", destination)?
+                assert read(destination)? == "library"
     return Ok(None)
 
 

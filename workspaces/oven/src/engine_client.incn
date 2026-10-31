@@ -19,7 +19,7 @@ from files import json_text
 from incan_units import run_program
 from json_fields import required_text
 from observation import observe, file_metadata, trace
-from segment_store import Snapshot, begin, claim, commit, put, snapshot, view_snapshot, lease
+from segment_store import Snapshot, begin, claim, commit, put, snapshot, view_snapshot
 from toolchain import load_toolchain, toolchain_file
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
@@ -138,7 +138,8 @@ def execute_local(
 
         Some(unit) =>
             pinning = begin_work()
-            held = lease(exact).map_err((error) => error.message())?
+            if exact.pin is None:
+                return Err("selected native snapshot has no execution lease")
             record_work("engine_lease", view, pinning)
             restoring = begin_work()
             restore_program(store, unit)?
