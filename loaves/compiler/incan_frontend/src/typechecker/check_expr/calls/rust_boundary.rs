@@ -1873,6 +1873,7 @@ impl TypeChecker {
         }
         let callable_returns =
             self.infer_rust_signature_bindings(sig, owner_path, &sig.type_params, args, arg_types, expected_return_ty);
+        self.validate_rust_scalar_predicates(sig, &callable_returns, span);
         self.record_inferred_rust_arguments(callable_display, &sig.type_params, &callable_returns, span);
         let declared_sig = sig;
         let declared_params = if Self::rust_signature_has_receiver(sig) {
@@ -2006,6 +2007,7 @@ impl TypeChecker {
 
         let callable_returns =
             self.infer_rust_signature_bindings(sig, path, &sig.type_params, args, &arg_types, expected_return_ty);
+        self.validate_rust_scalar_predicates(sig, &callable_returns, span);
         self.record_inferred_rust_arguments(path, &sig.type_params, &callable_returns, span);
         let effective_sig = self.specialize_inferred_rust_signature(sig, path, &callable_returns);
         self.record_rust_call_site_params(span, &effective_sig.params, path);
