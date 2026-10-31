@@ -456,9 +456,9 @@ pub struct OpenRustGenericCall {
 
 /// A local bound to an [`OpenRustGenericCall`], watched until its first use fixes the call's open parameters (#1720).
 ///
-/// The first read must be a use that determines them, and the binding takes the type that use fixes at once. When
-/// the statement holding a first read that fixed nothing ends, the call is refused for its open parameters (#2481). A
-/// binding nothing reads is refused when its declaring block ends, naming the binding to annotate.
+/// The first read whose checking needs the parameters must determine them, and the binding takes that type at once.
+/// Independent reads leave it watched. A type-dependent read that fixes nothing refuses the call at the statement's
+/// end; no fixing use refuses it at the declaring block's end (#2481).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenRustGenericBinding {
     /// The local's name.
@@ -475,8 +475,24 @@ pub struct OpenRustGenericBinding {
     pub statement: Span,
     /// The binding's canonical identity: only a read of this binding can fix it.
     pub identity: Option<CanonicalSymbolId>,
-    /// The statement block of the first read, once something read the binding.
+    /// The statement block of the first read whose checking needs the open parameters.
     pub read_in: Option<usize>,
+    /// Reads in the current fixing statement that still require the open parameters.
+    pub active_reads: Vec<Span>,
+    /// Earlier operations whose own checking needs no open parameter, rechecked once the initializer is fixed.
+    pub passive_uses: Vec<OpenRustPassiveUse>,
+}
+
+/// An operation whose checking needs no open owner argument, retained until its native layout can be fixed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpenRustPassiveUse {
+    /// Recheck an ordinary native method expression with its original source argument shape.
+    Expression(crate::ast::Spanned<crate::ast::Expr>),
+    /// Keep builtin length's native call shape, whose receiver is an ordinary argument rather than a method slot.
+    Length {
+        receiver: crate::ast::Spanned<crate::ast::Expr>,
+        span: Span,
+    },
 }
 
 impl Drop for TypeCompatibilityDepthGuard<'_> {

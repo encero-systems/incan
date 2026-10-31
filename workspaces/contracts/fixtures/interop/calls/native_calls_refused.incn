@@ -183,7 +183,7 @@ def unselected_callees() -> None:
     command.args(("one", "two"))
     command.args(range(3))
     unfixed = HashMap.new()
-    println(len(unfixed))
+    println(unfixed)
 
 
 def conflicting_first_use() -> None:

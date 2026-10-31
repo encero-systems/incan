@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, infer a native method's open result at a typed use, reborrow mutable native slice receivers, contextually type native range literals, and take a local's open owner arguments from its first use, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place (#2256, #2432, #2481)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners, close binders projected from source collections, as for Command.args, Command.envs and Vec.extend, retain exclusive authority through mutable slice dereferences, contextually type range literals, fix a method's open result at a typed use, and take a local's open owner arguments from its first type-dependent use after length and emptiness reads, as for HashMap.new with insert, Vec.new with push, a typed parameter, a typed return and an annotated place (#2256, #2432, #2481)
 # expect-stdout:
 #   7
 #   leaf
@@ -30,7 +30,7 @@
 
 from rust::incan_std_core::strings import str_slice_byte_range
 from rust::std::convert import identity
-from rust::std::collections import HashMap
+from rust::std::collections import HashMap, VecDeque
 from rust::std::hash import DefaultHasher, Hash, Hasher
 from rust::std::iter import Iterator as NativeIterator
 from rust::std::mem import size_of_val, swap
@@ -247,9 +247,16 @@ def inferred_total(values: Vec[int]) -> int:
 def show_first_use_arguments() -> None:
     """Take each local's open owner arguments from its first use, then use the local as the type it fixed."""
     mut table = HashMap.new()
+    assert len(table) == 0
+    assert table.is_empty()
     table.insert("a", 1)
     table.insert("b", 2)
     println(table.len())
+    mut queue = VecDeque.new()
+    assert len(queue) == 0
+    assert queue.is_empty()
+    queue.push_back(2)
+    assert len(queue) == 1
     mut values = Vec.new()
     values.push(4)
     values.push(5)

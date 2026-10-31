@@ -989,7 +989,7 @@ impl TypeChecker {
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
             self.note_list_reassignment(&assign.name, span);
-            self.mark_open_rust_generic_binding_read(&assign.name);
+            self.mark_open_rust_generic_binding_read(&assign.name, assign.name_span);
             return;
         }
 
@@ -1218,7 +1218,7 @@ impl TypeChecker {
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
                 self.note_list_reassignment(name, target_span);
-                self.mark_open_rust_generic_binding_read(name);
+                self.mark_open_rust_generic_binding_read(name, target_span);
                 return;
             }
             if let Some(static_info) = self.lookup_static_info(name) {
@@ -1414,6 +1414,8 @@ impl TypeChecker {
             statement,
             identity,
             read_in: None,
+            active_reads: Vec::new(),
+            passive_uses: Vec::new(),
         });
     }
 
@@ -1442,11 +1444,14 @@ impl TypeChecker {
     ///
     /// The use that read is the one that must fix the owner's type arguments, and it fixes them while it is checked;
     /// the end of the statement holding the read refuses a binding it left open (#2481).
-    pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str) {
+    pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str, span: Span) {
         let block = self.statement_blocks.current;
         for binding in &mut self.open_rust_generic_bindings {
-            if binding.name == name && binding.read_in.is_none() {
-                binding.read_in = Some(block);
+            if binding.name == name {
+                binding.read_in.get_or_insert(block);
+                if !binding.active_reads.contains(&span) {
+                    binding.active_reads.push(span);
+                }
             }
         }
     }
