@@ -63,6 +63,14 @@ pub def command_help(command: str, arguments: list[str]) -> Option[str]:
         return Some(render(OWNER_USAGE, [], "incan owner stop"))
     elif command == "inspect" and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
         return Some(graph_help())
+    elif command == "inspect" and nested_help(arguments, "run"):
+        return Some(
+            render(
+                "incan inspect run ID --proofs",
+                [],
+                "INCAN_ENGINE=records incan inspect run 0123456789abcdef0123456789abcdef --proofs",
+            ),
+        )
     elif command == "toolchain":
         if nested_help(arguments, "pack"):
             return Some(archive_help("pack"))
@@ -92,6 +100,7 @@ def unit_help(command: str) -> str:
             options + [
                 "  --argv0 TEXT          Set the program's argument zero.",
                 "  --program-entry PATH  Add a program entry; repeatable.",
+                "  --engine-report       Retain and print unit counters with INCAN_ENGINE=records.",
                 "  --                    Pass remaining arguments to the program.",
             ],
             "incan run src/main.incn -- hello",
@@ -111,6 +120,7 @@ def unit_help(command: str) -> str:
         options + [
             "  --substitute NAME=DIR  Supply a local Rust dependency substitution; repeatable.",
             "  --program-entry PATH   Add a program entry to a program build; repeatable.",
+            "  --engine-report        Retain and print unit counters with INCAN_ENGINE=records.",
         ],
         "incan build src/main.incn --profile debug",
     )

@@ -17,13 +17,3 @@ pub def select(value: str) -> Result[Engine, Refusal]:
     if value == "records":
         return Ok(Engine.Records)
     return Err(Refusal(kind=RefusalKind.Schema, detail="INCAN_ENGINE must be legacy or records"))
-
-
-pub def command(engine: Engine, name: str) -> Result[None, Refusal]:
-    """Refuse commands whose record producers have not landed, naming the exact requested command."""
-    match engine:
-        Engine.Legacy => return Ok(None)
-        Engine.Records =>
-            return Err(
-                Refusal(kind=RefusalKind.UnsupportedCommand, detail=f"records engine does not implement `{name}`"),
-            )

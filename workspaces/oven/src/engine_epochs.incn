@@ -46,8 +46,13 @@ pub def capture_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     before = snapshot(store).map_err((error) => error.message())?
     previous = previous_epoch(before, head)?
     # 2. Build and run select the same program inputs; the verb is an execution action, not a compiled identity.
-    request = CaptureRequest(roots=[source.0], selection=InputSelection(command="run", profile=submit.input_selection))
-    captured = capture(request, previous, admitted)?
+    request = CaptureRequest(
+        roots=[source.0],
+        selection=InputSelection(command="run", profile=submit.input_selection),
+        whole_unit=true,
+    )
+    # Complete nanosecond metadata guards this Unix request; no coarse timestamp grace delays unchanged reuse.
+    captured = capture(request, previous, admitted, 0)?
     match captured.epoch:
         None => return Err(f"capture could not settle inputs: {captured.unstable}")
         Some(epoch) =>
@@ -69,6 +74,13 @@ def previous_epoch(view: Snapshot, head: str) -> Result[Option[BuildEpoch], str]
             match record_text(view, epoch_key(revision))?:
                 None => return Err("capture head names a missing epoch record")
                 Some(text) => return Ok(Some(decoded_epoch(text)?))
+
+
+pub def load_epoch(store: Path, revision: str) -> Result[BuildEpoch, str]:
+    """Activate one exact persisted capture revision for a producer; callers drop it when that activation ends."""
+    match record_text(snapshot(store).map_err((error) => error.message())?, epoch_key(revision))?:
+        None => return Err("captured epoch record is missing")
+        Some(text) => return decoded_epoch(text)
 
 
 pub def record_text(view: Snapshot, key: str) -> Result[Option[str], str]:

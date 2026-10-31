@@ -24,6 +24,9 @@ from engine_messages import (
 )
 from engine_state import Identity, ServiceState
 from engine_epochs import capture_submit
+from engine_actions import Pending, ExecutionLease, finish_request
+from engine_programs import read_program
+from engine_messages import Resolve, Resolution
 from engine_messages import Submit
 from engine_wire import Refusal, RefusalKind, zero_id
 from files import discard_file
@@ -31,21 +34,12 @@ from files import discard_file
 const MAX_CLIENTS: int = 16
 
 
-pub model Pending:
-    """An accepted control request awaiting its terminal producer-unavailable outcome."""
-
-    pub request: bytes
-    pub token: str
-    pub command: str
-    pub snapshot: str
-
-
 pub class Client:
     """A client's bounded volatile interests; disconnect releases exactly these reader pins and requests."""
 
     pub channel: Channel
     pub pending: list[Pending] = []
-    pub pins: list[str] = []
+    pub pins: list[ExecutionLease] = []
     pub closed: bool = false
 
 
@@ -185,15 +179,33 @@ def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Resu
                 ),
             )
         Message.Pin(pin) =>
-            state.pin(pin.lease_id)?
-            client.pins.append(pin.lease_id)
+            mut found = false
+            for held in client.pins:
+                if held.token == pin.lease_id and held.snapshot == pin.snapshot and held.handle == pin.allowed_roots:
+                    found = true
+            if not found:
+                return Err(
+                    Refusal(
+                        kind=RefusalKind.Identity,
+                        detail="execution lease does not belong to this caller and result",
+                    ),
+                )
             return send(client.channel, request, Message.Event(Event(status="Pinned", trace_handle=pin.lease_id)))
         Message.Release(release) =>
-            if release.lease_id not in client.pins:
+            if release.lease_id not in [held.token for held in client.pins]:
                 return Err(Refusal(kind=RefusalKind.Identity, detail="reader lease belongs to another client"))
             state.release(release.lease_id)?
-            client.pins = [lease for lease in client.pins if lease != release.lease_id]
+            client.pins = [held for held in client.pins if held.token != release.lease_id]
             return send(client.channel, request, Message.Event(Event(status="Released", trace_handle=release.lease_id)))
+        Message.Resolve(resolve) =>
+            mut outcome = Resolution.NotCommitted
+            if read_program(state.store, resolve.transaction).map_err(transport)? is not None:
+                outcome = Resolution.Committed
+            return send(
+                client.channel,
+                request,
+                Message.Resolve(Resolve(transaction=resolve.transaction, outcome=outcome)),
+            )
         Message.Drain(_) =>
             state.draining = true
             return send(client.channel, request, Message.Event(Event(status="Draining", trace_handle="")))
@@ -216,7 +228,17 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
             return Err(transport(reason))
         Ok(captured) =>
             selected = captured.snapshot.digest
-            client.pending.append(Pending(request=request, token=token, command=submit.command, snapshot=selected))
+            client.pending.append(
+                Pending(
+                    request=request,
+                    token=token,
+                    revision=captured.revision,
+                    view=submit.view,
+                    proofs=submit.observation_policy == "proofs",
+                    counters=captured.counters,
+                    producer=state.identity.compiler_generation,
+                ),
+            )
             return send(
                 client.channel,
                 request,
@@ -231,20 +253,21 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
         if client.channel.pending.exhausted():
             waiting.append(pending)
             continue
-        send(
-            client.channel,
-            pending.request,
-            Message.Complete(
-                Complete(
-                    snapshot=pending.snapshot,
-                    admission_proof="",
-                    result_handles="",
-                    binding_outcome=BindingOutcome.NotSelected,
-                    status=CompletionStatus.Unavailable,
-                    observation_handle="",
-                ),
-            ),
-        )?
+        match finish_request(state.store, pending):
+            Err(reason) => send_refusal(client.channel, pending.request, transport(reason), "unit-record")?
+            Ok(ready) =>
+                if ready.console != "":
+                    send(
+                        client.channel,
+                        pending.request,
+                        Message.Event(Event(status="Console", trace_handle=ready.console)),
+                    )?
+                match ready.pin:
+                    Some(pin) =>
+                        state.pin(pin.token)?
+                        client.pins.append(pin)
+                    None => pass
+                send(client.channel, pending.request, Message.Complete(ready.message))?
         state.detach(pending.request, pending.token)?
     client.pending = waiting
     return Ok(None)
@@ -254,8 +277,8 @@ def close_client(mut client: Client, mut state: ServiceState) -> None:
     """Drop only the disconnected client's volatile requests and scoped reader interests."""
     for pending in client.pending:
         state.detach(pending.request, pending.token)
-    for lease in client.pins:
-        state.release(lease)
+    for held in client.pins:
+        state.release(held.token)
     client.closed = true
 
 

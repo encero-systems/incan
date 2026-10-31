@@ -1,0 +1,96 @@
+"""Settle one captured program request, select its result and protect the caller's execution roots."""
+
+from std.fs import Path
+from std.fs.locking import FileLock
+from rust::std::rc import Rc
+from std.encoding.hex import hexlify
+from engine_capture import CaptureCounters
+from engine_epochs import load_epoch
+from engine_messages import BindingOutcome, Complete, CompletionStatus
+from engine_programs import obtain, program_handle, select_program
+from engine_proofs import retain
+from segment_store import lease
+
+
+pub model Pending:
+    """A bounded captured request descriptor; decoded compiler or source state is never retained here."""
+
+    pub request: bytes
+    pub token: str
+    pub revision: str
+    pub view: str
+    pub proofs: bool
+    pub counters: CaptureCounters
+    pub producer: str
+
+
+pub model ExecutionLease:
+    """A live substrate lease over the exact selected view, retained until release or client disconnect."""
+
+    pub token: str
+    pub snapshot: str
+    pub handle: str
+    pub held: Rc[FileLock]
+
+
+pub model Ready:
+    """A completed caller's control reply, diagnostic stream handles and optional execution lease."""
+
+    pub message: Complete
+    pub console: str
+    pub pin: Option[ExecutionLease] = None
+
+
+pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
+    """
+    Settle one request without executing user code in the engine.
+
+    1. Activate its captured epoch and ask for the unit record.
+    2. Retain counters only when this caller explicitly requested a proof report.
+    3. Select successful results in the caller's virtual view and hold an execution lease before replying.
+    """
+    # 1. The compiler owns whole-unit production; the engine holds no semantic closure after this activation.
+    epoch = load_epoch(store, pending.revision)?
+    run = hexlify(pending.request)
+    directory = store.joinpath("engine/console")
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    produced = obtain(store, epoch, directory.joinpath(run).0, pending.producer)?
+    # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
+    mut observation = ""
+    if pending.proofs:
+        observation = retain(store, run, pending.counters, produced)?
+    match produced.unit:
+        None =>
+            return Ok(
+                Ready(
+                    message=Complete(
+                        snapshot="",
+                        admission_proof="",
+                        result_handles="",
+                        binding_outcome=BindingOutcome.NotSelected,
+                        status=CompletionStatus.Failed,
+                        observation_handle=observation,
+                    ),
+                    console=produced.console,
+                ),
+            )
+        Some(unit) =>
+            # 3. A completed native descriptor is selected independently for each caller.
+            selected = select_program(store, pending.view, unit)?
+            held = lease(selected).map_err((error) => error.message())?
+            handle = program_handle(epoch, pending.producer)?
+            pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=Rc.new(held))
+            return Ok(
+                Ready(
+                    message=Complete(
+                        snapshot=selected.digest,
+                        admission_proof=unit.identity,
+                        result_handles=handle,
+                        binding_outcome=BindingOutcome.Selected,
+                        status=CompletionStatus.Success,
+                        observation_handle=observation,
+                    ),
+                    console=produced.console,
+                    pin=Some(pin),
+                ),
+            )

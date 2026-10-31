@@ -295,6 +295,8 @@ pub model CaptureRequest:
     # The lookups a first capture starts from, as the current import resolution reports them. A later capture checks
     # these and the previous epoch's.
     pub witnesses: list[LookupWitness] = []
+    # The unit-record producer uses the existing conservative authored inventory until compiler reach replaces it.
+    pub whole_unit: bool = false
 
 
 pub model AdmittedHome:
@@ -371,7 +373,7 @@ pub def capture_with(
     # 2. The roots and their configuration are always in reach.
     mut membership: list[str] = []
     for root in request.roots:
-        membership.extend(state.root(absolute(root), request.selection.command)?)
+        membership.extend(state.root(absolute(root), request.selection.command, request.whole_unit)?)
     # 3. A package's membership is listed with the compiler's collection rules.
     for directory in membership:
         state.members(directory)?
@@ -436,7 +438,7 @@ model Capture:
         self.frozen = self.admitted.frozen_roots()
         return Ok(None)
 
-    def root(mut self, path: str, command: str) -> Result[list[str], str]:
+    def root(mut self, path: str, command: str, whole_unit: bool) -> Result[list[str], str]:
         """
         Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
 
@@ -452,12 +454,24 @@ model Capture:
                 Admission.Missing => return Err(f"{path}: no such source file")
                 _ => pass
             _ = self.manifest_lookup(Path(path))?
+            if whole_unit:
+                return self.unit_membership(Path(path))
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
         if not self.manifest(manifest)?:
             return Err(f"{manifest}: no such manifest")
         return Ok([self.source_root(path)?])
+
+    def unit_membership(mut self, source: Path) -> Result[list[str], str]:
+        """Capture the whole-unit producer's authored inventory, including an entry outside its source root."""
+        for candidate in manifest_candidates(source):
+            if candidate.0 in self.declared:
+                selected = self.source_root(candidate.parent().0)?
+                if source.0.startswith(selected + "/"):
+                    return Ok([selected])
+                return Ok(unique([selected, source.parent().0]))
+        return Ok([source.parent().0])
 
     def manifest_lookup(mut self, source: Path) -> Result[bool, str]:
         """Look up the manifest of `source` where the unit description does; each miss is an absent lookup."""

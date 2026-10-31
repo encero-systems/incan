@@ -6,6 +6,10 @@ from rust::std::time import Duration
 from std.environ import get_or
 from std.fs import Path
 from files import write
+from engine_programs import read_program
+from engine_proofs import report
+from std.json import parse
+from rust::std::process import Command
 from pub::incan_platform.ipc import dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid
 from engine_channel import Channel, SendOutcome
@@ -305,7 +309,8 @@ def process_lifecycle() -> Result[None, str]:
     """Two real starters share one lifetime lock; drain settles requests and a disconnected idle service exits."""
     scratch = scratch_directory()?
     root = scratch.path()
-    source = root.joinpath("hello.incn")
+    root.joinpath("project").mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("project/hello.incn")
     write(source, "def main() -> None:\n    println(\"hello\")\n")?
     identity = Identity(
         store_id="process-store",
@@ -336,7 +341,7 @@ def process_lifecycle() -> Result[None, str]:
             request,
             Message.Submit(
                 Submit(
-                    command="run",
+                    command="build",
                     view="view",
                     input_selection="debug",
                     requested_roots=source.0,
@@ -377,7 +382,9 @@ def process_lifecycle() -> Result[None, str]:
                 captured = true
             Message.Complete(value) =>
                 assert captured
-                assert value.binding_outcome == BindingOutcome.NotSelected
+                assert value.binding_outcome == BindingOutcome.Selected
+                assert value.status == CompletionStatus.Success
+                assert value.admission_proof.startswith("sha256:")
                 completed = true
             Message.Refused(value) =>
                 assert value.code == 13
@@ -394,8 +401,62 @@ def process_lifecycle() -> Result[None, str]:
     # A fresh service with a one-second timeout exits after its last client disconnects, without Drain.
     mut idle = launch_service(binary, root, identity)?
     mut idle_channel = await_service(root, identity)?
+    for turn in range(2):
+        check_service_reuse(idle_channel, root, source, turn)?
     idle_channel.transport.close()?
     await_exit(idle, true)?
+    return Ok(None)
+
+
+def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: int) -> Result[None, str]:
+    """A new virtual view reuses the prior build; its unchanged repeat also reads and hashes no source."""
+    request = joined([scalar(3 + turn, 8), scalar(0, 8)])
+    _ = channel
+        .send(
+            request,
+            Message.Submit(
+                Submit(
+                    command="run",
+                    view="second-view",
+                    input_selection="debug",
+                    requested_roots=source.0,
+                    options="",
+                    observation_policy="proofs",
+                ),
+            ),
+        )
+        .map_err(detail)?
+    mut captured = false
+    mut completed = false
+    for _index in range(8):
+        frame = channel.receive().map_err(detail)?
+        match frame.message:
+            Message.Captured(_) => captured = true
+            Message.Complete(value) =>
+                assert captured
+                assert value.binding_outcome == BindingOutcome.Selected
+                assert value.status == CompletionStatus.Success
+                proof = parse(report(root, value.observation_handle)?).map_err((error) => error.message())?
+                mut counters = ["unit_evaluations", "native_bakes"]
+                if turn > 0:
+                    counters.extend(["source_reads", "source_hashes"])
+                for name in counters:
+                    assert proof.require(name).map_err((error) => error.message())?.expect_int().map_err(
+                        (error) => error.message(),
+                    )? == 0
+                match read_program(root, value.result_handles)?:
+                    None => return Err("completed program descriptor is missing")
+                    Some(unit) =>
+                        output = Command.new(unit.binary).output().map_err((error) => str(error))?
+                        assert output.status.success()
+                        assert output.stdout == b"hello\x0a"
+                completed = true
+            Message.Refused(value) => return Err(value.detail)
+            _ => pass
+        channel.acknowledge(frame).map_err(detail)?
+        if completed:
+            break
+    assert completed
     return Ok(None)
 
 

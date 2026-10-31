@@ -124,7 +124,7 @@ def capture_for(toolchain: Toolchain) -> Result[Toolchain, str]:
     return Ok(capturing)
 
 
-def relay_console(prefix: str) -> Result[None, str]:
+pub def relay_console(prefix: str) -> Result[None, str]:
     """Relay exact diagnostic bytes before withdrawing foreground request files, including on a compile refusal."""
     relay_file(Path(f"{prefix}.out"), false)?
     relay_file(Path(f"{prefix}.err"), true)?
