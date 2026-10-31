@@ -368,6 +368,35 @@ mod tests {
         Ok(())
     }
 
+    /// Transfers follow actual Copy evidence, including derives and composite carriers. An exclusive reference
+    /// never becomes Copy merely because the legacy caller-adaptation helper groups all reference types together.
+    #[test]
+    fn explicit_transfer_uses_copy_evidence() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, conflict) in [
+            (
+                "def exclusive(value: Owned[&mut int]) -> &mut int:\n    first = value\n    return value\n",
+                true,
+            ),
+            (
+                "def shared(value: Owned[&int]) -> &int:\n    first = value\n    return value\n",
+                false,
+            ),
+            (
+                "def derived(value: Owned[Point]) -> Point:\n    first = value\n    return value\n@derive(Copy)\nmodel Point:\n    x: int\n",
+                false,
+            ),
+            (
+                "def optional(value: Owned[Option[int]]) -> Option[int]:\n    first = value\n    return value\n",
+                false,
+            ),
+        ] {
+            let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
+            let analysis = flow::analyze(&graph).map_err(|error| format!("{source}\n{error:?}"))?;
+            assert_eq!(!analysis.conflicts.is_empty(), conflict, "{source}\n{analysis:?}");
+        }
+        Ok(())
+    }
+
     /// Conflicts are source diagnostics with the actual operation and the dependency explaining its lifetime;
     /// stable secondary anchors must survive independently of message wording or native compilation.
     #[test]

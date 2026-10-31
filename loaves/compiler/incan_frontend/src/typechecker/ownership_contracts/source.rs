@@ -10,6 +10,7 @@ use crate::ast::{
     Span, Spanned, Statement,
 };
 use crate::symbols::{ResolvedType, SymbolKind};
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
@@ -296,7 +297,7 @@ impl Builder<'_> {
                 })?;
                 let access = if consume
                     && (place.through.is_some() || self.constrained.contains(&place.place.root))
-                    && !self.checker.is_copy_type(ty)
+                    && !self.copy_value(ty)
                 {
                     Access::Move
                 } else {
@@ -326,6 +327,21 @@ impl Builder<'_> {
                 span: expression.span,
                 reason: "expression needs checked call or dependency access facts",
             }),
+        }
+    }
+
+    /// Use the checker's derive relation for transfer proofs rather than the legacy ABI adaptation heuristic.
+    /// Shared references copy their address; exclusive references transfer access. Missing Copy evidence never
+    /// authorizes duplication, including inside tuples and native carriers with incomplete trait metadata.
+    fn copy_value(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Ref(_) => true,
+            ResolvedType::RefMut(_) => false,
+            ResolvedType::Tuple(items) => items.iter().all(|item| self.copy_value(item)),
+            _ => matches!(
+                self.checker.derive_support(ty, DeriveId::Copy),
+                super::super::derive_requirements::DeriveSupport::Supported
+            ),
         }
     }
 
