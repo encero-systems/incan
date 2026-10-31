@@ -1,5 +1,5 @@
-//! Source control-flow projection for explicit inputs. Unsupported expressions refuse this profile; an empty graph
-//! is never substituted for missing call, capture, suspension or returned-dependency facts.
+//! Source control-flow projection for explicit inputs and selected calls. Unsupported expressions refuse this
+//! profile; an empty graph is never substituted for missing call, capture, suspension or returned-dependency facts.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,6 +13,8 @@ use crate::symbols::{ResolvedType, SymbolKind};
 use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
+
+mod calls;
 
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +47,7 @@ struct Path {
 /// Invocation-local projection state, borrowing immutable checked identities and types rather than resolving names.
 struct Builder<'a> {
     checker: &'a TypeChecker,
+    owner: CanonicalSymbolId,
     graph: Graph,
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
@@ -52,8 +55,8 @@ struct Builder<'a> {
     loops: Vec<LoopEdges>,
 }
 
-/// Project a checked callable body against its declaration and local contracts. Calls, escaping dependencies
-/// and other incomplete shapes remain explicit unavailable results rather than successful partial graphs.
+/// Project a checked callable body against its declaration and local contracts. Calls without selected access
+/// facts, escaping dependencies and other incomplete shapes remain explicit unavailable results.
 pub(super) fn build(checker: &TypeChecker, callable: CallableSource<'_>, span: Span) -> Result<Graph, Unavailable> {
     let (parameters, body, is_async, receiver, bindings) = match callable {
         CallableSource::Function(function) => (
@@ -100,6 +103,7 @@ pub(super) fn build(checker: &TypeChecker, callable: CallableSource<'_>, span: S
     }
     let mut builder = Builder {
         checker,
+        owner: identity.clone(),
         locals: checker
             .symbols
             .all_symbols()
@@ -368,6 +372,7 @@ impl Builder<'_> {
                 ))
             }
             Expr::Literal(_) => Ok(incoming),
+            Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
             Expr::Binary(left, operation, right) => {
                 let incoming = self.expression(left, incoming, false)?;

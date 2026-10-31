@@ -45,7 +45,7 @@ pub(super) struct LocalMode {
 
 /// One successfully checked call retains the exact contract owner and instantiated parameter values. A call in
 /// declaration/default evaluation has no callable body owner, but still cannot cross a record profile unaware of it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct InputCall {
     pub owner: Option<incan_semantics_core::CanonicalSymbolId>,
     pub callee: incan_semantics_core::CanonicalSymbolId,
@@ -656,7 +656,7 @@ mod tests {
     }
 
     /// A selected overload retains its own instantiated parameter slots without rewriting either declaration.
-    /// The ordinary caller still owns an unavailable flow profile until call access projection is implemented.
+    /// The ordinary caller owns its checked access profile even without an explicit input annotation of its own.
     #[test]
     fn explicit_call_facts_preserve_canonical_slots() -> Result<(), Box<dyn std::error::Error>> {
         let checker = checked(
@@ -703,8 +703,119 @@ mod tests {
         assert_eq!(owner.declaration_name, "use");
         assert!(matches!(
             checker.type_info.protocols.explicit_input_flow.get(owner),
-            Some(InputFlow::Unavailable(_))
+            Some(InputFlow::Checked { .. })
         ));
+        Ok(())
+    }
+
+    /// Call-site requests apply even to read-only bodies and ordinary callers, including named argument order.
+    #[test]
+    fn explicit_calls_check_source_access_and_transfer() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, conflicts) in [
+            (
+                "def use(mut value: int) -> int:\n    set(value)\n    return value\ndef set(mut value: BorrowedMut[int]) -> None:\n    value = 2\n",
+                false,
+            ),
+            (
+                "def use(value: str) -> None:\n    read(value, value)\ndef read(first: Borrowed[str], second: Borrowed[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def use(value: str) -> str:\n    take(value)\n    return value\ndef take(value: Owned[str]) -> None:\n    pass\n",
+                true,
+            ),
+            (
+                "def use(value: int) -> int:\n    take(value)\n    return value\ndef take(value: Owned[int]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def use(value: int) -> None:\n    read(value)\ndef read(value: BorrowedMut[int]) -> None:\n    pass\n",
+                true,
+            ),
+            (
+                "def use(mut value: int) -> None:\n    read(value, value)\ndef read(first: BorrowedMut[int], second: BorrowedMut[int]) -> None:\n    pass\n",
+                true,
+            ),
+            (
+                "def use(value: str) -> None:\n    read(value, value)\ndef read(first: Borrowed[str], second: Owned[str]) -> None:\n    pass\n",
+                true,
+            ),
+            (
+                "def use(value: str) -> None:\n    read(second=take(value), first=value)\ndef read(first: Borrowed[str], second: int) -> None:\n    pass\ndef take(value: Owned[str]) -> int:\n    return 1\n",
+                true,
+            ),
+            (
+                "def use(value: str) -> None:\n    read(first=value, second=take(value))\ndef read(first: Borrowed[str], second: int) -> None:\n    pass\ndef take(value: Owned[str]) -> int:\n    return 1\n",
+                true,
+            ),
+            (
+                "def use(mut value: Pair) -> None:\n    read(value.left, value.right)\ndef read(first: BorrowedMut[int], second: BorrowedMut[int]) -> None:\n    pass\nmodel Pair:\n    left: int\n    right: int\n",
+                false,
+            ),
+            (
+                "def use(mut value: Pair) -> None:\n    read(value, value.left)\ndef read(first: BorrowedMut[Pair], second: Borrowed[int]) -> None:\n    pass\nmodel Pair:\n    left: int\n    right: int\n",
+                true,
+            ),
+            (
+                "def use(mut value: BorrowedMut[int]) -> int:\n    read(value)\n    value = 3\n    return value\ndef read(value: Borrowed[int]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def use(value: Borrowed[str]) -> None:\n    take(value)\ndef take(value: Owned[str]) -> None:\n    pass\n",
+                true,
+            ),
+        ] {
+            let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
+            let analysis = flow::analyze(&graph).map_err(|error| format!("{error:?}"))?;
+            assert_eq!(!analysis.conflicts.is_empty(), conflicts, "{source}\n{analysis:?}");
+        }
+        Ok(())
+    }
+
+    /// A synthetic protocol lookup at an existing expression span must not steal or invent the source call's
+    /// explicit ownership contract when its temporary lookup artifacts are removed.
+    #[test]
+    fn explicit_calls_follow_call_site_save_and_restore() -> Result<(), Box<dyn std::error::Error>> {
+        let mut checker = checked(
+            "def use(value: int) -> int:\n    return read(value)\ndef read(value: Borrowed[int]) -> int:\n    return value\n",
+        )?;
+        let (span, original) = checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .iter()
+            .next()
+            .map(|(span, call)| (*span, call.clone()))
+            .ok_or("missing call")?;
+        let facts = checker.type_info.take_call_site_facts(span);
+        assert!(checker.type_info.protocols.explicit_input_calls.is_empty());
+        checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .insert(span, original.clone());
+        checker.type_info.clear_body_ir_call_site_facts(span);
+        assert!(checker.type_info.protocols.explicit_input_calls.is_empty());
+        checker.type_info.restore_call_site_facts(span, facts);
+        assert_eq!(
+            checker.type_info.protocols.explicit_input_calls.get(&span),
+            Some(&original)
+        );
+        let empty_span = crate::ast::Span::new(0, 0);
+        let empty = checker.type_info.take_call_site_facts(empty_span);
+        checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .insert(empty_span, original);
+        checker.type_info.restore_call_site_facts(empty_span, empty);
+        assert!(
+            !checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .contains_key(&empty_span)
+        );
         Ok(())
     }
 
