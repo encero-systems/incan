@@ -49,3 +49,9 @@ Rust items are checked against ABI caches supplied by the installed toolchain. P
 `incan inspect codegraph` exposes checked declaration and call relationships across Incan and Rust. It can return parseable facts for units that fail checking, with explicit warnings and degraded state. Strict inspection refuses those units.
 
 See [Layering](layering.md), [CLI reference](../../tooling/reference/cli_reference.md) and [contract families](https://github.com/encero-systems/incan/blob/main/workspaces/contracts/README.md).
+
+### Standard namespace ownership
+
+The compiler's `STDLIB_NAMESPACES` catalog records module lookup, submodule discovery and the ordinary standard Loaf that may publish each root. Publication policies are projected from that catalog; there is no separate package ownership list. Compiler-only namespaces have no package issuer. `std.primitives` is an ordinary ambient standard package, so a consumer does not declare it in its manifest.
+
+Loaf manifests currently describe package names and dependency intent, but do not declare reserved namespace ownership. A package name or matching source directory cannot grant that authority: installed namespace admission still validates the original checked package and generation. The compiler catalog therefore remains the authority for reserved roots. Adding manifest-driven ownership requires an authenticated ownership declaration, rather than inferring it from a package's name.
