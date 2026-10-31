@@ -47,7 +47,9 @@ mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
-pub(crate) use body_check::{BodyIrOracleInputs, CheckedBodyInputError, CheckedBodyView};
+pub(crate) use body_check::BodyIrOracleInputs;
+#[cfg(test)]
+pub(crate) use body_check::CheckedBodyInputError;
 pub use check_work::CheckWork;
 pub(crate) mod canonical_nodes;
 mod check_expr;

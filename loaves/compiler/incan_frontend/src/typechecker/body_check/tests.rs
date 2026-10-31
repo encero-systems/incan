@@ -629,7 +629,8 @@ fn assert_canonical_record_fields() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Refused and warning-only owners retain their own status, recipe fields and current rendered source positions.
+/// Refused and warning-only owners retain their own status, recipe fields and current rendered source positions;
+/// a match's unrepresented loan-free-subject fact refuses the initial canonical profile.
 fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> {
     let refused = "def main() -> int:\n    return \"wrong\"\n";
     let warning = "def main() -> None:\n    println(\"hello\")\n    return\n    println(\"unreachable\")\n";
@@ -660,5 +661,10 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
         field[1].push_str("/missing");
         assert!(super::records::verify_fixture(source, "main", malformed).is_err());
     }
+    let matched = "def main() -> int:\n    match 1:\n        1 => return 2\n        _ => return 3\n";
+    assert!(matches!(
+        super::records::fixture_projection(matched, "main", false),
+        Err(NodeBindingError::Unsupported("ProtocolArtifacts.loan_free_scrutinees"))
+    ));
     Ok(())
 }
