@@ -60,7 +60,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
         return Err("unit records require one Incan program file and a project view")
     admitted = admitted_home()?
     head = f"incan.engine.capture-head\t{fingerprint([submit.view, source.0, submit.input_selection, admitted.pin])?}"
-    before = snapshot(store).map_err((error) => error.message())?
+    before = snapshot(store, submit.view).map_err((error) => error.message())?
     prior_revision, prior_identity, previous = previous_epoch(before, head)?
     # 2. Build and run select the same program inputs; the verb is an execution action, not a compiled identity.
     request = CaptureRequest(
@@ -159,9 +159,9 @@ def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, str, Option[B
                 Some(encoded) => return Ok((revision, identity, Some(decoded_epoch(encoded)?)))
 
 
-pub def load_epoch(store: Path, revision: str) -> Result[BuildEpoch, str]:
+pub def load_epoch(store: Path, revision: str, view: str) -> Result[BuildEpoch, str]:
     """Activate one exact persisted capture revision for a producer; callers drop it when that activation ends."""
-    match record_text(snapshot(store).map_err((error) => error.message())?, epoch_key(revision))?:
+    match record_text(snapshot(store, view).map_err((error) => error.message())?, epoch_key(revision))?:
         None => return Err("captured epoch record is missing")
         Some(text) => return decoded_epoch(text)
 

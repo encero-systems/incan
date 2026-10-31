@@ -29,7 +29,8 @@ object read this way is content-named and never rewritten in place, as a mapping
 Writing: a transaction begun on one view collects writes with their preconditions. Under the publication lock it
 validates every precondition against the latest generation, stages only changed records, then installs the segment,
 pages, manifest and `CURRENT`, each synced with its directory,
-in that order. A transaction whose writes are all already present commits nothing and adds no bytes.
+in that order. Related transactions across views share one generation switch; an execution pin's durable descriptor
+and live lock precede that switch. A transaction whose writes are all already present commits nothing and adds no bytes.
 """
 
 from rust::std::process import id, exit as process_exit
@@ -43,7 +44,7 @@ from std.fs.locking import FileLock
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError, _BytesIO
 from store_index import Entry, IndexError, Location, build, entries as index_entries, find as index_find, insert
-from store_index import copied_index_bytes, page_path, page_reads, view_digest
+from store_index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
 
 const FORMAT: str = "incan.segment-store/3"
 const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
@@ -556,7 +557,7 @@ pub def commit_group(transactions: list[Transaction]) -> Result[Snapshot, StoreE
 
 
 pub def commit_pinned(transactions: list[Transaction], view: str) -> Result[Publication, StoreError]:
-    """Publish a request and its durable execution descriptor under one switch, with its pin held before visibility."""
+    """Publish a request's durable view under one switch, with its execution pin held before visibility."""
     check_view_key(view)?
     return publish_group(transactions, view)
 
@@ -583,6 +584,8 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     latest = snapshot(root, selected_view)?
     staged = root.joinpath("staging").joinpath(first.id)
     if len(transactions) == 1 and first.fork != "":
+        if execution_view != "":
+            return Err(failure("format", "transaction", "a fork does not select an execution view"))
         return publish_fork(root, latest, first, staged).map((view) => Publication(snapshot=view))
     # 1. Duplicate views are combined before their preconditions are checked.
     mut writes: Dict[str, list[Write]] = {}
@@ -607,13 +610,13 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     mut segments = latest.segments
     mut views = latest.views
     for name in sorted([view for view in changed.keys()]):
-        index, segment = stage_view(root, view_snapshot(latest, name)?, changed[name], staged.joinpath(name))?
+        directory = staged.joinpath(hexlify(sha256.digest(name.encode("utf-8"))))
+        index, segment = stage_view(root, view_snapshot(latest, name)?, changed[name], directory)?
         if segment not in segments:
             segments.append(segment)
         views = with_view(views, name, index)
     # 3. One switch is the only visibility and durability boundary for the entire request.
     published = publish_switch(root, latest, segments, views, first.id, execution_view)?
-    counted["durable_commits"] = counted.get("durable_commits", 0) + 1
     remove_tree(staged)
     return Ok(published)
 
@@ -633,7 +636,7 @@ def stage_view(root: Path, latest: Snapshot, writes: list[Write], staged: Path) 
     pages = staged.joinpath("pages")
     index = insert(root, latest.index, pages, leaf_entries(encoded, segment)).map_err(index_failure)?
     publication_boundary("pages-staged")
-    install_pages(root, pages)?
+    install_pages(root, pages, [index])?
     publication_boundary("pages-installed")
     return Ok((index, segment))
 
@@ -711,15 +714,13 @@ def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreE
     return Ok(name)
 
 
-def install_pages(root: Path, pages: Path) -> Result[None, StoreError]:
-    """Install the staged index pages that are not installed yet, each synced, then sync the index directory once."""
+def install_pages(root: Path, pages: Path, roots: list[str]) -> Result[None, StoreError]:
+    """Sync and install only the final roots' new pages, then sync the index directory once."""
     if not pages.is_dir():
         return Ok(None)
     target_directory = root.joinpath("indexes")
     ensure_directory(target_directory)?
-    for page in pages.iterdir().map_err((error) => io_failure(pages, error))?:
-        if not page.name().endswith(".page"):
-            continue
+    for page in staged_pages(pages, roots).map_err(index_failure)?:
         target = page_path(root, page.name()[:-5])
         if target.is_file():
             continue
@@ -769,7 +770,7 @@ def publish_switch(
     marker = root.joinpath("FORMAT")
     if not marker.is_file():
         place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
-    # The pin descriptor and its live lock precede the only visibility boundary.
+    # The manifest is the pin's durable descriptor; its live OS lock precedes visibility.
     mut returned_view = latest.view
     if execution_view != "":
         returned_view = execution_view
@@ -790,6 +791,7 @@ def publish_switch(
     place_synced(root.joinpath("CURRENT"), f"{following} {digest}\n".encode("utf-8"))?
     sync_directory(root)?
     publication_boundary("root-synced")
+    counted["durable_commits"] = counted.get("durable_commits", 0) + 1
     return Ok(pinned)
 
 
@@ -813,30 +815,30 @@ def pinned_publication(view: Snapshot, name: str) -> Result[Publication, StoreEr
     selected = view
     if view.view != name:
         return Err(failure("format", name, "execution pin must name the returned view"))
-    return Ok(Publication(snapshot=selected, pin=Some(Rc.new(lease(selected)?))))
+    held = lease(selected)?
+    publication_boundary("pin-acquired")
+    return Ok(Publication(snapshot=selected, pin=Some(Rc.new(held))))
 
 
 pub def lease(view: Snapshot) -> Result[FileLock, StoreError]:
     """
     Register a lease on `view`'s generation and view for as long as the returned lock is held.
 
-    The lease file names the generation, its manifest digest and the view's index root it pins; its lock proves the
-    holder is alive. Equal snapshot/view descriptors share one durable lease file and independent shared locks;
-    an unchanged pin writes nothing. Collection must take the descriptor's exclusive lock before removing it and
-    keeps every root a live lease names, and only those of the leased view.
+    The lock name identifies the generation, manifest digest and view; the immutable manifest is the one durable
+    descriptor of its index root. The OS lock proves live interest and needs no second durable descriptor file.
+    Equal snapshot/view descriptors share the lock identity with independent guards. Collection must take that
+    identity's exclusive lock and retain the selected view's roots while a shared holder is alive. Host failure ends
+    every live interest; recovery reads the committed manifest, never a duplicate lease record.
     """
     leases = view.root.joinpath("leases")
     ensure_directory(leases)?
     name = hexlify(sha256.digest(view.view.encode("utf-8")))
     path = leases.joinpath(f"{view.generation}-{view.digest}-{name}")
     held = path.lock_shared().map_err((error) => io_failure(path, error))?
-    descriptor = f"{view.generation} {view.digest} {view.view} {view.index}\n".encode("utf-8")
-    if path.exists():
-        if path.read_bytes().map_err((error) => io_failure(path, error))? != descriptor:
-            return Err(failure("integrity", path.0, "lease disagrees with its snapshot"))
-    else:
-        place_synced(path, descriptor)?
-        sync_directory(leases)?
+    if view.generation > 0:
+        checked = read_manifest(view.root, view.generation, view.digest, view.view)?
+        if checked.index != view.index:
+            return Err(failure("integrity", path.0, "lease disagrees with its immutable manifest"))
     return Ok(held)
 
 
@@ -875,7 +877,7 @@ pub def compact(root: Path) -> Result[Snapshot, StoreError]:
         relocated = in_key_order(relocate(leaf_entries(held_encoded, name), encoded))
         index = build(staged.joinpath("pages"), relocated).map_err(index_failure)?
         views.append(ViewRoot(view=entry.view, root=index))
-    install_pages(root, staged.joinpath("pages"))?
+    install_pages(root, staged.joinpath("pages"), [view.root for view in views])?
     published = switch(root, latest, [name], views, "compaction")?
     remove_tree(staged)
     return Ok(published)

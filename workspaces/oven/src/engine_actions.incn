@@ -4,7 +4,6 @@ from std.fs import Path
 from std.fs.locking import FileLock
 from rust::std::rc import Rc
 from std.encoding.hex import hexlify
-from engine_capture import CaptureCounters
 from engine_messages import BindingOutcome, Complete, CompletionStatus
 from engine_programs import obtain, prepare_selection
 from engine_epochs import CapturedRequest, after_projection
@@ -20,11 +19,10 @@ pub model Pending:
 
     pub request: bytes
     pub token: str
-    pub revision: str
     pub capture: CapturedRequest
     pub view: str
     pub proofs: bool
-    pub counters: CaptureCounters
+    pub producer: str
     pub handle: str
 
 
@@ -58,14 +56,21 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => error.message())?
     producing = begin()
-    produced = obtain(store, pending.revision, pending.handle, directory.joinpath(run).0, Some(pending.capture.epoch))?
-    record("engine_unit", pending.revision, producing)
+    produced = obtain(
+        store,
+        pending.capture.revision,
+        pending.handle,
+        directory.joinpath(run).0,
+        Some(pending.capture.epoch),
+        pending.producer,
+    )?
+    record("engine_unit", pending.capture.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
     match produced.unit:
         None =>
             if pending.proofs:
-                observation = retain(store, run, pending.counters, produced)?
+                observation = retain(store, run, pending.capture.counters, produced)?
             return Ok(
                 Ready(
                     message=Complete(
@@ -92,7 +97,7 @@ pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
             if let Some(transaction) = selection.transaction:
                 group.append(transaction)
             if pending.proofs:
-                group.append(prepare_report(store, run, pending.counters, produced)?)
+                group.append(prepare_report(store, run, pending.capture.counters, produced)?)
                 observation = run
             if len(group) == 0:
                 group.append(begin_selection(selection.snapshot))
