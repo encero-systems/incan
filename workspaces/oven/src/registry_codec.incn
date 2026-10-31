@@ -1,0 +1,156 @@
+"""A versioned registry table decoded directly from checked mapped bytes, without an intermediate document tree."""
+
+from rust::std::string import String as RustString
+from std.fs import MappedView
+from std.io import BytesIO, Endian, _BytesIO
+from registry_units import RegistryUnit
+
+
+pub model Catalog:
+    """The completed closure and the directory and artifact observations that justify its reuse."""
+
+    pub units: list[RegistryUnit]
+    pub listings: list[str]
+    pub artifacts: list[str]
+
+
+model Reader:
+    """A cursor bounded by one immutable mapped page; only requested strings are copied out."""
+
+    view: MappedView
+    offset: int = 0
+
+    def number(mut self) -> Result[int, str]:
+        """Read a checked little-endian length or counter in place."""
+        match self.view.read_u64_le(self.offset):
+            None => return Err("registry page scalar runs past the page")
+            Some(value) =>
+                self.offset += 8
+                result = int(value)
+                if result < 0:
+                    return Err("registry page scalar is outside the supported range")
+                return Ok(result)
+
+    def text(mut self) -> Result[str, str]:
+        """Copy one UTF-8 field after its length has been checked against the remaining mapped range."""
+        size = self.number()?
+        if size > self.view.len() - self.offset:
+            return Err("registry page text runs past the page")
+        match self.view.slice(self.offset, size):
+            None => return Err("registry page text has an invalid range")
+            Some(field) =>
+                self.offset += size
+                return RustString.from_utf8(field.to_bytes()).map((value) => str(value)).map_err(
+                    (_) => "registry page text is not UTF-8",
+                )
+
+    def texts(mut self) -> Result[list[str], str]:
+        """Read one typed string vector, refusing a count that cannot fit even its length fields."""
+        count = self.number()?
+        if count > (self.view.len() - self.offset) // 8:
+            return Err("registry page vector runs past the page")
+        mut found: list[str] = []
+        for _index in range(count):
+            found.append(self.text()?)
+        return Ok(found)
+
+    def unit(mut self) -> Result[RegistryUnit, str]:
+        """Decode a row in the versioned field order; booleans have exactly two encodings."""
+        loaf = self.text()?
+        version = self.text()?
+        domain = self.text()?
+        directory = self.text()?
+        features = self.texts()?
+        entry = self.text()?
+        dependencies = self.texts()?
+        profile = self.text()?
+        recorded = self.number()?
+        if recorded > 1:
+            return Err("registry page recorded flag is not a boolean")
+        return Ok(RegistryUnit(
+            loaf=loaf, version=version, domain=domain, directory=directory, features=features, entry=entry,
+            dependencies=dependencies, profile=profile, recorded=recorded == 1,
+            name=self.text()?, crate_hash=self.text()?, refusal=self.text()?, artifact=self.text()?, kind=self.text()?,
+        ))
+
+
+pub def decode(view: MappedView) -> Result[Catalog, str]:
+    """Read a versioned table, refusing unknown versions, truncated rows, duplicate entries and trailing bytes."""
+    mut reader = Reader(view=view)
+    if reader.text()? != "incan.registry-page/1":
+        return Err("unsupported registry page version")
+    count = reader.number()?
+    if count > (view.len() - reader.offset) // 128:
+        return Err("registry page rows run past the page")
+    mut units: list[RegistryUnit] = []
+    mut listings: list[str] = []
+    mut artifacts: list[str] = []
+    mut entries: set[str] = set()
+    for _index in range(count):
+        unit = reader.unit()?
+        if unit.entry in entries:
+            return Err("registry page has duplicate entry identities")
+        entries.add(unit.entry)
+        units.append(unit)
+        listings.append(reader.text()?)
+        artifacts.append(reader.text()?)
+    if reader.offset != view.len():
+        return Err("registry page has trailing bytes")
+    return Ok(Catalog(units=units, listings=listings, artifacts=artifacts))
+
+
+pub def encode(catalog: Catalog) -> Result[bytes, str]:
+    """Encode one closure with exact dependency entries and parallel observation rows in deterministic order."""
+    if len(catalog.units) != len(catalog.listings) or len(catalog.units) != len(catalog.artifacts):
+        return Err("registry page observation rows differ from its units")
+    buffer = BytesIO(b"")
+    put_text(buffer, "incan.registry-page/1")?
+    put_number(buffer, len(catalog.units))?
+    for index in range(len(catalog.units)):
+        put_unit(buffer, catalog.units[index])?
+        put_text(buffer, catalog.listings[index])?
+        put_text(buffer, catalog.artifacts[index])?
+    return Ok(buffer.getvalue())
+
+
+def put_unit(buffer: _BytesIO, unit: RegistryUnit) -> Result[None, str]:
+    """Write exactly the fields the typed row reader consumes, preserving source order and exact entries."""
+    for value in [unit.loaf, unit.version, unit.domain, unit.directory]:
+        put_text(buffer, value)?
+    put_texts(buffer, unit.features)?
+    put_text(buffer, unit.entry)?
+    put_texts(buffer, unit.dependencies)?
+    put_text(buffer, unit.profile)?
+    mut recorded = 0
+    if unit.recorded:
+        recorded = 1
+    put_number(buffer, recorded)?
+    for value in [unit.name, unit.crate_hash, unit.refusal, unit.artifact, unit.kind]:
+        put_text(buffer, value)?
+    return Ok(None)
+
+
+def put_texts(buffer: _BytesIO, values: list[str]) -> Result[None, str]:
+    """Write a vector length followed by the individual UTF-8 fields."""
+    put_number(buffer, len(values))?
+    for value in values:
+        put_text(buffer, value)?
+    return Ok(None)
+
+
+def put_text(buffer: _BytesIO, value: str) -> Result[None, str]:
+    """Write an exact byte length before the UTF-8 contents."""
+    data = value.encode("utf-8")
+    put_number(buffer, len(data))?
+    buffer.write_bytes(data).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def put_number(buffer: _BytesIO, value: int) -> Result[None, str]:
+    """Write a portable unsigned scalar, refusing negative or overflowing lengths."""
+    maybe: Option[u64] = value.try_resize()
+    match maybe:
+        None => return Err("registry page length is outside the supported range")
+        Some(number) =>
+            buffer.write(number, Endian.Little).map_err((error) => error.message())?
+            return Ok(None)

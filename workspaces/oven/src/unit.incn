@@ -163,10 +163,11 @@ pub def describe(
     request: FeatureRequest,
     reader: ManifestReader = ManifestReader(),
     selected_toolchain: Option[Toolchain] = None,
+    selected_facets: list[LocalFacet] = [],
 ) -> Result[UnitDescription, str]:
     """Describe the unit whose entry source is `source`, for `profile` and the features `request` asks for."""
     clock = begin()
-    result = described(source, profile, request, reader, selected_toolchain)
+    result = described(source, profile, request, reader, selected_toolchain, selected_facets)
     key = f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|{request.all_features}"
     record("unit_description", key, clock)
     return result
@@ -178,6 +179,7 @@ def described(
     request: FeatureRequest,
     reader: ManifestReader,
     selected_toolchain: Option[Toolchain],
+    selected_facets: list[LocalFacet],
 ) -> Result[UnitDescription, str]:
     """Resolve the source's canonical project and use its selected graph for one description."""
     entry = source.absolute().map_err((error) => f"{source.0}: {error.message()}")?
@@ -188,7 +190,7 @@ def described(
         Some(found) =>
             graph = intake(found, reader).map_err((error) => error.message())?
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
-            active = resolve_features(graph, root.0, request, reader, selected_toolchain)?
+            active = resolve_features(graph, root.0, request, reader, selected_toolchain, selected_facets)?
             projects = projects_by_root(graph.projects)
             return project_unit(entry, projects[root.0], profile, root.0, active, projects, reader)
 

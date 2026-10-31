@@ -6,9 +6,11 @@ from rust::std::process import exit
 from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
-from engine_selector import select as select_engine, command as engine_command
+from engine_selector import Engine, select as select_engine
+from engine_client import execute as execute_records
+from engine_proofs import report as proof_report
 from engine_service import serve as serve_engine, refusal_code
-from bakery import bakery_command, parse_bakery, repair_payload_command
+from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
@@ -32,6 +34,7 @@ from toolchain_archive import toolchain_command, parse_arguments as archive_opti
 from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
 from pub::incan_platform.trace import flush as flush_trace
+from jec import begin as begin_work, record as record_work
 
 
 pub model Options:
@@ -44,6 +47,7 @@ pub model Options:
     pub program_entries: list[str] = []
     pub argv0: Option[str] = None
     pub feature_options: bool = false
+    pub engine_report: bool = false
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
@@ -62,6 +66,7 @@ def command_line() -> None:
     2. Answer help before accessing projects, installations or transports.
     3. Execute the selected command.
     """
+    starting = begin_work()
     trace_boundary("command_entered")
     # 1. A missing command is a syntax error.
     mut arguments: list[str] = []
@@ -82,6 +87,7 @@ def command_line() -> None:
             return
         None => pass
     # 3. Each command keeps its own parsing and execution boundary.
+    record_work("cli_start", command, starting)
     dispatch(command, rest)
 
 
@@ -98,10 +104,10 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     match select_engine(get_or("INCAN_ENGINE", "legacy")):
         Err(reason) => fail(f"incan {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
-        Ok(engine) =>
-            match engine_command(engine, command):
-                Ok(_) => pass
-                Err(reason) => fail(f"incan {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        Ok(Engine.Records) =>
+            records_command(command, rest)
+            return
+        Ok(Engine.Legacy) => pass
     if command == "run":
         run(rest)
         return
@@ -206,7 +212,9 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
                 options.feature_options = true
             index += 2
             continue
-        if argument == "--no-default-features":
+        if argument == "--engine-report":
+            options.engine_report = true
+        elif argument == "--no-default-features":
             options.feature_options = true
             options.request.default_features = false
         elif argument == "--all-features":
@@ -222,6 +230,36 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     if options.path == "":
         return Err("a PATH is required")
     return Ok(options)
+
+
+def records_command(command: str, arguments: list[str]) -> None:
+    """Dispatch only connected records capabilities; unsupported commands never enter the legacy path."""
+    if command == "inspect" and len(arguments) == 3 and arguments[0] == "run" and arguments[2] == "--proofs":
+        match bakery().and_then((store) => proof_report(store, arguments[1])):
+            Ok(text) => println(text)
+            Err(reason) => fail(f"incan inspect: {reason}", 1)
+        return
+    if command not in ["run", "build"]:
+        fail(f"incan {command}: records engine does not implement `{command}`", 1)
+    own, passed = program_arguments(arguments)
+    match parse_options(own):
+        Err(reason) => syntax_error(command, reason)
+        Ok(options) =>
+            if options.feature_options or len(options.substitutes) > 0 or len(options.program_entries) > 0:
+                fail(f"incan {command}: unit records do not implement feature, substitution or program-entry options", 1)
+            if command == "build" and (len(passed) > 0 or options.argv0 is not None):
+                syntax_error(command, "program arguments and --argv0 require run")
+            finish(
+                command,
+                execute_records(
+                    command,
+                    Path(options.path),
+                    options.profile,
+                    passed,
+                    options.argv0,
+                    options.engine_report,
+                ),
+            )
 
 
 def apply_option(mut options: Options, name: str, value: str) -> Result[None, str]:
@@ -292,18 +330,23 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     3. Become the program.
     """
     # 1. When the project's owner serves the unit, it made the executable, and a refused compile is the run's result.
-    match via_owner("run", options, Path(options.path)):
+    requesting = begin_work()
+    owned = via_owner("run", options, Path(options.path))
+    record_work("legacy_request", options.path, requesting)
+    match owned:
         Some(reply) =>
             if reply.exit != 0:
                 return Ok(status_code(reply.exit))
             return run_program(Path(reply.binary), passed, options.argv0)
         None => pass
     # 2. Otherwise this process describes and compiles the unit, keeping the stored executable while its inputs hold.
+    preparing = begin_work()
     mut unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
     unit.program_entries = options.program_entries
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
     made = make_unit(unit, toolchain, binary, true)?
+    record_work("legacy_prepare", options.path, preparing)
     if made.code != 0:
         return Ok(made.code)
     # 3. The process becomes the program, so its exit status is the run's; it keeps the view's name as its own.
@@ -407,6 +450,8 @@ def validated(command: str, options: Options) -> Options:
 
 def require_command_options(command: str, options: Options) -> Result[None, str]:
     """Each command admits only options it applies, and feature selection requires an owning project."""
+    if options.engine_report:
+        return Err("--engine-report requires INCAN_ENGINE=records run or build")
     if options.argv0 != None and command != "run":
         return Err("--argv0 requires run")
     if len(options.program_entries) > 0 and command not in ["run", "build"]:

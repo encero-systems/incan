@@ -1,0 +1,137 @@
+"""Settle one captured program request, select its result and protect the caller's execution roots."""
+
+from std.fs import Path
+from std.fs.locking import FileLock
+from rust::std::rc import Rc
+from std.encoding.hex import hexlify
+from engine_messages import BindingOutcome, Complete, CompletionStatus
+from engine_programs import obtain, prepare_selection
+from engine_epochs import CapturedRequest, after_projection
+from engine_proofs import retain, prepare_report
+from segment_store import begin as begin_selection
+from segment_store import Transaction, commit_pinned
+from observation import trace
+from jec import begin, record
+
+
+pub model Pending:
+    """One transient captured request; its input observations are released when this activation settles."""
+
+    pub request: bytes
+    pub token: str
+    pub capture: CapturedRequest
+    pub view: str
+    pub proofs: bool
+    pub producer: str
+    pub handle: str
+
+
+pub model ExecutionLease:
+    """A live substrate lease over the exact selected view, retained until release or client disconnect."""
+
+    pub token: str
+    pub snapshot: str
+    pub handle: str
+    pub held: Rc[FileLock]
+
+
+pub model Ready:
+    """A completed caller's control reply, diagnostic stream handles and optional execution lease."""
+
+    pub message: Complete
+    pub console: str
+    pub pin: Option[ExecutionLease] = None
+
+
+pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
+    """
+    Settle one request without executing user code in the engine.
+
+    1. Ask for the captured unit record, activating its epoch only on a miss.
+    2. Retain counters only when this caller explicitly requested a proof report.
+    3. Select successful results in the caller's virtual view and hold an execution lease before replying.
+    """
+    # 1. The compiler owns whole-unit production; the engine holds no semantic closure after this activation.
+    run = hexlify(pending.request)
+    directory = store.joinpath("engine/console")
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    producing = begin()
+    produced = obtain(
+        store,
+        pending.capture.revision,
+        pending.handle,
+        directory.joinpath(run).0,
+        Some(pending.capture.epoch),
+        pending.producer,
+    )?
+    record("engine_unit", pending.capture.revision, producing)
+    # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
+    mut observation = ""
+    match produced.unit:
+        None =>
+            if pending.proofs:
+                observation = retain(store, run, pending.capture.counters, produced)?
+            return Ok(
+                Ready(
+                    message=Complete(
+                        snapshot="",
+                        admission_proof="",
+                        result_handles="",
+                        binding_outcome=BindingOutcome.NotSelected,
+                        status=CompletionStatus.Failed,
+                        observation_handle=observation,
+                    ),
+                    console=produced.console,
+                ),
+            )
+        Some(unit) =>
+            # 3. A completed native descriptor is selected independently for each caller.
+            selecting = begin()
+            captured = after_projection(pending.capture)?
+            selection = prepare_selection(store, pending.view, unit, pending.handle)?
+            mut group: list[Transaction] = []
+            if let Some(transaction) = captured.transaction:
+                group.append(transaction)
+            if let Some(transaction) = produced.transaction:
+                group.append(transaction)
+            if let Some(transaction) = selection.transaction:
+                group.append(transaction)
+            if pending.proofs:
+                group.append(prepare_report(store, run, pending.capture.counters, produced)?)
+                observation = run
+            if len(group) == 0:
+                group.append(begin_selection(selection.snapshot))
+            published = commit_pinned(group, pending.view).map_err((error) => error.message())?
+            selected = published.snapshot
+            if produced.native_bakes > 0:
+                trace(
+                    f"bakery {unit.identity[:12]}: baked program {Path(unit.binary).name()} (generation {selected.generation})",
+                )
+
+            record("engine_select", pending.view, selecting)
+            pinning = begin()
+            held = required_pin(published.pin)?
+            record("engine_lease", pending.view, pinning)
+            handle = pending.handle
+            pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=held)
+            return Ok(
+                Ready(
+                    message=Complete(
+                        snapshot=selected.digest,
+                        admission_proof=unit.identity,
+                        result_handles=handle,
+                        binding_outcome=BindingOutcome.Selected,
+                        status=CompletionStatus.Success,
+                        observation_handle=observation,
+                    ),
+                    console=produced.console,
+                    pin=Some(pin),
+                ),
+            )
+
+
+def required_pin(pin: Option[Rc[FileLock]]) -> Result[Rc[FileLock], str]:
+    """A completed request must already hold its selected generation's execution pin."""
+    match pin:
+        Some(held) => return Ok(held)
+        None => return Err("publication completed without an execution pin")

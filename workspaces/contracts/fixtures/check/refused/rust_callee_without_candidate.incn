@@ -1,0 +1,13 @@
+# behavior: a Rust method call whose arguments match an imported trait's signature, but which no implementation of that trait for the receiver's type supplies, is refused at check time instead of stopping the build (#2481)
+# expect-diagnostic: INCAN-T0122
+
+"""An imported trait's method needs an implementation of that trait for the receiver's type."""
+
+from rust::std::io import Write
+from rust::std::string import String as RustString
+
+
+def main() -> None:
+    """Flush a Rust string, which is no writer."""
+    mut text = RustString.from("a")
+    text.flush()

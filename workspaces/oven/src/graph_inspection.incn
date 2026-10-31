@@ -5,6 +5,7 @@ from rust::std::string import String as RustString
 from rust::std::time import Instant
 from std.fs import Path
 from std.json import JsonValue, parse
+from bakery import bakery, claim
 from features import FeatureRequest
 from files import json_text, read
 from graph_cache import (
@@ -12,6 +13,7 @@ from graph_cache import (
     cache_file,
     read_graph,
     stamp_file,
+    tree_inputs,
     unchecked_note,
     unchecked_refusal,
     unchecked_warning,
@@ -48,7 +50,7 @@ pub const VALUE_OPTIONS: FrozenList[str] = [
     "--budget",
 ]
 # The version of the key an answer is cached under; changing it discards every cached answer.
-const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/18"
+const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/19"
 
 
 pub model GraphOptions:
@@ -213,6 +215,28 @@ pub def graph_response(arguments: list[str], preferences: Dict[str, int] = {}) -
 
 
 def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) -> Result[str, str]:
+    """Prepare one command and render its answer; no prepared facts outlive the command."""
+    return prepare_inspection(selected)?.respond(preferences)
+
+
+pub model PreparedInspection:
+    """One request's graph selection, shared by its snapshot probe and response and dropped with that request."""
+
+    pub paths: list[GraphUnit]
+    pub root: str
+    pub selected: GraphOptions
+    pub toolchain: Toolchain
+
+    def snapshot(self) -> Result[str, str]:
+        """Identify the exact prepared inputs used by feedback and the answer in this request."""
+        return snapshot_identity(self.paths, self.root, self.selected.strict)
+
+    def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
+        """Render the admitted request over its prepared graph without reopening the dependency closure."""
+        return response(self.paths, self.root, self.selected, self.toolchain, preferences)
+
+
+pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection, str]:
     """
     Prepare and render a validated graph request; CLI syntax failures never enter this boundary.
 
@@ -234,7 +258,7 @@ def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) 
         paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain, selected.query == "defs")?
     trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
-    return response(paths, path.0, selected, toolchain, preferences)
+    return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain))
 
 
 def entry_source(path: Path) -> Path:
@@ -296,18 +320,23 @@ def response(
             snapshot = f"snapshot:{fingerprint([snapshot, observed])?}"
     if selected.stale != "":
         return json_text(snapshot_status(selected.stale, snapshot))
-    mut owner = Path(root)
-    if owner.is_file():
-        owner = owner.parent()
-    inputs = presentation_inputs(paths, root, selected, snapshot, preferences)?
-    cached = Path(f"{cache_file(owner, fingerprint(inputs)?)?.0}.answer")
+    portable = shared_query(selected)
+    mut inputs: list[str] = []
+    match presentation_inputs(paths, root, selected, snapshot, preferences, portable)?:
+        None => return render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)
+        Some(ready) => inputs = ready
+    cached = Path(f"{cache_file(fingerprint(inputs)?)?.0}.answer")
     trace(f"graph answer lookup: {lookup.elapsed().as_millis()} ms")
     if cached.is_file():
         return read(cached)
-    # 3. Any other answer is rendered once and cached for the next time.
+    # 3. A missing answer is rendered once, after rechecking its claim.
+    held = claim(bakery()?, fingerprint(["graph-answer"] + inputs)?)?
+    if cached.is_file():
+        return read(cached)
     evaluation = Instant.now()
     rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
-    publish(cached, rendered)?
+    if not portable or portable_answer(rendered):
+        publish(cached, rendered)?
     trace(f"graph answer evaluation: {evaluation.elapsed().as_millis()} ms")
     return Ok(rendered)
 
@@ -323,9 +352,17 @@ def presentation_inputs(
     selected: GraphOptions,
     snapshot: str,
     preferences: Dict[str, int],
-) -> Result[list[str], str]:
+    portable: bool,
+) -> Result[Option[list[str]], str]:
     """Everything an answer depends on: the options, and each unit's graph with the identity of its file."""
-    mut inputs = [PRESENTATION_DOMAIN, snapshot, root, selected.format, selected.query, selected.term]
+    mut key_root = root
+    mut anchors = ""
+    if portable:
+        anchors = anchor_root(Path(root)).0
+        match relative_scope(root, anchors):
+            None => return Ok(None)
+            Some(scope) => key_root = f"relative:{scope}"
+    mut inputs = [PRESENTATION_DOMAIN, snapshot, key_root, selected.format, selected.query, selected.term]
     inputs = inputs + [str(selected.limit), str(selected.strict)]
     inputs = inputs + [selected.task, str(selected.budget)]
     boost_values = JsonValue.object(
@@ -335,8 +372,43 @@ def presentation_inputs(
     if selected.query == "imports":
         inputs.append("nonempty-import-labels/1")
     for unit in paths:
-        inputs = inputs + [unit.path.0, unit.root.0, unit.package, unit.version, artifact_identity(stamp_file(unit))?]
-    return Ok(inputs)
+        if portable:
+            match relative_scope(unit.root.0, anchors):
+                None => return Ok(None)
+                Some(scope) =>
+                    observed = tree_inputs(stamp_file(unit))?
+                    inputs.extend([scope, unit.package, unit.version, observed[1]])
+        else:
+            inputs.extend([unit.path.0, unit.root.0, unit.package, unit.version, artifact_identity(stamp_file(unit))?])
+    return Ok(Some(inputs))
+
+
+def shared_query(selected: GraphOptions) -> bool:
+    """Only plain, risk-free query lines can be reused without rendering requester-specific structured headers."""
+    structured = selected.query == "defs" and selected.format == "json"
+    return selected.query != "" and not structured and not selected.risk
+
+
+def relative_scope(path: str, root: str) -> Option[str]:
+    """Name a virtual package or a binding within the requester's repository; external roots remain unshared."""
+    if path.startswith("@"):
+        return Some(path)
+    if path == root:
+        return Some(".")
+    if path.startswith(root + "/"):
+        return Some(path[len(root) + 1:])
+    return None
+
+
+def portable_answer(answer: str) -> bool:
+    """Refuse retention of plain answers that expose an absolute source location instead of a relative anchor."""
+    for line in answer.split("\n"):
+        for word in line.split(" "):
+            if word.startswith("/") or word.startswith("\\\\") or word.startswith("file://"):
+                return false
+            if len(word) > 2 and word[1:3] in [":/", ":\\"]:
+                return false
+    return true
 
 
 def render(
@@ -531,8 +603,9 @@ def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, st
             if source.name() != "lib.incn":
                 paths.append(own_unit_graph(source, root, prepared, toolchain)?)
             # 4. The standard Loaves the units reach join, except the one the project itself is.
-            package = rust_facet(root.0, false)?.package
-            standard = standard_graphs(root, "debug", toolchain, paths, package)?
+            package = rust_facet(root.0, false, prepared.request.manifests)?.package
+            standard = standard_graphs(root, "debug", toolchain, paths, prepared.registry, package,
+                                       prepared.request.manifests)?
             return Ok(paths + standard)
 
 
@@ -545,9 +618,11 @@ def own_unit_graph(
     """The graph of a source of the project's own target unit, checked against the interfaces of its dependencies."""
     for facet in prepared.facets:
         if facet.project == root.0 and facet.domain.value() == "target":
-            natives = unit_natives(facet, prepared.built, prepared.request, unit_loaves(facet, prepared.interfaces)?)?
-            loaves = unit_loaves(facet, prepared.interfaces)?
-            graph = inspect_incan(source, toolchain, natives, prepared.interfaces, facet.features, false, loaves)?
+            loaves = unit_loaves(facet, prepared.interfaces, prepared.request.manifests)?
+            natives = unit_natives(facet, prepared.built, prepared.request, loaves)?
+            graph = inspect_incan(source, toolchain, natives, prepared.interfaces, facet.features, false, loaves,
+                                  registry=Some(prepared.registry), reader=prepared.request.manifests,
+                                  facets=prepared.facets)?
             return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
     return Err("inspection selected no source unit")
 

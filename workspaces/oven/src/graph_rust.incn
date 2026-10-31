@@ -3,10 +3,23 @@
 from rust::std::process import id
 from rust::std::time import Instant
 from std.fs import Path
+from bakery import bakery, claim
 from features import FeatureRequest
 from files import remove
 from driver_command import driver_command
-from graph_cache import GraphUnit, cache_file, is_unchecked, publish_unchecked, tree_inputs
+from graph_cache import GraphUnit, content_facts, is_unchecked, publish_unchecked
+from graph_exports import export_file, exported, pending_export, publish_export
+from graph_rust_inputs import (
+    discover,
+    export_identity,
+    finish_evidence,
+    observed_key,
+    portable_dependencies,
+    prior_export,
+    producer_name,
+)
+from rust_freshness import compilation_observations, inputs_unchanged
+from unit_publication import published_identity
 from graph_dependencies import GraphDependencies, prepare_graph
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from loaf_local_graph import LocalFacet
@@ -24,10 +37,10 @@ from rust_units import (
     rust_facet,
 )
 from toolchain import Toolchain
-from unit_freshness import artifact_identity, fingerprint
+from unit_freshness import compiler_fingerprint, fingerprint
 
 # The version of the key a Rust export is cached under; changing it discards every cached export.
-const EXPORT_DOMAIN: str = "incan.codegraph.rust/4"
+const EXPORT_DOMAIN: str = "incan.codegraph.rust/6"
 
 
 model NativeContext:
@@ -57,13 +70,16 @@ pub def inspect_rust(
     prepared = prepare_graph(root, profile, features, substitutes, toolchain, [], published_only)?
     mut paths = prepared.paths
     if len(paths) > 0:
-        paths = paths + standard_graphs(root, profile, toolchain, paths)?
+        paths = paths + standard_graphs(root, profile, toolchain, paths, prepared.registry,
+                                       reader=prepared.request.manifests)?
     # 2. Every Rust export is keyed by the compiler, the libraries built and the registry artifacts it links against.
     context = native_context(prepared, toolchain)?
     registry = registry_artifacts(prepared.facets, prepared.request)?
     mut inputs = context.inputs
-    for artifact in sorted([key for key in registry.keys()]):
-        inputs = inputs + [artifact, artifact_identity(Path(artifact))?]
+    mut registry_inputs: list[str] = []
+    for artifact in registry.keys():
+        registry_inputs.append(f"{registry[artifact]} {published_identity(Path(artifact))?}")
+    inputs.extend(sorted(registry_inputs))
     # 3. The graphs that registry Loaves publish are used as they are.
     paths = paths + registry_graphs(registry)
     # 4. Each facet is exported where no published graph covers it, and the root's own binaries are exported too.
@@ -79,15 +95,16 @@ def native_context(prepared: GraphDependencies, toolchain: Toolchain) -> Result[
     The compiler, then every library built (its identity, and its directory on the search path), then the directories
     of the libraries Oven's last build compiled.
     """
-    mut inputs = [EXPORT_DOMAIN, artifact_identity(Path(toolchain.driver))?, toolchain.sysroot]
+    mut inputs = [EXPORT_DOMAIN, compiler_fingerprint(toolchain)?]
+    mut libraries: list[str] = []
     # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
     mut search: list[str] = []
     for key in sorted([key for key in prepared.built.keys()]):
         library = prepared.built[key]
-        inputs = inputs + [library.artifact, artifact_identity(Path(library.artifact))?]
+        libraries.append(f"{library.crate_name} {published_identity(Path(library.artifact))?}")
         search.append(library.directory)
+    inputs.extend(sorted(libraries))
     for directory in prepared.closure:
-        inputs.append(directory)
         if directory not in search:
             search.append(directory)
     return Ok(NativeContext(inputs=inputs, search=search))
@@ -102,11 +119,11 @@ def facet_graphs(
     toolchain: Toolchain,
 ) -> Result[list[GraphUnit], str]:
     """The graphs of one facet: its library, when it has one, and, for the project's own facet, its binaries."""
-    declared = rust_facet(facet.project, false)?
+    declared = rust_facet(facet.project, false, prepared.request.manifests)?
     own = facet.project == root.0 and facet.domain == DependencyDomain.Target
     mut graphs: list[GraphUnit] = []
     if declared.kind != "":
-        graphs.append(library_graph(facet, declared, own, prepared, root, inputs, search, toolchain)?)
+        graphs.append(library_graph(facet, declared, own, prepared, inputs, search, toolchain)?)
     if own:
         for name, source in declared.binaries:
             graphs.append(binary_graph(name, source, facet, declared, prepared, root, inputs, search, toolchain)?)
@@ -118,7 +135,6 @@ def library_graph(
     declared: RustFacet,
     own: bool,
     prepared: GraphDependencies,
-    root: Path,
     inputs: list[str],
     search: list[str],
     toolchain: Toolchain,
@@ -140,12 +156,10 @@ def library_graph(
     if not own:
         return Err(f"{declared.package}: missing published dependency graph; build its Loaf before inspection")
     # 2. Any other library is exported once per digest of its sources, features and inputs.
-    keyed = inputs + [facet.project, facet.domain.value(), str(facet.features), "library"]
-    graph = cache_file(root, fingerprint(keyed + tree_inputs(Path(facet.project))?)?)?
-    if not graph.is_file() and not is_unchecked(graph):
-        arguments = library_arguments(declared) + linking(facet, prepared.request, prepared.built, search)?
-        environment = package_environment(facet.project, declared, declared.crate_name)
-        observe(graph, facet, declared.package, arguments, environment, false, toolchain)?
+    arguments = library_arguments(declared) + linking(facet, prepared.request, prepared.built, search)?
+    environment = package_environment(facet.project, declared, declared.crate_name)
+    keyed = inputs + [facet.domain.value(), str(sorted(facet.features)), "library"]
+    graph = checked_export(facet, declared.package, arguments, environment, false, keyed, toolchain)?
     return Ok(GraphUnit(path=graph, root=Path(facet.project), source_root=facet.project))
 
 
@@ -161,14 +175,64 @@ def binary_graph(
     toolchain: Toolchain,
 ) -> Result[GraphUnit, str]:
     """The graph of one of the project's `[[rust.bin]]` crates, exported once per digest of its inputs."""
-    keyed = inputs + [facet.project, f"binary:{name}", str(facet.features)]
-    graph = cache_file(root, fingerprint(keyed + tree_inputs(root)?)?)?
-    if not graph.is_file() and not is_unchecked(graph):
-        crate_id = name.replace("-", "_")
-        arguments = binary_arguments(name, source, facet, declared, prepared.request, prepared.built, search)?
-        environment = binary_environment(prepared.request.rustc, facet.project, declared, crate_id)?
-        observe(graph, facet, f"{declared.package}:{name}", arguments, environment, declared.unstable, toolchain)?
+    crate_id = name.replace("-", "_")
+    arguments = binary_arguments(name, source, facet, declared, prepared.request, prepared.built, search)?
+    environment = binary_environment(prepared.request.rustc, facet.project, declared, crate_id)?
+    keyed = inputs + [facet.domain.value(), f"binary:{name}", str(sorted(facet.features))]
+    graph = checked_export(
+        facet, f"{declared.package}:{name}", arguments, environment, declared.unstable, keyed, toolchain,
+    )?
     return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
+
+
+def checked_export(
+    facet: LocalFacet,
+    unit_name: str,
+    arguments: list[str],
+    environment: Dict[str, str],
+    unstable: bool,
+    inputs: list[str],
+    toolchain: Toolchain,
+) -> Result[Path, str]:
+    """
+    Ask the bakery for an export under rustc's complete observed-input identity, never a tree-only approximation.
+
+    1. Claim the portable producer selector and recheck its previous dependency evidence in this project.
+    2. Discover a miss's exact inputs before naming its checked export.
+    3. Analyze privately, retaining no unchecked or nonportable result.
+    4. Publish only unchanged input evidence and checked facts together.
+    """
+    # 1. Dependency producers have finished before this claim, so waiting cannot hold their work hostage.
+    project = Path(facet.project)
+    compiler = compiler_fingerprint(toolchain)?
+    sources, _ = content_facts(project)?
+    selected = inputs + sources + [str(unstable)]
+    name = producer_name(selected, project, arguments)?
+    held = claim(bakery()?, fingerprint([name])?)?
+    if let Some(entry) = prior_export(name, project, arguments, environment, toolchain, compiler)?:
+        return Ok(entry)
+    # 2. The old list is only a lookup hint: a miss discovers the new list before committing an identity.
+    pending = pending_export(export_file(fingerprint(["graph-discovery", name])?)?, project)?
+    if not discover(project, pending.parent(), arguments, environment, unstable, toolchain)?:
+        observe(pending, facet, unit_name, arguments, environment, unstable, toolchain)?
+        return Ok(pending)
+    dependencies = pending.parent().joinpath("inputs.d")
+    observations = compilation_observations(project, dependencies, arguments, [], toolchain)?
+    key = observed_key(project, pending.parent(), arguments, environment, toolchain, compiler)?
+    portable = key.refusal == "" and portable_dependencies(project, dependencies)?
+    entry = export_file(export_identity(name, key)?)?
+    if portable and exported(entry)?:
+        return Ok(entry)
+    # 3. Diagnostics and undeclared external source bindings remain private to their producing request.
+    observe(pending, facet, unit_name, arguments, environment, unstable, toolchain)?
+    if is_unchecked(pending) or not portable:
+        return Ok(pending)
+    # 4. No mutable producer observation is admitted into the graph's portable record.
+    after = observed_key(project, pending.parent(), arguments, environment, toolchain, compiler)?
+    if after.digest != key.digest or not inputs_unchanged(dependencies, observations, Some(project), arguments)?:
+        return Err(f"Rust graph inputs of {unit_name} changed during export")
+    finish_evidence(project, pending.parent())?
+    return publish_export(entry, pending, name)
 
 
 def observe(
@@ -183,11 +247,11 @@ def observe(
     """
     Run the installed compiler in analysis-only mode and atomically publish only its complete binary graph.
 
-    Rust has no parse-only facts: a unit rustc refuses is cached as a note alone, naming the refusal and contributing
-    none.
+    Rust has no parse-only facts: a unit rustc refuses contributes a request-local diagnostic note alone. That note
+    never enters the bakery under a checked export's identity.
 
     1. Run the driver's Rust analysis with the unit's environment and arguments.
-    2. A refusal, unless the analysis was interrupted, is cached as a note.
+    2. A normal refusal leaves a private diagnostic note; an interrupted analysis fails.
     3. A completed analysis publishes its graph.
     """
     # 1. The driver analyzes the unit with its own environment and arguments, writing beside the graph's final name.
@@ -205,7 +269,7 @@ def observe(
     started = Instant.now()
     result = command.output().map_err((error) => str(error))?
     trace(f"graph analyzed Rust {unit_name}: {started.elapsed().as_millis()} ms")
-    # 2. A unit rustc refuses is cached as a note naming the refusal, unless the analysis was interrupted instead.
+    # 2. A normal refusal leaves its diagnostic with this requester; interrupted analysis cannot become a fact.
     if not result.status.success():
         match result.status.code():
             None => return Err(f"Rust graph analysis of {facet.project} was interrupted")

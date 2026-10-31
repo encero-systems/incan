@@ -3,17 +3,30 @@
 from rust::std::process import id
 from std.fs import Path
 from features import FeatureRequest
-from files import json_text, make_directory, read, remove
-from graph_cache import cache_file, is_unchecked, publish_unchecked, tree_inputs
+from jec import begin as begin_work, record as record_work
+from files import make_directory, read, remove
+from graph_cache import content_facts, interface_inputs, is_unchecked, publish_unchecked
+from graph_exports import claim_export, export_file, exported, pending_export, publish_export as admit_export
 from publication import publish, publish_binary
-from unit_freshness import artifact_identity, cache_identities, fingerprint, linked_natives, native_identities
+from unit_freshness import (
+    compiler_fingerprint,
+    description_digest,
+    cache_identities,
+    fingerprint,
+    linked_natives,
+    native_identities,
+    vocabulary_facts,
+)
 from unit_compiler import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import prepare_linked
+from registry_units import RegistryUnits
+from intake import ManifestReader
+from loaf_local_graph import LocalFacet
 
 # The version of the key an export is cached under; changing it discards every cached export.
-const EXPORT_DOMAIN: str = "incan.codegraph.incan/4"
+const EXPORT_DOMAIN: str = "incan.codegraph.incan/6"
 
 
 pub def inspect_incan(
@@ -25,49 +38,67 @@ pub def inspect_incan(
     defaults: bool = true,
     source_loaves: list[UnitLoaf] = [],
     owner: Option[Path] = None,
+    registry: Option[RegistryUnits] = None,
+    reader: ManifestReader = ManifestReader(),
+    facets: list[LocalFacet] = [],
 ) -> Result[Path, str]:
     """
     Export one unit, checked or not, once per digest; dependency interfaces stay in the inspection cache and never
     claim native artifacts.
 
-    A unit that fails checking is not an error here: its parseable facts are cached with a note naming its diagnostics,
-    and it publishes no interface. A unit the compiler refuses to export is cached as a note alone, contributing no
-    facts. Only an abnormal compiler exit fails, and nothing is cached for it.
+    A unit that fails checking is not an error here: its parseable facts and diagnostics remain request-local, and it
+    publishes no interface. A unit the compiler refuses to export contributes its diagnostic note alone. Checked
+    portable exports are claimed and published once through the bakery; no unchecked diagnostic is shared.
 
     1. Describe the unit against the toolchain, linking the checked interfaces of the Loaves it reaches.
-    2. Name the export by a digest of everything it reads; a cached export is returned as it is.
+    2. Name the export by content and logical bindings; claim a portable miss and recheck before producing it.
     3. Have the compiler export the unit's graph, and its interface when it is a library.
-    4. Publish the graph, the interface and the note of a unit that failed checking.
+    4. Publish checked portable facts, or return an unretained export with its own diagnostic locations.
     """
     # 1. The unit is described against the toolchain, and links the interfaces its dependencies were checked into.
     entry_source = source.resolve().map_err((error) => error.message())?
-    mut unit = describe(entry_source, "debug", FeatureRequest(features=features, default_features=defaults))?
+    mut unit = describe(entry_source, "debug", FeatureRequest(features=features, default_features=defaults),
+                        reader, Some(toolchain), facets)?
     if source.name() == "lib.incn":
         unit.kind = "library"
-    ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves)?
-    # 2. An export is made once per digest of everything it reads; a cached one, checked or not, is returned as it is.
+    ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves, registry)?
+    # 2. Only portable checked exports can be shared by another requester.
     project = Path(unit.project_root)
     mut cache_root = project
     if let Some(selected) = owner:
         cache_root = selected
-    entry = cache_file(cache_root, export_digest(ready, project, toolchain)?)?
-    directory = interface_directory(entry)
-    interface = directory.joinpath(f"{unit.package}.incnlib")
-    if is_unchecked(entry) or (entry.is_file() and (ready.kind != "library" or interface.is_file())):
+    digest, source_portable = export_digest(ready, project, toolchain)?
+    portable = source_portable and portable_description(ready, project)
+    entry = export_file(digest)?
+    if portable and exported(entry)?:
         return Ok(entry)
+    held = claim_export(entry)?
+    if portable and exported(entry)?:
+        return Ok(entry)
+    pending_entry = pending_export(entry, Path(ready.source))?
+    directory = interface_directory(pending_entry)
+    interface = directory.joinpath(f"{unit.package}.incnlib")
     # 3. The compiler writes its output beside the entry's name, so a failed export leaves nothing at the entry itself.
     description = write_unit(ready, crate_name(ready), Some(cache_root))?
-    output = Path(f"{entry.0}.{id()}.analysis")
+    output = Path(f"{pending_entry.0}.{id()}.analysis")
     pending = Path(f"{interface.0}.{id()}.analysis")
     mut arguments = ["--codegraph", description.0, toolchain.sysroot, output.0]
     if ready.kind == "library":
         make_directory(directory)?
         arguments.append(pending.0)
-    if run_compiler(toolchain, arguments)? != 0:
+    clock = begin_work()
+    status = run_compiler(toolchain, arguments)?
+    record_work("graph_export", entry.parent().name(), clock)
+    if status != 0:
         return Err(f"Incan graph export failed for {unit.package}")
     # 4. The graph, the interface and any note are published whole, a note before the entry it describes.
-    publish_export(entry, interface, unit.package, output, pending, ready.kind == "library")?
-    return Ok(entry)
+    publish_export(pending_entry, interface, unit.package, output, pending, ready.kind == "library")?
+    if is_unchecked(pending_entry) or not portable:
+        return Ok(pending_entry)
+    current, still_portable = export_digest(ready, project, toolchain)?
+    if current != entry.parent().name() or not still_portable:
+        return Err("Incan graph inputs changed during export")
+    return admit_export(entry, pending_entry)
 
 
 def prepared_unit(
@@ -76,6 +107,7 @@ def prepared_unit(
     built: Dict[str, NativeCrate],
     interfaces: Dict[str, Path],
     source_loaves: list[UnitLoaf],
+    registry: Option[RegistryUnits],
 ) -> Result[UnitDescription, str]:
     """
     The unit as the exporting compiler is told about it.
@@ -89,7 +121,7 @@ def prepared_unit(
         [loaf for loaf in unit.loaves if not loaf.is_dependency()] + source_loaves,
         interfaces,
     )?
-    mut ready = prepare_linked(selected, toolchain, [loaf.name for loaf in source_loaves])?
+    mut ready = prepare_linked(selected, toolchain, [loaf.name for loaf in source_loaves], registry)?
     for name in sorted([key for key in built.keys()]):
         native = built[name]
         ready.externs = [item for item in ready.externs if item.name != name] + [native]
@@ -110,17 +142,53 @@ def linked_loaves(loaves: list[UnitLoaf], interfaces: Dict[str, Path]) -> Result
     return Ok(linked)
 
 
-def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -> Result[str, str]:
+def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -> Result[tuple[str, bool], str]:
     """
-    The digest an export is cached under: the compiler, the unit's description, its native crates and ABI caches, its
-    search directories and the authored files of its project and of the Loaves it reaches.
+    Identify checked facts by compiler, effective unit facts, selected relative entry, source contents and interfaces.
+
+    Search directories and published artifact locations only locate the exact providers whose content identities
+    appear here. They never identify a graph, and physical publication observations never enter this key.
     """
-    head = [EXPORT_DOMAIN, artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, json_text(ready.to_json())?]
-    mut inputs = head + native_identities(linked_natives(ready))? + cache_identities(toolchain.rust_abi)?
-    inputs = inputs + ready.search + tree_inputs(project)?
+    head = [EXPORT_DOMAIN, compiler_fingerprint(toolchain)?, description_digest(ready)?]
+    entry = relative_name(ready.source, project)
+    mut inputs = head + ["entry", entry] + native_identities(linked_natives(ready))? + cache_identities(ready.rust_abi)?
+    sources, portable = content_facts(project)?
+    inputs.extend(sources)
+    bindings = ready.program_entries + ready.contract_models + ready.c_headers
+    inputs.extend([relative_name(path, project) for path in bindings])
+    if let Some(vocabulary) = ready.vocab:
+        inputs.extend(["vocabulary", vocabulary_facts(Path(vocabulary))?])
+    if let Some(entry) = ready.vocab_entry:
+        inputs.extend(["vocabulary-entry", relative_name(entry, project)])
     for loaf in ready.loaves:
-        inputs = inputs + tree_inputs(Path(loaf.dir))?
-    return fingerprint(inputs)
+        inputs.extend([loaf.key, loaf.name] + interface_inputs(Path(loaf.dir), loaf.name)?)
+    return Ok((fingerprint(inputs)?, portable))
+
+
+def portable_description(ready: UnitDescription, project: Path) -> bool:
+    """Retain only inputs whose source bindings can be transported under the requesting project's root."""
+    mut paths = [ready.source, ready.source_root] + ready.program_entries + ready.contract_models + ready.c_headers
+    if let Some(entry) = ready.vocab_entry:
+        paths.append(entry)
+    for path in paths:
+        mut selected = Path(path)
+        if not path.startswith("/"):
+            selected = project.joinpath(path)
+        match selected.resolve():
+            Err(_) => return false
+            Ok(canonical) =>
+                if canonical.0 != project.0 and not canonical.0.startswith(project.0 + "/"):
+                    return false
+    return true
+
+
+def relative_name(path: str, project: Path) -> str:
+    """Keep a binding's project-relative name; an external name is used only for unretained request staging."""
+    if path.startswith(project.0 + "/"):
+        return path[len(project.0) + 1:]
+    if path.startswith("/"):
+        return f"<external>/{Path(path).name()}"
+    return path
 
 
 def publish_export(

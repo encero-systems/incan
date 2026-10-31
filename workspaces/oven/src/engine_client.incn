@@ -1,0 +1,262 @@
+"""Submit program requests to the records engine, retain execution interest and relay only the caller's console."""
+
+from std.fs import Path
+from std.environ import get_or
+from std.json import JsonValue, parse
+from pub::incan_platform.ipc import session_id
+from bakery import bakery
+from core_process import executable
+from compiler_worker import relay_console
+from engine_channel import Channel, SendOutcome
+from engine_endpoint import connect, owner_uid
+from engine_epochs import record_text, prepare_submit
+from engine_messages import Complete, CompletionStatus, Message, Release, Submit
+from engine_programs import read_program, program_handle, selected_program, restore_program
+from engine_proofs import report
+from engine_state import Identity
+from engine_wire import Refusal
+from files import json_text
+from incan_units import run_program
+from json_fields import required_text
+from observation import observe, file_metadata, trace
+from segment_store import Snapshot, begin, claim, commit, put, snapshot, view_snapshot, lease
+from toolchain import load_toolchain, toolchain_file
+from unit_freshness import compiler_fingerprint, fingerprint
+from rust_target import inherited_deployment_configuration
+from home import home
+from jec import begin as begin_work, record as record_work
+
+
+pub def execute(
+    command: str,
+    source: Path,
+    profile: str,
+    arguments: list[str],
+    argv0: Option[str],
+    proofs: bool,
+) -> Result[i32, str]:
+    """
+    Build or run one file through the selected engine, without a legacy fallback.
+
+    1. Discover the physical store's compatible engine and submit the program root.
+    2. Wait for accepted capture and caller-specific completion, relaying diagnostic bytes separately.
+    3. Hold the selected execution pin until the program exits, then release it.
+    """
+    # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
+    absolute = source.absolute().map_err((error) => error.message())?
+    view = f"project-{fingerprint([home()?.0, absolute.0, profile])?}"
+    mut policy = ""
+    if proofs:
+        policy = "proofs"
+    connecting = begin_work()
+    store = bakery()?
+    store.mkdir(true, true).map_err((error) => error.message())?
+    compiler = installed_compiler()?
+    if not proofs:
+        if let Some(code) = execute_local(store, compiler, command, absolute, view, profile, arguments, argv0)?:
+            return Ok(code)
+    request = session_id()?
+    identity = identity_for(store, compiler)?
+    mut channel = connect(store, identity).map_err(detail)?
+    record_work("engine_connect", source.0, connecting)
+    channel.transport.wait_at_most(600)
+    submitted = begin_work()
+    send(
+        channel,
+        request,
+        Message.Submit(
+            Submit(
+                command=command,
+                view=view,
+                input_selection=profile,
+                requested_roots=absolute.0,
+                options="",
+                observation_policy=policy,
+            ),
+        ),
+    )?
+    # 2. Execution is impossible before a real captured epoch and a successful selected native result.
+    complete, interest = await_completion(channel, request)?
+    record_work("engine_request", source.0, submitted)
+    if complete.observation_handle != "":
+        println(report(store, complete.observation_handle)?)
+    if complete.status != CompletionStatus.Success:
+        return Ok(1)
+    mut binary = ""
+    match read_program(store, complete.result_handles)?:
+        None => return Err("engine completed without a native descriptor")
+        Some(unit) =>
+            if unit.identity != complete.admission_proof:
+                return Err("engine completion and admitted native identity disagree")
+            binary = unit.binary
+    # 3. Complete already holds this caller's execution lease; the engine never runs or retries user code.
+    executing = begin_work()
+    mut code: Result[i32, str] = Ok(0)
+    if command == "run":
+        code = run_program(Path(binary), arguments, argv0, true)
+    record_work("engine_child", source.0, executing)
+    # Execution has ended. Cleanup cannot replace its outcome, and disconnect releases the lease if delivery fails.
+    _ = send(channel, request, Message.Release(Release(lease_id=interest)))
+    _ = channel.transport.close()
+    return code
+
+
+def execute_local(
+    store: Path,
+    compiler: str,
+    command: str,
+    source: Path,
+    view: str,
+    profile: str,
+    arguments: list[str],
+    argv0: Option[str],
+) -> Result[Option[i32], str]:
+    """An unchanged local capture and selected native record need no service request or control round trips."""
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    if selected.index == "":
+        return Ok(None)
+    capturing = begin_work()
+    captured = prepare_submit(
+        store,
+        Submit(
+            command=command,
+            view=view,
+            input_selection=profile,
+            requested_roots=source.0,
+            options="",
+            observation_policy="",
+        ),
+    )?
+    record_work("engine_capture", source.0, capturing)
+    if captured.commits != 0:
+        return Ok(None)
+    handle = program_handle(captured.identity, compiler, view)?
+    selecting = begin_work()
+    exact = view_snapshot(captured.snapshot, view).map_err((error) => error.message())?
+    match selected_program(exact, handle)?:
+        None => return Ok(None)
+
+        Some(unit) =>
+            pinning = begin_work()
+            held = lease(exact).map_err((error) => error.message())?
+            record_work("engine_lease", view, pinning)
+            restoring = begin_work()
+            restore_program(store, unit)?
+            record_work("engine_unit", unit.identity, restoring)
+            record_work("engine_select", view, selecting)
+            trace(
+                f"engine local: encodings={captured.encodings} publications={captured.commits} reads={captured.counters.in_reach.reads} hashes={captured.counters.in_reach.hashes}",
+            )
+            if command == "run":
+                executing = begin_work()
+                code = run_program(Path(unit.binary), arguments, argv0, true)?
+                record_work("engine_child", source.0, executing)
+                return Ok(Some(code))
+            return Ok(Some(0))
+
+
+pub def service_identity(store: Path) -> Result[Identity, str]:
+    """Bind one persistent physical-store id to exact service and admitted compiler generations."""
+    return identity_for(store, installed_compiler()?)
+
+
+def installed_compiler() -> Result[str, str]:
+    """Read this home's installation admission once, before deciding whether a service is needed."""
+    admitting = begin_work()
+    catalog = home()?.joinpath("bakery")
+    compiler = installation_compiler(catalog)?
+    record_work("engine_admission", catalog.0, admitting)
+    return Ok(compiler)
+
+
+def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
+    """Prepare service negotiation only for a request that cannot be answered by a local record read."""
+    binary = executable()?
+    generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    return Ok(
+        Identity(
+            store_id=physical_store_identity(store)?,
+            profile="incan.engine.unit-records/1",
+            service_generation=generation,
+            compiler_generation=compiler,
+            uid=owner_uid(store).map_err(detail)?,
+        ),
+    )
+
+
+def physical_store_identity(store: Path) -> Result[str, str]:
+    """Name the physical root by its filesystem identity, independent of homes, aliases and directory contents."""
+    match file_metadata(store)?:
+        Some(found) => return fingerprint(["incan.engine.physical-store/1", str(found.device), str(found.inode)])
+        None => return Err("engine store root disappeared during admission")
+
+
+def installation_compiler(store: Path) -> Result[str, str]:
+    """Admit a toolchain once per installation in the home catalog, independent of project or alternate stores."""
+    pin = toolchain_file()?
+    stamp = observe(pin)?.stamp
+    configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
+    key = f"incan.engine.installation\t{fingerprint([pin.0] + configuration)?}"
+    selected = snapshot(store).map_err((error) => error.message())?
+    if let Some(compiler) = admitted_compiler(selected, key, stamp)?:
+        return Ok(compiler)
+    held = claim(store, "incan.engine.installation").map_err((error) => error.message())?
+    checked = snapshot(store).map_err((error) => error.message())?
+    if let Some(compiler) = admitted_compiler(checked, key, stamp)?:
+        return Ok(compiler)
+    compiler = compiler_fingerprint(load_toolchain()?)?
+    value = json_text(JsonValue.object({"pin": JsonValue.string(stamp), "compiler": JsonValue.string(compiler)}))?
+    _ = commit(put(begin(checked), key, value.encode("utf-8"))).map_err((error) => error.message())?
+    return Ok(compiler)
+
+
+def admitted_compiler(selected: Snapshot, key: str, stamp: str) -> Result[Option[str], str]:
+    """Read the portable compiler identity only while its editable installation pin matches admission."""
+    if let Some(text) = record_text(selected, key)?:
+        previous = parse(text).map_err((error) => error.message())?
+        if required_text(previous, "pin")? == stamp:
+            return Ok(Some(required_text(previous, "compiler")?))
+    return Ok(None)
+
+
+def await_completion(mut channel: Channel, request: bytes) -> Result[tuple[Complete, str], str]:
+    """Require Accepted before Captured and Captured before Complete, with exact request correlation throughout."""
+    mut interest = ""
+    mut captured = false
+    while true:
+        frame = channel.receive().map_err(detail)?
+        if frame.header.request != request:
+            return Err("engine replied for a different request")
+        match frame.message:
+            Message.Accepted(value) =>
+                if interest != "":
+                    return Err("engine accepted this request twice")
+                interest = value.interest_token
+            Message.Captured(value) =>
+                if interest == "" or value.epoch == "" or value.snapshot == "":
+                    return Err("engine captured without accepted inputs")
+                captured = true
+            Message.Event(event) =>
+                if event.status == "Console":
+                    relay_console(event.trace_handle)?
+            Message.Complete(value) =>
+                if not captured:
+                    return Err("engine completed before capture")
+                channel.acknowledge(frame).map_err(detail)?
+                return Ok((value, interest))
+            Message.Refused(value) => return Err(value.detail)
+            Message.Ack(_) => pass
+            _ => return Err("unexpected engine reply while awaiting completion")
+        channel.acknowledge(frame).map_err(detail)?
+
+
+def send(mut channel: Channel, request: bytes, message: Message) -> Result[None, str]:
+    """Send one bounded command at a boundary with available credits; no request is queued implicitly."""
+    match channel.send(request, message).map_err(detail)?:
+        SendOutcome.Sent(_) => return Ok(None)
+        SendOutcome.Blocked => return Err("engine request blocked without credit")
+
+
+def detail(refusal: Refusal) -> str:
+    """Preserve the typed protocol refusal's context at the CLI's textual error boundary."""
+    return refusal.detail

@@ -38,6 +38,8 @@ pub enum Retirement:
     Idle
     Footprint
     Incompatible
+    # The caller requested one activation, so successful cleanup is followed by process teardown.
+    ActivationComplete
     # The process state is unsafe for any further request, so no queued request is served either.
     Unsafe
 

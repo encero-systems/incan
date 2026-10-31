@@ -5,7 +5,7 @@ from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
-from files import optional_text as text
+from files import make_directory, parse_json, read, remove, required_text, optional_text as text
 
 
 pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
@@ -46,6 +46,9 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
     protocol.write_text(data, "utf-8", "strict", None).map_err((error) => error.message())?
     mut command = Command.new(incan)
     command.arg("mcp").arg(".").current_dir(project.0)
+    observations = project.joinpath(".mcp-preparation")
+    make_directory(observations)?
+    command.env("INCAN_JEC_TRACE", observations.0)
     command.stdin(File.open(protocol.0).map_err((error) => str(error))?)
     output = command.output().map_err((error) => str(error))?
     protocol.unlink().map_err((error) => error.message())?
@@ -92,6 +95,21 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
     summary = result(replies[10])?.to_json().map_err((error) => error.message())?
     if "incan://graph/snapshot" not in resources or "snapshot_id" not in summary:
         return Err("MCP orientation resources are missing current snapshot facts")
+    check_preparations(observations)?
+    return Ok(None)
+
+
+def check_preparations(directory: Path) -> Result[None, str]:
+    """Four graph requests prepare four times; the context's snapshot probe shares its request's preparation."""
+    mut preparations = 0
+    for path in directory.iterdir().map_err((error) => error.message())?:
+        for line in read(path)?.split("\n"):
+            if line != "" and required_text(parse_json(line)?, "category")? == "registry_index":
+                preparations += 1
+        remove(path)?
+    directory.rmdir().map_err((error) => error.message())?
+    if preparations != 4:
+        return Err(f"four MCP graph requests prepared {preparations} times; expected four")
     return Ok(None)
 
 

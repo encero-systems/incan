@@ -13,7 +13,7 @@ use super::type_info::{
 };
 use super::{TypeChecker, VisibilityPoint, YieldContext};
 use crate::ast::{FunctionDecl, Program, Span, Spanned, Statement};
-use crate::diagnostics::CompileError;
+use crate::diagnostics::{CompileError, ErrorKind};
 use crate::symbols::ResolvedType;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -133,6 +133,7 @@ impl BodyLocal {
     /// root inventory requires every added artifact to choose local, declaration or final-settlement ownership.
     fn take(checker: &mut TypeChecker) -> Self {
         let TypeCheckInfo {
+            body_ir_oracle_inputs: _,
             traits,
             derivations: _,
             expressions,
@@ -256,22 +257,13 @@ impl BodyLocal {
     /// Append one checked body's facts exactly once. Relocate only the local open-value indices; every map value and
     /// deferred decision otherwise reaches the original settlement owners unchanged. Diagnostics are not facts here:
     /// they already occupy their traversal positions in the writer and are published by settlement.
-    fn append(mut self, checker: &mut TypeChecker) {
+    fn append(self, checker: &mut TypeChecker) {
         checker
             .type_info
             .declarations
             .nested_declaration_identities
             .extend(self.nested);
-        let offset = checker.type_info.expressions.body_ir_open_calls.len();
-        for value in self
-            .expressions
-            .body_ir_open_values
-            .values_mut()
-            .chain(self.expressions.body_ir_open_bindings.values_mut())
-        {
-            value.group += offset;
-        }
-        append_expressions(&mut checker.type_info.expressions, self.expressions);
+        append_local_expressions(&mut checker.type_info.expressions, self.expressions);
         append_references(&mut checker.type_info.references, self.references);
         append_calls(&mut checker.type_info.calls, self.calls);
         append_protocols(&mut checker.type_info.protocols, self.protocols);
@@ -285,6 +277,20 @@ impl BodyLocal {
             .extend(self.iterator_sum_items);
         append_c_abi(&mut checker.type_info.c_abi, self.c_abi);
     }
+}
+
+/// Relocate one local expression projection into its receiving index space before the exhaustive field join. Native
+/// read-only assembly and compatibility publication share this operation so open-value groups cannot drift.
+fn append_local_expressions(target: &mut ExpressionArtifacts, mut local: ExpressionArtifacts) {
+    let offset = target.body_ir_open_calls.len();
+    for value in local
+        .body_ir_open_values
+        .values_mut()
+        .chain(local.body_ir_open_bindings.values_mut())
+    {
+        value.group += offset;
+    }
+    append_expressions(target, local);
 }
 
 /// Consume all expressions fields into the compatibility view; field additions require an explicit ownership choice.
@@ -1181,11 +1187,148 @@ impl CheckedBodyView {
 
     /// Whether local checking or deferred settlement refused this owner. Successful checking of another owner does
     /// not turn a refused result into usable Body IR input. A false result does not establish whole-module admission;
-    /// declaration and module refusals remain independent inputs.
+    /// declaration and module refusals remain independent inputs. Local warning and lint messages do not refuse an
+    /// owner.
     pub(crate) fn is_refused(&self) -> bool {
-        !self.diagnostics.is_empty()
+        self.diagnostics
+            .iter()
+            .any(|value| !matches!(value.kind(), ErrorKind::Warning | ErrorKind::Lint))
             || !self.mutation.is_empty()
             || !self.dictionary.is_empty()
             || !self.open.is_empty()
+    }
+}
+
+/// Invalid use of the native read adapter, rather than a new source-language diagnostic. The record scope separately
+/// binds both revision-local handles to the same checked source revision and producer profile.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub(crate) enum CheckedBodyInputError {
+    /// A statement view and a declaration/default view must keep their different ownership roles.
+    #[error("native body inputs require statement and declaration owners")]
+    WrongOwnerRole,
+    /// The supplied declaration belongs to another revision-local lexical owner.
+    #[error("native body inputs belong to different declaration owners")]
+    DifferentOwner,
+    /// Refused predecessor values cannot supply executable Body IR inputs.
+    #[error("native body inputs require accepted settled predecessors")]
+    RefusedOwner,
+}
+
+/// Native read-only settled owners retained for an explicit Body IR oracle activation. The compatibility module
+/// projection is not a keyed fact source; retaining it must never be mistaken for record-backed production.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct BodyIrOracleInputs {
+    declarations: BTreeMap<Span, Arc<CheckedBodyView>>,
+    bodies: BTreeMap<Span, Arc<CheckedBodyView>>,
+}
+
+impl TypeChecker {
+    /// Retain indexed references to completed native owners for the Body IR migration oracle, without checking or
+    /// settling them again.
+    pub(crate) fn body_ir_oracle_inputs(&self) -> BodyIrOracleInputs {
+        BodyIrOracleInputs {
+            declarations: self
+                .checked_declarations
+                .iter()
+                .map(|body| (body.owner(), Arc::clone(body)))
+                .collect(),
+            bodies: self
+                .checked_bodies
+                .iter()
+                .map(|body| (body.owner(), Arc::clone(body)))
+                .collect(),
+        }
+    }
+}
+
+impl BodyIrOracleInputs {
+    /// Locate a default's exact checked writer by its expression key, not by a preset binding's signature span or
+    /// an inferred source-range enclosure. Ambiguous ownership is unavailable, never an arbitrary chosen writer.
+    pub(crate) fn default_owner(&self, expression: Span) -> Option<&CheckedBodyView> {
+        let mut selected = self
+            .declarations
+            .values()
+            .filter(|declaration| declaration.expressions().expr_types.contains_key(&expression));
+        let owner = selected.next()?;
+        if selected.next().is_some() {
+            return None;
+        }
+        Some(owner)
+    }
+
+    /// Locate two settled owners by their revision-local source handle. Persistent source identity and snapshot
+    /// authentication belong to the scoped record source, not to this compatibility oracle container.
+    pub(crate) fn owners(&self, span: Span) -> Option<(&CheckedBodyView, &CheckedBodyView)> {
+        let body = self.bodies.get(&span)?;
+        let declaration = self.declarations.get(&span)?;
+        Some((body, declaration))
+    }
+}
+
+impl CheckedBodyView {
+    /// Read the references a body builder needs from its two settled owners. Parameter writes belong to declaration
+    /// preparation, while statement references belong to the body. Reuse the existing reference join in its original
+    /// declaration-before-statement order; no checker, settlement, diagnostics or other body's facts are consulted.
+    pub(crate) fn reference_inputs(&self, declaration: &Self) -> Result<ReferenceArtifacts, CheckedBodyInputError> {
+        if self.local.kind == LocalOwnerKind::Declaration || declaration.local.kind != LocalOwnerKind::Declaration {
+            return Err(CheckedBodyInputError::WrongOwnerRole);
+        }
+        if self.owner() != declaration.owner() {
+            return Err(CheckedBodyInputError::DifferentOwner);
+        }
+        if self.is_refused() || declaration.is_refused() {
+            return Err(CheckedBodyInputError::RefusedOwner);
+        }
+        let mut references = declaration.references().clone();
+        append_references(&mut references, self.references().clone());
+        Ok(references)
+    }
+
+    /// Assemble this lexical body's local inputs over caller-supplied earlier facets. The caller owns the selection
+    /// of those facets; this operation never reads another body or reconstructs shared declaration facts. Declaration
+    /// expressions precede statement facts, and open-value group indices are relocated exactly as in publication.
+    pub(crate) fn append_lowering_inputs(
+        &self,
+        declaration: &Self,
+        target: &mut TypeCheckInfo,
+    ) -> Result<(), CheckedBodyInputError> {
+        let references = self.reference_inputs(declaration)?;
+        for owner in [declaration, self] {
+            owner.append_native_inputs(target);
+        }
+        append_references(&mut target.references, references);
+        Ok(())
+    }
+
+    /// Read a previously settled default/declaration projection over already selected earlier facets. A callee's
+    /// statement body is never needed to retain its residual defaults or declaration-time lexical closures.
+    pub(crate) fn append_declaration_inputs(&self, target: &mut TypeCheckInfo) -> Result<(), CheckedBodyInputError> {
+        if self.local.kind != LocalOwnerKind::Declaration {
+            return Err(CheckedBodyInputError::WrongOwnerRole);
+        }
+        if self.is_refused() {
+            return Err(CheckedBodyInputError::RefusedOwner);
+        }
+        self.append_native_inputs(target);
+        append_references(&mut target.references, self.references().clone());
+        Ok(())
+    }
+
+    /// Copy one owner's native local families through the existing exhaustive joins. This is a read projection,
+    /// not another checker, settlement, shared-input collector or witness implementation.
+    fn append_native_inputs(&self, target: &mut TypeCheckInfo) {
+        append_local_expressions(&mut target.expressions, self.expressions().clone());
+        append_calls(&mut target.calls, self.calls().clone());
+        append_protocols(&mut target.protocols, self.protocols().clone());
+        append_rust(&mut target.rust, self.rust().clone());
+        append_traits(&mut target.traits, self.traits().clone());
+        append_c_abi(&mut target.c_abi, self.c_abi().clone());
+        target
+            .declarations
+            .nested_declaration_identities
+            .extend(self.local.nested.clone());
+        target
+            .body_ir_iterator_sum_items
+            .extend(self.local.iterator_sum_items.clone());
     }
 }

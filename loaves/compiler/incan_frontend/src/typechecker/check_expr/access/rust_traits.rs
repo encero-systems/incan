@@ -1367,6 +1367,7 @@ impl TypeChecker {
             other.borrow_cost == selected.borrow_cost
                 && (other.path != selected.path || other.arguments != selected.arguments)
         }) {
+            self.record_tied_rust_trait_callees(call.span, &candidates);
             return None;
         }
         let selected = candidates.remove(0);
@@ -1400,6 +1401,39 @@ impl TypeChecker {
             return Some(rusttype);
         }
         Some(result)
+    }
+
+    /// Retain the equally ranked trait callees a call could not choose between, each as its trait with the trait's
+    /// arguments, for the refusal of a call that no later step selects. The first tie a call records is kept.
+    fn record_tied_rust_trait_callees(&mut self, span: crate::ast::Span, candidates: &[TraitCandidate]) {
+        let Some(best) = candidates.first().map(|candidate| candidate.borrow_cost) else {
+            return;
+        };
+        let mut tied: Vec<String> = Vec::new();
+        for candidate in candidates.iter().take_while(|candidate| candidate.borrow_cost == best) {
+            // Arguments hold Self, then the trait's arguments, then the method's own type arguments.
+            let trait_arguments = candidate
+                .arguments
+                .len()
+                .saturating_sub(1 + candidate.signature.type_params.len());
+            let arguments = candidate
+                .arguments
+                .iter()
+                .skip(1)
+                .take(trait_arguments)
+                .map(render_resolved_type_as_rust_arg)
+                .collect::<Vec<_>>();
+            let display = match candidate.path.rsplit_once("::") {
+                Some((trait_path, method)) if !arguments.is_empty() => {
+                    format!("{trait_path}<{}>::{method}", arguments.join(", "))
+                }
+                _ => candidate.path.clone(),
+            };
+            if !tied.contains(&display) {
+                tied.push(display);
+            }
+        }
+        self.tied_rust_trait_callees.entry(span).or_insert(tied);
     }
 
     /// The rusttype an associated function is called on (`Name.from(...)` over a Rust String), which keeps that

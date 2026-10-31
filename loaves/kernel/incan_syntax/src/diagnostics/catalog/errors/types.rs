@@ -2435,12 +2435,13 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
 
 /// Report a Rust associated call whose owner type arguments nothing in the program fixes (#1720).
 ///
-/// `HashMap.new()` leaves `K` and `V` open; Rust would fill them from a later insert, a typed return, or an
-/// annotation on the binding, but a binding that is never read again gives it nothing to work with, and the build
-/// stops on it. `owner` is the receiver as the source spells it (`HashMap`), `method` the associated function,
-/// `type_params` the owner's open parameters, and `binding` the local the result was bound to, or `None` when the
-/// value was discarded. The hint shows both spellings that close the parameters, with example types sized to the
-/// parameter count. `INCAN-T0105` is its stable code.
+/// `HashMap.new()` leaves `K` and `V` open; a later use of the binding fixes them, such as an insert, a typed parameter
+/// or a typed return, but a binding that is never read again gives nothing to fix them. This refusal covers a result
+/// that is discarded or bound to a local nothing reads; a binding whose first use fixes nothing is refused with
+/// `INCAN-T0122` instead. `owner` is the receiver as the source spells it (`HashMap`), `method` the
+/// associated function, `type_params` the owner's open parameters, and `binding` the local the result was bound to,
+/// or `None` when the value was discarded. The hint shows both spellings that close the parameters, with example
+/// types sized to the parameter count. `INCAN-T0105` is its stable code.
 pub fn rust_owner_type_args_not_inferred(
     owner: &str,
     method: &str,
@@ -2503,6 +2504,61 @@ pub fn rust_trait_method_not_declared(trait_path: &str, method: &str, span: Span
         span,
     )
     .with_hint("Qualify the call with the trait that declares the method, or call it as a method on the receiver value")
+}
+
+/// Why native callee selection found no single Rust callee for a call whose arguments check (#2481).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeCalleeGap<'a> {
+    /// Type parameters of the callee that nothing in the call fixes, by name.
+    OpenTypeParameters(&'a [String]),
+    /// No admitted implementation of the method applies to the receiver and the arguments.
+    NoCandidate,
+    /// Several implementations apply equally, by native path.
+    Ambiguous(&'a [String]),
+}
+
+/// A native method call whose arguments check, but for which no single Rust callee can be selected (#2481).
+///
+/// A native call compiles only through the callee the checker selects for it, so a call without one cannot be built;
+/// it is refused at checking instead of at the build. `callee` names the requested method
+/// (`rust::std::process::Command.args`) and `gap` says why selection failed. `INCAN-T0122` is its stable code.
+pub fn rust_callee_not_selected(callee: &str, gap: NativeCalleeGap<'_>, span: Span) -> CompileError {
+    let quoted = |names: &[String]| {
+        let names = names.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>();
+        match names.as_slice() {
+            [] => String::new(),
+            [only] => only.clone(),
+            [init @ .., last] => format!("{} and {last}", init.join(", ")),
+        }
+    };
+    let (reason, note, hint) = match gap {
+        NativeCalleeGap::OpenTypeParameters(names) => (
+            match names {
+                [_] => format!("its type parameter {} is not fixed by the call", quoted(names)),
+                _ => format!("its type parameters {} are not fixed by the call", quoted(names)),
+            },
+            "Nothing in the receiver, the arguments, the type the result is expected to have or the first use of the \
+             local it is bound to fixes them, and a native call compiles only through a callee whose type arguments \
+             are all known",
+            "Write the type arguments in the call, annotate the type the result is bound to, or pass an argument \
+             whose type fixes them",
+        ),
+        NativeCalleeGap::NoCandidate => (
+            "no admitted implementation of the method applies to this receiver and these arguments".to_string(),
+            "An imported trait may declare the method while the receiver's type has no admitted implementation of \
+             that trait",
+            "Call the method on a value whose type implements it, or convert the receiver to such a type first",
+        ),
+        NativeCalleeGap::Ambiguous(candidates) => (
+            format!("{} apply equally", quoted(candidates)),
+            "Several implementations accept the receiver and the arguments, and nothing in the call chooses one",
+            "Call a method or conversion whose signature names the type it produces",
+        ),
+    };
+    CompileError::type_error(format!("Cannot select the Rust callee of `{callee}`: {reason}"), span)
+        .with_stable_code("INCAN-T0122")
+        .with_note(note)
+        .with_hint(hint)
 }
 
 /// A Rust import is being used as a constructor, but the compiler lacks enough metadata to emit valid Rust.

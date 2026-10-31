@@ -2,10 +2,11 @@
 
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
-from std.fs import Path
+from std.fs import MappedView, Path
 from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from store_index import view_digest
 from segment_store import (
     EXPECT_ABSENT,
     EXPECT_REPAIR,
@@ -197,6 +198,31 @@ pub def record_key(spec: SetSpec, record: Record) -> Result[str, StoreError]:
     """The full immutable revision identity, scoped by origin and identity profile, independent of value digest."""
     fields = [spec.profile.identity, spec.profile.schema, spec.profile.codec, spec.origin, record.key, record.revision]
     return Ok("sealed/record/" + content_digest(json_bytes(strings(fields))?))
+
+
+pub def mapped_value(view: Snapshot, spec: SetSpec, record: Record, digest: str) -> Result[MappedView, StoreError]:
+    """
+    Read one exact admitted revision as a checked, owner-anchored mapping without decoding its value.
+
+    The caller supplies the selected profile, ownership, revision and full value digest, and holds a snapshot lease
+    while consuming it. The envelope must match that exact contract. Missing envelopes or payloads and damaged bytes
+    are errors, never absence. The returned view retains its immutable inode; no whole-value copy is made.
+    """
+    check_digest(digest)?
+    key = record_key(spec, record)?
+    expected = envelope_bytes(spec, Entry(record=record, value=digest))?
+    if required_value(view, key)? != expected:
+        return Err(problem("integrity", key, "admitted revision differs from the selected contract"))
+    path = payload_path(view.root, digest)
+    if path.is_symlink():
+        return Err(problem("integrity", path.0, "a canonical value is a symbolic link"))
+    mapped = path.map_read().map_err((error) => problem("integrity", path.0, error.message()))?
+    match mapped.view(0, mapped.len()):
+        None => return Err(problem("integrity", path.0, "value has no whole mapped range"))
+        Some(value) =>
+            if hexlify(view_digest(value)) != digest:
+                return Err(problem("integrity", path.0, "value differs from its content name"))
+            return Ok(value)
 
 
 def verify_transport(directory: Path, root: str, supported: Profile) -> Result[VerifiedSet, StoreError]:

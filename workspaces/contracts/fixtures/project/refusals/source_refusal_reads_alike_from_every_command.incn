@@ -1,0 +1,14 @@
+# behavior: run and build print a source refusal exactly as check does, as the rendered diagnostic, never as a quoted and escaped debug string of it
+# cli-commands:
+#   check src/main.incn
+#   run src/main.incn
+#   build src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   has type mismatch: expected 'Int', found 'Str'
+#   count: int = "seven"
+# expect-exit: 1
+
+def main() -> None:
+    count: int = "seven"
+    println(count)

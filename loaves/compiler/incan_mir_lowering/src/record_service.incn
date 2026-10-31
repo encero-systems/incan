@@ -1,10 +1,11 @@
 """Compiler record-service contracts from DD-0013; handles carry no compiler heap representation."""
 
-from records import RecordKey, RecordReads
+from record_scope import RecordKey, RecordReads, RecordRequest, ReadScope, PreparationEvidence, valid_key, valid_request
 
 pub const RECORD_SERVICE_SCHEMA: str = "incan.compiler-record-service/1"
 
 
+@derive(Eq)
 pub enum ProducerStage:
     """Compiler-owned phases, ordered within the namespace import rank."""
 
@@ -64,7 +65,7 @@ pub model PreparedInputs:
     pub output: RecordKey
     pub snapshot: InputSnapshot
     pub profile: ProducerProfile
-    pub required_keys: list[RecordKey]
+    pub required_reads: list[RecordRequest]
     pub rank_certificate: RankCertificate
     pub selector_witnesses: RecordRoot
 
@@ -156,9 +157,9 @@ pub trait CompilerRecordService:
     """
     Prepare and evaluate compiler-owned records without running the whole-program check or lowering path.
 
-    The reader is the existing keyed read API. Its table positions and boolean witnesses are bootstrap-local;
-    revision-bound mapped handles and exact witness roots are required before a producer can publish `Produced`.
-    No implementation of this contract is supplied until the checker can consume a final keyed environment.
+    The reader binds every response to its full key, selection, immutable snapshot and producer profile. A failed
+    activation cannot publish a partial witness set. Native value adaptation and store admission remain separate
+    boundaries; this contract supplies no whole-module implementation.
     """
 
     def prepare(
@@ -180,3 +181,33 @@ pub trait CompilerRecordService:
     ) -> Evaluation:
         """Evaluate once from final inputs; an unfinished read is CompilerFaultKind.UnfinishedSupplier."""
         pass
+
+
+pub def prepared_reader(
+    ready: ReadyWork,
+    snapshot: InputSnapshot,
+    prepared: PreparedInputs,
+) -> Result[RecordReads, CompilerFaultKind]:
+    """Bind one evaluation's reader to its prepared output, exact snapshot/profile and bounded read envelope."""
+    if snapshot.root.digest == "" or snapshot.root.digest != prepared.snapshot.root.digest:
+        return Err(CompilerFaultKind.SnapshotMismatch)
+    if ready.profile.identity.digest == "" or ready.profile.identity.digest != prepared.profile.identity.digest:
+        return Err(CompilerFaultKind.ProfileMismatch)
+    if not valid_key(ready.output):
+        return Err(CompilerFaultKind.InvalidPreparation)
+    rank = prepared.rank_certificate.rank
+    if ready.output != prepared.output or ready.stage != rank.stage or rank.namespace < 0 or rank.dependency < 0:
+        return Err(CompilerFaultKind.InvalidPreparation)
+    if prepared.rank_certificate.evidence.digest == "" or prepared.selector_witnesses.digest == "":
+        return Err(CompilerFaultKind.InvalidPreparation)
+    for request in prepared.required_reads:
+        if not valid_request(request):
+            return Err(CompilerFaultKind.InvalidPreparation)
+    return Ok(RecordReads(
+        scope=ReadScope(snapshot=snapshot.root.digest, profile=ready.profile.identity.digest),
+        preparation=PreparationEvidence(
+            output=prepared.output, rank_certificate=prepared.rank_certificate.evidence.digest,
+            selector_witnesses=prepared.selector_witnesses.digest,
+        ),
+        allowed=prepared.required_reads,
+    ))

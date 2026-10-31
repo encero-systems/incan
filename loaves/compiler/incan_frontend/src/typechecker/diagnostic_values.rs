@@ -14,7 +14,7 @@ use serde::{Serialize, ser};
 use sha2::{Digest, Sha256};
 
 use crate::ast::{Declaration, Program, Span, Spanned};
-use crate::diagnostics::{CompileError, DiagnosticRanges, DiagnosticRecipe};
+use crate::diagnostics::{CompileError, DiagnosticRanges, DiagnosticRecipe, ErrorKind};
 use incan_semantics_core::SymbolOrigin;
 
 /// A stored diagnostic: the catalog recipe it was built from, without coordinates, and one anchor per source range
@@ -25,6 +25,13 @@ pub(crate) struct AnchoredDiagnostic {
     primary: SourceAnchor,
     related: Vec<SourceAnchor>,
     declarations: Vec<DeclarationSite>,
+}
+
+impl AnchoredDiagnostic {
+    /// Severity and category of the stored value, readable without binding it to a revision.
+    pub(crate) fn kind(&self) -> ErrorKind {
+        self.recipe.kind()
+    }
 }
 
 /// Owner declaration of an anchor, independent of where the declaration sits in its file.

@@ -396,9 +396,43 @@ impl TypeChecker {
         }
         self.reject_unbound_c_abi_span_constructors();
         self.reject_unbound_scoped_c_string_views(&stmt.node);
-        // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its
-        // context (an argument's declared type, a typed return); only the two shapes above are refused (#1720).
-        self.open_rust_generic_calls.clear();
+        self.settle_open_rust_generic_calls();
+    }
+
+    /// End the statement's native call selection facts. A call nested somewhere other than a direct binding or a
+    /// bare statement is closed by its context (an argument's declared type, a typed return) when its callee was
+    /// retained; one without a callee is refused (#1720, #2481). A watched binding this statement read first takes
+    /// the type its use fixed, or is refused.
+    fn settle_open_rust_generic_calls(&mut self) {
+        let mut nested = std::mem::take(&mut self.open_rust_generic_calls)
+            .into_iter()
+            .collect::<Vec<_>>();
+        nested.sort_by_key(|(span, _)| *span);
+        for (span, call) in nested {
+            self.refuse_unselected_open_rust_generic_call(&call, span);
+        }
+        self.tied_rust_trait_callees.clear();
+        self.settle_read_open_rust_generic_bindings(self.statement_blocks.current);
+    }
+
+    /// Refuse the watched bindings first read in statement block `block` for their open parameters: a first use that
+    /// fixes them stops the watch at once, so a binding still watched here was read by a use that fixed nothing
+    /// (#2481).
+    fn settle_read_open_rust_generic_bindings(&mut self, block: usize) {
+        if !self
+            .open_rust_generic_bindings
+            .iter()
+            .any(|binding| binding.read_in == Some(block))
+        {
+            return;
+        }
+        let (read, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
+            .into_iter()
+            .partition(|binding| binding.read_in == Some(block));
+        self.open_rust_generic_bindings = still_watched;
+        for binding in read {
+            self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
+        }
     }
 
     /// Check a tuple unpack before introducing its names. Plain names reassign the nearest active binding while
@@ -1069,7 +1103,7 @@ impl TypeChecker {
         self.bind_scoped_c_string_view_assignment(target_span, assign.value.span);
         if assign.ty.is_none() {
             // An annotation is itself what fixes the arguments; only an unannotated binding is watched (#1720).
-            self.bind_open_rust_generic_assignment(&assign.name, assign.value.span);
+            self.bind_open_rust_generic_assignment(assign, span);
         }
         self.consumed_iterator_bindings.remove(&assign.name);
         self.transferred_c_resource_bindings.remove(&assign.name);
@@ -1329,14 +1363,15 @@ impl TypeChecker {
     /// Attach the open Rust associated call a new binding received to that binding, or refuse it at once when
     /// the binding is the discard `_` (#1720).
     ///
-    /// The call was recorded by its span when the method call resolved; a direct `name = call()` is the one place
-    /// a later reader can still fix the owner's type arguments, so the binding is watched until its block ends
-    /// instead of being refused here. `_` is never read, so nothing can fix them and the call is refused at once.
-    fn bind_open_rust_generic_assignment(&mut self, name: &str, value_span: Span) {
+    /// The call was recorded by its span when the method call resolved. A direct `name = call()` binding is watched
+    /// until its first use fixes the parameters, or until its block ends, so the refusal can name the binding to
+    /// annotate if nothing reads it. `_` is never read, so the call is refused at once.
+    fn bind_open_rust_generic_assignment(&mut self, assign: &AssignmentStmt, statement: Span) {
+        let value_span = assign.value.span;
         let Some(call) = self.open_rust_generic_calls.remove(&value_span) else {
             return;
         };
-        if name == "_" {
+        if assign.name == "_" {
             self.errors.push(errors::rust_owner_type_args_not_inferred(
                 &call.owner,
                 &call.method,
@@ -1346,11 +1381,35 @@ impl TypeChecker {
             ));
             return;
         }
+        let identity = self
+            .type_info
+            .resolved_write_identity(assign.name_span, &assign.name)
+            .cloned();
+        // The open native carrier and its item let the binding's methods dispatch to the native owner, so a method
+        // call can be the use that fixes the parameters (#2481).
+        if let Some(identity) = &identity {
+            if let Some(native) = &call.native {
+                self.type_info
+                    .rust
+                    .value_native_types
+                    .insert(identity.clone(), native.clone());
+            }
+            if let Some(item) = &call.native_item {
+                self.type_info
+                    .rust
+                    .value_item_paths
+                    .insert(identity.clone(), item.clone());
+            }
+        }
         self.open_rust_generic_bindings.push(super::OpenRustGenericBinding {
-            name: name.to_string(),
+            name: assign.name.clone(),
             block: self.statement_blocks.current,
             span: value_span,
             call,
+            assignment: assign.clone(),
+            statement,
+            identity,
+            read_in: None,
         });
     }
 
@@ -1371,26 +1430,50 @@ impl TypeChecker {
         ));
     }
 
-    /// Stop watching the open Rust generic bindings named `name`: a read or a reassignment reached it (#1720).
+    /// Note the first read of the open Rust generic bindings named `name`, by a read or a reassignment (#1720).
     ///
-    /// Any later reader is taken as the one that fixes the type arguments. That is deliberately generous, since
-    /// Rust's own inference decides which uses fix them; the checker refuses only a binding nothing reads at all.
+    /// The use that read is the one that must fix the owner's type arguments, and it fixes them while it is checked;
+    /// the end of the statement holding the read refuses a binding it left open (#2481).
     pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str) {
-        if self.open_rust_generic_bindings.is_empty() {
+        let block = self.statement_blocks.current;
+        for binding in &mut self.open_rust_generic_bindings {
+            if binding.name == name && binding.read_in.is_none() {
+                binding.read_in = Some(block);
+            }
+        }
+    }
+
+    /// Refuse an open Rust associated call that is no longer watched when checking retained no callee for it.
+    pub(in crate::typechecker) fn refuse_unselected_open_rust_generic_call(
+        &mut self,
+        call: &super::OpenRustGenericCall,
+        span: Span,
+    ) {
+        if self.type_info.rust.checked_calls.contains_key(&span) {
             return;
         }
-        self.open_rust_generic_bindings.retain(|binding| binding.name != name);
+        let callee = format!("{}.{}", call.owner, call.method);
+        self.errors.push(errors::rust_callee_not_selected(
+            &callee,
+            errors::NativeCalleeGap::OpenTypeParameters(&call.type_params),
+            span,
+        ));
     }
 
     /// Refuse every open Rust generic binding that the statement block `block` declared and nothing read (#1720).
     ///
-    /// Called when that block ends. Bindings of enclosing blocks stay watched: a read inside this block already
-    /// released them, and one after it still can.
+    /// Called when that block ends, after settling a read the block's last statement did not. Bindings of enclosing
+    /// blocks stay watched: one after this block can still read them.
     pub(in crate::typechecker) fn reject_unread_open_rust_generic_bindings_of_block(&mut self, block: usize) {
-        let (left_unread, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
+        self.settle_read_open_rust_generic_bindings(block);
+        let (left, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
             .into_iter()
             .partition(|binding| binding.block == block);
         self.open_rust_generic_bindings = still_watched;
+        let (read, left_unread): (Vec<_>, Vec<_>) = left.into_iter().partition(|binding| binding.read_in.is_some());
+        for binding in read {
+            self.refuse_unselected_open_rust_generic_call(&binding.call, binding.span);
+        }
         for binding in left_unread {
             self.errors.push(errors::rust_owner_type_args_not_inferred(
                 &binding.call.owner,

@@ -957,11 +957,15 @@ impl TypeChecker {
                 self.check_match(subject, arms, expr.span, Some(expected_ty))
             }
             _ => {
-                let ty = self.check_expr(expr);
+                let mut ty = self.check_expr(expr);
                 if self.errors.len() == errors_before
                     && let Some(expected) = expected
                 {
                     self.constrain_open_value_destination(expr.span, expected);
+                    // A typed destination can fix a watched local's open owner arguments (#2481).
+                    if let Some(fixed) = self.fix_open_rust_binding_by_destination(expr, expected) {
+                        ty = fixed;
+                    }
                 }
                 return self.retain_declared_conversion(expr, &ty, expected);
             }

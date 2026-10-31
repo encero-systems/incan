@@ -2,6 +2,7 @@
 
 from engine_messages import Hello, Welcome
 from engine_wire import DATA_CREDITS, MAX_PAYLOAD, Refusal, RefusalKind, zero_id
+from std.fs import Path
 
 pub const IDLE_SECONDS: int = 600
 const MAX_INTERESTS: int = 16
@@ -42,6 +43,7 @@ pub class ServiceState:
     """Bounded volatile control state; no semantic facts or durable request log live here."""
 
     pub identity: Identity
+    pub store: Path = Path("")
     pub interests: list[Interest] = []
     pub pins: list[str] = []
     pub clients: int = 0
