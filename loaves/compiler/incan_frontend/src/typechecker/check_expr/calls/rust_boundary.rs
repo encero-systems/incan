@@ -389,7 +389,13 @@ impl TypeChecker {
         }
         match &expression.node {
             Expr::Paren(inner) => self.rust_argument_native_type(inner),
-            Expr::Range { inclusive: false, .. } => Some(self.native_rust_signature_type("std::ops::Range<i64>", "")),
+            Expr::Range { inclusive: false, .. } => self
+                .type_info
+                .calls
+                .body_ir_constructor_types
+                .get(&expression.span)
+                .cloned()
+                .or_else(|| Some(self.native_rust_signature_type("std::ops::Range<i64>", ""))),
             _ => self.rust_native_value_type(expression),
         }
     }
@@ -597,6 +603,10 @@ impl TypeChecker {
             );
             let target = self.rust_inference_type(&target, parameters);
             let native_actual = self.rust_argument_native_type(Self::call_arg_expr(argument));
+            let native_actual = native_actual.map(|native| {
+                self.rust_range_bound_destination(sig, &parameter.type_display, Self::call_arg_expr(argument), &native)
+                    .unwrap_or(native)
+            });
             let actual = self.rust_inference_type(native_actual.as_ref().unwrap_or(actual), parameters);
             let (target, actual) = match (&target, &actual) {
                 (ResolvedType::Ref(_) | ResolvedType::RefMut(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {

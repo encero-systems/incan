@@ -6,7 +6,7 @@ use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, R
 use incan_lang::lang::types::numerics::NumericTypeId;
 
 use super::{TypeChecker, first_open_type_param};
-use crate::ast::Span;
+use crate::ast::{Expr, Span, Spanned};
 use crate::diagnostics::CompileError;
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
@@ -90,6 +90,89 @@ impl TypeChecker {
                 span,
             ));
         }
+    }
+
+    /// Infer a literal native carrier's element destination from the selected parameter's declared trait arguments.
+    /// Only unsuffixed range endpoints take this context. Matching impl self constructors must agree, and all impl
+    /// binders must close from the bound itself; a default i64 endpoint is never evidence against that destination.
+    pub(super) fn rust_range_bound_destination(
+        &self,
+        signature: &RustFunctionSig,
+        parameter: &str,
+        expression: &Spanned<Expr>,
+        native: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        if let Expr::Paren(inner) = &expression.node {
+            return self.rust_range_bound_destination(signature, parameter, inner, native);
+        }
+        let Expr::Range {
+            start,
+            end,
+            inclusive: false,
+        } = &expression.node
+        else {
+            return None;
+        };
+        if !super::super::ops::is_unsuffixed_integer_literal(start)
+            || !super::super::ops::is_unsuffixed_integer_literal(end)
+        {
+            return None;
+        }
+        let native = self.rust_inference_type(native, &[]);
+        let ResolvedType::Generic(base, _) = &native else {
+            return None;
+        };
+        let mut selected = None;
+        for bound in &signature.bounds {
+            if bound.self_type != parameter || bound.type_arguments.is_empty() {
+                continue;
+            }
+            let metadata = self.rust_item_metadata_for_path(&bound.path)?;
+            let RustItemKind::Trait(info) = &metadata.kind else {
+                continue;
+            };
+            for implementation in &info.implementations {
+                let template = self.rust_inference_type(
+                    &self.native_rust_signature_type(&implementation.self_type, ""),
+                    &implementation.type_params,
+                );
+                if !matches!(&template, ResolvedType::Generic(owner, _) if owner == base)
+                    || implementation.type_arguments.len() != bound.type_arguments.len()
+                {
+                    continue;
+                }
+                let mut inferred = HashMap::new();
+                for (template, destination) in implementation.type_arguments.iter().zip(&bound.type_arguments) {
+                    self.infer_type_param_bindings(
+                        &self.rust_inference_type(
+                            &self.native_rust_signature_type(template, ""),
+                            &implementation.type_params,
+                        ),
+                        &self.native_rust_signature_type(destination, ""),
+                        &mut inferred,
+                    );
+                }
+                let target = self.instantiate_rust_signature_type(&template, &implementation.type_params, &inferred);
+                if !matches!(&target, ResolvedType::Generic(_, arguments)
+                    if matches!(arguments.as_slice(), [ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_)]))
+                {
+                    continue;
+                }
+                if first_open_type_param(&target, &implementation.type_params).is_some()
+                    || first_open_type_param(&target, &signature.type_params).is_some()
+                {
+                    continue;
+                }
+                if selected
+                    .as_ref()
+                    .is_some_and(|previous| !self.rust_trait_carriers_match(previous, &target))
+                {
+                    return None;
+                }
+                selected = Some(target);
+            }
+        }
+        selected
     }
 
     /// Close missing callable binders from a bound whose subject is already known, repeating only while new bindings
