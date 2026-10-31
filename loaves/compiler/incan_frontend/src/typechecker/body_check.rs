@@ -749,6 +749,8 @@ impl TypeChecker {
     }
 }
 
+mod oracle_compare;
+pub(crate) mod records;
 #[cfg(test)]
 mod tests;
 

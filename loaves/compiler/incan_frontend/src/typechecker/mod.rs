@@ -42,13 +42,14 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
-mod body_check;
+pub(crate) mod body_check;
 mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
 pub(crate) use body_check::{BodyIrOracleInputs, CheckedBodyInputError, CheckedBodyView};
 pub use check_work::CheckWork;
+pub(crate) mod canonical_nodes;
 mod check_expr;
 mod check_stmt;
 mod collect;
