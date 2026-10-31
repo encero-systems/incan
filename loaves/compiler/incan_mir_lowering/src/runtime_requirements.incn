@@ -1,0 +1,47 @@
+"""Transient dependency requests produced by the runtime operations a planning attempt actually selects."""
+
+from rust::incan_semantics_core import CanonicalSymbolId
+from pub::incan_mir_plan import Plan, SourceSpan, StaticCell
+
+
+pub model RuntimeRequirement:
+    """An authenticated runtime declaration needed at an existing source operation's location."""
+
+    pub canonical: CanonicalSymbolId
+    pub path: str
+    pub span: SourceSpan
+
+
+pub enum RuntimeRetention:
+    """Runtime and instance retention completes, or asks for a missing authenticated declaration."""
+
+    Complete
+    NeedsRuntime(list[RuntimeRequirement])
+
+
+pub enum FramesPlanning:
+    """Static cells retained by completed frame planning, or the dependencies needed before retrying."""
+
+    Complete(list[StaticCell])
+    NeedsRuntime(list[RuntimeRequirement])
+
+
+pub enum BodyPlanning:
+    """Completed body storage and its original nominal count, or missing runtime declarations."""
+
+    Complete(tuple[list[StaticCell], int])
+    NeedsRuntime(list[RuntimeRequirement])
+
+
+pub enum UnitPlanning:
+    """A complete native plan or missing entry, distinct from prerequisites and real lowering refusals."""
+
+    Complete(Option[Plan])
+    NeedsRuntime(list[RuntimeRequirement])
+
+
+pub enum RefusalPlanning:
+    """A complete diagnostic census, or prerequisites that must resolve before it can publish its report."""
+
+    Complete(list[str])
+    NeedsRuntime(list[RuntimeRequirement])
