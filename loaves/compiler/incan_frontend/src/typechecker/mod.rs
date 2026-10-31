@@ -58,6 +58,7 @@ mod declaration_views;
 mod decorated_method_receivers;
 mod derive_contract;
 mod derive_requirements;
+mod diagnostic_values;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
@@ -7281,10 +7282,10 @@ impl TypeChecker {
             self.legacy_resolve_mut_arguments();
             self.refuse_copying_dict_lookups_of_uncopyable_values();
         } else {
-            self.settle_body_checks();
+            self.settle_body_checks(program);
         }
         #[cfg(not(test))]
-        self.settle_body_checks();
+        self.settle_body_checks(program);
     }
 
     /// Retain layout and trait facts after body checking without publishing a nominal snapshot yet. Native module

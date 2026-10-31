@@ -57,6 +57,7 @@ fn influence_facts_match_fresh_legacy_inference() -> Result<(), Box<dyn std::err
     assert_body_local_matrix()?;
     TypeChecker::assert_declaration_expression_owners()?;
     TypeChecker::assert_body_edit_reuse()?;
+    TypeChecker::assert_stored_diagnostics_follow_comment_edits()?;
     assert_environment_matrix()?;
     assert_imported_influences()?;
     assert_check_work_scope()?;
@@ -118,6 +119,16 @@ fn assert_checkers(
     comparable_work.body_view_reuses = 0;
     comparable_work.mutation_components = 0;
     comparable_work.mutation_member_visits = 0;
+    assert_eq!(
+        comparable_work.detached_anchors, 0,
+        "every stored diagnostic range is anchored to syntax"
+    );
+    eprintln!(
+        "stored-diagnostics\tvalues={}\tnode_relative={}\tdetached={}",
+        comparable_work.stored_diagnostics, comparable_work.node_relative_anchors, comparable_work.detached_anchors
+    );
+    comparable_work.stored_diagnostics = 0;
+    comparable_work.node_relative_anchors = 0;
     assert_eq!(comparable_work, legacy.check_work(), "{source}");
 
     assert_eq!(
