@@ -26,12 +26,12 @@ from std.fs import Path
 from std.encoding.hex import hexlify
 from std.hash import sha256
 from std.json import JsonValue
-from files import read, read_json
-from home import TOOLCHAIN, home
+from files import read_json
+from home_paths import TOOLCHAIN, home
 from observation import observe
-from publication import publish
 from json_fields import array, field, strings, text_field, required_items, required_text
 from native_closure_input import NativeClosureInput
+pub from toolchain_types import NativeCrate, Toolchain
 from unit_publication import (
     PayloadAdmission,
     import_payload,
@@ -44,6 +44,8 @@ from compiler_facts import FactAdmission, admit_fact, verified_fact, relocate_fa
 from apple_sdk import selected_sdk
 from std.environ import get_or
 from jec import begin, record
+from installation_codec import Installation
+from installation_page import recall as recall_installation, retain as retain_installation
 
 pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
 
@@ -71,44 +73,13 @@ pub def finish_installation(directory: Path, admission: InstallationAdmission) -
         relocate_payload(directory.joinpath(relative), payload)?
     for relative, fact in admission.facts:
         relocate_fact(directory.joinpath(relative), fact)?
+    generation = observe(directory.joinpath("toolchain.json"))?.stamp
     toolchain, _ = parsed_toolchain(directory)?
     # The machine-local sysroot exists only after installation has selected and bound it.
     admit_compiler_facts(toolchain)?
-    return record_admission(directory)
-
-
-pub model NativeCrate:
-    """One crate a unit may name: its crate name and its library."""
-
-    pub name: str
-    pub path: str
-
-    def to_json(self) -> JsonValue:
-        """The crate as the unit description spells it."""
-        return JsonValue.object({"name": JsonValue.string(self.name), "path": JsonValue.string(self.path)})
-
-
-pub model Toolchain:
-    """The toolchain's compiler and the native closure every unit links."""
-
-    pub driver: str
-    pub sysroot: str
-    pub rust_abi: list[str]
-    pub externs: list[NativeCrate]
-    pub search: list[str]
-    pub registry_units: str
-    # When set, a path prefix: the compiler writes its standard output to `<prefix>.out` and its standard error to
-    # `<prefix>.err` instead of the caller's streams, so a resident owner can report them without owning a terminal.
-    pub console: str = ""
-    # A resident owner's worker selection, held only while it watches the compiler inputs and its inherited
-    # environment stays unchanged. Ordinary toolchain loading leaves this empty and derives the selection afresh.
-    pub worker_generation: str = ""
-    # Published linking fields are read once within this selection, never retained across owner requests blindly.
-    pub native_closures: NativeClosureInput = NativeClosureInput()
-    pub registry_lock: str = ""
-    pub c_compiler: str = ""
-    # Explicit target facts for synthetic or cross-target toolchains; empty selects rustc's reported host.
-    pub target: str = ""
+    retain_installation(directory, read_toolchain, Some((toolchain, generation)))?
+    retire_legacy_admission(directory)?
+    return Ok(None)
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
@@ -134,15 +105,32 @@ pub def load_toolchain() -> Result[Toolchain, str]:
 
 
 pub def load_toolchain_at(directory: Path) -> Result[Toolchain, str]:
-    """Select an installed directory using its completed admission, or admit an unprepared generation once."""
-    if admitted(directory)?:
-        toolchain, _ = parsed_toolchain(directory)?
-        return Ok(toolchain)
+    """Select the compiler from the same admitted installation page every ordinary command reads."""
+    return Ok(installation(directory)?.toolchain.select())
+
+
+pub def installation(directory: Path) -> Result[Installation, str]:
+    """Read the admitted typed page, or verify and admit a changed installation before selecting any facts."""
+    if let Some(page) = recall_installation(directory)?:
+        return Ok(page)
     clock = begin()
-    toolchain = read_toolchain(directory)?
-    record_admission(directory)?
+    page = retain_installation(directory, unprepared_toolchain)?
+    retire_legacy_admission(directory)?
     record("toolchain_admission", directory.0, clock)
+    return Ok(page)
+
+
+def parsed_without_admission(directory: Path) -> Result[Toolchain, str]:
+    """Import only the description of a generation whose payload admission is already complete."""
+    toolchain, _document = parsed_toolchain(directory)?
     return Ok(toolchain)
+
+
+def unprepared_toolchain(directory: Path) -> Result[Toolchain, str]:
+    """Produce a description under the page claim, preserving already verified legacy payload admission."""
+    if legacy_admitted(directory)?:
+        return parsed_without_admission(directory)
+    return read_toolchain(directory)
 
 
 pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
@@ -174,19 +162,26 @@ def admission_marker(directory: Path) -> Result[Path, str]:
     return Ok(home()?.joinpath("cache/toolchain-admissions").joinpath(f"{located}.stamp"))
 
 
-def admitted(directory: Path) -> Result[bool, str]:
-    """Whether this installed generation, at this location, was admitted; a reinstall or a move admits again."""
+def legacy_admitted(directory: Path) -> Result[bool, str]:
+    """Import a preceding installation's payload admission once, before the typed page is first selected."""
     marker = admission_marker(directory)?
-    if not marker.is_file():
-        return Ok(false)
-    return Ok(read(marker)? == observe(directory.joinpath("toolchain.json"))?.stamp)
+    match marker.read_text("utf-8", "strict"):
+        Ok(saved) => return Ok(saved == observe(directory.joinpath("toolchain.json"))?.stamp)
+        Err(error) =>
+            if error.kind == "not_found":
+                return Ok(false)
+            return Err(error.message())
 
 
-def record_admission(directory: Path) -> Result[None, str]:
-    """Record a completed admission; a failed or interrupted one leaves no marker and is repeated."""
+def retire_legacy_admission(directory: Path) -> Result[None, str]:
+    """Remove the preceding marker after conversion; the selected typed revision becomes the sole admission reading."""
     marker = admission_marker(directory)?
-    marker.parent().mkdir(true, true).map_err((error) => error.message())?
-    return publish(marker, observe(directory.joinpath("toolchain.json"))?.stamp)
+    match marker.unlink():
+        Ok(_) => pass
+        Err(error) =>
+            if error.kind != "not_found":
+                return Err(error.message())
+    return Ok(None)
 
 
 pub def admit_compiler_facts(toolchain: Toolchain) -> Result[None, str]:

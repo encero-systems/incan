@@ -26,7 +26,8 @@ from std.fs import Path
 from std.fs.locking import FileLock
 from std.json import JsonValue
 from files import json_text, make_directory, read_json
-from home import home
+from home_paths import home
+pub from home_paths import bakery
 from jec import begin as begin_work, record as record_work
 from json_fields import required_items, required_text, string_value
 from observation import observe, trace
@@ -103,14 +104,6 @@ pub def unit_name(unit: UnitDescription) -> str:
     """The name a unit is indexed under: package, version, kind, profile and active features."""
     features = ",".join(unit.active_features)
     return f"{unit.package}\t{unit.version}\t{unit.kind}\t{unit.profile}\t{features}"
-
-
-pub def bakery() -> Result[Path, str]:
-    """This home's bakery: `<home>/bakery`, or the directory `INCAN_BAKERY` names (a cache volume, or a case's own)."""
-    configured = get_or("INCAN_BAKERY", "")
-    if configured != "":
-        return Path(configured).absolute().map_err((error) => error.message())
-    return Ok(home()?.joinpath("bakery"))
 
 
 def record_key(identity: str) -> str:

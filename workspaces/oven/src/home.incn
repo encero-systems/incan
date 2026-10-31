@@ -13,10 +13,10 @@ standard packages come from.
 
 from std.environ import get_or
 from std.fs import Path
-from intake import load_project, ManifestReader
-
+from intake import load_project, ManifestReader, ProjectIntent
+from toolchain import installation
 # The toolchain this Oven belongs to; it names the home's toolchain directory.
-pub const TOOLCHAIN: str = "0.6.0-dev.8"
+pub from home_paths import TOOLCHAIN, home
 
 
 pub model StandardPackage:
@@ -25,27 +25,6 @@ pub model StandardPackage:
     pub name: str
     # The package's source directory.
     pub root: str
-
-
-pub def home() -> Result[Path, str]:
-    """Oven's canonical absolute home, so every spelling uses the same local admission evidence."""
-    configured = get_or("INCAN_HOME", "")
-    if configured != "":
-        return resolved_home(Path(configured))
-    for name in ["HOME", "USERPROFILE"]:
-        user = get_or(name, "")
-        if user != "":
-            return resolved_home(Path(user).joinpath(".incan"))
-    return Err("no home directory: set INCAN_HOME, or HOME")
-
-
-def resolved_home(path: Path) -> Result[Path, str]:
-    """Resolve existing ancestors without creating a home that a first installation has yet to populate."""
-    absolute = path.absolute().map_err((error) => error.message())?
-    if absolute.exists():
-        return absolute.resolve().map_err((error) => error.message())
-    parent = resolved_home(absolute.parent())?
-    return Ok(parent.joinpath(absolute.name()))
 
 
 pub def standard_artifact_dir(package: str, profile: str) -> Result[Path, str]:
@@ -83,7 +62,13 @@ pub def standard_library_dir() -> Result[Path, str]:
 
 
 pub def standard_packages(reader: ManifestReader = ManifestReader()) -> Result[list[StandardPackage], str]:
-    """The toolchain's standard packages, in name order."""
+    """Read installed package intent from the admitted page; explicit editable source overrides retain live intake."""
+    if get_or("INCAN_STDLIB", "") == "":
+        _ = standard_library_dir()?
+        mut directory = home()?.joinpath("toolchains").joinpath(TOOLCHAIN)
+        directory = directory.resolve().map_err((error) => error.message())?
+        page = installation(directory)?
+        return Ok([StandardPackage(name=manifest.intent.name, root=manifest.root) for manifest in page.manifests])
     directory = standard_library_dir()?
     root = directory.0
     mut packages: list[StandardPackage] = []
@@ -104,3 +89,17 @@ pub def standard_packages(reader: ManifestReader = ManifestReader()) -> Result[l
 pub def owners_dir() -> Result[Path, str]:
     """Where the resident owners of this home keep their sockets, locks and mailboxes: private to the user."""
     return Ok(home()?.joinpath("owners"))
+
+
+pub def standard_intents() -> Result[list[ProjectIntent], str]:
+    """The complete admitted standard declarations; source overrides use the same live intake as other projects."""
+    if get_or("INCAN_STDLIB", "") == "":
+        _ = standard_library_dir()?
+        mut directory = home()?.joinpath("toolchains").joinpath(TOOLCHAIN)
+        directory = directory.resolve().map_err((error) => error.message())?
+        return Ok([manifest.intent for manifest in installation(directory)?.manifests])
+    reader = ManifestReader()
+    mut intents: list[ProjectIntent] = []
+    for package in standard_packages(reader)?:
+        intents.append(load_project(Path(package.root), reader).map_err((error) => error.message())?.intent)
+    return Ok(intents)

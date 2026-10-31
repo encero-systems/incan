@@ -13,7 +13,7 @@ from std.hash import sha256
 from std.json import JsonValue, parse
 from files import json_text, read_json
 from graph_queries import nested, text
-from home import home
+from home_paths import home
 from json_fields import required_text
 from observation import SETTLE_SECONDS, Observation, file_digest, now_seconds, observe
 from publication import publish
