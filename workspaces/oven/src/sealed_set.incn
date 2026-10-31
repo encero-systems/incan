@@ -14,6 +14,7 @@ from segment_store import (
     Snapshot,
     StoreError,
     Write,
+    PreparedPayload,
     begin,
     commit,
     encode_segment,
@@ -25,6 +26,7 @@ from segment_store import (
     payload_path,
     put,
     put_payload,
+    pin_payload,
     readmit_payload,
     snapshot,
 )
@@ -186,7 +188,7 @@ pub def admit(root: Path, directory: Path, set_root: str, supported: Profile) ->
     check_existing(view, receipt_key, verified.document)?
     transaction = put(transaction, receipt_key, verified.document, EXPECT_ABSENT)
     # 2. Content names are checked by both the transport verifier and the store's immutable installer.
-    install_objects(root, directory, verified.objects, already)?
+    transaction.payloads = install_objects(root, directory, verified.objects, already)?
     if already:
         return Ok(view)
     # 3. No namespace binding is written; imported revisions coexist until a plan explicitly selects one.
@@ -319,7 +321,12 @@ def check_dependencies(view: Snapshot, dependencies: list[str]) -> Result[None, 
     return Ok(None)
 
 
-def install_objects(root: Path, directory: Path, objects: list[Object], admitted: bool) -> Result[None, StoreError]:
+def install_objects(
+    root: Path,
+    directory: Path,
+    objects: list[Object],
+    admitted: bool,
+) -> Result[list[PreparedPayload], StoreError]:
     """
     Stage only missing content in private files, validating every copy before asking the store to install it.
 
@@ -327,7 +334,9 @@ def install_objects(root: Path, directory: Path, objects: list[Object], admitted
     store only receives files whose full digest and length were checked after copying. Existing damage is an error.
     """
     mut missing: list[Object] = []
+    mut prepared: list[PreparedPayload] = []
     for object in objects:
+        prepared.append(pin_payload(root, object.digest)?)
         target = payload_path(root, object.digest)
         if target.exists():
             if target.is_symlink() or checked_length(target, object.digest)? != object.length:
@@ -337,7 +346,7 @@ def install_objects(root: Path, directory: Path, objects: list[Object], admitted
                 return Err(problem("integrity", target.0, "admitted set is missing a required object"))
             missing.append(object)
     if len(missing) == 0:
-        return Ok(None)
+        return Ok(prepared)
     staging = root.joinpath("staging")
     staging.mkdir(true, true).map_err((error) => problem("io", staging.0, error.message()))?
     private = TemporaryDirectory
@@ -351,9 +360,23 @@ def install_objects(root: Path, directory: Path, objects: list[Object], admitted
             return Err(problem("integrity", target.0, "transport object changed during staging"))
     for object in missing:
         source = private.path().joinpath(object.digest)
-        if put_payload(root, source)? != object.digest:
+        if put_payload(root, source)?.digest != object.digest:
             return Err(problem("integrity", source.0, "private staged object changed"))
-    return Ok(None)
+    return Ok(prepared)
+
+
+pub def payload_references(key: str, value: bytes) -> Result[list[str], StoreError]:
+    """The exact objects named by each independent owner receipt or revision envelope."""
+    if key.startswith(SET_PREFIX):
+        verified = decode_manifest(value)?
+        return Ok([object.digest for object in verified.objects])
+    if key.startswith("sealed/record/"):
+        text = RustString.from_utf8(value).map_err((error) => problem("integrity", key, str(error)))?
+        parsed = JsonValue.parse(str(text)).map_err((error) => problem("integrity", key, error.message()))?
+        envelope = array(parsed, 3)?
+        entry = array(envelope[2], 6)?
+        return Ok([string(entry[2])?] + string_list(entry[3])?)
+    return Ok([])
 
 
 def check_existing(view: Snapshot, key: str, value: bytes) -> Result[None, StoreError]:
@@ -669,7 +692,8 @@ pub def readmit(root: Path, directory: Path, set_root: str, supported: Profile) 
     transaction = restored_frame(transaction, view, SET_PREFIX + set_root, verified.document)?
     # 3. Payload identities remain pinned while replacement frames become visible atomically.
     for object in verified.objects:
-        readmit_payload(root, transport_file(directory, f"payloads/{object.digest}")?, object.digest)?
+        prepared = readmit_payload(root, transport_file(directory, f"payloads/{object.digest}")?, object.digest)?
+        transaction.payloads.append(prepared)
     return commit(transaction)
 
 

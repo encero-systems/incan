@@ -25,8 +25,10 @@ pub def test_sealed_sets_are_canonical_shared_idempotent_and_checked() -> Result
     other = base.joinpath("other")
     payload_file = base.joinpath("native-file")
     payload_file.write_bytes(b"shared native file").map_err((error) => error.message())?
-    payload = put_payload(source, payload_file).map_err((error) => error.message())?
-    assert put_payload(other, payload_file).map_err((error) => error.message())? == payload
+    prepared = put_payload(source, payload_file).map_err((error) => error.message())?
+    payload = prepared.digest
+    other_prepared = put_payload(other, payload_file).map_err((error) => error.message())?
+    assert other_prepared.digest == payload
     first = write_value(source, "entry", b"shared value")?
     write_value(other, "unrelated", b"history")?
     second = write_value(other, "entry", b"shared value")?
