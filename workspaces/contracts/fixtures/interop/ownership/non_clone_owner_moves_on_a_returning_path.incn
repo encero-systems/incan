@@ -1,0 +1,53 @@
+# behavior: a non-Clone Rust owner passed by value on a path that then returns moves there, while the paths that continue keep it for its later uses (#2481)
+# expect-stdout:
+#   kept
+#   returned early
+#   kept
+
+"""Give a socket back to its cell on an early return and on the ordinary path."""
+
+from rust::std::cell import RefCell
+from rust::std::os::unix::net import UnixStream
+from rust::std::rc import Rc
+
+
+class Holder:
+    """A socket that is lent out for one operation and given back."""
+
+    stream: Rc[RefCell[Option[UnixStream]]]
+
+    def lend(self) -> Result[UnixStream, str]:
+        match self.stream.replace(None):
+            None => return Err("the socket is lent out")
+            Some(open) => return Ok(open)
+
+    def give_back(self, open: UnixStream) -> None:
+        _ = self.stream.replace(Some(open))
+
+    def poll(self, early: bool) -> Result[str, str]:
+        open = self.lend()?
+        match open.set_nonblocking(true):
+            Err(error) =>
+                self.give_back(open)
+                return Err(f"cannot poll: {error}")
+            Ok(_) => pass
+        if early:
+            self.give_back(open)
+            return Ok("returned early")
+        restored = open.set_nonblocking(false)
+        self.give_back(open)
+        match restored:
+            Ok(_) => return Ok("kept")
+            Err(error) => return Err(f"cannot restore: {error}")
+
+
+def main() -> None:
+    match UnixStream.pair():
+        Ok(pair) =>
+            left, _right = pair
+            holder = Holder(stream=Rc.new(RefCell.new(Some(left))))
+            for early in [false, true, false]:
+                match holder.poll(early):
+                    Ok(outcome) => println(outcome)
+                    Err(error) => println(error)
+        Err(error) => println(f"{error}")
