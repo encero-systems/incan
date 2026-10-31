@@ -91,6 +91,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
 
     assert!(union_layouts::storage_types(std::iter::empty()).is_empty());
     assert_settled_function_seeds()?;
+    assert_free_function_input_oracle()?;
     assert_shared_loans()?;
     assert_equality_contract()?;
     let mut changed = seed.clone();
@@ -375,5 +376,55 @@ fn assert_refused_reference_inputs() -> Result<(), Box<dyn std::error::Error>> {
         body.reference_inputs(owner),
         Err(CheckedBodyInputError::RefusedOwner)
     ));
+    Ok(())
+}
+
+/// Extend the existing representation oracle to nonempty declaration defaults, nominal construction, calls and
+/// nested lexical closures. The missing-owner control proves a comparison cannot silently skip an eligible body.
+fn assert_free_function_input_oracle() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Value:\n    number: int = 1\n    offset: int = 2\ndef increment(value: int) -> int:\n    return value + 1\ndef chosen(value: int = increment(2)) -> int:\n    item = Value(number=value)\n    callback: Callable[int, int] = (number) => number + item.number\n    return callback(value)\ndef sibling() -> int:\n    values = [1, 2]\n    mut total = 0\n    for value in values:\n        total += increment(value)\n    return total\ndef refined() -> int:\n    mut values = []\n    values.append(1)\n    return len(values)\ndef defaults(prefix: int, items: list[float] = []) -> int:\n    return prefix\ndef residual() -> int:\n    callback = partial defaults(prefix=1)\n    return callback()\npreset = partial defaults(prefix=2)\ndef preset_use() -> int:\n    return preset()\ndef constructor_partial() -> int:\n    make = partial Value(number=3)\n    return make().number\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let owners = checker.body_ir_oracle_inputs();
+    let mut info = checker.into_type_info();
+    let providers = ProviderOperationCatalog::new();
+    let context = BodyIrContext {
+        modules: &[],
+        provider_operations: &providers,
+        registry_package: None,
+        library_package: None,
+    };
+    let reports = tempfile::tempdir()?;
+    assert!(super::verify_free_function_inputs(&program, &[], &info, &context, reports.path()).is_err());
+    info.body_ir_oracle_inputs = Some(owners);
+    super::verify_free_function_inputs(&program, &[], &info, &context, reports.path())?;
+    let mut comparisons = 0;
+    for entry in std::fs::read_dir(reports.path())? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "jsonl") {
+            for line in std::fs::read_to_string(path)?.lines() {
+                let row: serde_json::Value = serde_json::from_str(line)?;
+                assert_eq!(row["equal"], true, "{row}");
+                comparisons += 1;
+            }
+        }
+    }
+    assert_eq!(comparisons, 16);
+    let module = super::build_body_ir_module(&program, &[], &info, &context);
+    let expected = module.bodies.first().ok_or("missing comparator control body")?;
+    let mut changed = expected.clone();
+    changed.native_attributes.push(bir::NativeAttribute {
+        path: "selected::attribute".to_owned(),
+        arguments: Vec::new(),
+    });
+    assert_eq!(postcard::to_stdvec(expected)?, postcard::to_stdvec(&changed)?);
+    let failure = super::free_function_oracle::record_comparison(expected, &changed, "negative", reports.path())
+        .err()
+        .ok_or("free-function oracle omitted a native-only field")?;
+    assert!(failure.to_string().contains("native_attributes"));
     Ok(())
 }

@@ -22,17 +22,25 @@ pub fn lower_authored_modules(
         let type_info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
-        bodies.push(incan_frontend::body_ir::build_body_ir_module(
-            &module.ast,
-            &module.path_segments,
-            type_info,
-            &incan_frontend::body_ir::BodyIrContext {
-                modules: bodies,
-                provider_operations: &provider_operations,
-                registry_package: Some(&unit.package),
-                library_package: (unit.kind == UnitKind::Library).then_some(unit.package.as_str()),
-            },
-        ));
+        let context = incan_frontend::body_ir::BodyIrContext {
+            modules: bodies,
+            provider_operations: &provider_operations,
+            registry_package: Some(&unit.package),
+            library_package: (unit.kind == UnitKind::Library).then_some(unit.package.as_str()),
+        };
+        if let Some(directory) = std::env::var_os("INCAN_BODY_IR_FREE_ORACLE") {
+            incan_frontend::body_ir::verify_free_function_inputs(
+                &module.ast,
+                &module.path_segments,
+                type_info,
+                &context,
+                std::path::Path::new(&directory),
+            )
+            .map_err(|error| format!("Body IR free-function input oracle: {error}"))?;
+        }
+        let lowered =
+            incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);
+        bodies.push(lowered);
     }
     Ok(())
 }

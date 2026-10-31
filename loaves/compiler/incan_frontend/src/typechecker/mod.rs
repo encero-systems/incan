@@ -47,7 +47,7 @@ mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
-pub(crate) use body_check::{CheckedBodyInputError, CheckedBodyView};
+pub(crate) use body_check::{BodyIrOracleInputs, CheckedBodyInputError, CheckedBodyView};
 pub use check_work::CheckWork;
 mod check_expr;
 mod check_stmt;
@@ -2761,8 +2761,12 @@ impl TypeChecker {
         &self.type_info
     }
 
-    /// Hand the accumulated type information to a later stage once checking is over, without copying it.
-    pub fn into_type_info(self) -> TypeCheckInfo {
+    /// Hand the accumulated type information to a later stage once checking is over. The opt-in Body IR oracle also
+    /// retains indexed immutable owner references; checking and settlement are never repeated.
+    pub fn into_type_info(mut self) -> TypeCheckInfo {
+        if std::env::var_os("INCAN_BODY_IR_FREE_ORACLE").is_some() {
+            self.type_info.body_ir_oracle_inputs = Some(self.body_ir_oracle_inputs());
+        }
         self.type_info
     }
 
