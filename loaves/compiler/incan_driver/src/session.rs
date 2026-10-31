@@ -201,8 +201,9 @@ impl CompilationSession {
     }
 
     /// Before checking: the facts of the Rust paths `modules` import that neither a Loaf nor an ABI cache holds, from
-    /// the session's source. Without a source, an uncovered path keeps no facts and its uses refuse where checked.
-    /// Manifest inventory determines coverage before the caches and source are consulted.
+    /// the session's source. A path the source describes nothing at is absent from its crate, and its import is
+    /// refused. Without a source, an uncovered path keeps no facts and its uses refuse where checked. Manifest
+    /// inventory determines coverage before the caches and source are consulted.
     pub fn resolve_rust_facts(&mut self, modules: &[ParsedModule]) -> CliResult<()> {
         let Some(source) = self.rust_facts_source.clone() else {
             return Ok(());
@@ -218,7 +219,7 @@ impl CompilationSession {
             return Ok(());
         }
         let facts = source.facts(&uncovered).map_err(CliError::failure)?;
-        Arc::make_mut(&mut self.loaves).add_rust_facts(facts);
+        Arc::make_mut(&mut self.loaves).add_rust_facts(&uncovered, facts);
         Ok(())
     }
 

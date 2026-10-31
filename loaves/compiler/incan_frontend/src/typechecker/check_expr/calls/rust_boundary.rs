@@ -2181,6 +2181,7 @@ mod validate_rust_function_call_tests {
     fn canonical_rust_collection_namespaces_keep_structural_boundary_identity() {
         let mut loaves = crate::loaf_index::LoafIndex::default();
         loaves.add_rust_facts(
+            &Default::default(),
             [("std::primitive::str", "str"), ("native::Text", "str")]
                 .into_iter()
                 .map(|(path, target)| {
@@ -2249,6 +2250,7 @@ mod validate_rust_function_call_tests {
         for imports in [&[first][..], &[second][..], &[first, second][..]] {
             let mut loaves = crate::loaf_index::LoafIndex::default();
             loaves.add_rust_facts(
+                &Default::default(),
                 definitions
                     .iter()
                     .map(|(path, definition, visibility)| {
