@@ -66,7 +66,7 @@ from rust_freshness import (
 )
 from rust_portable import portable_reusable, record_portable
 from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal_rust, view_prior_evidence
-from bakery import bakery, claim, find, register_root, seal, staging, view
+from bakery import bakery, claim, find, forget_view, library_directory, register_root, seal, staging, view
 from unit_publication import import_payload
 from registry_units import sole_library as registry_artifact
 
@@ -924,7 +924,17 @@ pub def compile_rust_library(
     if let Some(unit) = selected:
         return Ok(unit)
     # 2. A facet absent from the installed generation retains ordinary local compilation.
-    return compile_local_rust_library(facet, declared, output, request, built, search, toolchain)
+    unit = compile_local_rust_library(facet, declared, output, request, built, search, toolchain)?
+    return stored_library(unit)
+
+
+pub def stored_library(unit: BuiltUnit) -> Result[BuiltUnit, str]:
+    """Bind compiler consumers to the library's store-owned filenames, never a project's replaceable target."""
+    directory = library_directory(bakery()?, Path(unit.directory))?
+    mut stored = unit
+    stored.artifact = directory.joinpath(Path(unit.artifact).name()).0
+    stored.directory = directory.0
+    return Ok(stored)
 
 
 def installed_rust_library(
@@ -1261,6 +1271,7 @@ def compile_rust_producer(
     toolchain: Toolchain,
 ) -> Result[Path, str]:
     """Compile a Rust library and its checked graph into `directory`, refusing inputs that changed meanwhile."""
+    forget_view(directory)?
     dependencies = directory.joinpath("library.d")
     graph = directory.joinpath(f"{declared.package}.incngraph")
     context = artifact_context(facet, declared, request.profile)?
@@ -1358,12 +1369,13 @@ def compile_incan_library(
     if code != 0:
         return Err(f"Incan library {declared.package} failed with exit code {code}")
     # 3. Rust's extern edge names the same public facade an Incan consumer receives.
+    stored = library_directory(bakery()?, directory)?
     return Ok(
         BuiltUnit(
             crate_name=compiled_name,
-            artifact=artifact.0,
-            directory=directory.0,
-            search=native_search(directory.joinpath(f"{declared.package}.native.json"), readings)?,
+            artifact=stored.joinpath(artifact.name()).0,
+            directory=stored.0,
+            search=native_search(stored.joinpath(f"{declared.package}.native.json"), readings)?,
             loaf=declared.package,
         ),
     )

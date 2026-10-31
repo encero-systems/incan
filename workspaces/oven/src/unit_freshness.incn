@@ -22,7 +22,7 @@ from rust_target import compiler_version, deployment_target, inherited_deploymen
 from apple_sdk import selected_sdk
 from std.environ import get_or
 
-const UNIT_DOMAIN: str = "incan.oven.unit/2"
+const UNIT_DOMAIN: str = "incan.oven.unit/3"
 
 
 pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]:
