@@ -5,25 +5,41 @@ Oven writes the unit description where the compiler reads it, under `<project>/t
 runs the compiler once per unit. The description already names the exact Rust externs, ABI caches, and dependency
 search directories; these are the same inputs for checking and compilation.
 
-A program or test executable is stored under the project's `target/incan/` with a stamp of the key it was built for
-(see `unit_freshness`). A later run whose key is unchanged executes the stored executable and starts no compiler.
-Compiler-certified deterministic refusals retain their exact output bytes under that same identity. A normal repeat
-replays them; crashes, signals, resource failures and missing successful outputs remain retryable.
+A program or test executable is a fact of the home bakery (see `bakery`), and the project's `target/incan/` holds a
+view of it. A later run of the same identity, in this project or any other, views the fact and starts no compiler;
+deleting `target/` only costs the views. Compiler-certified deterministic refusals are retained as facts under that
+same identity. A normal repeat replays them; crashes, signals, resource failures and missing successful outputs remain
+retryable.
 """
 
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command
 from std.fs import Path
+from bakery import (
+    bakery,
+    claim,
+    find,
+    view_directory,
+    lookup,
+    reached,
+    register_root,
+    seal,
+    staging,
+    unit_identity,
+    unit_name,
+    view,
+    Fact,
+    fact_file,
+    has_files_under,
+)
 from compiler_refusals import check_or_replay
-from files import discard_file
 from observation import trace, trace_launch
-from publication import place
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
-from unit_freshness import Key, install_all, reusable, staleness, unit_key
+from unit_freshness import Key, unit_key
 from unit_rust import compile_library_unit, prepare_native
-from shared_link import development_link, library_witness, linkage_key, shared_current
+from shared_link import development_link, library_witness, linkage_key, witness_current
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
@@ -43,7 +59,7 @@ pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> 
     path = write_unit(ready, crate_name(ready), None, described_by(key))?
     # 3. The record's identity covers the key and the complete invocation, so text and JSON reports are kept apart.
     arguments = ["--check", path.0, toolchain.sysroot, "--format", format]
-    return check_or_replay(ready, toolchain, arguments, check_record(ready, format), key)
+    return check_or_replay(ready, toolchain, arguments, bakery()?, key)
 
 
 pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, check: bool) -> Result[i32, str]:
@@ -83,46 +99,76 @@ pub def compile_executable(
     output: Path,
     key: Key,
     development: bool = false,
+    selected_store: Option[Path] = None,
 ) -> Result[i32, str]:
     """
-    Keep the stored executable while `key` is unchanged; otherwise build it beside `output` and install it.
+    Obtain the executable of `key` from the home bakery and make `output` a view of it.
 
     The caller reconciled the unit's inputs into `key`, so a resident owner can answer from what it retains.
-    Development linkage has its own key, and every shared library is validated before reuse.
+    Development linkage has its own identity, and every shared library is validated before its fact is used.
 
-    1. An executable whose stamp vouches for `key` is kept.
-    2. Otherwise take the output's lock: one build of an output at a time.
-    3. A build that finished while this one waited is kept.
-    4. Compile to a staged name beside the output.
-    5. Install the staged build, with the stamp of its key.
+    1. A sealed fact of the identity is viewed, and no compiler starts.
+    2. Otherwise claim the identity: one bake of it at a time, in any project or process.
+    3. A fact another command sealed while this one waited is viewed.
+    4. Compile into a private staging directory of the fact.
+    5. Seal it, then view it.
     """
     shared = development_link(unit, development)
+    # Inputs that cannot be named portably are compiled in place; nothing is baked or reused.
+    if key.refusal != "":
+        return compile_staged(unit, toolchain, output, key, key.refusal, shared)
     selected = linkage_key(key, shared)?
-    stamp = Path(f"{output.0}.oven-inputs")
-    outputs = executable_outputs(unit.kind, output, shared)
+    mut store = Path("")
+    match selected_store:
+        Some(chosen) => store = chosen
+        None => store = bakery()?
+    identity = unit_identity(selected)
     label = f"unit {crate_name(unit)} {unit.kind}"
-    # 1. An executable whose stamp vouches for the key starts no compiler.
-    mut why = staleness(outputs, stamp, selected)?
-    if why == "" and shared and not shared_current(output):
-        why = "dynamic native inputs changed"
-    if why == "":
+    register_root(store, unit.project_root, identity)?
+    # 1. A sealed executable of the identity starts no compiler.
+    if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
+        view_executable(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused")
         return Ok(0)
-    # 2. A concurrent build waits here, and then finds the executable it needs. The lock is held until this returns.
-    output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
-    building = output.lock_exclusive().map_err((error) => error.message())?
-    # 3. A build another command finished while this one waited is used, not repeated.
-    if reusable(outputs, stamp, selected)? and (not shared or shared_current(output)):
+    # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
+    held = claim(store, identity)?
+    # 3. A bake another command finished while this one waited is used, not repeated.
+    if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
+        view_executable(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(0)
-    # 4. The staged name is stable, because the system vets a path the first time it runs a new executable at it.
-    staged = Path(f"{output.0}-staged")
-    code = compile_staged(unit, toolchain, staged, key, why, shared)?
+    # 4. A failed bake publishes nothing; its staging directory goes with it.
+    staged = staging(store, identity)?
+    code = compile_staged(unit, toolchain, staged.joinpath(output.name()), key, bake_reason(store, unit), shared)?
     if code != 0:
+        _ = staged.remove_tree()
         return Ok(code)
-    # 5. A complete build replaces the stored one with its stamp, or an interruption leaves a rebuild and no mix.
-    install_executable(staged, output, unit.kind, stamp, selected, shared)?
+    # 5. Only a sealed fact is viewed.
+    reaches = reached(store, [loaf.dir for loaf in unit.loaves])?
+    fact = seal(store, identity, staged, unit.kind, unit_name(unit), reaches, f"incan {unit.kind} {unit.profile}")?
+    view_executable(store, fact, output, unit.kind, shared)?
     return Ok(0)
+
+
+def current_executable(store: Path, identity: str, binary: str, shared: bool) -> Result[Option[Fact], str]:
+    """The sealed fact of `identity`, while its shared libraries, if it links any, are still the ones it recorded."""
+    match find(store, identity)?:
+        None => return Ok(None)
+        Some(fact) =>
+            if shared and not current_link(store, fact, binary):
+                trace(f"bakery {identity[:12]}: dynamic native inputs changed")
+                return Ok(None)
+            return Ok(Some(fact))
+
+
+def bake_reason(store: Path, unit: UnitDescription) -> str:
+    """Why a unit is baked: nothing was baked under its name yet, or what was is for other inputs."""
+    match lookup(store, unit_name(unit)):
+        Ok(found) =>
+            if found is not None:
+                return "inputs changed"
+        Err(_) => pass
+    return "no stored build"
 
 
 def compile_staged(
@@ -133,15 +179,8 @@ def compile_staged(
     reason: str,
     shared: bool,
 ) -> Result[i32, str]:
-    """Compile a unit to its staged name; a build that fails leaves nothing behind. Returns the compiler's exit code."""
-    match compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared):
-        Err(reason) =>
-            discard(staged, unit.kind, shared)
-            return Err(reason)
-        Ok(code) =>
-            if code != 0:
-                discard(staged, unit.kind, shared)
-            return Ok(code)
+    """Compile a unit to its staged name. Returns the compiler's exit code."""
+    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared)
 
 
 pub def executable_outputs(kind: str, output: Path, shared: bool = false) -> list[Path]:
@@ -159,40 +198,30 @@ pub def test_report(binary: Path) -> Path:
     return Path(f"{binary.0}.tests.json")
 
 
-pub def install_executable(
-    staged: Path,
-    output: Path,
-    kind: str,
-    stamp: Path,
-    key: Key,
-    shared: bool = false,
-) -> Result[None, str]:
+pub def view_executable(store: Path, fact: Fact, output: Path, kind: str, shared: bool = false) -> Result[None, str]:
     """
-    Replace the stored executable with a completed build of `key`, atomically (see `install_all`).
-
-    The debug bundle the linker wrote beside it follows, and only helps a debugger.
+    Make `output`, and the files that belong beside it, clones of the executable fact that the user may run, edit or
+    strip. A development executable with shared linkage finds its libraries through absolute search paths, so its
+    clone runs wherever it is placed.
     """
-    install_all(executable_outputs(kind, staged, shared), executable_outputs(kind, output, shared), stamp, key)?
-    if debug_bundle(staged).is_dir():
-        if debug_bundle(output).is_dir():
-            debug_bundle(output).remove_tree().map_err((error) => error.message())?
-        place(debug_bundle(staged), debug_bundle(output))?
+    for path in executable_outputs(kind, output, shared):
+        view(store, fact, path.name(), path)?
+    bundle = debug_bundle(Path(output.name())).0
+    if has_files_under(fact, bundle):
+        view_directory(store, fact, debug_bundle(output), bundle)?
     return Ok(None)
+
+
+def current_link(store: Path, fact: Fact, binary: str) -> bool:
+    """Whether a baked development executable's shared libraries are still the ones its loader witness records."""
+    match fact_file(store, fact, library_witness(Path(binary)).0):
+        None => return false
+        Some(witness) => return witness_current(witness)
 
 
 def debug_bundle(binary: Path) -> Path:
     """The debug information the linker writes beside an executable on macOS."""
     return Path(f"{binary.0}.dSYM")
-
-
-def discard(staged: Path, kind: str, shared: bool = false) -> None:
-    """Remove what a failed build left beside the stored executable; the stored executable itself is untouched."""
-    for leftover in executable_outputs(kind, staged, shared):
-        if leftover.is_file():
-            discard_file(leftover)
-    if debug_bundle(staged).is_dir():
-        # Tidying a failed build is best effort: a bundle that stays is replaced by the next build.
-        _ = debug_bundle(staged).remove_tree()
 
 
 pub def run_program(binary: Path, arguments: list[str], argv0: Option[str] = None) -> Result[i32, str]:
@@ -221,9 +250,3 @@ pub def stored_executable(unit: UnitDescription, directory: str) -> Path:
     """Where an executable of a unit is stored: `target/incan/<profile>/<directory>/<crate>` in its project."""
     profile = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile)
     return profile.joinpath(directory).joinpath(crate_name(unit))
-
-
-def check_record(unit: UnitDescription, format: str) -> Path:
-    """Where a unit's last certified check report is retained: `target/incan/<profile>/check/<crate>.<format>`."""
-    stored = stored_executable(unit, "check")
-    return Path(f"{stored.0}.{format}.oven-check")

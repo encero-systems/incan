@@ -1,0 +1,55 @@
+"""Thin OS process facilities with an opaque retained child handle for disposable service startup."""
+
+from rust::std::cell import RefCell
+from rust::std::env import current_exe
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Child, Command, Stdio
+from rust::std::rc import Rc
+
+
+pub class Process:
+    """A retained child handle, never a PID-based ownership guess or a copied native Child."""
+
+    child: Rc[RefCell[Child]]
+
+    def pid(self) -> int:
+        """The OS identifier belonging to this retained child handle."""
+        return int(self.child.borrow().id())
+
+    def poll(mut self) -> Result[Option[bool], str]:
+        """Reap a finished child and report its success; None means it is still running."""
+        found = self.child.borrow_mut().try_wait().map_err((error) => str(error))?
+        match found:
+            None => return Ok(None)
+            Some(status) => return Ok(Some(status.success()))
+
+    def terminate(mut self) -> Result[None, str]:
+        """Kill and reap only this caller's child after a failed startup deadline."""
+        self.child.borrow_mut().kill().map_err((error) => str(error))?
+        self.child.borrow_mut().wait().map_err((error) => str(error))?
+        return Ok(None)
+
+
+pub def executable() -> Result[str, str]:
+    """Return the running executable for an internal role, without selecting another executable through PATH."""
+    return current_exe().map((path) => str(path.to_string_lossy().into_owned())).map_err((error) => str(error))
+
+
+pub def spawn_detached(executable: str, arguments: list[str]) -> Result[Process, str]:
+    """Start an internal service in its own process group with no inherited command console streams."""
+    mut command = Command.new(executable)
+    for argument in arguments:
+        command.arg(argument)
+    command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null()).process_group(0)
+    child = command.spawn().map_err((error) => f"cannot start service: {error}")?
+    return Ok(Process(child=Rc.new(RefCell.new(child))))
+
+
+pub def running(mut child: Process) -> Result[bool, str]:
+    """Poll the retained handle instead of inferring process identity from a PID."""
+    return child.poll().map((status) => status is None)
+
+
+pub def terminate(mut child: Process) -> Result[None, str]:
+    """Terminate only the retained child this caller started."""
+    return child.terminate()

@@ -118,15 +118,23 @@ def optional_text(value: Option[str]) -> JsonValue:
 
 pub def project_root_of(source: Path) -> Option[Path]:
     """The nearest directory at or above `source`'s directory that holds a `loaf.toml`."""
+    for manifest in manifest_candidates(source):
+        if manifest.is_file():
+            return Some(manifest.parent())
+    return None
+
+
+pub def manifest_candidates(source: Path) -> list[Path]:
+    """Where the manifest of `source` is looked up, nearest first: `loaf.toml` in its directory and each one above."""
+    mut candidates: list[Path] = []
     mut directory = source.parent()
     while true:
-        if directory.joinpath("loaf.toml").is_file():
-            return Some(directory)
+        candidates.append(directory.joinpath("loaf.toml"))
         parent = directory.parent()
         if parent.0 == directory.0 or parent.0 in ["", "."]:
-            return None
+            return candidates
         directory = parent
-    return None
+    return candidates
 
 
 def standard_loaves(package: str, profile: str, reader: ManifestReader) -> Result[list[UnitLoaf], str]:

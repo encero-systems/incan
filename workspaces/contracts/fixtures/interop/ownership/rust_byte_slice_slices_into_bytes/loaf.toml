@@ -1,0 +1,9 @@
+[project]
+name = "rust_byte_slice_slices_into_bytes"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+byte_views = { path = "rust/byte_views" }

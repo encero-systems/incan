@@ -1,0 +1,345 @@
+"""Request capture contracts: frozen inputs are never touched, and an editable one is read only when it changed."""
+
+from rust::std::fs import hard_link, remove_file
+from std.fs import Path
+from files import make_directory, read, write
+from scratch import scratch_directory
+from engine_capture import (
+    AdmittedHome,
+    BuildEpoch,
+    CaptureOutcome,
+    CaptureRequest,
+    CaptureResult,
+    InputClass,
+    InputRole,
+    InputSelection,
+    LookupWitness,
+    READ_ATTEMPTS,
+    capture,
+    capture_with,
+    decoded_epoch,
+)
+
+const PIN: str = """{"schema": "incan.toolchain/1", "driver": "bin/driver", "sysroot": "sysroot",
+"rust_abi": ["rust-abi/std.rustabi"], "externs": [{"name": "runtime", "path": "native/runtime-1/libruntime.rlib"}],
+"search": ["native/runtime-1"], "registry_units": "registry/closure.json"}"""
+
+
+def installed_home(scratch: Path) -> Result[AdmittedHome, str]:
+    """A home with an installed toolchain, standard Loaf sources and artifacts, and a content-named store."""
+    root = scratch.joinpath("home")
+    toolchain = root.joinpath("toolchains").joinpath("0.6.0-dev.8")
+    for directory in ["loaves/core/debug", "native/runtime-1", "rust-abi", "bin"]:
+        make_directory(toolchain.joinpath(directory))?
+    write(toolchain.joinpath("toolchain.json"), PIN)?
+    write(toolchain.joinpath("loaves/core/debug/core.incnlib"), "{}")?
+    write(toolchain.joinpath("native/runtime-1/libruntime.rlib"), "rlib")?
+    make_directory(root.joinpath("store").joinpath("sha256"))?
+    write(root.joinpath("store").joinpath("sha256").joinpath("object"), "object")?
+    standard = scratch.joinpath("stdlib")
+    make_directory(standard.joinpath("core").joinpath("src"))?
+    write(standard.joinpath("core").joinpath("src").joinpath("fs.incn"), "pub def f() -> None:\n    pass\n")?
+    return Ok(AdmittedHome(home=root.0, pin=toolchain.joinpath("toolchain.json").0, standard_library=standard.0))
+
+
+def project(root: Path) -> Result[Path, str]:
+    """A Loaf declaring a vocabulary, with a program, a module it imports, and a test fixture."""
+    make_directory(root.joinpath("src"))?
+    make_directory(root.joinpath("tests"))?
+    write(
+        root.joinpath("loaf.toml"),
+        "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[vocab]\nentry = \"src/vocab.incn\"\n",
+    )?
+    write(root.joinpath("src/vocab.incn"), "pub def register() -> None:\n    pass\n")?
+    write(root.joinpath("src/main.incn"), "from helper import greet\n\ndef main() -> None:\n    greet()\n")?
+    write(root.joinpath("src/helper.incn"), "pub def greet() -> None:\n    println(\"hello\")\n")?
+    write(root.joinpath("tests/fixture.incn"), "def main() -> None:\n    pass\n")?
+    return Ok(root)
+
+
+def run_request(file: Path, witnesses: list[LookupWitness]) -> CaptureRequest:
+    """`incan run file` with the lookups its imports recorded."""
+    return CaptureRequest(roots=[file.0], selection=InputSelection(command="run"), witnesses=witnesses)
+
+
+def epoch_of(result: CaptureResult) -> Result[BuildEpoch, str]:
+    """The epoch a capture took; an unstable capture has none."""
+    match result.epoch:
+        Some(epoch) => return Ok(epoch)
+        None => return Err(f"no epoch: {result.unstable}")
+
+
+def digest_of(epoch: BuildEpoch, path: Path) -> str:
+    """The digest captured for `path`, or empty when it was not captured."""
+    match epoch.input(path.0):
+        Some(found) => return found.digest
+        None => return ""
+
+
+def refused(result: Result[CaptureResult, str]) -> bool:
+    """Whether a capture was refused."""
+    match result:
+        Ok(_) => return false
+        Err(_) => return true
+
+
+def touched(epoch: BuildEpoch, path: Path) -> bool:
+    """Whether a capture recorded anything at `path`, found or absent."""
+    return epoch.input(path.0) is not None or path.0 in [item.path for item in epoch.absent]
+
+
+pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[None, str]:
+    """A repeated `run` with nothing changed reads and hashes nothing, and gets back the very epoch it had."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    helper = app.joinpath("src/helper.incn")
+    request = run_request(app.joinpath("src/main.incn"), [LookupWitness(path=helper.0, resolved=true)])
+    first = capture(request, None, admitted, 0)?
+    epoch = epoch_of(first)?
+    # The pin, the program, its manifest, the vocabulary it declares and its import are read once; the lock and
+    # `src/loaf.toml` are absent.
+    assert first.outcome == CaptureOutcome.Changed
+    assert first.counters.in_reach.reads == 5 and first.counters.in_reach.hashes == 5
+    assert len(epoch.inputs) == 5 and len(epoch.absent) == 2
+    assert epoch.input(helper.0) is not None
+    match epoch.input(app.joinpath("src/vocab.incn").0):
+        Some(vocabulary) => assert vocabulary.role == InputRole.Vocabulary
+        None => return Err("the declared vocabulary was not captured")
+    second = capture(request, Some(epoch), admitted, 0)?
+    assert second.outcome == CaptureOutcome.Unchanged
+    assert second.counters.in_reach.reads == 0 and second.counters.in_reach.hashes == 0
+    # One status query per path in reach, and nothing else.
+    assert second.counters.in_reach.stats == len(epoch.inputs) + len(epoch.absent)
+    assert second.counters.in_reach.listings == 0
+    assert epoch_of(second)? == epoch
+    # The test fixture beside the program is in nobody's reach.
+    assert not touched(epoch, app.joinpath("tests/fixture.incn"))
+    return Ok(None)
+
+
+pub def test_frozen_inputs_get_zero_stats() -> Result[None, str]:
+    """Lookups that land in the toolchain, the standard Loaves or the store are never stat'ed, read or hashed."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    toolchain = Path(admitted.pin).parent()
+    frozen = [
+        Path(admitted.standard_library).joinpath("core/src/fs.incn"),
+        toolchain.joinpath("loaves/core/debug/core.incnlib"),
+        toolchain.joinpath("native/runtime-1/libruntime.rlib"),
+        Path(admitted.home).joinpath("store/sha256/object"),
+        Path(admitted.standard_library).joinpath("core/src/absent.incn"),
+    ]
+    witnesses = [LookupWitness(path=path.0, resolved=true) for path in frozen]
+    result = capture(run_request(app.joinpath("src/main.incn"), witnesses), None, admitted, 0)?
+    epoch = epoch_of(result)?
+    assert result.counters.frozen.inputs == len(frozen)
+    assert result.counters.frozen.stats == 0 and result.counters.frozen.reads == 0
+    assert result.counters.frozen.hashes == 0 and result.counters.frozen.listings == 0
+    for path in frozen:
+        assert not touched(epoch, path)
+    # The pin that names them is editable and in reach; nothing is ever out of reach and met.
+    assert epoch.input(admitted.pin) is not None
+    unreached = result.counters.of(InputClass.OutOfReach)
+    assert unreached.stats == 0 and unreached.inputs == 0
+    return Ok(None)
+
+
+pub def test_a_touched_file_is_read_and_hashed_once_and_the_epoch_stays_equal() -> Result[None, str]:
+    """Rewriting a file with the same bytes costs one read and one hash and keeps the identity; the next run is free."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    helper = app.joinpath("src/helper.incn")
+    request = run_request(app.joinpath("src/main.incn"), [LookupWitness(path=helper.0, resolved=true)])
+    epoch = epoch_of(capture(request, None, admitted, 0)?)?
+    write(helper, read(helper)?)?
+    refreshed = capture(request, Some(epoch), admitted, 0)?
+    after = epoch_of(refreshed)?
+    assert refreshed.outcome == CaptureOutcome.Refreshed
+    assert refreshed.counters.in_reach.reads == 1 and refreshed.counters.in_reach.hashes == 1
+    assert after.identity()? == epoch.identity()?
+    assert digest_of(after, helper) == digest_of(epoch, helper)
+    again = capture(request, Some(after), admitted, 0)?
+    assert again.outcome == CaptureOutcome.Unchanged
+    assert again.counters.in_reach.reads == 0 and again.counters.in_reach.hashes == 0
+    return Ok(None)
+
+
+pub def test_an_edited_file_gets_a_new_digest() -> Result[None, str]:
+    """Editing an import changes its digest and the epoch's identity, and only that file is read."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    helper = app.joinpath("src/helper.incn")
+    request = run_request(app.joinpath("src/main.incn"), [LookupWitness(path=helper.0, resolved=true)])
+    epoch = epoch_of(capture(request, None, admitted, 0)?)?
+    write(helper, "pub def greet() -> None:\n    println(\"hello, edited\")\n")?
+    edited = capture(request, Some(epoch), admitted, 0)?
+    after = epoch_of(edited)?
+    assert edited.outcome == CaptureOutcome.Changed
+    assert edited.counters.in_reach.reads == 1 and edited.counters.in_reach.hashes == 1
+    assert digest_of(after, helper) != digest_of(epoch, helper)
+    assert after.identity()? != epoch.identity()?
+    main = app.joinpath("src/main.incn")
+    assert digest_of(after, main) == digest_of(epoch, main)
+    return Ok(None)
+
+
+def relinking(path: Path) -> Result[bytes, str]:
+    """
+    Read a file; reading a `helper.incn` adds a hard link to it and removes it again, as a concurrent move does. That
+    changes the file's status change time and nothing else.
+    """
+    content = path.read_bytes().map_err((error) => error.message())?
+    if path.name() == "helper.incn":
+        link = path.parent().joinpath("helper.moving")
+        hard_link(path.0, link.0).map_err((error) => str(error))?
+        remove_file(link.0).map_err((error) => str(error))?
+    return Ok(content)
+
+
+def disturbing(path: Path, always: bool) -> Result[bytes, str]:
+    """
+    Read a file; reading a `helper.incn` appends to it afterwards, as a concurrent editor would: every time, or once
+    (recorded beside the project, which no `run` reaches).
+    """
+    content = path.read_bytes().map_err((error) => error.message())?
+    marker = path.parent().parent().parent().joinpath("disturbed")
+    if path.name() == "helper.incn" and (always or not marker.exists()):
+        write(marker, "disturbed")?
+        write(path, read(path)? + "# changed while read\n")?
+    return Ok(content)
+
+
+pub def test_a_file_changing_during_its_read_is_retried_then_reported_unstable() -> Result[None, str]:
+    """A read that overlaps a write is retried; a file that keeps changing is reported unstable after three reads."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    helper = app.joinpath("src/helper.incn")
+    request = run_request(app.joinpath("src/main.incn"), [LookupWitness(path=helper.0, resolved=true)])
+    once = capture_with(request, None, admitted, 0, (path) => disturbing(path, false))?
+    # The second read saw one generation, and its bytes (with the appended line) are what the digest covers.
+    assert once.outcome == CaptureOutcome.Changed
+    assert once.counters.retries == 1 and once.counters.in_reach.reads == 6
+    epoch = epoch_of(once)?
+    expected = epoch_of(capture(request, None, admitted, 0)?)?
+    match expected.input(helper.0):
+        Some(input) => assert digest_of(epoch, helper) == input.digest
+        None => return Err("the helper was not captured")
+    always = capture_with(request, None, admitted, 0, (path) => disturbing(path, true))?
+    assert always.outcome == CaptureOutcome.Unstable
+    assert always.unstable == [helper.0] and always.epoch is None
+    assert always.counters.retries == READ_ATTEMPTS - 1
+    assert always.counters.in_reach.reads == 4 + READ_ATTEMPTS
+    return Ok(None)
+
+
+pub def test_a_status_change_during_a_read_is_not_a_change_of_the_file() -> Result[None, str]:
+    """A concurrent move that only changes a file's status change time does not make its read unstable or retried."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    helper = app.joinpath("src/helper.incn")
+    request = run_request(app.joinpath("src/main.incn"), [LookupWitness(path=helper.0, resolved=true)])
+    moved = capture_with(request, None, admitted, 0, (path) => relinking(path))?
+    assert moved.outcome == CaptureOutcome.Changed and moved.counters.retries == 0
+    epoch = epoch_of(moved)?
+    # The recorded metadata are those after the read, so the next capture finds the file unchanged.
+    again = capture(request, Some(epoch), admitted, 0)?
+    assert again.outcome == CaptureOutcome.Unchanged and again.counters.in_reach.reads == 0
+    return Ok(None)
+
+
+pub def test_capture_for_one_fixture_among_1500_touches_only_its_reach() -> Result[None, str]:
+    """`run` of one fixture in a directory of 1,500 never lists the directory or checks another fixture."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    fixtures = scratch.path().joinpath("fixtures")
+    make_directory(fixtures)?
+    for index in range(1500):
+        write(fixtures.joinpath(f"fixture{10000 + index}.incn"), f"def main() -> None:\n    println(\"{index}\")\n")?
+    root = fixtures.joinpath("fixture10001.incn")
+    first = capture(run_request(root, []), None, admitted, 0)?
+    epoch = epoch_of(first)?
+    # The fixture and the pin are read; every other path is a `loaf.toml` lookup above the fixture, found absent.
+    assert first.counters.in_reach.listings == 0
+    assert first.counters.in_reach.reads == 2 and len(epoch.inputs) == 2
+    for item in epoch.absent:
+        assert item.role == InputRole.Manifest and Path(item.path).name() == "loaf.toml"
+    assert not touched(epoch, fixtures.joinpath("fixture10002.incn"))
+    second = capture(run_request(root, []), Some(epoch), admitted, 0)?
+    assert second.outcome == CaptureOutcome.Unchanged
+    assert second.counters.in_reach.reads == 0 and second.counters.in_reach.listings == 0
+    assert second.counters.in_reach.stats == len(epoch.inputs) + len(epoch.absent)
+    assert second.counters.in_reach.stats < 50
+    return Ok(None)
+
+
+pub def test_a_new_file_at_an_absent_lookup_is_picked_up_and_an_unrelated_sibling_is_not() -> Result[None, str]:
+    """A file created where a lookup found nothing joins the epoch; a file created beside it is never checked."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    wanted = app.joinpath("src/extra.incn")
+    request = run_request(app.joinpath("src/main.incn"), [LookupWitness(path=wanted.0, resolved=false)])
+    first = capture(request, None, admitted, 0)?
+    epoch = epoch_of(first)?
+    assert InputRole.Resolved in [item.role for item in epoch.absent if item.path == wanted.0]
+    sibling = app.joinpath("src/unrelated.incn")
+    write(wanted, "pub def extra() -> None:\n    pass\n")?
+    write(sibling, "pub def unrelated() -> None:\n    pass\n")?
+    # The next run carries no witnesses of its own: the epoch's recorded absent lookup is what finds the new file.
+    later = capture(run_request(app.joinpath("src/main.incn"), []), Some(epoch), admitted, 0)?
+    after = epoch_of(later)?
+    assert later.outcome == CaptureOutcome.Changed
+    assert later.counters.in_reach.reads == 1 and later.counters.in_reach.hashes == 1
+    assert after.input(wanted.0) is not None
+    assert not touched(after, sibling)
+    assert later.counters.in_reach.stats == first.counters.in_reach.inputs + 1
+    return Ok(None)
+
+
+pub def test_build_captures_the_package_membership_without_its_fixtures() -> Result[None, str]:
+    """`build` checks each member under the source root and lists a directory again only when it changed; no `tests`."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    make_directory(app.joinpath("src/.cache"))?
+    write(app.joinpath("src/.cache/stale.incn"), "")?
+    request = CaptureRequest(roots=[app.0], selection=InputSelection(command="build", profile="release"))
+    first = capture(request, None, admitted, 0)?
+    epoch = epoch_of(first)?
+    members = [Path(item.path).name() for item in epoch.inputs if item.role == InputRole.Member]
+    assert sorted(members) == ["helper.incn", "main.incn"]
+    assert first.counters.in_reach.listings == 1
+    second = capture(request, Some(epoch), admitted, 0)?
+    assert second.outcome == CaptureOutcome.Unchanged
+    assert second.counters.in_reach.listings == 0 and second.counters.in_reach.reads == 0
+    write(app.joinpath("src/added.incn"), "pub def added() -> None:\n    pass\n")?
+    third = capture(request, Some(epoch), admitted, 0)?
+    assert third.outcome == CaptureOutcome.Changed
+    assert third.counters.in_reach.listings == 1 and third.counters.in_reach.reads == 1
+    # A command whose roots capture does not know is refused, not guessed at.
+    assert refused(capture(CaptureRequest(roots=[app.0], selection=InputSelection(command="check")), None, admitted, 0))
+    return Ok(None)
+
+
+pub def test_unsettled_metadata_are_read_again_and_the_epoch_encodes_deterministically() -> Result[None, str]:
+    """Metadata younger than the settle time never vouch for bytes; an epoch decodes to itself and encodes the same."""
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    request = run_request(app.joinpath("src/main.incn"), [])
+    first = capture(request, None, admitted, 3600)?
+    epoch = epoch_of(first)?
+    again = capture(request, Some(epoch), admitted, 3600)?
+    assert again.counters.in_reach.reads == first.counters.in_reach.reads
+    assert epoch_of(again)?.identity()? == epoch.identity()?
+    text = epoch.encoded()?
+    decoded = decoded_epoch(text)?
+    assert decoded == epoch
+    assert decoded.encoded()? == text
+    return Ok(None)

@@ -1,0 +1,952 @@
+"""
+Request capture (DD-0013): a request becomes a `BuildEpoch`, the exact editable inputs it depends on, each checked as
+cheaply as its kind allows.
+
+- **Frozen** inputs (the installed toolchain, the standard Loaves, admitted Loaves and content-named store objects) were
+  verified once at admission and cannot change after it. Capture derives their roots once from what the home admitted
+  and never stats, reads or hashes anything under them.
+- **Editable inputs in reach** are the request roots, the files their recorded lookups resolve to, the paths where a
+  recorded lookup found nothing, `loaf.toml`, the lock, the vocabulary and other files `loaf.toml` declares, and the
+  toolchain pin. `build` and `bake` add the package's membership: its source root, listed with the compiler's rules.
+- **Editable inputs out of reach**, such as unrelated sibling fixtures, are never listed, checked or read.
+
+Freshness builds on the metadata observation of `observation`. A file whose device, inode, size, nanosecond
+modification and status change times and mode all match its settled record keeps its digest unread; any other file is
+read and hashed. A read is admitted only when the file's metadata, its status change time apart, is the same after the
+read as before it: unlinking a hard link changes the surviving inode's status change time, so that time never decides
+whether a read was stable. A file still changing after three reads is reported unstable. An unchanged capture returns
+the previous epoch itself, so there is nothing to write.
+
+Metadata only detects change. An epoch's identity is the digest of its roots, its selection and the content digests of
+its inputs, so touching a file without changing its bytes leaves the identity as it was.
+"""
+
+from rust::std::str import from_utf8
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue, parse
+from files import json_text
+from home import home, standard_library_dir
+from intake import parse_document
+from loaf_local_graph import unique
+from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
+from toolchain import Toolchain, described_toolchain, toolchain_file
+from unit import manifest_candidates
+
+const EPOCH_SCHEMA: str = "incan.engine.build-epoch/1"
+# How many times a file that changes while it is read is read before it is reported unstable.
+pub const READ_ATTEMPTS: int = 3
+
+
+@derive(Eq)
+pub enum InputClass(str):
+    """How capture treats an input: never touched, checked metadata first, or never met because nothing reaches it."""
+
+    Frozen = "frozen"
+    InReach = "editable-in-reach"
+    OutOfReach = "editable-out-of-reach"
+
+
+@derive(Eq)
+pub enum InputRole(str):
+    """Why an editable input is in a request's reach."""
+
+    Root = "root"
+    Member = "member"
+    Resolved = "resolved"
+    Manifest = "manifest"
+    Lock = "lock"
+    Vocabulary = "vocabulary"
+    Declared = "declared"
+    ToolchainPin = "toolchain-pin"
+
+
+@derive(Eq)
+pub enum CaptureOutcome(str):
+    """What a capture found against the previous epoch."""
+
+    # Nothing differs: the previous epoch is returned as it was, and there is nothing to write.
+    Unchanged = "unchanged"
+    # The same identity, with metadata records that changed (a file touched without changing its bytes).
+    Refreshed = "refreshed"
+    # A new identity, or the first capture.
+    Changed = "changed"
+    # An input kept changing while it was read; no epoch is captured.
+    Unstable = "unstable"
+
+
+enum Admission:
+    """What checking one editable input did."""
+
+    # Already checked by this capture.
+    Checked
+    # Its settled metadata matched the record, so the recorded digest stands and the file was not read.
+    Reused
+    Read(bytes)
+    Missing
+    Unstable
+
+
+@derive(Eq)
+pub model InputSelection:
+    """What a request selects besides its roots: its command and the configuration it is built for."""
+
+    pub command: str
+    pub profile: str = "debug"
+    pub features: list[str] = []
+
+    def encoded(self) -> JsonValue:
+        """The selection in its deterministic encoding."""
+        return JsonValue.array(
+            [JsonValue.string(self.command), JsonValue.string(self.profile), texts(sorted(self.features))],
+        )
+
+
+@derive(Eq)
+pub model LookupWitness:
+    """One recorded lookup: the exact path it checked, and whether a file was there."""
+
+    pub path: str
+    pub resolved: bool
+
+
+@derive(Eq)
+pub model InputPath:
+    """A path in a request's reach and why it is there."""
+
+    pub path: str
+    pub role: InputRole
+
+    def encoded(self) -> JsonValue:
+        """The path and role in their deterministic encoding."""
+        return JsonValue.array([JsonValue.string(self.path), JsonValue.string(self.role.value())])
+
+
+@derive(Eq)
+pub model CapturedInput:
+    """An editable input in reach: why it is there, its metadata when its bytes were admitted, and their digest."""
+
+    pub path: str
+    pub role: InputRole
+    pub metadata: FileMetadata
+    pub digest: str
+    # Whether its last change was old enough when it was recorded for these metadata to vouch for its bytes later.
+    pub settled: bool
+
+    def encoded(self) -> JsonValue:
+        """The input in its deterministic encoding."""
+        return JsonValue.array(
+            [
+                JsonValue.string(self.path),
+                JsonValue.string(self.role.value()),
+                metadata_encoded(self.metadata),
+                JsonValue.string(self.digest),
+                JsonValue.bool(self.settled),
+            ],
+        )
+
+
+@derive(Eq)
+pub model CapturedListing:
+    """One directory of a package's membership: its metadata when listed, and the members and subdirectories it held."""
+
+    pub path: str
+    pub metadata: FileMetadata
+    pub settled: bool
+    pub files: list[str]
+    pub directories: list[str]
+
+    def encoded(self) -> JsonValue:
+        """The listing in its deterministic encoding."""
+        return JsonValue.array(
+            [
+                JsonValue.string(self.path),
+                metadata_encoded(self.metadata),
+                JsonValue.bool(self.settled),
+                texts(self.files),
+                texts(self.directories),
+            ],
+        )
+
+
+@derive(Eq)
+pub model Declarations:
+    """What one manifest leads capture to, kept with the epoch so that an unchanged manifest is not read again."""
+
+    pub manifest: str
+    # The lock and the files the manifest declares, each with its role.
+    pub files: list[InputPath] = []
+    # The source root the manifest declares, project-relative; empty when it declares none.
+    pub source_root: str = ""
+
+    def encoded(self) -> JsonValue:
+        """The declarations in their deterministic encoding."""
+        return JsonValue.array(
+            [
+                JsonValue.string(self.manifest),
+                JsonValue.array([item.encoded() for item in self.files]),
+                JsonValue.string(self.source_root),
+            ],
+        )
+
+
+@derive(Eq)
+pub model BuildEpoch:
+    """One captured request: its roots, its selection, and every editable input in its reach with what was found."""
+
+    pub roots: list[str]
+    pub selection: InputSelection
+    # The files found in reach, sorted by path.
+    pub inputs: list[CapturedInput]
+    # The paths in reach where nothing was found, sorted by path.
+    pub absent: list[InputPath]
+    # The membership directories of a `build` or `bake`, sorted by path.
+    pub listings: list[CapturedListing] = []
+    # What each manifest in reach declares, sorted by manifest.
+    pub declarations: list[Declarations] = []
+    # The admitted roots the toolchain pin names, derived when the pin was read and reused while it is unchanged.
+    pub admitted: list[str] = []
+
+    def identity(self) -> Result[str, str]:
+        """The digest of the roots, the selection and what each path in reach held; metadata never enters it."""
+        found = [JsonValue.array(
+            [JsonValue.string(item.path), JsonValue.string(item.role.value()), JsonValue.string(item.digest)],
+        ) for item in self.inputs]
+        content = JsonValue.array(
+            [
+                JsonValue.string(EPOCH_SCHEMA),
+                texts(self.roots),
+                self.selection.encoded(),
+                JsonValue.array(found),
+                JsonValue.array([item.encoded() for item in self.absent]),
+            ],
+        )
+        return Ok(hexlify(sha256.digest(json_text(content)?.encode("utf-8"))))
+
+    def encoded(self) -> Result[str, str]:
+        """The whole epoch as deterministic text: equal epochs encode to equal bytes."""
+        return json_text(
+            JsonValue.array(
+                [
+                    JsonValue.string(EPOCH_SCHEMA),
+                    texts(self.roots),
+                    self.selection.encoded(),
+                    JsonValue.array([item.encoded() for item in self.inputs]),
+                    JsonValue.array([item.encoded() for item in self.absent]),
+                    JsonValue.array([item.encoded() for item in self.listings]),
+                    JsonValue.array([item.encoded() for item in self.declarations]),
+                    texts(self.admitted),
+                ],
+            ),
+        )
+
+    def witnesses(self) -> list[LookupWitness]:
+        """The lookups this epoch recorded: those that resolved to a file and those that found nothing."""
+        resolved = [item for item in self.inputs if item.role == InputRole.Resolved]
+        mut found = [LookupWitness(path=item.path, resolved=true) for item in resolved]
+        found.extend(
+            [LookupWitness(path=item.path, resolved=false) for item in self.absent if item.role == InputRole.Resolved],
+        )
+        return found
+
+    def input(self, path: str) -> Option[CapturedInput]:
+        """The captured input at `path`, if one was found there."""
+        for item in self.inputs:
+            if item.path == path:
+                return Some(item)
+        return None
+
+
+pub model ClassCounters:
+    """The work capture did for one class of input."""
+
+    # Inputs of this class the capture met.
+    pub inputs: int = 0
+    pub stats: int = 0
+    pub reads: int = 0
+    pub hashes: int = 0
+    pub listings: int = 0
+
+
+pub model CaptureCounters:
+    """The work capture did, per class of input; out-of-reach inputs are never met, so their row stays zero."""
+
+    pub frozen: ClassCounters = ClassCounters()
+    pub in_reach: ClassCounters = ClassCounters()
+    pub out_of_reach: ClassCounters = ClassCounters()
+    # Reads repeated because the file changed while it was read.
+    pub retries: int = 0
+
+    def of(self, kind: InputClass) -> ClassCounters:
+        """The row of one class of input."""
+        match kind:
+            InputClass.Frozen => return self.frozen
+            InputClass.InReach => return self.in_reach
+            InputClass.OutOfReach => return self.out_of_reach
+
+
+pub model CaptureRequest:
+    """What a request asks capture for."""
+
+    # A file for `run`; the Loaf root for `build` and `bake`.
+    pub roots: list[str]
+    pub selection: InputSelection
+    # The lookups a first capture starts from, as the current import resolution reports them. A later capture checks
+    # these and the previous epoch's.
+    pub witnesses: list[LookupWitness] = []
+
+
+pub model AdmittedHome:
+    """What a home has admitted, from which capture derives the frozen roots once per capture."""
+
+    pub home: str
+    # The toolchain pin: the description that selects the installed toolchain and names what it admitted.
+    pub pin: str
+    # The standard Loaves' sources.
+    pub standard_library: str
+
+    def frozen_roots(self) -> list[str]:
+        """
+        The frozen roots the home itself holds: its content-named store and bakery, and the standard Loaves' artifacts
+        and sources. The toolchain pin names the rest.
+        """
+        store = Path(self.home)
+        installed = Path(self.pin).parent()
+        return [
+            store.joinpath("store").0,
+            store.joinpath("bakery").0,
+            installed.joinpath("loaves").0,
+            self.standard_library,
+        ]
+
+
+pub model CaptureResult:
+    """A capture's outcome, its epoch (none when an input was unstable), and the work it did."""
+
+    pub outcome: CaptureOutcome
+    pub epoch: Option[BuildEpoch]
+    # The inputs that kept changing while they were read.
+    pub unstable: list[str]
+    pub counters: CaptureCounters
+
+
+pub def admitted_home() -> Result[AdmittedHome, str]:
+    """The admitted home this Oven runs with."""
+    return Ok(AdmittedHome(home=home()?.0, pin=toolchain_file()?.0, standard_library=standard_library_dir()?.0))
+
+
+pub def capture(
+    request: CaptureRequest,
+    previous: Option[BuildEpoch],
+    admitted: AdmittedHome,
+    settle: int = SETTLE_SECONDS,
+) -> Result[CaptureResult, str]:
+    """Capture `request` against the previous epoch, reading files whole."""
+    return capture_with(request, previous, admitted, settle, (path) => read_file(path))
+
+
+pub def capture_with(
+    request: CaptureRequest,
+    previous: Option[BuildEpoch],
+    admitted: AdmittedHome,
+    settle: int,
+    reader: (Path) -> Result[bytes, str],
+) -> Result[CaptureResult, str]:
+    """
+    Capture `request` against the previous epoch, reading files with `reader`.
+
+    1. Take the frozen roots: from the previous epoch while the toolchain pin is unchanged, else from the pin's bytes.
+    2. Capture the roots with their project configuration: the manifest lookup, the lock, the files it declares.
+    3. A `build` or `bake` captures the package's membership.
+    4. Check every recorded lookup, resolved or absent, unless it lies under a frozen root.
+    5. Compare with the previous epoch.
+    """
+    if request.selection.command not in ["run", "build", "bake"]:
+        return Err(f"capture knows the roots of `run`, `build` and `bake`, not of `{request.selection.command}`")
+    mut state = Capture(admitted=admitted, settle=settle, reader=reader)
+    state.remember(previous)
+    # 1. Frozen roots come first, so that nothing under them is ever checked.
+    state.take_frozen_roots()?
+    # 2. The roots and their configuration are always in reach.
+    mut membership: list[str] = []
+    for root in request.roots:
+        membership.extend(state.root(absolute(root), request.selection.command)?)
+    # 3. A package's membership is listed with the compiler's collection rules.
+    for directory in membership:
+        state.members(directory)?
+    # 4. Recorded lookups are checked at their exact paths, and nowhere else.
+    state.lookups(request.witnesses)?
+    # 5. The previous epoch is returned unchanged when nothing differs.
+    return state.result(request, previous)
+
+
+model Capture:
+    """One capture in progress: what it found so far and the work it did."""
+
+    admitted: AdmittedHome
+    settle: int
+    reader: (Path) -> Result[bytes, str]
+    # The frozen roots: the home's own, and those the pin names (sorted and distinct). A path is frozen when it or one
+    # of its ancestors is one of them.
+    frozen: list[str] = []
+    pinned: list[str] = []
+    counters: CaptureCounters = CaptureCounters()
+    found: Dict[str, CapturedInput] = {}
+    missing: Dict[str, InputPath] = {}
+    listed: Dict[str, CapturedListing] = {}
+    unstable: list[str] = []
+    declared: Dict[str, Declarations] = {}
+    # The previous epoch, indexed once so that no step copies it.
+    recorded: Dict[str, CapturedInput] = {}
+    recorded_listings: Dict[str, CapturedListing] = {}
+    recorded_declarations: Dict[str, Declarations] = {}
+    recorded_admitted: list[str] = []
+    recorded_witnesses: list[str] = []
+
+    def remember(mut self, previous: Option[BuildEpoch]) -> None:
+        """Index the previous epoch's records by path."""
+        match previous:
+            None => return
+            Some(epoch) =>
+                for item in epoch.inputs:
+                    self.recorded[item.path] = item
+                for listing in epoch.listings:
+                    self.recorded_listings[listing.path] = listing
+                for declarations in epoch.declarations:
+                    self.recorded_declarations[declarations.manifest] = declarations
+                self.recorded_admitted = epoch.admitted
+                self.recorded_witnesses = [witness.path for witness in epoch.witnesses()]
+
+    def take_frozen_roots(mut self) -> Result[None, str]:
+        """
+        Derive the frozen roots once: from the home, and from what the toolchain pin names.
+
+        1. The pin is an editable input in reach, checked metadata first.
+        2. An unchanged pin keeps the admitted roots recorded with it; a pin read now names them afresh.
+        """
+        # 1. The pin selects the installed toolchain; the toolchain's own files are frozen.
+        admission = self.editable(self.admitted.pin, InputRole.ToolchainPin)?
+        match admission:
+            Admission.Read(content) => self.pinned = pinned_roots(self.admitted.pin, content)?
+            Admission.Missing => return Err(f"{self.admitted.pin}: no toolchain is installed")
+            # 2. An unchanged pin names what it named before.
+            Admission.Reused => self.pinned = self.recorded_admitted
+            _ => pass
+        self.frozen = self.admitted.frozen_roots()
+        return Ok(None)
+
+    def root(mut self, path: str, command: str) -> Result[list[str], str]:
+        """
+        Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
+
+        1. `run` captures its file and looks up its manifest from the file's directory upward.
+        2. `build` and `bake` capture the Loaf root's manifest and list its source root.
+        """
+        if self.is_frozen(path):
+            self.counters.frozen.inputs += 1
+            return Ok([])
+        # 1. A file: the manifest is the nearest `loaf.toml` at or above its directory.
+        if command == "run":
+            match self.editable(path, InputRole.Root)?:
+                Admission.Missing => return Err(f"{path}: no such source file")
+                _ => pass
+            _ = self.manifest_lookup(Path(path))?
+            return Ok([])
+        # 2. A Loaf: its own manifest is required, and its source root holds its members.
+        manifest = Path(path).joinpath("loaf.toml").0
+        if not self.manifest(manifest)?:
+            return Err(f"{manifest}: no such manifest")
+        return Ok([self.source_root(path)?])
+
+    def manifest_lookup(mut self, source: Path) -> Result[bool, str]:
+        """Look up the manifest of `source` where the unit description does; each miss is an absent lookup."""
+        for candidate in manifest_candidates(source):
+            if not self.is_frozen(candidate.0) and self.manifest(candidate.0)?:
+                return Ok(true)
+        return Ok(false)
+
+    def manifest(mut self, path: str) -> Result[bool, str]:
+        """
+        Capture a manifest and the files it declares; `false` when there is none at `path`.
+
+        1. The manifest itself is checked metadata first.
+        2. An unchanged manifest declares what it declared before; one read now is parsed from the admitted bytes.
+        3. Each declared file is checked; a missing one is recorded as absent.
+        """
+        # 1. A manifest read now is parsed from exactly the bytes that were admitted.
+        admission = self.editable(path, InputRole.Manifest)?
+        match admission:
+            Admission.Missing => return Ok(false)
+            Admission.Unstable => return Ok(true)
+            Admission.Checked => return Ok(true)
+            Admission.Read(content) => self.declared[path] = declarations_of(path, content)
+            # 2. Declarations are derived from the manifest's bytes, so an unchanged manifest keeps them.
+            Admission.Reused => self.declared[path] = self.recorded_declarations_of(path)
+        # 3. The lock and the declared files are in reach whether or not they exist.
+        declared_files = [item for item in self.declared[path].files]
+        for item in declared_files:
+            if not self.is_frozen(item.path):
+                _ = self.editable(item.path, item.role)?
+        return Ok(true)
+
+    def source_root(mut self, project: str) -> Result[str, str]:
+        """The declared source root, else `src` when it is a directory, else the project root (as intake decides)."""
+        root = Path(project)
+        manifest = root.joinpath("loaf.toml").0
+        if manifest in self.declared and self.declared[manifest].source_root != "":
+            return Ok(root.joinpath(self.declared[manifest].source_root).0)
+        conventional = root.joinpath("src")
+        self.counters.in_reach.stats += 1
+        match file_metadata(conventional)?:
+            Some(found) =>
+                if found.is_directory():
+                    return Ok(conventional.0)
+            None => pass
+        return Ok(project)
+
+    def members(mut self, top: str) -> Result[None, str]:
+        """
+        Capture a package's membership under `top`: every Incan source, with each directory listed only when it changed.
+
+        Hidden directories, `target` and `node_modules` are not entered, as the compiler collects a package.
+        """
+        mut pending = [top]
+        mut index = 0
+        while index < len(pending):
+            directory = pending[index]
+            index += 1
+            if self.is_frozen(directory):
+                self.counters.frozen.inputs += 1
+                continue
+            match self.listing(directory)?:
+                None => pass
+                Some(entry) =>
+                    for name in entry.files:
+                        _ = self.editable(Path(directory).joinpath(name).0, InputRole.Member)?
+                    for name in entry.directories:
+                        pending.append(Path(directory).joinpath(name).0)
+        return Ok(None)
+
+    def listing(mut self, directory: str) -> Result[Option[CapturedListing], str]:
+        """A membership directory's members: the recorded listing while its metadata is unchanged, else listed now."""
+        self.counters.in_reach.stats += 1
+        match file_metadata(Path(directory))?:
+            None => return Ok(None)
+            Some(observed) =>
+                if not observed.is_directory():
+                    return Ok(None)
+                if directory in self.recorded_listings:
+                    recorded = self.recorded_listings[directory]
+                    if recorded.settled and recorded.metadata == observed:
+                        self.listed[directory] = recorded
+                        return Ok(Some(recorded))
+                entry = children(Path(directory), ".incn")?
+                self.counters.in_reach.listings += 1
+                self.counters.in_reach.stats += entry.checked
+                listing = CapturedListing(
+                    path=directory,
+                    metadata=observed,
+                    settled=observed.settled(self.settle),
+                    files=entry.files,
+                    directories=entry.directories,
+                )
+                self.listed[directory] = listing
+                return Ok(Some(listing))
+
+    def recorded_declarations_of(self, manifest: str) -> Declarations:
+        """What the previous epoch recorded `manifest` as declaring; a manifest it does not know declares nothing."""
+        if manifest in self.recorded_declarations:
+            return self.recorded_declarations[manifest]
+        return Declarations(manifest=manifest)
+
+    def lookups(mut self, witnesses: list[LookupWitness]) -> Result[None, str]:
+        """Check each recorded lookup at its exact path: the request's and the previous epoch's, once each."""
+        paths = [witness.path for witness in witnesses] + self.recorded_witnesses
+        for path in unique(paths):
+            if self.is_frozen(path):
+                self.counters.frozen.inputs += 1
+                continue
+            _ = self.editable(path, InputRole.Resolved)?
+        return Ok(None)
+
+    def editable(mut self, path: str, role: InputRole) -> Result[Admission, str]:
+        """
+        Check one editable input in reach, metadata first.
+
+        1. A path this capture already checked is not checked again.
+        2. One status query: no regular file there is an absent input.
+        3. A settled record with the same metadata keeps its digest, and the file is not read.
+        4. Otherwise the file is read until a read is stable, then hashed.
+        """
+        # 1. One path is one input, whichever role reached it first.
+        if path in self.found:
+            return Ok(Admission.Checked)
+        if path in self.missing:
+            return Ok(Admission.Missing)
+        self.counters.in_reach.inputs += 1
+        self.counters.in_reach.stats += 1
+        # 2. Nothing there, or a directory where a file was looked up, is recorded as absent.
+        mut observed = FileMetadata(device=0, inode=0, size=0, mode=0, modified_ns=0, changed_ns=0)
+        match file_metadata(Path(path))?:
+            None =>
+                self.missing[path] = InputPath(path=path, role=role)
+                return Ok(Admission.Missing)
+            Some(found) => observed = found
+        if not observed.is_file():
+            self.missing[path] = InputPath(path=path, role=role)
+            return Ok(Admission.Missing)
+        # 3. Matching settled metadata vouches for the recorded bytes.
+        if path in self.recorded:
+            recorded = self.recorded[path]
+            if recorded.settled and recorded.metadata == observed:
+                self.found[path] = CapturedInput(
+                    path=path,
+                    role=role,
+                    metadata=observed,
+                    digest=recorded.digest,
+                    settled=true,
+                )
+                return Ok(Admission.Reused)
+        # 4. Changed or new metadata is a reason to read the bytes.
+        return self.admit(path, role, observed)
+
+    def admit(mut self, path: str, role: InputRole, observed: FileMetadata) -> Result[Admission, str]:
+        """
+        Read a file until its metadata, the status change time apart, is the same after a read as before it; then hash
+        exactly those bytes. A file still changing after `READ_ATTEMPTS` reads is unstable.
+        """
+        read = self.reader
+        mut before = observed
+        for attempt in range(READ_ATTEMPTS):
+            if attempt > 0:
+                self.counters.retries += 1
+            content = read(Path(path))?
+            self.counters.in_reach.reads += 1
+            self.counters.in_reach.stats += 1
+            match file_metadata(Path(path))?:
+                None =>
+                    self.missing[path] = InputPath(path=path, role=role)
+                    return Ok(Admission.Missing)
+                Some(after) =>
+                    if stable_across_read(before, after):
+                        self.counters.in_reach.hashes += 1
+                        digest = hexlify(sha256.digest(content))
+                        settled = after.settled(self.settle)
+                        self.found[path] = CapturedInput(
+                            path=path,
+                            role=role,
+                            metadata=after,
+                            digest=digest,
+                            settled=settled,
+                        )
+                        return Ok(Admission.Read(content))
+                    before = after
+        self.unstable.append(path)
+        return Ok(Admission.Unstable)
+
+    def is_frozen(self, path: str) -> bool:
+        """Whether `path` lies under a root the home admitted: per ancestor, one search of the pinned roots."""
+        mut current = Path(path)
+        while true:
+            if current.0 in self.frozen or sorted_contains(self.pinned, current.0):
+                return true
+            parent = current.parent()
+            if parent.0 == current.0 or parent.0 in ["", "."]:
+                return false
+            current = parent
+        return false
+
+    def result(self, request: CaptureRequest, previous: Option[BuildEpoch]) -> Result[CaptureResult, str]:
+        """
+        The capture's outcome.
+
+        1. An unstable input leaves no epoch.
+        2. An epoch equal to the previous one is the previous one, and nothing needs writing.
+        3. Equal identities differ only in metadata records; any other difference is a new identity.
+        """
+        # 1. Bytes that never held still for a read are not admitted.
+        if len(self.unstable) > 0:
+            return Ok(self.outcome(CaptureOutcome.Unstable, None))
+        epoch = self.epoch(request)
+        match previous:
+            None => return Ok(self.outcome(CaptureOutcome.Changed, Some(epoch)))
+            Some(prior) =>
+                # 2. The previous epoch itself is returned, so a caller sees that nothing changed.
+                if prior == epoch:
+                    return Ok(self.outcome(CaptureOutcome.Unchanged, Some(prior)))
+                # 3. Touched files keep the identity; their new metadata spares the next capture a read.
+                if prior.identity()? == epoch.identity()?:
+                    return Ok(self.outcome(CaptureOutcome.Refreshed, Some(epoch)))
+                return Ok(self.outcome(CaptureOutcome.Changed, Some(epoch)))
+
+    def outcome(self, outcome: CaptureOutcome, epoch: Option[BuildEpoch]) -> CaptureResult:
+        """A result with this capture's unstable inputs and counters."""
+        return CaptureResult(outcome=outcome, epoch=epoch, unstable=sorted(self.unstable), counters=self.counters)
+
+    def epoch(self, request: CaptureRequest) -> BuildEpoch:
+        """The epoch of what this capture found, each list sorted by path."""
+        return BuildEpoch(
+            roots=[absolute(root) for root in request.roots],
+            selection=request.selection,
+            inputs=[self.found[path] for path in sorted([key for key in self.found.keys()])],
+            absent=[self.missing[path] for path in sorted([key for key in self.missing.keys()])],
+            listings=[self.listed[path] for path in sorted([key for key in self.listed.keys()])],
+            declarations=[self.declared[path] for path in sorted([key for key in self.declared.keys()])],
+            admitted=self.pinned,
+        )
+
+
+def sorted_contains(values: list[str], value: str) -> bool:
+    """Whether the sorted `values` hold `value`: a binary search."""
+    mut low = 0
+    mut high = len(values)
+    while low < high:
+        middle = (low + high) // 2
+        if values[middle] < value:
+            low = middle + 1
+        else:
+            high = middle
+    return low < len(values) and values[low] == value
+
+
+def stable_across_read(before: FileMetadata, after: FileMetadata) -> bool:
+    """
+    Whether a read saw one file generation. The status change time is left out: a concurrent move that unlinks a hard
+    link changes it without changing the bytes.
+    """
+    same_file = before.device == after.device and before.inode == after.inode and before.mode == after.mode
+    return same_file and before.size == after.size and before.modified_ns == after.modified_ns
+
+
+def pinned_roots(pin: str, content: bytes) -> Result[list[str], str]:
+    """The admitted roots a toolchain pin names: compiler, Rust installation, fact caches, native closure, registry."""
+    text = str(from_utf8(content).map_err((error) => f"{pin}: {error}")?)
+    document = parse(text).map_err((error) => f"{pin}: {error.message()}")?
+    toolchain = described_toolchain(document, Path(pin).parent()).map_err((failed) => f"{pin}: {failed}")?
+    return Ok(toolchain_roots(toolchain))
+
+
+def toolchain_roots(toolchain: Toolchain) -> list[str]:
+    """Each named file, the content-named directory of each native crate, and the registry the closure lives in."""
+    mut roots = [toolchain.driver, toolchain.sysroot] + toolchain.rust_abi + toolchain.search
+    for native in toolchain.externs:
+        roots.append(Path(native.path).parent().0)
+    for named in [toolchain.registry_units, toolchain.registry_lock, toolchain.c_compiler]:
+        if named != "":
+            roots.append(Path(named).parent().0)
+    return unique([root for root in roots if root != ""])
+
+
+def declarations_of(manifest: str, content: bytes) -> Declarations:
+    """
+    What a manifest's admitted bytes lead capture to: the lock, the vocabulary entry, the contract models and C headers
+    it declares, and its source root. A manifest that does not parse declares nothing; planning reports why.
+    """
+    root = Path(manifest).parent()
+    match parse_document(content, manifest):
+        Err(_) =>
+            return Declarations(
+                manifest=manifest,
+                files=[InputPath(path=root.joinpath("oven.lock").0, role=InputRole.Lock)],
+            )
+        Ok(document) =>
+            intent = document.intent
+            mut files = [InputPath(path=root.joinpath("oven.lock").0, role=InputRole.Lock)]
+            if let Some(entry) = intent.vocab_entry:
+                files.append(InputPath(path=root.joinpath(entry).0, role=InputRole.Vocabulary))
+            for named in intent.contract_models + intent.c_headers:
+                files.append(InputPath(path=root.joinpath(named).0, role=InputRole.Declared))
+            mut source_root = ""
+            if let Some(declared_root) = intent.source_root:
+                source_root = declared_root
+            return Declarations(manifest=manifest, files=files, source_root=source_root)
+
+
+def read_file(path: Path) -> Result[bytes, str]:
+    """A file's bytes."""
+    return path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")
+
+
+def absolute(path: str) -> str:
+    """A path made absolute against the working directory, without resolving links."""
+    match Path(path).absolute():
+        Ok(found) => return found.0
+        Err(_) => return path
+
+
+def texts(items: list[str]) -> JsonValue:
+    """A JSON array of strings."""
+    return JsonValue.array([JsonValue.string(item) for item in items])
+
+
+def metadata_encoded(metadata: FileMetadata) -> JsonValue:
+    """File metadata in their deterministic encoding."""
+    return JsonValue.array(
+        [
+            JsonValue.int(metadata.device),
+            JsonValue.int(metadata.inode),
+            JsonValue.int(metadata.size),
+            JsonValue.int(metadata.mode),
+            JsonValue.int(metadata.modified_ns),
+            JsonValue.int(metadata.changed_ns),
+        ],
+    )
+
+
+pub def decoded_epoch(text: str) -> Result[BuildEpoch, str]:
+    """
+    An epoch from its encoding. Anything but a complete epoch of this schema is refused, so a damaged record is never
+    taken for an empty one.
+    """
+    parts = fields(parse(text).map_err((error) => error.message())?, 8)?
+    if string_of(parts[0])? != EPOCH_SCHEMA:
+        return Err("not a build epoch of this schema")
+    selection = fields(parts[2], 3)?
+    mut inputs: list[CapturedInput] = []
+    for value in elements(parts[3])?:
+        inputs.append(decoded_input(value)?)
+    mut absent: list[InputPath] = []
+    for value in elements(parts[4])?:
+        absent.append(decoded_path(value)?)
+    mut listings: list[CapturedListing] = []
+    for value in elements(parts[5])?:
+        listings.append(decoded_listing(value)?)
+    mut declarations: list[Declarations] = []
+    for value in elements(parts[6])?:
+        declarations.append(decoded_declarations(value)?)
+    return Ok(
+        BuildEpoch(
+            roots=strings_of(parts[1])?,
+            selection=InputSelection(
+                command=string_of(selection[0])?,
+                profile=string_of(selection[1])?,
+                features=strings_of(selection[2])?,
+            ),
+            inputs=inputs,
+            absent=absent,
+            listings=listings,
+            declarations=declarations,
+            admitted=strings_of(parts[7])?,
+        ),
+    )
+
+
+def decoded_input(value: JsonValue) -> Result[CapturedInput, str]:
+    """One captured input from its encoding."""
+    parts = fields(value, 5)?
+    return Ok(
+        CapturedInput(
+            path=string_of(parts[0])?,
+            role=role_of(string_of(parts[1])?)?,
+            metadata=decoded_metadata(parts[2])?,
+            digest=string_of(parts[3])?,
+            settled=bool_of(parts[4])?,
+        ),
+    )
+
+
+def decoded_declarations(value: JsonValue) -> Result[Declarations, str]:
+    """What one manifest declares, from its encoding."""
+    parts = fields(value, 3)?
+    mut files: list[InputPath] = []
+    for item in elements(parts[1])?:
+        files.append(decoded_path(item)?)
+    return Ok(Declarations(manifest=string_of(parts[0])?, files=files, source_root=string_of(parts[2])?))
+
+
+def decoded_listing(value: JsonValue) -> Result[CapturedListing, str]:
+    """One membership listing from its encoding."""
+    parts = fields(value, 5)?
+    return Ok(
+        CapturedListing(
+            path=string_of(parts[0])?,
+            metadata=decoded_metadata(parts[1])?,
+            settled=bool_of(parts[2])?,
+            files=strings_of(parts[3])?,
+            directories=strings_of(parts[4])?,
+        ),
+    )
+
+
+def decoded_path(value: JsonValue) -> Result[InputPath, str]:
+    """One path in reach from its encoding."""
+    parts = fields(value, 2)?
+    return Ok(InputPath(path=string_of(parts[0])?, role=role_of(string_of(parts[1])?)?))
+
+
+def decoded_metadata(value: JsonValue) -> Result[FileMetadata, str]:
+    """File metadata from their encoding."""
+    parts = fields(value, 6)?
+    return Ok(
+        FileMetadata(
+            device=int_of(parts[0])?,
+            inode=int_of(parts[1])?,
+            size=int_of(parts[2])?,
+            mode=int_of(parts[3])?,
+            modified_ns=int_of(parts[4])?,
+            changed_ns=int_of(parts[5])?,
+        ),
+    )
+
+
+def role_of(text: str) -> Result[InputRole, str]:
+    """The role an encoding names."""
+    roles = [
+        InputRole.Root,
+        InputRole.Member,
+        InputRole.Resolved,
+        InputRole.Manifest,
+        InputRole.Lock,
+        InputRole.Vocabulary,
+        InputRole.Declared,
+        InputRole.ToolchainPin,
+    ]
+    for role in roles:
+        if role.value() == text:
+            return Ok(role)
+    return Err(f"unknown input role `{text}`")
+
+
+def fields(value: JsonValue, count: int) -> Result[list[JsonValue], str]:
+    """An encoded record: an array of exactly `count` fields."""
+    found = elements(value)?
+    if len(found) != count:
+        return Err(f"expected {count} fields, found {len(found)}")
+    return Ok(found)
+
+
+def elements(value: JsonValue) -> Result[list[JsonValue], str]:
+    """An encoded list."""
+    match value.as_array():
+        Some(found) => return Ok(found)
+        None => return Err("expected an array")
+
+
+def string_of(value: JsonValue) -> Result[str, str]:
+    """An encoded string."""
+    match value.as_str():
+        Some(found) => return Ok(found)
+        None => return Err("expected a string")
+
+
+def strings_of(value: JsonValue) -> Result[list[str], str]:
+    """An encoded list of strings."""
+    mut found: list[str] = []
+    for item in elements(value)?:
+        found.append(string_of(item)?)
+    return Ok(found)
+
+
+def int_of(value: JsonValue) -> Result[int, str]:
+    """An encoded integer."""
+    match value.as_int():
+        Some(found) => return Ok(found)
+        None => return Err("expected an integer")
+
+
+def bool_of(value: JsonValue) -> Result[bool, str]:
+    """An encoded boolean."""
+    match value.as_bool():
+        Some(found) => return Ok(found)
+        None => return Err("expected a boolean")

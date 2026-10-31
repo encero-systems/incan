@@ -1,0 +1,338 @@
+"""
+Worker host contracts: what a caller of a compiler worker observes on its socket.
+
+Each case connects its callers and sends their frames before the host reads them, so one thread plays both sides.
+"""
+
+from rust::std::env import temp_dir
+from rust::std::fs import File, metadata, remove_file
+from rust::std::io import Write
+from rust::std::os::unix::fs import MetadataExt
+from rust::std::process import id
+from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant
+from std.json import JsonValue, parse
+from pub::incan_platform.ipc import Connection, dial
+from host import HostSettings, WorkerHost, complete, host_for, next_request
+from lifecycle import ActivationOutcome, Bounds, FOOTPRINT_CEILING, FOOTPRINT_MARGIN, Retirement, lifecycle
+from protocol import MISMATCH, PANIC_STATUS, SCHEMA, CompileRequest, Reply, WorkerCommand, encode_ready, encode_reply
+
+const GENERATION: str = "0123456789abcdef"
+
+
+def socket_path(name: str) -> str:
+    """A fresh socket path for one case, short enough to bind."""
+    path = temp_dir().join(f"iwh-{id()}-{name}.sock").to_string_lossy().into_owned()
+    discard(path)
+    return path
+
+
+def discard(path: str) -> None:
+    """Remove a scratch file; one that is absent needs nothing."""
+    _ = remove_file(path)
+
+
+def own_uid() -> Result[int, str]:
+    """The user running the cases, read from a file it creates."""
+    path = socket_path("uid")
+    created = File.create(path).map_err((error) => f"cannot create {path}: {error}")?
+    uid = int(metadata(path).map_err((error) => f"cannot read {path}: {error}")?.uid())
+    discard(path)
+    return Ok(uid)
+
+
+def settings(socket: str, idle_millis: int, margin: int, owner: Option[u32]) -> HostSettings:
+    """A host that announces itself to nobody, with a footprint baseline of one thousand bytes."""
+    return HostSettings(
+        socket=socket,
+        generation=GENERATION,
+        ready="",
+        baseline=1000,
+        bounds=Bounds(idle_millis=idle_millis, margin=margin, ceiling=FOOTPRINT_CEILING),
+        owner=owner,
+    )
+
+
+def request_text(generation: str, command: str) -> str:
+    """A request document for a formatting run, as Oven sends it."""
+    arguments = f"[\"{command}\",\"/p/unit.json\",\"src/main.incn\",\"--check\"]"
+    sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}}}"
+
+
+def caller(socket: str, payload: str) -> Result[Connection, str]:
+    """A caller that sent one framed payload and waits at most five seconds for its reply."""
+    mut connected = dial(socket)?
+    connected.wait_at_most(5)
+    connected.send(payload.encode("utf-8"))?
+    return Ok(connected)
+
+
+def raw_caller(socket: str, sent: bytes) -> Result[Connection, str]:
+    """A caller that wrote exactly these bytes, as a broken client does."""
+    mut connected = dial(socket)?
+    connected.wait_at_most(5)
+    match connected.stream.borrow_mut().write_all(sent):
+        Ok(_) => return Ok(connected)
+        Err(error) => return Err(f"cannot write: {error}")
+
+
+def reply(mut connected: Connection) -> Result[JsonValue, str]:
+    """The reply document a caller received."""
+    payload = connected.receive()?
+    match RustString.from_utf8(payload):
+        Ok(text) => return parse(str(text)).map_err((error) => error.message())
+        Err(_) => return Err("the reply is not UTF-8")
+
+
+def exit_of(document: JsonValue) -> int:
+    """The reply's exit status, or -1 without one."""
+    match document.get("exit"):
+        Some(value) =>
+            match value.as_int():
+                Some(code) => return code
+                None => return -1
+        None => return -1
+
+
+def reason_of(document: JsonValue) -> str:
+    """The reply's reason."""
+    match document.get("reason"):
+        Some(value) =>
+            match value.as_str():
+                Some(text) => return text
+                None => return ""
+        None => return ""
+
+
+def retired(document: JsonValue) -> bool:
+    """Whether the reply says the worker retires."""
+    match document.get("retired"):
+        Some(value) =>
+            match value.as_bool():
+                Some(flag) => return flag
+                None => return false
+        None => return false
+
+
+def withdrawn(socket: str) -> bool:
+    """Whether the worker's socket file is gone."""
+    match metadata(socket):
+        Ok(_) => return false
+        Err(_) => return true
+
+
+def served(mut host: WorkerHost) -> Result[CompileRequest, str]:
+    """The next request the host hands its compiler entry."""
+    match next_request(host):
+        Some(request) => return Ok(request)
+        None => return Err("the host retired instead of serving a request")
+
+
+def ended(mut host: WorkerHost) -> bool:
+    """Whether the host retired instead of handing out another request."""
+    match next_request(host):
+        Some(_) => return false
+        None => return true
+
+
+def stays(settled: Option[Retirement]) -> bool:
+    """Whether an activation leaves the worker serving."""
+    match settled:
+        Some(_) => return false
+        None => return true
+
+
+def is_format(request: CompileRequest) -> bool:
+    """Whether the request is a formatting run."""
+    match request.command:
+        WorkerCommand.Format => return true
+        WorkerCommand.Unit => return false
+        WorkerCommand.Check => return false
+
+
+pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
+    """A reply and a readiness document are the same bytes Oven has always read."""
+    completed = f"{{\"exit\":0,\"reason\":\"\",\"schema\":\"{SCHEMA}\"}}"
+    assert encode_reply(Reply.Completed(0), false) == completed.encode("utf-8")
+    refused = f"{{\"exit\":1,\"reason\":\"missing `cwd`\",\"retired\":true,\"schema\":\"{SCHEMA}\"}}"
+    assert encode_reply(Reply.Refused("missing `cwd`"), true) == refused.encode("utf-8")
+    ready = f"{{\"generation\":\"{GENERATION}\",\"pid\":42,\"schema\":\"{SCHEMA}\",\"status\":\"ready\"}}"
+    assert encode_ready(GENERATION, 42) == ready.encode("utf-8")
+    return Ok(None)
+
+
+pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Result[None, str]:
+    """
+    A header that is not a length, a length over the frame bound, a payload that is not JSON and an unserved command
+    are each refused with a reason; the request queued behind them is served.
+    """
+    socket = socket_path("frames")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut not_a_length = raw_caller(socket, "12ab5678".encode("utf-8"))?
+    mut over_bound = raw_caller(socket, "99999999".encode("utf-8"))?
+    mut not_json = caller(socket, "{not json")?
+    mut unserved = caller(socket, request_text(GENERATION, "--run"))?
+    mut valid = caller(socket, request_text(GENERATION, "--fmt"))?
+    request = served(host)?
+    assert is_format(request)
+    assert request.arguments == ["/p/unit.json", "src/main.incn", "--check"]
+    assert request.cwd == "/p" and request.stdout == "/p/r.out" and request.stderr == "/p/r.err"
+    for refused in [reply(not_a_length)?, reply(over_bound)?, reply(not_json)?, reply(unserved)?]:
+        assert exit_of(refused) == 1
+        assert reason_of(refused) != ""
+        assert not retired(refused)
+    complete(host, ActivationOutcome.Exited(0), -1)
+    answered = reply(valid)?
+    assert exit_of(answered) == 0 and reason_of(answered) == "" and not retired(answered)
+    assert not withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_a_peer_of_another_user_is_closed_unanswered() -> Result[None, str]:
+    """A caller the OS reports as another user is never served or answered; the worker then retires when idle."""
+    socket = socket_path("peer")
+    other: u32 = (own_uid()? + 1).wrapping_resize()
+    mut host = host_for(settings(socket, 300, 16777216, Some(other)))?
+    mut foreign = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert ended(host)
+    match reply(foreign):
+        Ok(_) => return Err("a foreign peer was answered")
+        Err(_) => pass
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_an_idle_worker_retires_and_withdraws_its_socket() -> Result[None, str]:
+    """A worker that serves nothing for its idle period retires and removes its socket."""
+    socket = socket_path("idle")
+    started = Instant.now()
+    mut host = host_for(settings(socket, 300, 16777216, None))?
+    assert ended(host)
+    assert int(started.elapsed().as_millis()) >= 300
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_a_worker_still_retires_when_idle_after_an_activation_longer_than_its_queue() -> Result[None, str]:
+    """
+    An activation that lasts longer than the socket's queue of wake-ups could hold neither loses the idle watchdog nor
+    delays the next request: the worker answers it and still retires once idle.
+    """
+    socket = socket_path("long")
+    mut host = host_for(settings(socket, 40, 16777216, None))?
+    mut first = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    # The watchdog wakes every 10 ms; 2 s is longer than the 128 connections a listening socket queues.
+    sleep(Duration.from_millis(2000))
+    complete(host, ActivationOutcome.Exited(0), -1)
+    assert exit_of(reply(first)?) == 0
+    started = Instant.now()
+    assert ended(host)
+    assert int(started.elapsed().as_millis()) < 2000
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_a_footprint_over_its_margin_for_two_activations_retires_the_worker() -> Result[None, str]:
+    """
+    A footprint more than the margin above the baseline after two activations in a row retires the worker: its second
+    reply is marked retired, its socket is withdrawn, and the request already queued is still answered, also retired.
+    """
+    socket = socket_path("footprint")
+    mut host = host_for(settings(socket, 10000, 100, None))?
+    mut first = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1101)
+    assert not retired(reply(first)?)
+    mut second = caller(socket, request_text(GENERATION, "--fmt"))?
+    mut queued = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1200)
+    second_reply = reply(second)?
+    assert exit_of(second_reply) == 0 and retired(second_reply)
+    assert withdrawn(socket)
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1200)
+    assert retired(reply(queued)?)
+    assert ended(host)
+    return Ok(None)
+
+
+pub def test_a_footprint_back_within_its_margin_keeps_the_worker() -> Result[None, str]:
+    """Excess footprint must persist across consecutive activations; one back within the margin resets it."""
+    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=FOOTPRINT_CEILING))
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1050).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), -1).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 1101).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("two consecutive activations over the margin did not retire the worker")
+    return Ok(None)
+
+
+pub def test_a_footprint_over_the_ceiling_retires_the_worker_at_once() -> Result[None, str]:
+    """A footprint above the ceiling after any activation retires the worker after that activation alone."""
+    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=5000))
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 5000).retirement)
+    match policy.settle(ActivationOutcome.Panicked, 5001).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a footprint over the ceiling did not retire the worker")
+    return Ok(None)
+
+
+pub def test_a_compiler_panic_is_a_fault_and_the_next_request_is_served() -> Result[None, str]:
+    """A panic contained by the compiler entry is answered as a compiler fault; the worker serves the next request."""
+    socket = socket_path("panic")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut panicked = caller(socket, request_text(GENERATION, "--fmt"))?
+    mut next = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Panicked, -1)
+    fault = reply(panicked)?
+    assert exit_of(fault) == PANIC_STATUS and reason_of(fault) == "" and not retired(fault)
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(3), -1)
+    assert exit_of(reply(next)?) == 3
+    assert not withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_a_request_of_another_generation_ends_the_worker() -> Result[None, str]:
+    """A request of another compiler generation is refused, its reply marked retired, and the worker exits."""
+    socket = socket_path("generation")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut stranger = caller(socket, request_text("fedcba9876543210", "--fmt"))?
+    assert ended(host)
+    refusal = reply(stranger)?
+    assert exit_of(refusal) == 1 and reason_of(refusal) == MISMATCH and retired(refusal)
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_an_unrestored_process_serves_nothing_more() -> Result[None, str]:
+    """
+    An activation after which the process could not be restored is answered and retires the worker at once; so does
+    an entry that asks for another request without completing the open one.
+    """
+    socket = socket_path("unsafe")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut first = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.UnsafeCleanup("compiler console restore failed: closed"), -1)
+    failed = reply(first)?
+    assert exit_of(failed) == 1 and reason_of(failed) == "compiler console restore failed: closed" and retired(failed)
+    assert withdrawn(socket)
+    assert ended(host)
+    again = socket_path("unsafe-again")
+    mut second_host = host_for(settings(again, 10000, 16777216, None))?
+    mut open = caller(again, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(second_host)?)
+    assert ended(second_host)
+    assert retired(reply(open)?)
+    return Ok(None)

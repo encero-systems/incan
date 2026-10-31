@@ -1,0 +1,691 @@
+"""Export and admit portable, canonical record sets without selecting or activating their namespaces."""
+
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest, sha256
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from segment_store import (
+    EXPECT_ABSENT,
+    EXPECT_REPAIR,
+    Lookup,
+    Transaction,
+    Snapshot,
+    StoreError,
+    Write,
+    begin,
+    commit,
+    encode_segment,
+    get,
+    lease,
+    lookup,
+    owned,
+    quarantine_record,
+    payload_path,
+    put,
+    put_payload,
+    readmit_payload,
+    snapshot,
+)
+
+const FORMAT: str = "incan.sealed-set/2"
+const SET_PREFIX: str = "sealed/set/"
+
+
+pub model Profile:
+    """Exact identity, family schema and codec contracts; the adapter supplies the supported profile."""
+
+    pub identity: str
+    pub schema: str
+    pub codec: str
+
+
+pub model ExternalReference:
+    """One full immutable revision key and value supplied by a declared dependency set, never by global latest lookup."""
+
+    pub set_root: str
+    pub key: str
+    pub revision: str
+    pub value: str
+
+
+pub model Record:
+    """One immutable revision; references name other keys in this set, and payloads name full SHA-256 digests."""
+
+    pub key: str
+    pub revision: str
+    pub payloads: list[str]
+    pub references: list[str]
+    pub external: list[ExternalReference] = []
+
+
+pub model SetSpec:
+    """An adapter's explicit export roots and immutable provenance, independent of a local store generation."""
+
+    pub profile: Profile
+    pub origin: str
+    pub producer: str
+    pub receipt: str
+    pub records: list[Record]
+    pub namespaces: list[str]
+    pub dependencies: list[str]
+
+
+model Entry:
+    """A record envelope refers to shared content rather than copying its value."""
+
+    pub record: Record
+    pub value: str
+
+
+model Object:
+    """One content-named file with an exact length, shared by every envelope that refers to it."""
+
+    pub digest: str
+    pub length: int
+
+
+model VerifiedSet:
+    """Private transport metadata; verification results supplied by callers never authorize admission."""
+
+    pub spec: SetSpec
+    pub entries: list[Entry]
+    pub objects: list[Object]
+    pub index: str
+    pub document: bytes
+
+
+pub def export_set(view: Snapshot, spec: SetSpec, directory: Path) -> Result[str, StoreError]:
+    """
+    Export explicitly selected source records to a new transport directory and return its full content root.
+
+    1. Pin the source snapshot and canonicalize the selection.
+    2. Export shared value and payload files, checking their exact identities.
+    3. Write a canonical indexed base and manifest, excluding local generations and paths.
+
+    Export is maintenance work over the selected records, not a bounded activation API. The adapter owns family
+    encoding and source authority; this boundary preserves its opaque bytes and exact profile.
+    """
+    # 1. The source lease spans every record and payload read.
+    held = lease(view)?
+    selected = canonical_spec(spec)?
+    directory.mkdir(true, false).map_err((error) => problem("io", directory.0, error.message()))?
+    directory.joinpath("payloads").mkdir(false, false).map_err((error) => problem("io", directory.0, error.message()))?
+    # 2. Equal contents are exported once, irrespective of record ownership.
+    mut entries: list[Entry] = []
+    mut objects: Dict[str, int] = {}
+    for record in selected.records:
+        value = required_value(view, record.key)?
+        digest = content_digest(value)
+        write_file(object_path(directory, digest), value)?
+        objects[digest] = len(value)
+        entries.append(Entry(record=record, value=digest))
+        for payload in record.payloads:
+            check_digest(payload)?
+            source = payload_path(view.root, payload)
+            objects[payload] = checked_length(source, payload)?
+            copy_file(source, object_path(directory, payload))?
+    # 3. The portable index has canonical record envelopes, never local physical offsets.
+    index = index_bytes(selected, entries)?
+    write_file(directory.joinpath("index.seg"), index)?
+    files = [Object(digest=digest, length=objects[digest]) for digest in sorted([key for key in objects.keys()])]
+    document = manifest_bytes(selected, entries, files, content_digest(index))?
+    write_file(directory.joinpath("manifest.json"), document)?
+    root = content_digest(document)
+    verify(directory, root, selected.profile)?
+    return Ok(root)
+
+
+pub def verify(directory: Path, root: str, supported: Profile) -> Result[SetSpec, StoreError]:
+    """
+    Verify a canonical transport and every declared object's full digest and length before any store write.
+
+    1. Check the externally supplied set root, format and exact supported profile.
+    2. Validate canonical identities, namespace roots and reference closure.
+    3. Verify the canonical index and all content-named files, refusing symlink escapes.
+
+    Trust, signatures and native-unit compatibility belong to the supplying adapter. A required unknown codec is
+    refused here; opaque native files alone never assert that a native unit is applicable.
+    """
+    return Ok(verify_transport(directory, root, supported)?.spec)
+
+
+pub def admit(root: Path, directory: Path, set_root: str, supported: Profile) -> Result[Snapshot, StoreError]:
+    """
+    Admit missing immutable objects and one set receipt, without creating any plan or namespace selection.
+
+    1. Verify the transport completely and validate dependencies and immutable record identities.
+    2. Install shared payloads through the store API, only when missing.
+    3. Publish record envelopes and the set receipt together through one validated transaction.
+
+    Local bakes, dependency exports and toolchain bundles use this same entry point. Payload installation may leave
+    unreferenced objects after an I/O failure; a set becomes visible only at the transaction's atomic publication.
+    """
+    # 1. Verification is required even for a repeated root; damaged transport is never interpreted as absence.
+    verified = verify_transport(directory, set_root, supported)?
+    view = snapshot(root)?
+    check_dependencies(view, verified.spec.dependencies)?
+    check_external(view, verified.spec.records)?
+    receipt_key = SET_PREFIX + set_root
+    already = get(view, receipt_key)? != None
+    mut transaction = begin(view)
+    for dependency in verified.spec.dependencies:
+        key = SET_PREFIX + dependency
+        transaction = put(transaction, key, required_value(view, key)?, EXPECT_ABSENT)
+    for record in verified.spec.records:
+        for reference in record.external:
+            transaction = put(transaction, reference.key, required_value(view, reference.key)?, EXPECT_ABSENT)
+    for entry in verified.entries:
+        key = record_key(verified.spec, entry.record)?
+        value = envelope_bytes(verified.spec, entry)?
+        check_existing(view, key, value)?
+        if already:
+            required_value(view, key)?
+        transaction = put(transaction, key, value, EXPECT_ABSENT)
+    check_existing(view, receipt_key, verified.document)?
+    transaction = put(transaction, receipt_key, verified.document, EXPECT_ABSENT)
+    # 2. Content names are checked by both the transport verifier and the store's immutable installer.
+    install_objects(root, directory, verified.objects, already)?
+    if already:
+        return Ok(view)
+    # 3. No namespace binding is written; imported revisions coexist until a plan explicitly selects one.
+    return commit(transaction)
+
+
+pub def record_key(spec: SetSpec, record: Record) -> Result[str, StoreError]:
+    """The full immutable revision identity, scoped by origin and identity profile, independent of value digest."""
+    fields = [spec.profile.identity, spec.profile.schema, spec.profile.codec, spec.origin, record.key, record.revision]
+    return Ok("sealed/record/" + content_digest(json_bytes(strings(fields))?))
+
+
+def verify_transport(directory: Path, root: str, supported: Profile) -> Result[VerifiedSet, StoreError]:
+    """Validate metadata, identities and all physical objects for both inspection and admission."""
+    # 1. The caller's pinned root is authority, never a root read from an untrusted manifest.
+    check_digest(root)?
+    manifest = transport_file(directory, "manifest.json")?
+    document = read_file(manifest)?
+    if content_digest(document) != root:
+        return Err(problem("integrity", manifest.0, "manifest differs from the pinned set root"))
+    verified = decode_manifest(document)?
+    if profile_fields(verified.spec.profile) != profile_fields(supported):
+        return Err(problem("format", root, "unsupported identity, schema or codec profile"))
+    # 2. Re-encoding rejects alternate encodings, duplicate keys, unknown fields and unsorted inventories.
+    canonical = canonical_spec(verified.spec)?
+    entries = canonical_entries(canonical, verified.entries)
+    if manifest_bytes(canonical, entries, verified.objects, verified.index)? != document:
+        return Err(problem("integrity", root, "noncanonical manifest"))
+    check_closure(verified)?
+    # 3. Objects use digest-only names; paths and symlinks are never supplied by a record.
+    index_path = transport_file(directory, "index.seg")?
+    expected_index = index_bytes(canonical, verified.entries)?
+    if content_digest(expected_index) != verified.index or read_file(index_path)? != expected_index:
+        return Err(problem("integrity", index_path.0, "index does not match its records"))
+    for object in verified.objects:
+        path = transport_file(directory, f"payloads/{object.digest}")?
+        if checked_length(path, object.digest)? != object.length:
+            return Err(problem("integrity", path.0, "object length differs from its manifest"))
+    return Ok(verified)
+
+
+def canonical_spec(spec: SetSpec) -> Result[SetSpec, StoreError]:
+    """Validate the adapter's explicit identities and sort each unordered selection without silently merging keys."""
+    for field in profile_fields(spec.profile) + [spec.origin, spec.producer, spec.receipt]:
+        if field == "":
+            return Err(problem("format", "selection", "profile, origin, producer and receipt must be explicit"))
+    mut by_key: Dict[str, Record] = {}
+    for record in spec.records:
+        if record.key == "" or record.revision == "" or record.key in by_key:
+            return Err(problem("integrity", record.key, "empty identity or duplicate record key"))
+        by_key[record.key] = Record(
+            key=record.key,
+            revision=record.revision,
+            payloads=unique_sorted(record.payloads)?,
+            references=unique_sorted(record.references)?,
+            external=canonical_external(record.external)?,
+        )
+    return Ok(
+        SetSpec(
+            profile=spec.profile,
+            origin=spec.origin,
+            producer=spec.producer,
+            receipt=spec.receipt,
+            records=[by_key[key] for key in sorted([key for key in by_key.keys()])],
+            namespaces=unique_sorted(spec.namespaces)?,
+            dependencies=unique_sorted(spec.dependencies)?,
+        ),
+    )
+
+
+def unique_sorted(values: list[str]) -> Result[list[str], StoreError]:
+    """Canonicalize an unordered set, refusing duplicate entries instead of hiding inconsistent input."""
+    ordered = sorted(values)
+    for position in range(1, len(ordered)):
+        if ordered[position] == ordered[position - 1]:
+            return Err(problem("integrity", ordered[position], "duplicate set member"))
+    return Ok(ordered)
+
+
+def canonical_entries(spec: SetSpec, entries: list[Entry]) -> list[Entry]:
+    """Order entries by full key and use the selection's canonical reference lists."""
+    values = {entry.record.key: entry.value for entry in entries}
+    return [Entry(record=record, value=values[record.key]) for record in spec.records]
+
+
+def check_closure(verified: VerifiedSet) -> Result[None, StoreError]:
+    """Require exact record/value/payload inventories and roots; external sets remain explicit dependencies."""
+    records = [record.key for record in verified.spec.records]
+    mut required: set[str] = set()
+    if len(verified.entries) != len(records):
+        return Err(problem("integrity", "records", "record inventory differs from selection"))
+    for entry in verified.entries:
+        required.add(entry.value)
+        for payload in entry.record.payloads:
+            required.add(payload)
+        for reference in entry.record.references:
+            if reference not in records:
+                return Err(problem("integrity", reference, "reference is outside the declared record closure"))
+    for record in verified.spec.records:
+        for reference in record.external:
+            check_digest(reference.set_root)?
+            check_digest(reference.value)?
+            if reference.set_root not in verified.spec.dependencies or reference.key == "" or reference.revision == "":
+                return Err(problem("integrity", reference.key, "external reference lacks exact declared membership"))
+    for namespace in verified.spec.namespaces:
+        if namespace not in records:
+            return Err(problem("integrity", namespace, "namespace root is not an exported record"))
+    names = [object.digest for object in verified.objects]
+    if names != sorted([digest for digest in required]):
+        return Err(problem("integrity", "payloads", "object inventory differs from the required closure"))
+    for digest in names + verified.spec.dependencies + [verified.index]:
+        check_digest(digest)?
+    return Ok(None)
+
+
+def check_dependencies(view: Snapshot, dependencies: list[str]) -> Result[None, StoreError]:
+    """Every external set must already have an admitted immutable receipt in this home."""
+    for dependency in dependencies:
+        document = required_value(view, SET_PREFIX + dependency)?
+        if content_digest(document) != dependency:
+            return Err(problem("integrity", dependency, "admitted dependency receipt differs from its root"))
+        admitted = decode_manifest(document)?
+        for entry in admitted.entries:
+            key = record_key(admitted.spec, entry.record)?
+            if required_value(view, key)? != envelope_bytes(admitted.spec, entry)?:
+                return Err(problem("integrity", key, "admitted dependency record differs from its receipt"))
+        for object in admitted.objects:
+            if checked_length(payload_path(view.root, object.digest), object.digest)? != object.length:
+                return Err(problem("integrity", dependency, "admitted dependency has an inconsistent payload"))
+    return Ok(None)
+
+
+def install_objects(root: Path, directory: Path, objects: list[Object], admitted: bool) -> Result[None, StoreError]:
+    """
+    Stage only missing content in private files, validating every copy before asking the store to install it.
+
+    Transport files are caller-owned and may change after verification. A private copy closes that boundary; the
+    store only receives files whose full digest and length were checked after copying. Existing damage is an error.
+    """
+    mut missing: list[Object] = []
+    for object in objects:
+        target = payload_path(root, object.digest)
+        if target.exists():
+            if target.is_symlink() or checked_length(target, object.digest)? != object.length:
+                return Err(problem("integrity", target.0, "installed object differs from its identity"))
+        else:
+            if admitted:
+                return Err(problem("integrity", target.0, "admitted set is missing a required object"))
+            missing.append(object)
+    if len(missing) == 0:
+        return Ok(None)
+    staging = root.joinpath("staging")
+    staging.mkdir(true, true).map_err((error) => problem("io", staging.0, error.message()))?
+    private = TemporaryDirectory
+        .try_new_with("sealed-", "", Some(staging))
+        .map_err((error) => problem("io", staging.0, error.message()))?
+    for object in missing:
+        source = transport_file(directory, f"payloads/{object.digest}")?
+        target = private.path().joinpath(object.digest)
+        copy_file(source, target)?
+        if checked_length(target, object.digest)? != object.length:
+            return Err(problem("integrity", target.0, "transport object changed during staging"))
+    for object in missing:
+        source = private.path().joinpath(object.digest)
+        if put_payload(root, source)? != object.digest:
+            return Err(problem("integrity", source.0, "private staged object changed"))
+    return Ok(None)
+
+
+def check_existing(view: Snapshot, key: str, value: bytes) -> Result[None, StoreError]:
+    """Refuse unequal values under one immutable identity before installing any new payloads."""
+    match get(view, key)?:
+        None => return Ok(None)
+        Some(found) =>
+            if found != value:
+                return Err(problem("conflict", key, "immutable identity already names another value"))
+    return Ok(None)
+
+
+def required_value(view: Snapshot, key: str) -> Result[bytes, StoreError]:
+    """Read a required source record, preserving store integrity errors and refusing missing closure members."""
+    match get(view, key)?:
+        Some(value) => return Ok(value)
+        None => return Err(problem("integrity", key, "required record is absent"))
+
+
+def profile_fields(profile: Profile) -> list[str]:
+    """The ordered profile contract shared by encoding and compatibility checks."""
+    return [profile.identity, profile.schema, profile.codec]
+
+
+def envelope_bytes(spec: SetSpec, entry: Entry) -> Result[bytes, StoreError]:
+    """One immutable record envelope, with ownership separate from shared content and admission provenance."""
+    return json_bytes(
+        JsonValue.array(
+            [strings(profile_fields(spec.profile)), JsonValue.string(spec.origin), entry_json(entry, false)?],
+        ),
+    )
+
+
+def index_bytes(spec: SetSpec, entries: list[Entry]) -> Result[bytes, StoreError]:
+    """The store's canonical indexed base encoding of the selected record envelopes."""
+    mut writes: list[Write] = []
+    for entry in entries:
+        key = record_key(spec, entry.record)?
+        writes.append(Write(key=key, kind=0, value=envelope_bytes(spec, entry)?, expect=EXPECT_ABSENT))
+    return encode_segment(writes)
+
+
+def entry_json(entry: Entry, membership: bool = true) -> Result[JsonValue, StoreError]:
+    """A revision and its exact value, payload and intra-set record references."""
+    return Ok(
+        JsonValue.array(
+            [
+                JsonValue.string(entry.record.key),
+                JsonValue.string(entry.record.revision),
+                JsonValue.string(entry.value),
+                strings(entry.record.payloads),
+                strings(entry.record.references),
+                external_fields(entry.record.external, membership)?,
+            ],
+        ),
+    )
+
+
+def manifest_bytes(spec: SetSpec, entries: list[Entry], objects: list[Object], index: str) -> Result[bytes, StoreError]:
+    """A canonical array encoding, with no map iteration order or local filesystem identity."""
+    return json_bytes(
+        JsonValue.array(
+            [
+                JsonValue.string(FORMAT),
+                strings(profile_fields(spec.profile)),
+                JsonValue.string(spec.origin),
+                JsonValue.string(spec.producer),
+                JsonValue.string(spec.receipt),
+                JsonValue.array([entry_json(entry)? for entry in entries]),
+                strings(spec.namespaces),
+                strings(spec.dependencies),
+                JsonValue.array([object_json(object) for object in objects]),
+                JsonValue.string(index),
+            ],
+        ),
+    )
+
+
+def object_json(object: Object) -> JsonValue:
+    """The digest and length of one content-named file."""
+    return JsonValue.array([JsonValue.string(object.digest), JsonValue.int(object.length)])
+
+
+def decode_manifest(document: bytes) -> Result[VerifiedSet, StoreError]:
+    """Decode the versioned transport shape; canonical encoding and reference closure are checked separately."""
+    text = RustString.from_utf8(document).map_err((error) => problem("integrity", "manifest", str(error)))?
+    parsed = JsonValue.parse(str(text)).map_err((error) => problem("integrity", "manifest", error.message()))?
+    fields = array(parsed, 10)?
+    if string(fields[0])? != FORMAT:
+        return Err(problem("format", "manifest", "unsupported sealed-set format"))
+    profile = string_list(fields[1])?
+    if len(profile) != 3:
+        return Err(problem("format", "manifest", "profile requires identity, schema and codec"))
+    mut entries: list[Entry] = []
+    for value in array(fields[5])?:
+        item = array(value, 6)?
+        entries.append(
+            Entry(
+                record=Record(
+                    key=string(item[0])?,
+                    revision=string(item[1])?,
+                    payloads=string_list(item[3])?,
+                    references=string_list(item[4])?,
+                    external=decode_external(item[5])?,
+                ),
+                value=string(item[2])?,
+            ),
+        )
+    mut objects: list[Object] = []
+    for value in array(fields[8])?:
+        item = array(value, 2)?
+        length = match item[1].as_int():
+            Some(number) => number
+            None => return Err(problem("integrity", "manifest", "object length must be an integer"))
+
+        if length < 0:
+            return Err(problem("integrity", "manifest", "negative object length"))
+        objects.append(Object(digest=string(item[0])?, length=length))
+    spec = SetSpec(
+        profile=Profile(identity=profile[0], schema=profile[1], codec=profile[2]),
+        origin=string(fields[2])?,
+        producer=string(fields[3])?,
+        receipt=string(fields[4])?,
+        records=[entry.record for entry in entries],
+        namespaces=string_list(fields[6])?,
+        dependencies=string_list(fields[7])?,
+    )
+    return Ok(VerifiedSet(spec=spec, entries=entries, objects=objects, index=string(fields[9])?, document=document))
+
+
+def array(value: JsonValue, length: int = -1) -> Result[list[JsonValue], StoreError]:
+    """A JSON array with the exact versioned arity when one is specified."""
+    match value.as_array():
+        Some(items) =>
+            if length >= 0 and len(items) != length:
+                return Err(problem("integrity", "manifest", "unexpected array length"))
+            return Ok(items)
+        None => return Err(problem("integrity", "manifest", "expected array"))
+
+
+def string(value: JsonValue) -> Result[str, StoreError]:
+    """A strict JSON string, never a coerced integer or null."""
+    match value.as_str():
+        Some(text) => return Ok(text)
+        None => return Err(problem("integrity", "manifest", "expected string"))
+
+
+def string_list(value: JsonValue) -> Result[list[str], StoreError]:
+    """A strict list of strings."""
+    mut texts: list[str] = []
+    for item in array(value)?:
+        texts.append(string(item)?)
+    return Ok(texts)
+
+
+def strings(values: list[str]) -> JsonValue:
+    """Encode strings in their supplied canonical order."""
+    return JsonValue.array([JsonValue.string(value) for value in values])
+
+
+def json_bytes(value: JsonValue) -> Result[bytes, StoreError]:
+    """Serialize the portable wire value as compact UTF-8."""
+    return Ok(value.to_json().map_err((error) => problem("format", "manifest", error.message()))?.encode("utf-8"))
+
+
+def content_digest(data: bytes) -> str:
+    """Full SHA-256 content identity, never a short fingerprint."""
+    return hexlify(sha256.digest(data))
+
+
+def check_digest(digest: str) -> Result[None, StoreError]:
+    """Refuse abbreviated, noncanonical or path-bearing object names."""
+    if len(digest) != 64:
+        return Err(problem("integrity", digest, "expected a full lowercase SHA-256 digest"))
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return Err(problem("integrity", digest, "invalid digest character"))
+    return Ok(None)
+
+
+def object_path(directory: Path, digest: str) -> Path:
+    """A content-named transport file, after its digest has been checked."""
+    return directory.joinpath("payloads").joinpath(digest)
+
+
+def transport_file(directory: Path, relative: str) -> Result[Path, StoreError]:
+    """Refuse symlinked transport roots, subdirectories and files, including paths escaping the canonical root."""
+    path = directory.joinpath(relative)
+    if directory.is_symlink() or path.parent().is_symlink() or path.is_symlink():
+        return Err(problem("integrity", path.0, "symlinks are not transport objects"))
+    base = directory.resolve().map_err((error) => problem("integrity", directory.0, error.message()))?
+    resolved = path.resolve().map_err((error) => problem("integrity", path.0, error.message()))?
+    if resolved.0 != base.joinpath(relative).0 or not path.is_file():
+        return Err(problem("integrity", path.0, "object escapes its transport root or is not a file"))
+    return Ok(path)
+
+
+def checked_length(path: Path, digest: str) -> Result[int, StoreError]:
+    """Verify a complete object with a streaming file digest and return its exact byte length."""
+    actual = file_digest(path, "sha256").map_err((error) => problem("integrity", path.0, error.message()))?
+    if hexlify(actual) != digest:
+        return Err(problem("integrity", path.0, "object does not match its content name"))
+    info = path.stat().map_err((error) => problem("integrity", path.0, error.message()))?
+    return info.size().map_err((error) => problem("integrity", path.0, error.message()))
+
+
+def read_file(path: Path) -> Result[bytes, StoreError]:
+    """Read transport metadata, preserving damage as an explicit error."""
+    return path.read_bytes().map_err((error) => problem("integrity", path.0, error.message()))
+
+
+def write_file(path: Path, data: bytes) -> Result[None, StoreError]:
+    """Write one file in the caller's new private export directory."""
+    return path.write_bytes(data).map_err((error) => problem("io", path.0, error.message()))
+
+
+def copy_file(source: Path, target: Path) -> Result[None, StoreError]:
+    """Copy an immutable payload to a transport without embedding a local source path."""
+    source.copy(target, true, true).map_err((error) => problem("io", target.0, error.message()))?
+    return Ok(None)
+
+
+def problem(kind: str, object: str, detail: str) -> StoreError:
+    """A named store-boundary failure, retaining the substrate's error categories."""
+    return StoreError(kind=kind, object=object, detail=detail)
+
+
+def external_json(reference: ExternalReference) -> JsonValue:
+    """Canonical exact membership separate from the immutable target's ownership and shared value bytes."""
+    return strings([reference.set_root, reference.key, reference.revision, reference.value])
+
+
+def canonical_external(references: list[ExternalReference]) -> Result[list[ExternalReference], StoreError]:
+    """Sort exact references by unambiguous canonical fields, refusing duplicate membership claims."""
+    mut ordered: Dict[str, ExternalReference] = {}
+    for reference in references:
+        key = external_json(reference).to_json().map_err((error) => problem("format", reference.key, error.message()))?
+        if key in ordered:
+            return Err(problem("integrity", reference.key, "duplicate external reference"))
+        ordered[key] = reference
+    return Ok([ordered[key] for key in sorted([key for key in ordered.keys()])])
+
+
+def decode_external(value: JsonValue) -> Result[list[ExternalReference], StoreError]:
+    """Decode exact external references; canonical order and closure are checked before admission."""
+    mut references: list[ExternalReference] = []
+    for item in array(value)?:
+        fields = array(item, 4)?
+        references.append(
+            ExternalReference(
+                set_root=string(fields[0])?,
+                key=string(fields[1])?,
+                revision=string(fields[2])?,
+                value=string(fields[3])?,
+            ),
+        )
+    return Ok(references)
+
+
+def check_external(view: Snapshot, records: list[Record]) -> Result[None, StoreError]:
+    """Require each exact target to belong to the named admitted set, never merely exist in this home."""
+    for record in records:
+        for reference in record.external:
+            dependency = decode_manifest(required_value(view, SET_PREFIX + reference.set_root)?)?
+            mut supplied = false
+            for entry in dependency.entries:
+                if (
+                    record_key(dependency.spec, entry.record)? == reference.key
+                    and entry.record.revision == reference.revision
+                ):
+                    if entry.value != reference.value:
+                        return Err(problem("integrity", reference.key, "dependency supplies another value"))
+                    supplied = true
+            if not supplied:
+                return Err(problem("integrity", reference.key, "dependency does not supply the exact revision"))
+    return Ok(None)
+
+
+def external_fields(references: list[ExternalReference], membership: bool) -> Result[JsonValue, StoreError]:
+    """Transport pins supplying sets; immutable envelopes retain only exact logical targets and values."""
+    if membership:
+        return Ok(JsonValue.array([external_json(reference) for reference in references]))
+    mut targets: Dict[str, JsonValue] = {}
+    for reference in references:
+        value = strings([reference.key, reference.revision, reference.value])
+        encoded = value.to_json().map_err((error) => problem("format", reference.key, error.message()))?
+        targets[encoded] = value
+    return Ok(JsonValue.array([targets[key] for key in sorted([key for key in targets.keys()])]))
+
+
+pub def readmit(root: Path, directory: Path, set_root: str, supported: Profile) -> Result[Snapshot, StoreError]:
+    """
+    Explicitly re-admit frozen records and payloads from a completely verified, externally pinned set.
+
+    The supplying adapter owns the pinned root and trust decision. Intact unequal revisions are conflicts; damaged
+    frames are preserved as quarantine evidence and replaced by new transaction frames. Payload damage is moved out
+    of its canonical name before exact re-admission. Frozen bytes are never edited in place or recomputed here.
+
+    1. Verify the transport and its exact admitted dependency closure.
+    2. Stage frozen envelopes and the receipt, refusing intact disagreement.
+    3. Re-admit exact payload bytes and commit the replacement frames together.
+    """
+    # 1. Repair receives the same complete integrity and profile checks as ordinary admission.
+    verified = verify_transport(directory, set_root, supported)?
+    view = snapshot(root)?
+    check_dependencies(view, verified.spec.dependencies)?
+    check_external(view, verified.spec.records)?
+    # 2. Quarantine preserves damage; only a new transaction can change selected frames.
+    mut transaction = begin(view)
+    for entry in verified.entries:
+        key = record_key(verified.spec, entry.record)?
+        transaction = restored_frame(transaction, view, key, envelope_bytes(verified.spec, entry)?)?
+    transaction = restored_frame(transaction, view, SET_PREFIX + set_root, verified.document)?
+    # 3. Payload identities remain pinned while replacement frames become visible atomically.
+    for object in verified.objects:
+        readmit_payload(root, transport_file(directory, f"payloads/{object.digest}")?, object.digest)?
+    return commit(transaction)
+
+
+def restored_frame(transaction: Transaction, view: Snapshot, key: str, value: bytes) -> Result[Transaction, StoreError]:
+    """Guard equal frozen frames, quarantine physical damage, and refuse intact revision disagreement."""
+    match lookup(view, key):
+        Err(error) =>
+            if error.kind != "integrity":
+                return Err(error)
+            quarantine_record(view, key)?
+            return Ok(put(transaction, key, value, EXPECT_REPAIR))
+        Ok(found) =>
+            match found:
+                Lookup.Found(previous) =>
+                    if owned(previous) != value:
+                        return Err(problem("conflict", key, "intact frozen revision differs from verified transport"))
+                Lookup.Deleted => pass
+                Lookup.Absent => pass
+    return Ok(put(transaction, key, value, EXPECT_ABSENT))

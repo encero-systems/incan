@@ -20,6 +20,10 @@ Standard packages and user libraries publish checked metadata and native artifac
 
 Runtime behavior belongs in `incan_native_runtime` and standard packages. Shared language policy belongs in kernel packages, where it can be consumed without pulling runtime behavior into checking.
 
+## Platform boundary
+
+`incan_platform` in `loaves/platform` is the OS-facing layer below the standard packages. It wraps OS and Rust facilities thinly through interop and imports no compiler, kernel or standard Loaf; standard packages wrap it, never the other way round. Its IPC carries bytes and peer identity only: the owner and engine protocols that encode those bytes stay in Oven, and the compiler worker's side of `incan.compiler-worker/1` is the worker host `incan_worker_host` in `loaves/compiler`.
+
 ## Verification boundary
 
 Contract families test observable behavior through the installed toolchain. Compiler setup or a successful relink is not runtime proof. Use a focused case while changing behavior and whole affected families at commit points.

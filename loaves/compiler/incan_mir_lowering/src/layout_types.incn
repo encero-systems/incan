@@ -17,6 +17,7 @@ from pub::incan_mir_plan import (
     semantic_type_matches,
     tuple_element_type,
 )
+from numerics import sized_numeric
 from models import model_type, hashed_element
 from tuples import tuple_element
 from enums import enum_type
@@ -329,6 +330,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         PlanType.StrArray(count) => return Ok(PlanType.StrArrayRef(count))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.NativeTraitObject(_path, _send, _sync) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
         PlanType.ValidationError => return Ok(PlanType.ValidationErrorRef)
@@ -527,6 +529,11 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
 
     An owned list, set or dictionary held by another collection is a collection leaf.
     """
+    match sized_numeric(ty):
+        Some(kind) =>
+            if ty not in [PlanType.U8, PlanType.USize]:
+                return Ok(ListLeaf.Numeric(kind))
+        None => pass
     match ty:
         PlanType.Int => return Ok(ListLeaf.Int)
         PlanType.Float => return Ok(ListLeaf.Float)

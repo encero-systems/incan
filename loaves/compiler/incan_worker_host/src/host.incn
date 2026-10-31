@@ -1,0 +1,314 @@
+"""
+The compiler worker host: it listens on the worker's private socket, admits one request at a time, hands it to the
+compiler entry, answers it with the entry's outcome and applies the worker's lifecycle.
+
+A retiring worker withdraws its socket before it sends its last reply, so no later request dials it; it then answers
+every request that connected before the withdrawal, each reply marked retired, unless the process is unsafe to serve
+another request.
+"""
+
+from rust::std::env import set_current_dir
+from rust::std::process import id
+from std.environ import get_or
+from pub::incan_platform.ipc import Connection, Listener, dial, listen
+from endpoint import CallerWatch, SocketFile, owner_uid, socket_file, start_watchdog, withdraw
+from lifecycle import (
+    ActivationOutcome,
+    Bounds,
+    FOOTPRINT_CEILING,
+    FOOTPRINT_MARGIN,
+    IDLE_SECONDS,
+    Lifecycle,
+    Retirement,
+    lifecycle,
+)
+from protocol import Admission, CompileRequest, MISMATCH, Reply, admit, encode_ready, encode_reply
+
+# The seconds a connected caller has to send its request, and to take the reply.
+const READ_SECONDS: u64 = 5
+const WRITE_SECONDS: u64 = 10
+# A test-only setting that lowers, and never raises, the footprint ceiling, so a case can retire a worker after every
+# request without a heavy compile.
+const FOOTPRINT_SETTING: str = "INCAN_WORKER_FOOTPRINT_BOUND"
+# The longest the idle watchdog sleeps between wake-ups, in milliseconds.
+const WATCHDOG_MILLIS: int = 1000
+
+
+pub model HostSettings:
+    """What a worker host starts with."""
+
+    pub socket: str
+    pub generation: str
+    # The socket of the process that started the worker, told when it listens; empty tells nobody.
+    pub ready: str
+    # The physical footprint after process start, in bytes; negative when it cannot be read.
+    pub baseline: int
+    pub bounds: Bounds
+    # The only user served; `None` serves the user that owns the socket, which is the worker's own.
+    pub owner: Option[u32]
+
+
+pub enum Phase:
+    """Where a worker is in its life."""
+
+    Serving
+    # The socket is withdrawn; requests that connected before are answered, each reply marked retired.
+    Draining
+    Ended
+
+
+pub class WorkerHost:
+    """One worker's socket, its policy state and the activation it is running, if any."""
+
+    pub generation: str
+    pub phase: Phase
+    socket: SocketFile
+    listener: Listener
+    owner: u32
+    policy: Lifecycle
+    active: Option[Connection] = None
+
+    def next(mut self) -> Option[CompileRequest]:
+        """
+        The next request for the compiler entry, or `None` once the worker has retired.
+
+        1. An activation the entry did not complete leaves the process in an unknown state, which ends the worker.
+        2. Each caller is admitted or answered in turn; a wake-up without a request checks the idle period.
+        """
+        # 1. One activation at a time: asking again without completing the open one is a broken entry.
+        if self.active is not None:
+            self.settle(ActivationOutcome.UnsafeCleanup("the compiler entry did not complete its activation"), -1)
+            return None
+        # 2. The watchdog's wake-ups arrive as callers that send an empty frame, which is refused.
+        while self.phase != Phase.Ended:
+            match self.connection():
+                None => self.phase = Phase.Ended
+                Some(caller) =>
+                    match self.receive(caller):
+                        Some(request) => return Some(request)
+                        None =>
+                            if self.phase == Phase.Serving and self.policy.idle():
+                                self.retire(Retirement.Idle)
+        return None
+
+    def complete(mut self, outcome: ActivationOutcome, footprint: int) -> None:
+        """Answer the open activation, if there is one."""
+        if self.active is not None:
+            self.settle(outcome, footprint)
+
+    def settle(mut self, outcome: ActivationOutcome, footprint: int) -> None:
+        """
+        Answer the open activation: decide the reply and any retirement, which withdraws the socket before the reply
+        is sent, then send the reply and close the activation.
+        """
+        settled = self.policy.settle(outcome, footprint)
+        match settled.retirement:
+            Some(reason) => self.retire(reason)
+            None => pass
+        match self.active:
+            Some(caller) => self.answer(caller, settled.reply)
+            None => pass
+        self.active = None
+
+    def caller_watch(self) -> Option[CallerWatch]:
+        """What the compiler entry watches while the open activation compiles, if one is open."""
+        match self.active:
+            Some(caller) => return Some(CallerWatch(descriptor=caller.descriptor(), socket=self.socket))
+            None => return None
+
+    def connection(mut self) -> Option[Connection]:
+        """The next caller: wait for one while serving, take only those already queued while draining."""
+        match self.phase:
+            Phase.Serving =>
+                match self.listener.accept():
+                    Ok(found) => return Some(found)
+                    Err(_) =>
+                        # A listener that cannot accept serves nobody; retiring lets the next request start a worker.
+                        self.retire(Retirement.Unsafe)
+                        return None
+            Phase.Draining =>
+                match self.listener.poll():
+                    Ok(found) => return found
+                    Err(_) => return None
+            Phase.Ended => return None
+
+    def receive(mut self, connection: Connection) -> Option[CompileRequest]:
+        """
+        The request one caller sends, admitted, or `None` when the caller was refused or answered.
+
+        1. Only the worker's own user is served; a connection from anyone else is closed unanswered.
+        2. A frame that is not a request of this protocol is refused, and the worker goes on serving.
+        3. A request of another protocol or generation retires the worker, which never serves it.
+        4. An admitted request opens the activation.
+        """
+        mut caller = connection
+        caller.wait_at_most(READ_SECONDS)
+        caller.write_at_most(WRITE_SECONDS)
+        # 1. The OS reports the peer's user; nothing is read from a foreign peer.
+        if not self.served_peer(caller):
+            hang_up(caller)
+            return None
+        # 2. A payload is checked against its frame bound before it is read, then decoded once.
+        match caller.receive():
+            Err(reason) =>
+                self.answer(caller, Reply.Refused(reason))
+                return None
+            Ok(payload) =>
+                match admit(payload, self.generation):
+                    Admission.Refused(reason) =>
+                        self.answer(caller, Reply.Refused(reason))
+                        return None
+                    Admission.Incompatible =>
+                        # 3. The socket is withdrawn before the refusal, so its caller starts a fresh worker.
+                        self.retire(Retirement.Incompatible)
+                        self.answer(caller, Reply.Refused(MISMATCH))
+                        return None
+                    Admission.Admitted(request) =>
+                        # 4. The caller stays connected until its activation is answered.
+                        self.active = Some(caller)
+                        return Some(request)
+
+    def served_peer(self, caller: Connection) -> bool:
+        """Whether the OS reports the caller as the user this worker serves."""
+        match caller.peer():
+            Ok(peer) => return peer.uid == self.owner
+            Err(_) => return false
+
+    def answer(mut self, caller: Connection, reply: Reply) -> None:
+        """Send one reply, marked retired once the socket is withdrawn, then close the connection."""
+        mut answered = caller
+        delivered(answered.send(encode_reply(reply, self.phase != Phase.Serving)))
+        hang_up(answered)
+
+    def retire(mut self, reason: Retirement) -> None:
+        """Withdraw the socket; an unsafe process ends at once, any other drains the requests already queued."""
+        if self.phase == Phase.Serving:
+            withdraw(self.socket)
+        if reason == Retirement.Unsafe:
+            self.phase = Phase.Ended
+            return
+        self.phase = Phase.Draining
+        match self.listener.stop_blocking(self.socket.path):
+            Ok(_) => pass
+            Err(_) => self.phase = Phase.Ended
+
+
+pub def start(arguments: list[str], baseline: int) -> Result[WorkerHost, str]:
+    """
+    Start the worker host of `--resident SOCKET GENERATION READY`, whose physical footprint after process start was
+    `baseline` bytes (negative when unknown).
+
+    1. Both endpoints are absolute, because the worker leaves its caller's directory.
+    2. A worker can outlive the project that started it, so its own directory is the root.
+    3. Listen, tell the starting process, and start the idle watchdog.
+    """
+    if len(arguments) != 3:
+        return Err("usage: --resident SOCKET GENERATION READY")
+    # 1. Relative endpoints would resolve against a directory the worker leaves.
+    if not arguments[0].startswith("/") or not arguments[2].startswith("/"):
+        return Err("compiler worker endpoints must be absolute")
+    # 2. Each request installs its caller's directory only for its own activation.
+    set_current_dir("/").map_err((error) => f"cannot leave the starting directory: {error}")?
+    # 3. The worker serves its own user and keeps the standard bounds, its ceiling lowered only by the test setting.
+    return host_for(
+        HostSettings(
+            socket=arguments[0],
+            generation=arguments[1],
+            ready=arguments[2],
+            baseline=baseline,
+            bounds=Bounds(idle_millis=IDLE_SECONDS * 1000, margin=FOOTPRINT_MARGIN, ceiling=footprint_ceiling()),
+            owner=None,
+        ),
+    )
+
+
+pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
+    """
+    A listening worker host.
+
+    1. Bind the private socket and remember the file it created.
+    2. Tell the starting process the worker listens, with its protocol, generation and process id.
+    3. Start the watchdog that wakes the worker to check its idle period.
+    """
+    # 1. Only this exact file is withdrawn later, never a replacement at the same path.
+    listener = listen(settings.socket, true)?
+    bound = socket_file(settings.socket)?
+    mut owner = owner_uid(settings.socket)?
+    match settings.owner:
+        Some(selected) => owner = selected
+        None => pass
+    host = WorkerHost(
+        generation=settings.generation,
+        phase=Phase.Serving,
+        socket=bound,
+        listener=listener,
+        owner=owner,
+        policy=lifecycle(settings.baseline, settings.bounds),
+    )
+    # 2. A worker that cannot announce itself is never sent a request.
+    if settings.ready != "":
+        mut announcing = dial(settings.ready)?
+        announcing.send(encode_ready(settings.generation, int(id())))?
+        hang_up(announcing)
+    # 3. The watchdog wakes the worker several times per idle period, until the worker withdraws this socket file.
+    start_watchdog(bound, watchdog_millis(settings.bounds.idle_millis))
+    return Ok(host)
+
+
+pub def next_request(mut host: WorkerHost) -> Option[CompileRequest]:
+    """The next request for the compiler entry to run, or `None` once the worker has retired and should exit."""
+    return host.next()
+
+
+pub def complete(mut host: WorkerHost, outcome: ActivationOutcome, footprint: int) -> None:
+    """
+    Answer the open activation with the compiler entry's outcome, given the process's physical footprint after it
+    (negative when unknown), and apply the lifecycle.
+    """
+    host.complete(outcome, footprint)
+
+
+pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:
+    """What the compiler entry watches while the open activation compiles; `None` when no activation is open."""
+    return host.caller_watch()
+
+
+def footprint_ceiling() -> int:
+    """The footprint ceiling, lowered by the test-only setting when it is a smaller number of bytes."""
+    text = get_or(FOOTPRINT_SETTING, "")
+    if text != "" and decimal(text) and int(text) < FOOTPRINT_CEILING:
+        return int(text)
+    return FOOTPRINT_CEILING
+
+
+def decimal(text: str) -> bool:
+    """Whether every character of `text` is an ASCII decimal digit."""
+    for index in range(len(text)):
+        if text[index] not in "0123456789":
+            return false
+    return true
+
+
+def watchdog_millis(idle_millis: int) -> int:
+    """Wake at least four times per idle period, and at least once a second."""
+    mut every = idle_millis // 4
+    if every > WATCHDOG_MILLIS:
+        every = WATCHDOG_MILLIS
+    if every < 10:
+        return 10
+    return every
+
+
+def delivered(sent: Result[None, str]) -> None:
+    """A reply whose caller has gone needs no delivery: it already left."""
+    match sent:
+        Ok(_) => pass
+        Err(_) => pass
+
+
+def hang_up(connection: Connection) -> None:
+    """Close a connection; one its peer already closed needs nothing more."""
+    mut closing = connection
+    match closing.close():
+        Ok(_) => pass
+        Err(_) => pass

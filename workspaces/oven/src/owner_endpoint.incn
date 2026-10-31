@@ -14,9 +14,7 @@ or an ordinary file in its place is left alone and the command prepares its exec
 
 from rust::std::env import current_exe
 from rust::std::fs import Permissions, metadata, set_permissions, symlink_metadata
-from rust::std::io import ErrorKind
 from rust::std::os::unix::fs import FileTypeExt, MetadataExt, PermissionsExt
-from rust::std::os::unix::net import UnixStream
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio
 from rust::std::thread import sleep
@@ -24,22 +22,13 @@ from rust::std::time import Duration
 from std.environ import get_optional, get_or
 from std.fs import Path
 from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, Listener, dial_live, listen
 from files import discard_file
 from home import home, owners_dir
 from observation import observe, relay
-from owner_protocol import (
-    Connection,
-    Listener,
-    PROTOCOL,
-    Reply,
-    Request,
-    connection,
-    dial,
-    digits_only,
-    listen,
-    prepares_executable,
-    reply_of,
-)
+from decimal_text import digits_only
+from owner_protocol import PROTOCOL, Reply, Request, discard_reply, prepares_executable, receive_document, reply_of
+from owner_protocol import send_document, send_quietly
 from rust_target import inherited_deployment_configuration
 from toolchain import toolchain_file
 from unit_freshness import artifact_identity, fingerprint
@@ -299,13 +288,11 @@ def require_socket(path: str) -> Result[None, str]:
 
 def connect_or_clear(path: str) -> Result[Option[Connection], str]:
     """A connection to the owner at the socket `path`; a socket nothing listens at is removed and gives `None`."""
-    match UnixStream.connect(f"{path}"):
-        Ok(stream) => return Ok(Some(connection(stream)))
-        Err(error) =>
-            if error.kind() == ErrorKind.ConnectionRefused or error.kind() == ErrorKind.NotFound:
-                discard_file(Path(path))
-                return Ok(None)
-            return Err(f"cannot connect to {path}: {error}")
+    match dial_live(path)?:
+        Some(found) => return Ok(Some(found))
+        None =>
+            discard_file(Path(path))
+            return Ok(None)
 
 
 pub def prepare_directory(directory: str) -> Result[None, str]:
@@ -398,7 +385,7 @@ def read_greeting(waiting: Connection, endpoint: Endpoint) -> Result[None, str]:
     """Read the greeting of a started owner and remove the readiness socket."""
     mut greeting = waiting
     greeting.wait_at_most(LIFECYCLE_SECONDS)
-    greeting_read = greeting.receive()
+    greeting_read = receive_document(greeting)
     discard_ready(endpoint)
     return greeted(greeting_read, endpoint.generation)
 
@@ -438,8 +425,8 @@ pub def ask(endpoint: Endpoint, request: Request, start: bool) -> Result[Option[
             owner.wait_at_most(timeout_for(request.command))
             owner.write_at_most(10)
             # 3. The owner's answer arrives with the trace lines of its reasoning, which this command relays.
-            owner.send(request.to_json())?
-            reply = reply_of(owner.receive()?)?
+            send_document(owner, request.to_json())?
+            reply = reply_of(receive_document(owner)?)?
             relay(reply.trace)
             return Ok(Some(reply))
 
@@ -464,22 +451,17 @@ pub def stop_owners() -> Result[int, str]:
 
 def stop_owner(socket: Path, generation: str) -> bool:
     """Ask the owner listening at `socket` to stop. Whether one answered; a socket nobody listens at is removed."""
-    match dial(socket.0):
-        Err(_) =>
-            if stale_socket(socket.0):
-                discard_file(socket)
-            return false
+    match dial_live(socket.0):
+        Err(_) => return false
         Ok(found) =>
-            mut owner = found
-            owner.wait_at_most(LIFECYCLE_SECONDS)
-            # An owner that answered counts as stopped, whether or not its reply to `stop` arrives.
-            owner.send_quietly(Request(command="stop", generation=generation).to_json())
-            owner.discard_reply()
-            return true
-
-
-def stale_socket(path: str) -> bool:
-    """Whether nothing listens at a socket path."""
-    match UnixStream.connect(f"{path}"):
-        Ok(_) => return false
-        Err(error) => return error.kind() == ErrorKind.ConnectionRefused
+            match found:
+                None =>
+                    discard_file(socket)
+                    return false
+                Some(live) =>
+                    mut owner = live
+                    owner.wait_at_most(LIFECYCLE_SECONDS)
+                    # An owner that answered counts as stopped, whether or not its reply to `stop` arrives.
+                    send_quietly(owner, Request(command="stop", generation=generation).to_json())
+                    discard_reply(owner)
+                    return true

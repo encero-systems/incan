@@ -115,9 +115,13 @@ def parsed_toolchain(directory: Path) -> Result[tuple[Toolchain, JsonValue], str
     if not path.is_file():
         return Err(f"no toolchain {TOOLCHAIN} is installed: {path.0} does not exist")
     document = read_json(path)?
-    match toolchain_of(document, directory):
-        Ok(toolchain) => return Ok((toolchain, document))
-        Err(failed) => return Err(f"{path.0}: `{".".join(failed)}` is missing or malformed")
+    toolchain = described_toolchain(document, directory).map_err((failed) => f"{path.0}: {failed}")?
+    return Ok((toolchain, document))
+
+
+pub def described_toolchain(document: JsonValue, directory: Path) -> Result[Toolchain, str]:
+    """The toolchain a description names, located in `directory`, without admitting anything it names."""
+    return toolchain_of(document, directory).map_err((failed) => f"`{".".join(failed)}` is missing or malformed")
 
 
 def admission_marker(directory: Path) -> Result[Path, str]:

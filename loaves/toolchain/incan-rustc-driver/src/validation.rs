@@ -162,6 +162,8 @@ enum Leaf {
     Enum(i64),
     U8,
     USize,
+    /// An exact-width scalar, compared through the plan's canonical numeric mapping.
+    Numeric(Numeric),
     Unit,
     Decimal,
     FrozenStr,
@@ -193,6 +195,7 @@ impl Leaf {
             ListLeaf::Reference(elements) => Leaf::Reference(elements.iter().map(scalar).collect()),
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::USize => Leaf::USize,
+            ListLeaf::Numeric(kind) => Leaf::Numeric(numeric(kind)),
             ListLeaf::Unit => Leaf::Unit,
             ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::FrozenStr => Leaf::FrozenStr,
@@ -741,6 +744,9 @@ fn projected_field(
             .ok_or_else(|| invalid(function, "unknown tuple field"))?,
         Scalar::Model(owner) => {
             let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
+            if model.unavailable_native_fields.contains(&slot) {
+                return Err(invalid(function, "cannot project an opaque native field"));
+            }
             let field = usize::try_from(slot)
                 .ok()
                 .and_then(|slot| model.fields.get(slot))
@@ -1117,6 +1123,9 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         RvalueKind::PointerAddress(pointer) => pointer_address_result(plan, function, pointer),
         RvalueKind::MutBorrow(value) => borrow_result(plan, function, value, true),
         RvalueKind::Borrow(value) => borrow_result(plan, function, value, false),
+        RvalueKind::UnsizeTraitObject(value, source, target) => {
+            trait_object_result(plan, function, value, source, target)
+        }
         RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
             Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
             Scalar::StrArrayRef(_) => Ok(Scalar::StrSlice),
@@ -1361,6 +1370,12 @@ fn model_aggregate_result(
         "model aggregate destination",
     )?;
     let model = model(plan, index).ok_or_else(|| invalid(function, "unknown constructed model"))?;
+    if !model.unavailable_native_fields.is_empty() {
+        return Err(invalid(
+            function,
+            "cannot construct a native layout with an opaque field",
+        ));
+    }
     if elements.len() != model.fields.len() {
         return Err(invalid(function, "model field count differs from declaration"));
     }
@@ -1395,6 +1410,38 @@ fn pointer_cast_result(
         return Err(invalid(function, "pointer cast requires a compatible raw pointer"));
     }
     Ok(scalar(target))
+}
+
+/// Admit a trait-object conversion only from the operand's own reference type to an object reference of the same
+/// mutability. Whether the referent implements the object is rustc's to prove when it builds the conversion.
+fn trait_object_result(
+    plan: &Plan,
+    function: &Function,
+    value: &Operand,
+    source: &PlanType,
+    target: &PlanType,
+) -> Result<Scalar, PlanError> {
+    require(
+        function,
+        operand(plan, function, value)?,
+        scalar(source),
+        "trait object conversion source",
+    )?;
+    let target = scalar(target);
+    let preserved = match (&target, scalar(source)) {
+        (Scalar::ScalarRef(inner), Scalar::ModelRef(_) | Scalar::ScalarRef(_))
+        | (Scalar::ScalarMutRef(inner), Scalar::ModelMutRef(_) | Scalar::ScalarMutRef(_)) => {
+            matches!(inner.as_slice(), [Scalar::NativeTraitObject(..)])
+        }
+        _ => false,
+    };
+    if !preserved {
+        return Err(invalid(
+            function,
+            "a trait object conversion keeps its reference's mutability",
+        ));
+    }
+    Ok(target)
 }
 
 /// Admit address observation only for a thin raw pointer, retaining the existing refusal for unsized pointees.
@@ -1714,11 +1761,11 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier borrows primitive storage, a checked tuple, a function pointer, or a sized shared
-/// reference. Borrowing a reference preserves its referent and does not make that referent writable; exclusive
-/// reference values do not acquire copying authority.
+/// The scalar reference carrier borrows primitive storage, a checked tuple, a function pointer, a Rust trait object or
+/// a sized shared reference. Borrowing a reference preserves its referent and does not make that referent writable;
+/// exclusive reference values do not acquire copying authority.
 fn scalar_referent(ty: &Scalar) -> bool {
-    if shared_reference(ty) {
+    if shared_reference(ty) || matches!(ty, Scalar::NativeTraitObject(..)) {
         return true;
     }
     if matches!(ty, Scalar::FunctionPointer(_) | Scalar::Tuple(_)) {
@@ -1938,6 +1985,16 @@ fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result
             function,
             "model hashed storage requires retained Hash layout authority",
         )),
+        Scalar::Set(Leaf::Numeric(element))
+        | Scalar::SetRef(Leaf::Numeric(element))
+        | Scalar::SetMutRef(Leaf::Numeric(element))
+        | Scalar::Dict(Leaf::Numeric(element), _)
+        | Scalar::DictRef(Leaf::Numeric(element), _)
+        | Scalar::DictMutRef(Leaf::Numeric(element), _)
+            if matches!(element, Numeric::F32 | Numeric::F64) =>
+        {
+            Err(invalid(function, "floating-point hashed keys lack Eq and Hash"))
+        }
         Scalar::Set(Leaf::Float)
         | Scalar::SetRef(Leaf::Float)
         | Scalar::SetMutRef(Leaf::Float)
@@ -2677,7 +2734,8 @@ fn validate_nested_carrier_components(plan: &Plan, ty: &PlanType) -> Result<(), 
             if !matches!(elements.as_slice(), [inner] if scalar_referent(&scalar(inner))) {
                 return Err(PlanError::Unsupported {
                     function: "scalar reference".into(),
-                    reason: "scalar reference requires one admitted sized scalar or shared-reference referent".into(),
+                    reason: "scalar reference requires one admitted scalar, Rust trait object or reference referent"
+                        .into(),
                 });
             }
             for element in elements {
@@ -3110,6 +3168,12 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 reason: "native type arguments on a source-owned model".into(),
             });
         }
+        if !opaque_native_fields_valid(declaration) {
+            return Err(PlanError::Invalid {
+                function: declaration.name.clone(),
+                reason: "invalid opaque native field slots".into(),
+            });
+        }
         for field in &declaration.fields {
             if declaration.library_item.is_empty()
                 && borrowed_alias_in_source_type(plan, &field.ty, &mut BTreeSet::new())
@@ -3139,6 +3203,19 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         }
     }
     Ok(())
+}
+
+/// Only a native layout keeps opaque field slots, each named once, within its fields and with a unit placeholder.
+fn opaque_native_fields_valid(declaration: &crate::plan::ModelDeclaration) -> bool {
+    let slots = &declaration.unavailable_native_fields;
+    (slots.is_empty() || !declaration.library_item.is_empty())
+        && slots.iter().enumerate().all(|(position, slot)| {
+            !slots[..position].contains(slot)
+                && usize::try_from(*slot)
+                    .ok()
+                    .and_then(|index| declaration.fields.get(index))
+                    .is_some_and(|field| field.ty == PlanType::Unit)
+        })
 }
 
 /// Order native aliases after their argument dependencies, including referents, before metadata type queries run.

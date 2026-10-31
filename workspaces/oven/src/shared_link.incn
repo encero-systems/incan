@@ -42,15 +42,9 @@ pub def library_witness(binary: Path) -> Path:
     return Path(f"{binary.0}.native-shared.json")
 
 
-pub def shared_current(binary: Path) -> bool:
-    """
-    Admit a stored executable only while all of its dynamic library generations still match.
-
-    1. Require a complete, schema-checked loader witness.
-    2. Compare every library's followed filesystem identity without reading its bytes.
-    """
-    # 1. A missing or malformed witness requires compilation; it never authorizes execution.
-    match loaded_libraries(library_witness(binary)):
+pub def witness_current(witness: Path) -> bool:
+    """Admit a loader witness only while every dynamic library it records still has its recorded generation."""
+    match loaded_libraries(witness):
         Err(_) => return false
         Ok(libraries) =>
             if len(libraries) == 0:

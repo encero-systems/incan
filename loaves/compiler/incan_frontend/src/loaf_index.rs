@@ -175,7 +175,15 @@ impl LoafArtifact {
     /// Read the library unit's native closure. A relative path in it (a packed toolchain's Loaf) names its target from
     /// this Loaf's directory, so the closure returned holds only locatable paths.
     pub fn native_closure(&self) -> Result<LoafNativeClosure, LoafIndexError> {
-        let path = self.native_closure_path();
+        LoafNativeClosure::read(&self.dir, &self.name)
+    }
+}
+
+impl LoafNativeClosure {
+    /// Read the native closure of the Loaf `name` in `dir` without reading its manifest: linking needs only the
+    /// closure file, and a Loaf the program never imports must not be decoded to link it.
+    pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
+        let path = dir.join(format!("{name}.native.json"));
         let bytes = std::fs::read(&path).map_err(|error| LoafIndexError::Unreadable {
             path: path.clone(),
             reason: error.to_string(),
@@ -185,7 +193,7 @@ impl LoafArtifact {
                 path,
                 reason: error.to_string(),
             })?;
-        closure.locate_in(&self.dir);
+        closure.locate_in(dir);
         Ok(closure)
     }
 }

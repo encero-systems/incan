@@ -29,7 +29,7 @@ Unknown options exit `2`. Absent values, invalid formats, unknown query kinds, i
 
 ## Export identity and snapshots
 
-The graph stream begins with its header. `schema_version` is `9`; the additional consumer identity schema is `identity_schema: "incan.graph.identity/1"`. Compiler `canonical_identity` is compilation provenance. A signature-bearing compiler `stable_identity` produces a package-name-scoped `stable_key`. Package version, source spans, file layout and semantic digest do not enter that key. Ambiguous or unproved targets receive no inferred key. Module or declaration renames may change the logical identity.
+The graph stream begins with its header. `schema_version` is `9`; the additional consumer identity schema is `identity_schema: "incan.graph.identity/2"`. Compiler `canonical_identity` is compilation provenance. A signature-bearing compiler `stable_identity` produces a package-name-scoped `stable_key`. Package version, source spans, file layout and semantic digest do not enter that key. Ambiguous or unproved targets receive no inferred key. Module or declaration renames may change the logical identity.
 
 `declaration_digests` maps each proved declaration key to its exported `semantic_digest`, or JSON `null` when unavailable. Identity and meaning remain separate. A missing digest authorizes no semantic reuse; this includes Rust declarations for which the producer has no checked digest.
 

@@ -1,0 +1,29 @@
+"""Select the temporary legacy or records engine without falling back after a records refusal."""
+
+from engine_wire import Refusal, RefusalKind
+
+
+pub enum Engine:
+    """The explicit migration modes; legacy remains the default until E7 acceptance."""
+
+    Legacy
+    Records
+
+
+pub def select(value: str) -> Result[Engine, Refusal]:
+    """Require the exact configured engine name; unknown values never silently choose legacy."""
+    if value == "legacy":
+        return Ok(Engine.Legacy)
+    if value == "records":
+        return Ok(Engine.Records)
+    return Err(Refusal(kind=RefusalKind.Schema, detail="INCAN_ENGINE must be legacy or records"))
+
+
+pub def command(engine: Engine, name: str) -> Result[None, Refusal]:
+    """Refuse commands whose record producers have not landed, naming the exact requested command."""
+    match engine:
+        Engine.Legacy => return Ok(None)
+        Engine.Records =>
+            return Err(
+                Refusal(kind=RefusalKind.UnsupportedCommand, detail=f"records engine does not implement `{name}`"),
+            )

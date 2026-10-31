@@ -235,6 +235,31 @@ pub(crate) struct MutParamFacts {
     current: Option<MutParamBody>,
 }
 
+/// One body's mutation effects, forwarding edges, local reassignment evidence and pending argument decisions.
+/// Declared parameter contracts stay with the collected environment and never become another body's output.
+#[derive(Debug, Clone, Default)]
+pub(super) struct MutBodyLocal {
+    /// Callables whose bodies this check has read, so their changes are known exactly.
+    bodies_checked: HashSet<CanonicalSymbolId>,
+    /// Caller-visible parameters each callable's body changes directly.
+    changed: HashMap<CanonicalSymbolId, HashSet<String>>,
+    /// Caller-visible parameters passed on to another callee's caller-visible parameter.
+    forwards: Vec<MutParamForward>,
+    /// Local bindings that hold a declared callable by reference, `f = extend`, keyed by the binding's declaration
+    /// span, so a call through them is checked too.
+    function_values: HashMap<Span, CanonicalSymbolId>,
+    /// Binding spans of the variables of every `for` loop being checked, which are not mutable bindings, each with
+    /// whether its loop's pattern destructures the element.
+    loop_variables: Vec<(Span, bool)>,
+    /// Local bindings reassigned anywhere in the module, keyed by declaration span. A call through such a local may
+    /// run any callable it was assigned, so it counts as changing every marked parameter.
+    reassigned_locals: HashSet<Span>,
+    /// Arguments waiting for the module's change facts.
+    pending: Vec<PendingMutArgument>,
+    /// The body being checked, when it declares caller-visible parameters.
+    current: Option<MutParamBody>,
+}
+
 impl TypeChecker {
     // ========================================================================
     // Declarations
@@ -1555,6 +1580,7 @@ impl TypeChecker {
     /// published for lowering as a copy, unless its type cannot be copied (a `Generator`, a type holding one),
     /// which is refused with `INCAN-T0117` too.
     pub(in crate::typechecker) fn resolve_mut_arguments(&mut self) {
+        self.check_work.mutation_settlements += 1;
         let changed = self.mut_param_change_closure();
         let pending = std::mem::take(&mut self.mut_params.pending);
         for argument in pending {
@@ -1819,5 +1845,45 @@ fn place_root_name(expr: &Spanned<Expr>) -> Option<&str> {
         Expr::Ident(name) => Some(name.as_str()),
         Expr::Field(base, _) | Expr::Index(base, _) | Expr::Paren(base) => place_root_name(base),
         _ => None,
+    }
+}
+
+impl MutParamFacts {
+    /// Move body-owned mutation state out while leaving all declared parameter inputs readable.
+    pub(super) fn take_body_local(&mut self) -> MutBodyLocal {
+        MutBodyLocal {
+            bodies_checked: std::mem::take(&mut self.bodies_checked),
+            changed: std::mem::take(&mut self.changed),
+            forwards: std::mem::take(&mut self.forwards),
+            function_values: std::mem::take(&mut self.function_values),
+            loop_variables: std::mem::take(&mut self.loop_variables),
+            reassigned_locals: std::mem::take(&mut self.reassigned_locals),
+            pending: std::mem::take(&mut self.pending),
+            current: std::mem::take(&mut self.current),
+        }
+    }
+
+    /// Restore the enclosing callable's exact mutation writer, including its current parameter frame.
+    pub(super) fn install_body_local(&mut self, local: MutBodyLocal) {
+        self.bodies_checked = local.bodies_checked;
+        self.changed = local.changed;
+        self.forwards = local.forwards;
+        self.function_values = local.function_values;
+        self.loop_variables = local.loop_variables;
+        self.reassigned_locals = local.reassigned_locals;
+        self.pending = local.pending;
+        self.current = local.current;
+    }
+
+    /// Append completed local effects and pending arguments in declaration traversal order.
+    pub(super) fn append_body_local(&mut self, local: MutBodyLocal) {
+        self.bodies_checked.extend(local.bodies_checked);
+        self.changed.extend(local.changed);
+        self.forwards.extend(local.forwards);
+        self.function_values.extend(local.function_values);
+        self.loop_variables.extend(local.loop_variables);
+        self.reassigned_locals.extend(local.reassigned_locals);
+        self.pending.extend(local.pending);
+        debug_assert!(local.current.is_none());
     }
 }

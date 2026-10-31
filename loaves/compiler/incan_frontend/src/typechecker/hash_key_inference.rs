@@ -53,6 +53,72 @@ struct ScanTarget<'a> {
     body: &'a [Spanned<Statement>],
 }
 
+/// One source body's restricted inference result. These are transfer facts, not a checked body or durable record key.
+struct HashKeyInfluence {
+    callable: HashKeyCallable,
+    direct: BTreeSet<String>,
+    forwards: Vec<HashKeyForward>,
+}
+
+/// A source type parameter depends on a particular local callee's type parameter being hashed.
+struct HashKeyForward {
+    callee: HashKeyCallable,
+    callee_parameter: String,
+    parameters: Vec<String>,
+}
+
+/// Source contributions owned by one collection activation, with the actual number of scanner calls.
+#[derive(Default)]
+struct HashKeyInfluences {
+    rows: Vec<HashKeyInfluence>,
+    body_scans: usize,
+}
+
+/// Work at the syntax/transfer boundary, counted separately from ordinary local typechecking.
+#[derive(Debug, Default)]
+struct HashKeyInfluenceCounters {
+    body_scans: usize,
+    iterations: usize,
+    member_visits: usize,
+}
+
+/// Apply the existing source-order growing fixed point to extracted facts. This preserves the original ordering and
+/// empty-entry behavior; SCC scheduling and durable publication belong to the record producer, not this adapter.
+fn resolve_influences(
+    influences: &HashKeyInfluences,
+) -> (HashMap<HashKeyCallable, BTreeSet<String>>, HashKeyInfluenceCounters) {
+    let mut requirements = HashMap::<HashKeyCallable, BTreeSet<String>>::new();
+    let mut counters = HashKeyInfluenceCounters {
+        body_scans: influences.body_scans,
+        ..HashKeyInfluenceCounters::default()
+    };
+    loop {
+        counters.iterations += 1;
+        let mut changed = false;
+        for influence in &influences.rows {
+            counters.member_visits += 1;
+            let mut propagated = influence.direct.clone();
+            for forward in &influence.forwards {
+                if requirements
+                    .get(&forward.callee)
+                    .is_some_and(|params| params.contains(&forward.callee_parameter))
+                {
+                    propagated.extend(forward.parameters.iter().cloned());
+                }
+            }
+            for parameter in propagated {
+                changed |= requirements
+                    .entry(influence.callable.clone())
+                    .or_default()
+                    .insert(parameter);
+            }
+        }
+        if !changed {
+            return (requirements, counters);
+        }
+    }
+}
+
 impl TypeChecker {
     /// Infer the hashed type parameters of every generic function and method in `declarations` and record them by
     /// declaration identity in the checker's hash-key inference state.
@@ -69,21 +135,8 @@ impl TypeChecker {
         if targets.is_empty() {
             return;
         }
-        let mut requirements: HashMap<HashKeyCallable, BTreeSet<String>> = HashMap::new();
-        loop {
-            let mut changed = false;
-            for target in &targets {
-                for type_param in self.hashed_type_params(target, &targets, &requirements) {
-                    changed |= requirements
-                        .entry(target.callable.clone())
-                        .or_default()
-                        .insert(type_param);
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        let influences = self.hash_key_influences(&targets);
+        let (requirements, _) = resolve_influences(&influences);
         let mut ordered = requirements.into_iter().collect::<Vec<_>>();
         ordered.sort();
         for (callable, type_params) in ordered {
@@ -98,6 +151,17 @@ impl TypeChecker {
                 self.hash_key_inference.local_requirements.push((callable, type_params));
             }
         }
+    }
+
+    /// Scan each source body exactly once into local requirements and symbolic transfers. Resolution consumes these
+    /// facts without retaining the source body or invoking expression checking.
+    fn hash_key_influences(&self, targets: &[ScanTarget<'_>]) -> HashKeyInfluences {
+        let mut influences = HashKeyInfluences::default();
+        for target in targets {
+            influences.rows.push(self.hash_key_influence(target, targets));
+            influences.body_scans += 1;
+        }
+        influences
     }
 
     /// Collect the generic functions and methods of `declarations` that have a body.
@@ -210,13 +274,9 @@ impl TypeChecker {
         }
     }
 
-    /// Return the type parameters of `target` its body hashes, given what is known of the other callables so far.
-    fn hashed_type_params(
-        &self,
-        target: &ScanTarget<'_>,
-        targets: &[ScanTarget<'_>],
-        requirements: &HashMap<HashKeyCallable, BTreeSet<String>>,
-    ) -> Vec<String> {
+    /// Return the type parameters of `target` its body hashes, and its local forwarding constraints, without revisiting
+    /// syntax during propagation.
+    fn hash_key_influence(&self, target: &ScanTarget<'_>, targets: &[ScanTarget<'_>]) -> HashKeyInfluence {
         let mut env = target
             .params
             .iter()
@@ -224,6 +284,7 @@ impl TypeChecker {
             .collect::<HashMap<_, _>>();
         self.bind_statement_locals(target.body, &mut env);
         let mut hashed = Vec::new();
+        let mut forwards = Vec::new();
 
         // ---- A dict or set type whose key or element mentions the type parameter ----
         for ty in env.values().chain(std::iter::once(&target.return_type)) {
@@ -239,6 +300,24 @@ impl TypeChecker {
             }
         }
 
+        self.scan_hash_key_expressions(target, targets, &env, &mut hashed, &mut forwards);
+        HashKeyInfluence {
+            callable: target.callable.clone(),
+            direct: hashed.into_iter().collect(),
+            forwards,
+        }
+    }
+
+    /// Retain the expression-level direct uses and forwarding constraints after the restricted local environment is
+    /// complete. This walk preserves the original scanner's traversal and its conservative treatment of unknowns.
+    fn scan_hash_key_expressions(
+        &self,
+        target: &ScanTarget<'_>,
+        targets: &[ScanTarget<'_>],
+        env: &HashMap<String, ResolvedType>,
+        hashed: &mut Vec<String>,
+        forwards: &mut Vec<HashKeyForward>,
+    ) {
         let owner = match &target.callable {
             HashKeyCallable::Method { owner, .. } => Some(owner.as_str()),
             HashKeyCallable::Function(_) => None,
@@ -248,63 +327,47 @@ impl TypeChecker {
                 Expr::Call(callee, _, args) => {
                     if let (Expr::Ident(name), [CallArg::Positional(source)]) = (&callee.node, args.as_slice())
                         && collection_type_id(name) == Some(CollectionTypeId::Set)
-                        && let Some(item) = Self::scan_type(source, &env).as_ref().and_then(Self::scan_item_type)
+                        && let Some(item) = Self::scan_type(source, env).as_ref().and_then(Self::scan_item_type)
                     {
-                        Self::collect_named_type_params(&item, &target.type_params, &mut hashed);
+                        Self::collect_named_type_params(&item, &target.type_params, hashed);
                     }
                     if let Expr::Ident(name) = &callee.node {
-                        self.passed_hashed_type_params(
+                        self.record_hash_key_forward(
                             &HashKeyCallable::Function(name.clone()),
                             args,
-                            &env,
+                            env,
                             target,
                             targets,
-                            requirements,
-                            &mut hashed,
+                            hashed,
+                            forwards,
                         );
                     }
                 }
                 Expr::MethodCall(receiver, method, _, args) => {
                     // `s.add(x)`, `d.insert(x, v)`, `d.get(x)` and the other keyed methods of a set or dict hash
                     // their first argument.
-                    if Self::scan_type(receiver, &env).is_some_and(|ty| Self::is_hashed_collection(&ty))
+                    if Self::scan_type(receiver, env).is_some_and(|ty| Self::is_hashed_collection(&ty))
                         && let Some(CallArg::Positional(key)) = args.first()
                     {
-                        Self::collect_direct_type_param(Self::scan_type(key, &env), &target.type_params, &mut hashed);
+                        Self::collect_direct_type_param(Self::scan_type(key, env), &target.type_params, hashed);
                     }
                     if let (Expr::SelfExpr, Some(owner)) = (&receiver.node, owner) {
                         let callable = HashKeyCallable::Method {
                             owner: owner.to_string(),
                             method: method.clone(),
                         };
-                        self.passed_hashed_type_params(
-                            &callable,
-                            args,
-                            &env,
-                            target,
-                            targets,
-                            requirements,
-                            &mut hashed,
-                        );
+                        self.record_hash_key_forward(&callable, args, env, target, targets, hashed, forwards);
                     }
                 }
                 Expr::Set(elements) => {
                     for element in elements {
-                        Self::collect_direct_type_param(
-                            Self::scan_type(element, &env),
-                            &target.type_params,
-                            &mut hashed,
-                        );
+                        Self::collect_direct_type_param(Self::scan_type(element, env), &target.type_params, hashed);
                     }
                 }
                 Expr::Dict(entries) => {
                     for entry in entries {
                         if let DictEntry::Pair(key, _) = entry {
-                            Self::collect_direct_type_param(
-                                Self::scan_type(key, &env),
-                                &target.type_params,
-                                &mut hashed,
-                            );
+                            Self::collect_direct_type_param(Self::scan_type(key, env), &target.type_params, hashed);
                         }
                     }
                 }
@@ -312,50 +375,42 @@ impl TypeChecker {
                     let mut comp_env = env.clone();
                     if let (Pattern::Binding(name), Some(item)) = (
                         &comp.pattern.node,
-                        Self::scan_type(&comp.iter, &env)
-                            .as_ref()
-                            .and_then(Self::scan_item_type),
+                        Self::scan_type(&comp.iter, env).as_ref().and_then(Self::scan_item_type),
                     ) {
                         comp_env.insert(name.clone(), item);
                     }
-                    Self::collect_direct_type_param(
-                        Self::scan_type(&comp.key, &comp_env),
-                        &target.type_params,
-                        &mut hashed,
-                    );
+                    Self::collect_direct_type_param(Self::scan_type(&comp.key, &comp_env), &target.type_params, hashed);
                 }
                 _ => {}
             }
             false
         });
-        hashed
     }
 
-    /// Add the type parameters `target` passes to a callable at the positions that callable hashes.
-    ///
-    /// A callable of the same module is found by name among the scan targets; one declared elsewhere is found through
-    /// its identity in the requirements recorded when its module was collected.
+    /// Retain how a local call transfers each possible hash requirement. Imported requirements are already final
+    /// and contribute directly; unknown arguments and unpacking retain the original restricted-scan behavior.
     #[allow(clippy::too_many_arguments)]
-    fn passed_hashed_type_params(
+    fn record_hash_key_forward(
         &self,
         callee: &HashKeyCallable,
         args: &[CallArg],
         env: &HashMap<String, ResolvedType>,
         target: &ScanTarget<'_>,
         targets: &[ScanTarget<'_>],
-        requirements: &HashMap<HashKeyCallable, BTreeSet<String>>,
         hashed: &mut Vec<String>,
+        forwards: &mut Vec<HashKeyForward>,
     ) {
-        let (required, params) = if let Some(scanned) = targets.iter().find(|candidate| &candidate.callable == callee) {
-            let Some(required) = requirements.get(callee) else {
-                return;
-            };
-            let params = scanned
-                .params
+        let local = targets.iter().find(|candidate| &candidate.callable == callee);
+        let (required, params) = if let Some(scanned) = local {
+            let params = scanned.params.clone();
+            // Legacy groups requirements by lookup name, even when overload candidates have different explicit
+            // bounds. Keep the first candidate's parameter matching, but retain every candidate's possible effects.
+            let required = targets
                 .iter()
-                .map(|(name, kind, ty)| (name.clone(), *kind, ty.clone()))
-                .collect::<Vec<_>>();
-            (required.clone(), params)
+                .filter(|candidate| &candidate.callable == callee)
+                .flat_map(|candidate| candidate.type_params.iter().cloned())
+                .collect::<BTreeSet<_>>();
+            (required, params)
         } else {
             let HashKeyCallable::Function(name) = callee else {
                 return;
@@ -390,8 +445,19 @@ impl TypeChecker {
                 continue;
             };
             for required_param in &required {
-                if let Some(bound) = Self::scan_binding(param_ty, &arg_ty, required_param) {
-                    Self::collect_named_type_params(&bound, &target.type_params, hashed);
+                let Some(bound) = Self::scan_binding(param_ty, &arg_ty, required_param) else {
+                    continue;
+                };
+                let mut propagated = Vec::new();
+                Self::collect_named_type_params(&bound, &target.type_params, &mut propagated);
+                if local.is_some() {
+                    forwards.push(HashKeyForward {
+                        callee: callee.clone(),
+                        callee_parameter: required_param.clone(),
+                        parameters: propagated,
+                    });
+                } else {
+                    hashed.extend(propagated);
                 }
             }
         }
@@ -770,3 +836,9 @@ impl TypeChecker {
             .map_or(&[], Vec::as_slice)
     }
 }
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod legacy_oracle;

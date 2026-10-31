@@ -15,13 +15,15 @@ from rust::std::time import Duration
 from std.fs import Path
 from std.fs.locking import FileLock
 from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file
 from home import owners_dir
 from json_fields import required_text
 from observation import trace, trace_boundary
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
-from owner_protocol import Connection, Listener, digits_only, listen
+from decimal_text import digits_only
+from owner_protocol import receive_document, send_document
 from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command
@@ -29,9 +31,6 @@ from jec import begin, record, invocation_key
 
 const SCHEMA: str = "incan.compiler-worker/1"
 const READINESS_POLLS: int = 7500
-const IDLE_SECONDS: int = 600
-# The idle seconds of a worker beyond the first slot, which only a burst of concurrent requests started.
-const SPARE_IDLE_SECONDS: int = 10
 # The resident memory one worker may reach while it compiles, which bounds how many physical memory holds.
 const WORKER_CEILING_BYTES: int = 4294967296
 # The pool size when physical memory cannot be read.
@@ -180,9 +179,9 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             mut connected = connected_socket
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
-            connected.send(request(toolchain, arguments, generation)?)?
+            send_document(connected, request(toolchain, arguments, generation)?)?
             # 3. A completed request grants only its actual exit code, never a retained checking result.
-            reply = connected.receive()?
+            reply = receive_document(connected)?
             record("driver_request", invocation_key(arguments), clock)
             # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
             if retired(reply):
@@ -206,7 +205,7 @@ def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLo
     endpoint = slot_endpoint(directory, generation, slot)?
     trace_boundary("worker_selected")
     # 3. The slot's lock also arbitrates startup: only its holder can start the slot's worker.
-    connected = slot_connection(toolchain, endpoint, slot)?
+    connected = slot_connection(toolchain, endpoint)?
     trace_boundary("worker_connected")
     return Ok((connected, generation, held))
 
@@ -235,22 +234,15 @@ def try_slot(directory: Path, generation: str, slot: int) -> Result[Option[FileL
     return path.try_lock_exclusive().map_err((error) => error.message())
 
 
-def slot_connection(toolchain: Toolchain, endpoint: Endpoint, slot: int) -> Result[Connection, str]:
+def slot_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Connection, str]:
     """Connect to the held slot's worker, or start it and connect after its readiness acknowledgment."""
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => pass
-    launch(toolchain, endpoint, idle_for(slot))?
+    launch(toolchain, endpoint)?
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => return Err("the compiler worker disappeared after readiness")
-
-
-def idle_for(slot: int) -> int:
-    """The first slot's worker stays for later commands; the others retire soon after the burst that needed them."""
-    if slot == 0:
-        return IDLE_SECONDS
-    return SPARE_IDLE_SECONDS
 
 
 def generation_of(toolchain: Toolchain) -> Result[str, str]:
@@ -356,15 +348,15 @@ def unicode_environment(value: OsString) -> Result[str, str]:
     return value.into_string().map_err((_) => "a compiler environment entry is not Unicode")
 
 
-def launch(toolchain: Toolchain, endpoint: Endpoint, idle: int) -> Result[None, str]:
+def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     """
-    Start the exact driver detached from the owner, with protocol and console on separate streams; it retires after
-    `idle` seconds without a request.
+    Start the exact driver detached from the owner, with protocol and console on separate streams. The worker decides
+    its own retirement, after its idle period among others.
     """
     mut listener = listen(f"{endpoint.ready}", false)?
     mut command = driver_command(toolchain)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
-    command.arg(f"{endpoint.ready}").arg(str(idle))
+    command.arg(f"{endpoint.ready}")
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
     command.process_group(0)
     clock = begin()
@@ -382,7 +374,7 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
             Some(waiting) =>
                 mut connected = waiting
                 connected.wait_at_most(5)
-                document = connected.receive()?
+                document = receive_document(connected)?
                 if required_text(document, "schema")? != SCHEMA:
                     return Err("compiler worker readiness protocol mismatch")
                 if required_text(document, "generation")? != endpoint.generation:

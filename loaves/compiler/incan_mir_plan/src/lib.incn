@@ -86,6 +86,8 @@ pub enum ListLeaf:
     Set(list[ListLeaf])
     # Preserve the native pointer-width unsigned carrier in collection storage.
     USize
+    # Exact-width numeric storage uses the same carrier table as scalar overflow results.
+    Numeric(SizedNumeric)
     # A local collection may hold an exact shared reference without copying its referent into the collection.
     Reference(list[PlanType])
 
@@ -269,6 +271,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Enum(index, name) => return PlanType.Enum(index, name)
         ListLeaf.U8 => return PlanType.U8
         ListLeaf.USize => return PlanType.USize
+        ListLeaf.Numeric(kind) => return sized_plan_type(kind)
         ListLeaf.Unit => return PlanType.Unit
         ListLeaf.Decimal => return PlanType.Decimal
         ListLeaf.FrozenStr => return PlanType.FrozenStr
@@ -278,6 +281,24 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])
         ListLeaf.Set(element) => return PlanType.Set(element[0])
         ListLeaf.Reference(element) => return element[0]
+
+
+pub def sized_plan_type(kind: SizedNumeric) -> PlanType:
+    """Recover the exact scalar carrier shared by collection leaves and sized overflow pairs."""
+    match kind:
+        SizedNumeric.I8 => return PlanType.I8
+        SizedNumeric.I16 => return PlanType.I16
+        SizedNumeric.I32 => return PlanType.I32
+        SizedNumeric.I128 => return PlanType.I128
+        SizedNumeric.U8 => return PlanType.U8
+        SizedNumeric.U16 => return PlanType.U16
+        SizedNumeric.U32 => return PlanType.U32
+        SizedNumeric.U64 => return PlanType.U64
+        SizedNumeric.U128 => return PlanType.U128
+        SizedNumeric.F32 => return PlanType.F32
+        SizedNumeric.F64 => return PlanType.F64
+        SizedNumeric.ISize => return PlanType.ISize
+        SizedNumeric.USize => return PlanType.USize
 
 
 pub def range_field_types() -> list[PlanType]:
@@ -501,6 +522,9 @@ pub enum RvalueKind:
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)
+    # A reference to a concrete value, as a reference to a Rust trait object of the same mutability: source type, then
+    # target type. rustc proves the value implements the object's every bound before the conversion is built.
+    UnsizeTraitObject(Operand, PlanType, PlanType)
     FunctionItem(Callee)
     ReifyFunction(Operand)
     # Expose a checked function pointer's address without changing its argument or return signature.
@@ -860,6 +884,22 @@ pub model FallibleIteratorMethods:
 
 
 @derive(Clone, PartialEq)
+pub model NativeTraitMethod:
+    """A Rust trait method filled by a planned source method; rustc checks the implementation's signature."""
+
+    pub name: str
+    pub function: str
+
+
+@derive(Clone, PartialEq)
+pub model NativeTraitAdoption:
+    """A class's request to implement a concrete Rust trait; rustc proves the implementation, not this record."""
+
+    pub path: str
+    pub methods: list[NativeTraitMethod]
+
+
+@derive(Clone, PartialEq)
 pub model ModelDeclaration:
     """
     Checked field layout and implicit derives for one concrete source nominal layout.
@@ -901,6 +941,11 @@ pub model ModelDeclaration:
     # Empty paired fields grant no conversion, independently of serde's native Rust TryFrom contract.
     pub string_conversion_root: str = ""
     pub string_conversion_trait: str = ""
+    # Rust traits a source class implements with its own methods; empty implements none.
+    pub native_trait_adoptions: list[NativeTraitAdoption] = []
+    # Native field slots the plan cannot carry. Each keeps a unit placeholder type that never authorizes a read, a
+    # write or a construction of the layout.
+    pub unavailable_native_fields: list[int] = []
 
 
 @derive(Clone, PartialEq)

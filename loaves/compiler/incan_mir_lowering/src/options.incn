@@ -62,7 +62,7 @@ from unions import lower_union_declaration
 from type_parameters import substitute
 from nominal_frames import closed_arguments, closed_type, declaration_storage
 from program_context import body_at
-from native_type_identity import ConstructorIndex
+from native_type_identity import ConstructorIndex, native_owner
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
@@ -189,7 +189,13 @@ pub def intrinsic_declarations(
     for nominal_position in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
         for ty in declaration.field_types:
-            retain_carrier(constructors, module, declarations, ty, file)?
+            # A Rust layout keeps a field without a carrier opaque; that field grants no read, write or construction.
+            if native_owner(declaration):
+                match retain_carrier(constructors, module, declarations, ty, file):
+                    Ok(_retained) => pass
+                    Err(_reason) => pass
+            else:
+                retain_carrier(constructors, module, declarations, ty, file)?
     for enum_position in range(len(module.enum_declarations)):
         declaration = borrowed_at(module.enum_declarations, enum_position)
         for variant in declaration.variants:

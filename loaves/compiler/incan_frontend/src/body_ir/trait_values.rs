@@ -105,7 +105,7 @@ fn retain_annotation_identities(body: &mut bir::Body, program: &ast::Program, fa
             IncanType::Generic { base, .. } => base,
             _ => continue,
         };
-        body.named_type_identities.insert(name.clone(), identity.clone());
+        std::sync::Arc::make_mut(&mut body.named_type_identities).insert(name.clone(), identity.clone());
     }
 }
 
@@ -136,7 +136,7 @@ fn retain_body_inputs(body: &mut bir::Body) -> TraitInputs {
         }
         annotations.push((parameter.ty.clone(), identity.clone()));
         body.type_parameters.push(hidden.clone());
-        body.named_type_identities.insert(hidden.clone(), identity);
+        std::sync::Arc::make_mut(&mut body.named_type_identities).insert(hidden.clone(), identity);
         parameter.ty = IncanType::TypeVar(hidden);
         body.locals[parameter.local.index()].ty = parameter.ty.clone();
         slots.push(slot);

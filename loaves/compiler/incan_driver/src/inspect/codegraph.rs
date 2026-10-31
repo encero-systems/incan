@@ -25,9 +25,7 @@ use incan_codegraph::{
 };
 use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
-use incan_semantics_core::stable_identity::{
-    DeclarationSignature, StableDeclarationContext, StableDeclarationId, StableDeclarationLocation,
-};
+use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId, StableDeclarationLocation};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
 
@@ -109,7 +107,9 @@ pub fn collect_checked_unit_codegraph(
 ) -> Vec<CodegraphRecord> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::checked_unit_codegraph", modules = modules.len()).entered();
     let mut builder = checked_unit_builder(unit, session, modules, analysis);
-    builder.set_lowered_declaration_facts(bodies.iter_mut().flat_map(body_declaration_facts).collect());
+    let mut facts = source_declaration_facts(modules, analysis);
+    append_body_declaration_facts(&mut facts, bodies);
+    builder.set_checked_declaration_facts(facts);
     for module in modules {
         builder.collect_parsed_module(module, Vec::new());
     }
@@ -127,7 +127,7 @@ pub fn collect_live_unit_codegraph(
     let mut builder = match analysis {
         Ok(analysis) => {
             let mut builder = checked_unit_builder(unit, session, modules, analysis);
-            builder.set_lowered_declaration_facts(lowered_declaration_facts(modules, analysis, session));
+            builder.set_checked_declaration_facts(checked_declaration_facts(modules, analysis, session));
             builder
         }
         Err(failure) => {
@@ -193,7 +193,7 @@ pub fn collect_codegraph_with_interface(
         }
         if analysis.diagnostics.is_empty() {
             builder.set_semantic_snapshots(Cow::Owned(analysis.semantic_snapshots_by_path));
-            builder.set_lowered_declaration_facts(analysis.signatures_by_identity);
+            builder.set_checked_declaration_facts(analysis.declaration_facts);
             builder.set_registry_metadata(analysis.registry_metadata_by_path);
             builder.set_capabilities(analysis.capabilities_by_path);
             builder.set_c_abi_artifacts(analysis.c_abi_by_path);
@@ -246,7 +246,7 @@ pub fn collect_codegraph_with_interface(
                 }
                 interface = analysis.interface;
                 builder.set_semantic_snapshots(Cow::Owned(analysis.semantic_snapshots_by_path));
-                builder.set_lowered_declaration_facts(analysis.signatures_by_identity);
+                builder.set_checked_declaration_facts(analysis.declaration_facts);
                 builder.set_registry_metadata(analysis.registry_metadata_by_path);
                 builder.set_capabilities(analysis.capabilities_by_path);
                 builder.set_c_abi_artifacts(analysis.c_abi_by_path);
@@ -275,8 +275,8 @@ struct CheckedCodegraphAnalysis {
     interface: Option<LibraryManifest>,
     diagnostics: Vec<StableDiagnostic>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
-    /// Signatures derived by lowering, keyed by the identity that owns each one.
-    signatures_by_identity: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>,
+    /// Header-owned source identities and optional executable digests, keyed by their canonical owner.
+    declaration_facts: BTreeMap<CanonicalSymbolId, CheckedDeclarationFacts>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
@@ -294,7 +294,7 @@ fn directory_modules_diagnostics_and_info(
     let mut modules_by_path = BTreeMap::new();
     let mut diagnostics = Vec::new();
     let mut semantic_snapshots_by_path = BTreeMap::new();
-    let mut signatures_by_identity = BTreeMap::new();
+    let mut declaration_facts = BTreeMap::new();
     let mut registry_metadata_by_path = BTreeMap::new();
     let mut capabilities_by_path = BTreeMap::new();
     let mut c_abi_by_path = BTreeMap::new();
@@ -330,11 +330,10 @@ fn directory_modules_diagnostics_and_info(
                         for (path, c_abi) in checked_c_abi_by_path(&analysis, &modules) {
                             retain_root_analysis(&mut c_abi_by_path, file, &path, c_abi);
                         }
-                        // Lowering happens here rather than in `SemanticModuleSnapshot`, so only the graph pays
-                        // for it. A module whose type info is unavailable contributes no signatures, and its
-                        // declarations export an identity a consumer must read as unproven.
-                        for (identity, signature) in lowered_declaration_facts(&modules, &analysis, session) {
-                            signatures_by_identity.entry(identity).or_insert(signature);
+                        // Header identities stay independent of optional executable digests. Only graph inspection
+                        // pays for Body IR here; unavailable checked facts never acquire a portable signature.
+                        for (identity, signature) in checked_declaration_facts(&modules, &analysis, session) {
+                            declaration_facts.entry(identity).or_insert(signature);
                         }
                     }
                     Err(failure) => {
@@ -359,10 +358,10 @@ fn directory_modules_diagnostics_and_info(
             } else {
                 semantic_snapshots_by_path
             },
-            signatures_by_identity: if has_diagnostics {
+            declaration_facts: if has_diagnostics {
                 BTreeMap::new()
             } else {
-                signatures_by_identity
+                declaration_facts
             },
             registry_metadata_by_path: if has_diagnostics {
                 BTreeMap::new()
@@ -429,7 +428,7 @@ fn typecheck_diagnostics_and_info(
             interface,
             diagnostics: Vec::new(),
             semantic_snapshots_by_path: analysis.semantic_snapshots().clone(),
-            signatures_by_identity: lowered_declaration_facts(modules, &analysis, session),
+            declaration_facts: checked_declaration_facts(modules, &analysis, session),
             registry_metadata_by_path: checked_registry_metadata_by_path(
                 &analysis,
                 modules,
@@ -442,7 +441,7 @@ fn typecheck_diagnostics_and_info(
             interface: None,
             diagnostics: stable_diagnostics(&failure),
             semantic_snapshots_by_path: BTreeMap::new(),
-            signatures_by_identity: BTreeMap::new(),
+            declaration_facts: BTreeMap::new(),
             registry_metadata_by_path: BTreeMap::new(),
             capabilities_by_path: BTreeMap::new(),
             c_abi_by_path: BTreeMap::new(),
@@ -656,11 +655,9 @@ struct CodegraphBuilder<'analysis> {
     semantic_contexts: Vec<CodegraphSemanticContext>,
     next_body_fact_index: usize,
     semantic_snapshots_by_path: Cow<'analysis, BTreeMap<PathBuf, SemanticModuleSnapshot>>,
-    /// Signatures for every declaration the export lowered, keyed by the identity that owns each one.
-    ///
-    /// Populated only where the modules actually lowered. A declaration with no entry exports an identity whose
-    /// `signature` is `None`, which a consumer must read as unproven rather than as a key.
-    signatures_by_identity: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>,
+    /// Early source identities and optional executable digests, keyed by their canonical declaration owners.
+    /// A failed Body IR projection leaves the source identity available and the executable digest unproven.
+    declaration_facts: BTreeMap<CanonicalSymbolId, CheckedDeclarationFacts>,
     /// Checked owner and collision-local ordinal for nested declarations.
     stable_contexts_by_identity: BTreeMap<CanonicalSymbolId, (CanonicalSymbolId, u32)>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
@@ -709,7 +706,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         Self {
             records: Vec::new(),
             diagnostics: Vec::new(),
-            signatures_by_identity: BTreeMap::new(),
+            declaration_facts: BTreeMap::new(),
             stable_contexts_by_identity: BTreeMap::new(),
             file_ids: BTreeMap::new(),
             module_ids: BTreeSet::new(),
@@ -734,37 +731,36 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         }
     }
 
-    /// Record the signatures derived from lowering, so exported identities can separate overloads.
-    fn set_lowered_declaration_facts(&mut self, signatures: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>) {
-        self.signatures_by_identity = signatures;
+    /// Attach checker-owned source identities and independent executable digests to the graph projection.
+    fn set_checked_declaration_facts(&mut self, facts: BTreeMap<CanonicalSymbolId, CheckedDeclarationFacts>) {
+        self.declaration_facts = facts;
     }
 
     /// Project one checked identity into its exported edit-stable form, carrying a signature when one was proved.
     fn stable_identity_for(&self, canonical: Option<&CanonicalSymbolId>) -> Option<CodegraphStableDeclarationId> {
         let canonical = canonical?;
+        if let Some(identity) = self
+            .declaration_facts
+            .get(canonical)
+            .and_then(|facts| facts.source_identity.as_ref())
+        {
+            return Some(codegraph_stable_identity_from_semantic(identity));
+        }
         let context = self
             .stable_contexts_by_identity
             .get(canonical)
             .and_then(|(owner, binding_ordinal)| {
-                let owner = StableDeclarationId::from_canonical(
-                    owner,
-                    self.signatures_by_identity
-                        .get(owner)
-                        .map(|facts| facts.signature.clone()),
-                    None,
-                )?;
+                let owner = self
+                    .declaration_facts
+                    .get(owner)
+                    .and_then(|facts| facts.source_identity.clone())
+                    .or_else(|| StableDeclarationId::from_canonical(owner, None, None))?;
                 Some(StableDeclarationContext {
                     owner,
                     binding_ordinal: *binding_ordinal,
                 })
             });
-        codegraph_stable_identity(
-            canonical,
-            self.signatures_by_identity
-                .get(canonical)
-                .map(|facts| facts.signature.clone()),
-            context,
-        )
+        codegraph_stable_identity(canonical, context)
     }
 
     /// Borrow the compilation's checked facts, or own the snapshots returned by a standalone inspection pass.
@@ -1390,7 +1386,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     let wire_stable_identity = self.stable_identity_for(canonical_identity.as_ref());
                     let lowered = canonical_identity
                         .as_ref()
-                        .and_then(|identity| self.signatures_by_identity.get(identity));
+                        .and_then(|identity| self.declaration_facts.get(identity));
                     self.records
                         .push(CodegraphRecord::Declaration(CodegraphDeclarationRecord {
                             id: declaration_id.clone(),
@@ -1403,7 +1399,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                             signature: summary.signature,
                             canonical_identity: wire_identity.clone(),
                             stable_identity: wire_stable_identity.clone(),
-                            semantic_digest: lowered.map(|facts| facts.semantic_digest.clone()),
+                            semantic_digest: lowered.and_then(|facts| facts.semantic_digest.clone()),
                             doc_digest: lowered.and_then(|facts| facts.doc_digest.clone()),
                             span: Some(source_span(&module.file_path, &module.source, declaration.span)),
                             provenance: provenance_for_identity(canonical_identity.as_ref()),
@@ -2552,58 +2548,65 @@ impl<'analysis> CodegraphBuilder<'analysis> {
     }
 }
 
-/// What one lowered declaration contributes to the export.
-#[derive(Debug, Clone)]
-struct LoweredDeclarationFacts {
-    /// Separates overloads, which share every other identity field once the span is dropped.
-    signature: DeclarationSignature,
-    /// Digest over checked meaning, excluding position, formatting, comments and documentation.
-    semantic_digest: String,
-    /// Digest over documentation, kept apart so a consumer gating a compiled artifact can ignore it.
+/// A source identity and independent optional executable/documentation digests.
+#[derive(Debug, Clone, Default)]
+struct CheckedDeclarationFacts {
+    /// The checker's source-signature authority; executable types never enter this identity.
+    source_identity: Option<StableDeclarationId>,
+    /// Digest over executable meaning, unavailable when Body IR construction fails.
+    semantic_digest: Option<String>,
+    /// Documentation is independent of semantic identity.
     doc_digest: Option<String>,
 }
 
-/// Project declaration digests from the shared compilation boundary; a failed lowering exports no proven digest.
-fn lowered_declaration_facts(
+/// Read early checked source identities without constructing Body IR or waiting for executable representations.
+fn source_declaration_facts(
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
+) -> BTreeMap<CanonicalSymbolId, CheckedDeclarationFacts> {
+    modules
+        .iter()
+        .filter_map(|module| analysis.type_info_for_module_path(&module.path_segments))
+        .flat_map(|info| &info.declarations.source_identities)
+        .map(|(canonical, identity)| {
+            (
+                canonical.clone(),
+                CheckedDeclarationFacts {
+                    source_identity: Some(identity.clone()),
+                    ..CheckedDeclarationFacts::default()
+                },
+            )
+        })
+        .collect()
+}
+
+/// Retain early source identities even when executable digest construction is unavailable.
+fn checked_declaration_facts(
     modules: &[ParsedModule],
     analysis: &CompilationAnalysis,
     session: &CompilationSession,
-) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
-    let Ok(mut bodies) = crate::body_ir::checked_modules(modules, analysis, session) else {
-        return BTreeMap::new();
-    };
-    bodies.iter_mut().flat_map(body_declaration_facts).collect()
+) -> BTreeMap<CanonicalSymbolId, CheckedDeclarationFacts> {
+    let mut facts = source_declaration_facts(modules, analysis);
+    if let Ok(mut bodies) = crate::body_ir::checked_modules(modules, analysis, session) {
+        append_body_declaration_facts(&mut facts, &mut bodies);
+    }
+    facts
 }
 
-/// Read signatures and digests from checked Body IR once. Digesting temporarily detaches a leading docstring and
-/// restores it before returning, so compilation receives the identical body without a deep projection clone.
-fn body_declaration_facts(
-    body_ir: &mut incan_semantics_core::body_ir::BodyIrModule,
-) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
+/// Attach executable digests without deriving, replacing or refusing a source signature. A leading docstring is
+/// temporarily detached by the shared digest boundary and restored before compilation consumes the body.
+fn append_body_declaration_facts(
+    facts: &mut BTreeMap<CanonicalSymbolId, CheckedDeclarationFacts>,
+    bodies: &mut [incan_semantics_core::body_ir::BodyIrModule],
+) {
     use incan_semantics_core::semantic_digest::{body_docstring, body_semantic_digest, semantic_digest};
 
-    body_ir
-        .bodies
-        .iter_mut()
-        .filter_map(|body| {
-            let canonical = body.canonical.clone()?;
-            // A body that will not digest contributes nothing rather than contributing a wrong answer: a consumer
-            // reads the absent digest as changed, which costs a rebuild, where a wrong digest costs a wrong build.
-            let semantic = body_semantic_digest(body).ok()?;
-            let documentation = body_docstring(body).and_then(|text| semantic_digest(&text).ok());
-            Some((
-                canonical,
-                LoweredDeclarationFacts {
-                    signature: DeclarationSignature::from_callable_types(
-                        body.params.iter().map(|param| &param.ty),
-                        &body.return_type,
-                    ),
-                    semantic_digest: semantic,
-                    doc_digest: documentation,
-                },
-            ))
-        })
-        .collect()
+    for body in bodies.iter_mut().flat_map(|module| &mut module.bodies) {
+        let Some(canonical) = &body.canonical else { continue };
+        let fact = facts.entry(canonical.clone()).or_default();
+        fact.semantic_digest = body_semantic_digest(body).ok();
+        fact.doc_digest = body_docstring(body).and_then(|text| semantic_digest(&text).ok());
+    }
 }
 
 /// Project a checked identity into the edit-stable form exported beside the span-carrying one.
@@ -2613,10 +2616,9 @@ fn body_declaration_facts(
 /// to remove.
 fn codegraph_stable_identity(
     identity: &CanonicalSymbolId,
-    signature: Option<DeclarationSignature>,
     context: Option<StableDeclarationContext>,
 ) -> Option<CodegraphStableDeclarationId> {
-    let stable = StableDeclarationId::from_canonical(identity, signature, context)?;
+    let stable = StableDeclarationId::from_canonical(identity, None, context)?;
     Some(codegraph_stable_identity_from_semantic(&stable))
 }
 

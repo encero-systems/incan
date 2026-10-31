@@ -25,6 +25,7 @@ from comparison_methods import comparison_functions
 from fallible_methods import fallible_methods
 from iterator_methods import iterator_methods
 from callable_methods import callable_methods
+from native_traits import native_trait_adoptions
 from marker_traits import validate_marker_traits
 from nominal_instances import NominalInstance
 from library_model_arguments import library_model_arguments, local_generic_item
@@ -121,6 +122,7 @@ pub def lower_model_declarations(
             ):
                 derives.append(derive)
         mut fields: list[Parameter] = []
+        mut unavailable_fields: list[int] = []
         mut field_public = declaration.field_public
         mut serde_names: list[str] = []
         if item != "":
@@ -132,9 +134,7 @@ pub def lower_model_declarations(
                 unions,
                 intrinsics,
             )?
-            fields = library_fields(constructors, module, declaration, file, unions, intrinsics)
-            if len(fields) != len(declaration.fields):
-                field_public = []
+            fields, unavailable_fields = library_fields(constructors, module, declaration, file, unions, intrinsics)
             # Native Copy is a checked capability, verified again against rustc rather than derived on this alias.
             derives = []
             if "Copy" in declaration.derives:
@@ -184,6 +184,8 @@ pub def lower_model_declarations(
                 callable_signature=callable_signature,
                 string_conversion_root=string_conversion_root,
                 string_conversion_trait=string_conversion_trait,
+                native_trait_adoptions=native_trait_adoptions(module, owner)?,
+                unavailable_native_fields=unavailable_fields,
             ),
         )
     return Ok(models)
@@ -302,17 +304,18 @@ def library_fields(
     file: str,
     mut unions: list[RustType],
     mut intrinsics: list[EnumDeclaration],
-) -> list[Parameter]:
+) -> tuple[list[Parameter], list[int]]:
     """
-    A stdlib layout's fields when the plan can carry every one of them, otherwise none.
+    A native layout's fields in their native slots, and the slots whose type the plan cannot carry.
 
-    A layout without fields is opaque: its values move and drop as the SDK crate's own type. Reading a field whose type
-    the plan cannot carry refuses while lowering; the driver's plan validation rejects any projection into an opaque
-    layout.
+    An uncarried field keeps its name and slot with a unit placeholder type. The placeholder never authorizes a read,
+    write or construction: the driver's plan validation refuses a projection into that slot and an aggregate of the
+    layout, while the layout's other fields stay usable. Its values still move and drop as the native crate's own type.
 
     Reuse the enclosing layout pass's union inventory so every field reads that pass's exact slot order.
     """
     mut fields: list[Parameter] = []
+    mut unavailable: list[int] = []
     for slot in range(len(declaration.fields)):
         match stored_field_type(
             constructors,
@@ -327,8 +330,16 @@ def library_fields(
                 fields.append(
                     Parameter(name=str(declaration.fields[slot]), ty=ty, span=plan_span(file=file, line=1, column=1)),
                 )
-            Err(_reason) => return []
-    return fields
+            Err(_reason) =>
+                unavailable.append(slot)
+                fields.append(
+                    Parameter(
+                        name=str(declaration.fields[slot]),
+                        ty=PlanType.Unit,
+                        span=plan_span(file=file, line=1, column=1),
+                    ),
+                )
+    return (fields, unavailable)
 
 
 pub def library_item(declaration: &NominalDeclaration) -> str:

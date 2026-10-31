@@ -622,7 +622,7 @@ def read_records(
     header["degraded"] = JsonValue.bool(degraded)
     header["languages"] = JsonValue.array([JsonValue.string(name) for name in sorted(languages)])
     header["semantic_contexts"] = JsonValue.array(contexts)
-    header["identity_schema"] = JsonValue.string("incan.graph.identity/1")
+    header["identity_schema"] = JsonValue.string("incan.graph.identity/2")
     records = link_keys(records, providers)?
     header["declaration_digests"] = declaration_digests(records)?
     header["snapshot_id"] = JsonValue.string(snapshot)

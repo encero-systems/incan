@@ -27,7 +27,7 @@ from rust_units import (
 )
 from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
 from unit import UnitDescription, UnitLoaf, describe
-from unit_rust import add_extern, prepare_linked
+from unit_rust import add_extern, add_rust_root, prepare_linked
 from vocabulary import published_workers, stage_vocabulary
 from unit_reading import read_unit
 from unit_freshness import artifact_files, record, unit_key
@@ -180,6 +180,10 @@ def prepared_source_unit(
     facets = local_facets(demand, configuration)?
     registry = selected_registry(read_registry_units(Path(toolchain.registry_units))?, facets, "release")?
     built = installed_support(facets, toolchain, registry)?
+    own_key = f"{project.0}@target"
+    if own_key in built:
+        own = built[own_key]
+        unit = add_rust_root(unit, NativeCrate(name=own.crate_name, path=own.artifact))?
     # 2. A Rust edge selects its Rust facet, never an Incan facade that links this same runtime.
     mut native_edges: list[str] = []
     for facet in facets:

@@ -14,6 +14,7 @@ incan describe-unit PATH [UNIT OPTIONS]
 incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
 incan owner stop
+incan bakery gc [--keep-days N] | verify | repair-payload SHA256 FILE
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan mcp PATH
 incan toolchain pack OUT
@@ -92,6 +93,20 @@ Formats one or more files or directory trees. `--check` leaves files unchanged a
 ## `incan owner stop`
 
 Stops resident project owners belonging to the selected Incan home. `OVEN_OWNER=off` disables owner use for run, build and test. Executables may still be reused with owners disabled. Tests execute afresh even when their executable is reused.
+
+## `incan bakery gc`
+
+Refuses with exit `1` and removes nothing: collection is disabled until it honors live snapshot leases. Each build registers the identities it uses under `<home>/bakery/roots/`. `--keep-days N` is accepted for that collection. `INCAN_BAKERY` names another directory for the bakery, such as a cache volume.
+
+
+## `incan bakery verify`
+
+Reads every unit record and every byte of every payload file in the selected bakery. A damaged record is named. A payload file that does not match its committed digest is reported by its canonical object path. Verification does not change records or payloads. Exits `0` when nothing is damaged and `1` otherwise.
+
+
+## `incan bakery repair-payload SHA256 FILE`
+
+Re-admits an explicit replacement file only when its full SHA-256 digest matches the committed payload name. A mismatched replacement is refused before changing the store. Existing damaged bytes are moved to quarantine; frozen payloads are never edited in place. This command does not select another record revision or namespace.
 
 ## `incan inspect codegraph`
 

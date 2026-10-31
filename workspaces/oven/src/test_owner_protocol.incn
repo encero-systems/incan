@@ -3,7 +3,8 @@
 from rust::std::io import Write
 from rust::std::os::unix::net import UnixStream
 from std.json import JsonValue
-from owner_protocol import MAX_FRAME, Reply, Request, dial, length_of, listen, padded, reply_of, request_of
+from pub::incan_platform.ipc import MAX_FRAME, dial, length_of, listen, padded
+from owner_protocol import Reply, Request, receive_document, reply_of, request_of, send_document
 from scratch import scratch_directory
 
 
@@ -46,6 +47,8 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     mut listener = listen(path, true)?
     mut client = dial(path)?
     mut server = listener.accept()?
+    assert client.peer()?.uid == server.peer()?.uid
+    assert client.peer()?.gid == server.peer()?.gid
     # A request travels from the client to the server, and a reply back.
     request = Request(
         command="run",
@@ -54,15 +57,15 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
         features=["a", "b"],
         default_features=false,
     )
-    client.send(request.to_json())?
-    seen = request_of(server.receive()?)?
+    send_document(client, request.to_json())?
+    seen = request_of(receive_document(server)?)?
     assert seen.command == "run"
     assert seen.path == "/p/src/main.incn"
     assert seen.features == ["a", "b"]
     assert not seen.default_features
     reply = Reply(status="done", exit=3, binary="/p/target/bin/p", stdout="out", stderr="err", trace=["oven: x"], pid=7)
-    server.send(reply.to_json())?
-    answer = reply_of(client.receive()?)?
+    send_document(server, reply.to_json())?
+    answer = reply_of(receive_document(client)?)?
     assert answer.status == "done"
     assert answer.exit == 3
     assert answer.binary == "/p/target/bin/p"
@@ -83,15 +86,15 @@ pub def test_a_broken_client_leaves_the_next_request_healthy() -> Result[None, s
     mut listener = listen(path, true)?
     raw(path, "00000100{".encode("utf-8"))?
     mut cut = listener.accept()?
-    assert refused_frame(cut.receive())
+    assert refused_frame(receive_document(cut))
     raw(path, "not-a-header".encode("utf-8"))?
     mut junk = listener.accept()?
-    assert refused_frame(junk.receive())
+    assert refused_frame(receive_document(junk))
     raw(path, "00000002{}".encode("utf-8"))?
     mut empty = listener.accept()?
-    assert refused_request(request_of(empty.receive()?))
+    assert refused_request(request_of(receive_document(empty)?))
     mut client = dial(path)?
     mut server = listener.accept()?
-    client.send(Request(command="status", generation="abc").to_json())?
-    assert request_of(server.receive()?)?.command == "status"
+    send_document(client, Request(command="status", generation="abc").to_json())?
+    assert request_of(receive_document(server)?)?.command == "status"
     return Ok(None)

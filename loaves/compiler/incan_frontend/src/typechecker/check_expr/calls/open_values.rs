@@ -180,6 +180,7 @@ impl TypeChecker {
 
     /// Apply retained adaptation destinations and publish each complete lexical inference group.
     pub(in crate::typechecker) fn settle_open_value_destinations(&mut self) {
+        self.check_work.open_value_settlements += 1;
         let destinations = self.type_info.expressions.value_destination_types.clone();
         for (span, actual) in destinations {
             if let Some(value) = self.type_info.expressions.body_ir_open_values.get(&span).cloned() {

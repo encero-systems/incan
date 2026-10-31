@@ -1,4 +1,4 @@
-# behavior: bytes parameters, fields and frozen values support signed indexing with u8 elements, including typed list comprehensions (parity corpus case 15)
+# behavior: bytes parameters, fields and frozen values support signed indexing with u8 elements, including typed list comprehensions and read-only frozen-constant arguments (#2497; #2256; parity corpus case 15)
 # expect-stdout:
 #   1
 #   105
@@ -6,9 +6,21 @@
 #   []
 #   90
 #   255
+#   2
+#   255
+#   2
+#   0
+#   255 0 0
+#   0
+#   2
 
 """A bytes literal is passed to a bytes parameter (parity corpus case 15)."""
+
+from std.io import BytesIO
+
 const RAW: FrozenBytes = b"\x00\xff"
+const EMPTY: bytes = b""
+const ID: bytes = b"id"
 
 
 model Packet:
@@ -33,14 +45,25 @@ def send(payload: bytes) -> int:
 
 
 def main() -> None:
-    """Print `send(greeting)` after preparing the fixture inputs."""
+    """Observe owned byte storage and repeated shared reads of frozen constants through source and stream calls."""
     greeting = b"hi"
     println(send(greeting))
     println(byte_at(greeting, -1))
-    println(f"{ordinal_key_bytes(b'\x00\xff'):?}")
-    println(f"{ordinal_key_bytes(b''):?}")
+    println(f"{ordinal_key_bytes(b"\x00\xff"):?}")
+    println(f"{ordinal_key_bytes(b""):?}")
     packet = Packet(data=b"AZ")
     element: u8 = packet.data[-1]
     println(element)
     frozen_element: u8 = RAW[1]
     println(frozen_element)
+    println(len(ordinal_key_bytes(RAW)))
+    println(byte_at(RAW, -1))
+    stream = BytesIO(RAW)
+    println(len(stream.getvalue()))
+    println(len(ordinal_key_bytes(EMPTY)))
+    mut copied = Packet(data=RAW)
+    other = Packet(data=RAW)
+    copied.data = EMPTY
+    println(f"{other.data[-1]} {len(copied.data)} {RAW[0]}")
+    println(len(Packet(data=EMPTY).data))
+    println(len(Packet(data=ID).data))

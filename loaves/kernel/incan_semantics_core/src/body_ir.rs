@@ -1312,7 +1312,10 @@ pub struct Body {
     pub callable_representation: Option<CallableRepresentation>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
     /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
-    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    ///
+    /// Shared, not copied: a cloned body shares the map, and a writer copies it once through `Arc::make_mut`.
+    #[serde(with = "shared_identities")]
+    pub named_type_identities: SharedIdentities,
     /// Every local (parameter, user binding, or compiler-introduced temporary) declared in this body, in
     /// declaration order. Referenced elsewhere by [`LocalId`] index.
     pub locals: Vec<LocalDecl>,
@@ -6523,5 +6526,23 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(&binding)?, original);
         Ok(())
+    }
+}
+
+/// A body's checked nominal bindings, shared between clones of the body.
+pub type SharedIdentities = std::sync::Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>;
+
+/// Serialize [`SharedIdentities`] as the map itself, so the published representation is unchanged.
+mod shared_identities {
+    use super::{CanonicalSymbolId, SharedIdentities};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    pub fn serialize<S: Serializer>(value: &SharedIdentities, serializer: S) -> Result<S::Ok, S::Error> {
+        value.as_ref().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SharedIdentities, D::Error> {
+        BTreeMap::<String, CanonicalSymbolId>::deserialize(deserializer).map(std::sync::Arc::new)
     }
 }

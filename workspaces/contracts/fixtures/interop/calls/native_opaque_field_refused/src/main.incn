@@ -1,0 +1,24 @@
+# behavior: a read of a Rust struct field whose type the program cannot hold is refused (#2481)
+# expect-exit: 1
+# expect-stderr-contains:
+#   cannot project an opaque native field
+
+"""Refuse a read of a native field without a supported carrier."""
+
+from rust::tiny_driver import Callbacks, Config, run_compiler
+
+
+class Hooks with Callbacks:
+    """Read a field whose static borrowed carrier is not supported."""
+
+    marker: int = 0
+
+    def config(mut self, mut config: &mut Config) -> None:
+        """Count the borrowed names: refused."""
+        _ = len(config.extra_symbols)
+
+
+def main() -> None:
+    """Never runs: the program is refused."""
+    mut hooks = Hooks()
+    run_compiler(["opaque"], hooks)

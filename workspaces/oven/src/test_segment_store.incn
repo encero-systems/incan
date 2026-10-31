@@ -1,0 +1,567 @@
+"""Segment store contracts: validated transactions, durable publication, damage told apart from absence, compaction."""
+
+from rust::std::string import String as RustString
+from rust::std::env import current_exe
+from rust::std::process import Command, exit as native_exit
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.environ import get_or
+from std.encoding.hex import hexlify
+from std.hash import file_digest, sha256
+from std.io import BytesIO
+from store_index import Entry, Location, build, entries as index_entries
+from std.fs import Path
+from scratch import scratch_directory
+from segment_store import (
+    EXPECT_ABSENT,
+    EXPECT_ABSENT_OR_DAMAGED,
+    Lookup,
+    Snapshot,
+    StoreError,
+    begin,
+    commit,
+    compact,
+    delete,
+    get,
+    keys,
+    lookup,
+    owned,
+    payload_intact,
+    payload_path,
+    put,
+    put_payload,
+    snapshot,
+    fork,
+    read_counts,
+    repair_current,
+    quarantine_record,
+)
+
+
+def text(found: Result[Lookup, StoreError]) -> str:
+    """A lookup as text: the value, `<deleted>`, `<absent>`, or `<integrity>` and the like for an error."""
+    match found:
+        Err(error) => return f"<{error.kind}>"
+        Ok(outcome) =>
+            match outcome:
+                Lookup.Found(value) =>
+                    match RustString.from_utf8(owned(value)):
+                        Ok(decoded) => return str(decoded)
+                        Err(_) => return "<bytes>"
+                Lookup.Deleted => return "<deleted>"
+                Lookup.Absent => return "<absent>"
+
+
+def write_one(root: Path, key: str, value: str, expect: int = 0) -> Result[Snapshot, StoreError]:
+    """Commit one value on the latest generation."""
+    return commit(put(begin(snapshot(root)?), key, value.encode("utf-8"), expect))
+
+
+def error_kind(result: Result[Snapshot, StoreError]) -> str:
+    """The kind of a commit's error, or `ok`."""
+    match result:
+        Ok(_) => return "ok"
+        Err(error) => return error.kind
+
+
+def count_files(directory: Path) -> int:
+    """How many entries a directory holds; zero when it does not exist."""
+    if not directory.is_dir():
+        return 0
+    match directory.iterdir():
+        Ok(entries) => return len(entries)
+        Err(_) => return 0
+
+
+pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_and_absence_apart() -> Result[None, str]:
+    """
+    A reader's snapshot answers from its own generation; a tombstone is not absence, and a full key is not its locator.
+
+    1. An empty store is generation 0, and every key is absent.
+    2. Each commit adds one generation; a snapshot taken earlier still answers from its own.
+    3. A deleted key answers `Deleted`; a never-written key answers `Absent`.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    empty = snapshot(root).map_err((error) => error.message())?
+    assert empty.generation == 0
+    assert text(lookup(empty, "a")) == "<absent>"
+    first = write_one(root, "a", "one").map_err((error) => error.message())?
+    second = write_one(root, "a", "two").map_err((error) => error.message())?
+    assert first.generation == 1 and second.generation == 2
+    assert text(lookup(second, "a")) == "two"
+    assert text(lookup(first, "a")) == "one"
+    deleted = commit(delete(begin(second), "a")).map_err((error) => error.message())?
+    assert text(lookup(deleted, "a")) == "<deleted>"
+    assert text(lookup(deleted, "b")) == "<absent>"
+    assert keys(deleted).map_err((error) => error.message())? == []
+    return Ok(None)
+
+
+pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_refused() -> Result[None, str]:
+    """
+    Two transactions begun on one generation: disjoint writes both commit; a conflicting one is refused; an equal one
+    commits nothing and adds no bytes.
+    """
+    if get_or("INCAN_STORE_PROOF_CHILD", "") == "writer":
+        return writer_child()
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    base = snapshot(root).map_err((error) => error.message())?
+    left = put(begin(base), "a", b"one", EXPECT_ABSENT)
+    right = put(begin(base), "b", b"two", EXPECT_ABSENT)
+    rival = put(begin(base), "a", b"other", EXPECT_ABSENT)
+    same = put(begin(base), "a", b"one", EXPECT_ABSENT)
+    assert commit(left).map_err((error) => error.message())?.generation > 0
+    landed = commit(right).map_err((error) => error.message())?
+    assert text(lookup(landed, "a")) == "one" and text(lookup(landed, "b")) == "two"
+    assert error_kind(commit(rival)) == "conflict"
+    segments = count_files(root.joinpath("segments"))
+    retained = retained_inventory(root)?
+    size_before = retained_bytes(root)?
+    unchanged = commit(same).map_err((error) => error.message())?
+    assert unchanged.generation == landed.generation
+    assert count_files(root.joinpath("segments")) == segments
+    assert retained_inventory(root)? == retained
+    assert retained_bytes(root)? == size_before
+    println("S1 unchanged commit: 0 added files, 0 changed bytes, 0 manifest writes")
+    prove_concurrent_writers(scratch.path())?
+    return Ok(None)
+
+
+pub def test_damage_is_an_error_never_absence_or_an_older_value() -> Result[None, str]:
+    """
+    A damaged frame is an integrity error, and the older value beneath it is never returned; a writer that expects
+    damage may replace it. A damaged pointer or manifest refuses the store instead of reading it as empty.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    assert write_one(root, "a", "old").map_err((error) => error.message())?.generation > 0
+    newer = write_one(root, "a", "newer").map_err((error) => error.message())?
+    damage_last_byte(root.joinpath("segments").joinpath(f"{newer.segments[1]}.seg"))?
+    damaged = snapshot(root).map_err((error) => error.message())?
+    assert text(lookup(damaged, "a")) == "<integrity>"
+    assert error_kind(write_one(root, "a", "plain")) == "integrity"
+    quarantine_record(damaged, "a").map_err((error) => error.message())?
+    assert count_files(root.joinpath("quarantine")) == 1
+    repaired = write_one(root, "a", "repaired", EXPECT_ABSENT_OR_DAMAGED).map_err((error) => error.message())?
+    assert text(lookup(repaired, "a")) == "repaired"
+    root.joinpath("CURRENT").write_text("garbage", "utf-8", "strict", None).map_err((error) => error.message())?
+    match snapshot(root):
+        Ok(_) =>
+            assert false, "a malformed CURRENT was read"
+        Err(error) =>
+            assert error.kind == "format", error.message()
+    restored = repair_current(repaired).map_err((error) => error.message())?
+    assert text(lookup(restored, "a")) == "repaired"
+    root.joinpath("CURRENT").unlink().map_err((error) => error.message())?
+    assert error_kind(snapshot(root)) == "integrity"
+    repair_current(restored).map_err((error) => error.message())?
+    manifest = root.joinpath("snapshots").joinpath(f"{restored.generation}.{restored.digest[:16]}.manifest")
+    damage_last_byte(manifest)?
+    assert error_kind(snapshot(root)) == "integrity"
+    assert error_kind(repair_current(restored)) == "integrity"
+    return Ok(None)
+
+
+pub def test_a_commit_interrupted_before_its_switch_leaves_the_last_generation_visible() -> Result[None, str]:
+    """
+    Objects installed and a manifest written without the `CURRENT` switch are not committed: readers see the last
+    generation, and the next commit publishes normally.
+    """
+    if get_or("INCAN_STORE_PROOF_CHILD", "") == "crash":
+        return crash_child()
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    committed = write_one(root, "a", "one").map_err((error) => error.message())?
+    other = scratch.path().joinpath("other")
+    assert write_one(other, "a", "two").map_err((error) => error.message())?.generation == 1
+    # A crashed writer's segment and a next-generation manifest, without the pointer switch.
+    for name in ["segments", "snapshots"]:
+        for entry in other.joinpath(name).iterdir().map_err((error) => error.message())?:
+            entry
+                .copy(root.joinpath(name).joinpath(f"{entry.name()}.orphan"), true, true)
+                .map_err((error) => error.message())?
+    seen = snapshot(root).map_err((error) => error.message())?
+    assert seen.generation == committed.generation
+    assert text(lookup(seen, "a")) == "one"
+    after = write_one(root, "b", "two").map_err((error) => error.message())?
+    assert after.generation == committed.generation + 1
+    assert text(lookup(after, "a")) == "one" and text(lookup(after, "b")) == "two"
+    prove_crash_boundaries(scratch.path())?
+    return Ok(None)
+
+
+pub def test_compaction_preserves_contents_and_gives_a_byte_identical_base() -> Result[None, str]:
+    """
+    Compaction keeps every key's newest state, tombstones included, and equal contents give the same base however they
+    were written.
+    """
+    scratch = scratch_directory()?
+    one = scratch.path().joinpath("one")
+    two = scratch.path().joinpath("two")
+    assert write_one(one, "a", "x").map_err((error) => error.message())?.generation > 0
+    assert write_one(one, "b", "y").map_err((error) => error.message())?.generation > 0
+    assert write_one(one, "c", "z").map_err((error) => error.message())?.generation > 0
+    assert commit(delete(begin(snapshot(one).map_err((error) => error.message())?), "c")).map_err(
+        (error) => error.message(),
+    )?.generation > 0
+    assert write_one(two, "c", "w").map_err((error) => error.message())?.generation > 0
+    assert commit(delete(begin(snapshot(two).map_err((error) => error.message())?), "c")).map_err(
+        (error) => error.message(),
+    )?.generation > 0
+    assert write_one(two, "b", "old").map_err((error) => error.message())?.generation > 0
+    assert write_one(two, "b", "y").map_err((error) => error.message())?.generation > 0
+    assert write_one(two, "a", "x").map_err((error) => error.message())?.generation > 0
+    left = compact(one).map_err((error) => error.message())?
+    right = compact(two).map_err((error) => error.message())?
+    assert len(left.segments) == 1 and len(right.segments) == 1
+    assert left.segments[0] == right.segments[0] and left.index == right.index
+    println(f"S2 canonical compaction: equal_base={left.segments[0]} equal_index={left.index}")
+    assert text(lookup(right, "b")) == "y"
+    assert text(lookup(right, "c")) == "<deleted>"
+    source = scratch.path().joinpath("artifact")
+    source.write_bytes(b"program").map_err((error) => error.message())?
+    digest = put_payload(two, source).map_err((error) => error.message())?
+    assert payload_intact(two, digest)
+    stored = payload_path(two, digest)
+    stored.chmod(false).map_err((error) => error.message())?
+    stored.write_bytes(b"damaged").map_err((error) => error.message())?
+    match put_payload(two, source):
+        Ok(_) =>
+            assert false, "a damaged payload was accepted as stored"
+        Err(error) =>
+            assert error.kind == "integrity", error.message()
+    return Ok(None)
+
+
+def damage_last_byte(path: Path) -> Result[None, str]:
+    """Cut the last byte off a file, past its permissions, as a stray tool would."""
+    data = path.read_bytes().map_err((error) => error.message())?
+    path.chmod(false).map_err((error) => error.message())?
+    path.write_bytes(data[:len(data) - 1]).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys() -> Result[None, str]:
+    """
+    A key is found through its view's index: the pages read for one lookup do not grow with the number of segments or
+    with keys written elsewhere, and every key stays readable.
+    """
+    scratch = scratch_directory()?
+    for scale in [1, 10, 100]:
+        root = scratch.path().joinpath(f"store-{scale}")
+        selected = write_one(root, "selected", "constant").map_err((error) => error.message())?
+        for batch in range(scale):
+            mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+            for item in range(10):
+                transaction = put(transaction, f"key-{batch}-{item}", b"unrelated")
+            commit(transaction).map_err((error) => error.message())?
+        latest = snapshot(root).map_err((error) => error.message())?
+        before = read_counts()
+        assert text(lookup(latest, "selected")) == "constant"
+        after = read_counts()
+        assert after.pages - before.pages <= 3
+        assert after.records - before.records == 1
+        assert after.bytes - before.bytes == 24
+        assert text(lookup(latest, "missing")) == "<absent>"
+        println(
+            f"S2 selected read: scale={scale} segments={len(latest.segments)} pages={after.pages - before.pages} records={after.records - before.records} frame_bytes={after.bytes - before.bytes}",
+        )
+    return Ok(None)
+
+
+pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, str]:
+    """
+    A lookup answers with a view of the value inside its segment: it copies out the same key and location bytes
+    whatever the value's size, and none of the value. Only `owned` copies a value, and it counts every byte it copies.
+    """
+    scratch = scratch_directory()?
+    mut lookup_copies: list[int] = []
+    for size in [1, 65536, 4194304]:
+        value = repeated(size)?
+        root = scratch.path().joinpath(f"value-{size}")
+        commit(put(begin(snapshot(root).map_err((error) => error.message())?), "value", value))
+            .map_err((error) => error.message())?
+        latest = snapshot(root).map_err((error) => error.message())?
+        before = read_counts()
+        found = lookup(latest, "value").map_err((error) => error.message())?
+        after = read_counts()
+        assert after.decoded == before.decoded, "a lookup decoded its value"
+        assert after.bytes - before.bytes == 8 + 5 + size
+        lookup_copies.append(after.copied - before.copied)
+        match found:
+            Lookup.Found(view) =>
+                assert view.len() == size
+                decoded = owned(view)
+                assert read_counts().decoded - after.decoded == size
+                assert decoded == value
+            Lookup.Deleted => assert false, "the stored value reads as deleted"
+            Lookup.Absent => assert false, "the stored value reads as absent"
+        println(
+            f"S2 mapped view: value_bytes={size} frame_bytes_checked={after.bytes - before.bytes} lookup_copied_bytes={after.copied - before.copied} lookup_decoded_bytes={after.decoded - before.decoded} owned_decoded_bytes={size}",
+        )
+    assert lookup_copies[0] == lookup_copies[1] and lookup_copies[1] == lookup_copies[2]
+    return Ok(None)
+
+
+def repeated(size: int) -> Result[bytes, str]:
+    """`size` bytes, built by doubling."""
+    mut data = BytesIO(b"v").getvalue()
+    while len(data) < size:
+        buffer = BytesIO(data)
+        buffer.seek(0, 2).map_err((error) => error.message())?
+        buffer.write_bytes(data).map_err((error) => error.message())?
+        data = buffer.getvalue()
+    return Ok(data[:size])
+
+
+pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_writes() -> Result[None, str]:
+    """
+    A fork starts at its source's root; writes to either side stay on that side, an existing view name is refused, and
+    compaction keeps what each view holds.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    home = write_one(root, "shared", "base").map_err((error) => error.message())?
+    source = scratch.path().joinpath("native-payload")
+    source.write_bytes(b"shared native bytes").map_err((error) => error.message())?
+    put_payload(root, source).map_err((error) => error.message())?
+    payloads = retained_inventory(root.joinpath("payloads"))?
+    segments = count_files(root.joinpath("segments"))
+    pages = count_files(root.joinpath("indexes"))
+    bytes_before = retained_bytes(root)?
+    before_invalid = retained_inventory(root)?
+    for invalid in ["", "two words", "line\nbreak"]:
+        assert error_kind(fork(home, invalid)) == "format", f"invalid view {invalid} was accepted"
+        assert error_kind(snapshot(root, invalid)) == "format"
+        if invalid != "":
+            mut invalid_transaction = begin(home)
+            invalid_transaction.fork = invalid
+            assert error_kind(commit(invalid_transaction)) == "format"
+        assert retained_inventory(root)? == before_invalid, "an invalid fork changed the committed store"
+    test_view = fork(home, "test").map_err((error) => error.message())?
+    assert test_view.index == home.index
+    assert count_files(root.joinpath("segments")) == segments
+    assert count_files(root.joinpath("indexes")) == pages
+    assert retained_inventory(root.joinpath("payloads"))? == payloads
+    println(
+        f"S2 fork: root_delta_bytes={retained_bytes(root)? - bytes_before} new_pages=0 new_segments=0 payload_copies=0",
+    )
+    assert text(lookup(test_view, "shared")) == "base"
+    in_test = commit(put(begin(test_view), "only-test", b"t")).map_err((error) => error.message())?
+    assert count_files(root.joinpath("indexes")) == pages + 1
+    assert retained_inventory(root.joinpath("payloads"))? == payloads
+    println("S2 first fork write: new_pages=1 new_segments=1 payload_copies=0")
+    in_home = write_one(root, "only-home", "h").map_err((error) => error.message())?
+    assert text(lookup(in_test, "only-home")) == "<absent>"
+    assert text(lookup(in_home, "only-test")) == "<absent>"
+    assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-test")) == "t"
+    match fork(in_home, "test"):
+        Ok(_) =>
+            assert false, "an existing view was replaced"
+        Err(error) =>
+            assert error.kind == "conflict", error.message()
+    compacted = compact(root).map_err((error) => error.message())?
+    assert len(compacted.segments) == 1
+    assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-test")) == "t"
+    assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-home")) == "<absent>"
+    assert text(lookup(snapshot(root).map_err((error) => error.message())?, "only-home")) == "h"
+    return Ok(None)
+
+
+pub def test_injected_128_bit_locator_collision_resolves_by_full_key() -> Result[None, str]:
+    """Equal physical fingerprint accelerators cannot alias distinct full-key frames or their absence witnesses."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    base = snapshot(root).map_err((error) => error.message())?
+    transaction = put(put(begin(base), "left", b"one"), "right", b"two")
+    original = commit(transaction).map_err((error) => error.message())?
+    segment = root.joinpath("segments").joinpath(f"{original.segments[0]}.seg")
+    buffer = BytesIO(segment.read_bytes().map_err((error) => error.message())?)
+    # Inject the same 128-bit accelerator into both segment-directory slots without changing either full-key frame.
+    for offset in [16, 104]:
+        buffer.seek(offset, 0).map_err((error) => error.message())?
+        buffer.write_bytes(b"00000000000000000000000000000000").map_err((error) => error.message())?
+    contents = buffer.getvalue()
+    digest = hexlify(sha256.digest(contents))
+    root.joinpath("segments").joinpath(f"{digest}.seg").write_bytes(contents).map_err((error) => error.message())?
+    mut entries: list[Entry] = []
+    for entry in index_entries(root, original.index).map_err((error) => error.detail)?:
+        match entry.location:
+            None =>
+                assert false, "fixture requires a leaf location"
+            Some(location) =>
+                entries.append(
+                    Entry(
+                        key=entry.key,
+                        child="",
+                        location=Some(
+                            Location(
+                                segment=digest,
+                                offset=location.offset,
+                                length=location.length,
+                                digest=location.digest,
+                                tombstone=location.tombstone,
+                            ),
+                        ),
+                    ),
+                )
+    mut collided = original
+    collided.index = build(root.joinpath("indexes"), entries).map_err((error) => error.detail)?
+    assert text(lookup(collided, "left")) == "one"
+    assert text(lookup(collided, "right")) == "two"
+    assert text(lookup(collided, "neither")) == "<absent>"
+    println("S1 collision: 2 full keys, 1 injected 128-bit locator, 0 aliases")
+    return Ok(None)
+
+
+def retained_inventory(root: Path, prefix: str = "") -> Result[list[str], str]:
+    """Every retained file and its full content identity; unchanged commits cannot hide writes behind counts."""
+    if not root.is_dir():
+        return Ok([])
+    mut result: list[str] = []
+    for path in root.iterdir().map_err((error) => error.message())?:
+        name = prefix + path.name()
+        if path.is_dir():
+            result.extend(retained_inventory(path, name + "/")?)
+        else:
+            digest = hexlify(file_digest(path, "sha256").map_err((error) => error.message())?)
+            result.append(f"{name} {digest}")
+    return Ok(sorted(result))
+
+
+def retained_bytes(root: Path) -> Result[int, str]:
+    """Logical file lengths, explicitly separate from allocated filesystem extents or transient peak space."""
+    if not root.is_dir():
+        return Ok(0)
+    mut size = 0
+    for path in root.iterdir().map_err((error) => error.message())?:
+        if path.is_dir():
+            size += retained_bytes(path)?
+        else:
+            size += path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+    return Ok(size)
+
+
+def proof_command(test: str) -> Result[Command, str]:
+    """Launch this exact native test again so process failures cannot be mistaken for caught store errors."""
+    executable = current_exe().map_err((error) => str(error))?.to_string_lossy().into_owned()
+    mut command = Command.new(executable)
+    command.arg("--exact").arg(test).arg("--nocapture").arg("--test-threads=1")
+    return Ok(command)
+
+
+def crash_child() -> Result[None, str]:
+    """Attempt one two-record transaction; the selected publication boundary terminates the process."""
+    root = Path(get_or("INCAN_STORE_PROOF_ROOT", ""))
+    base = snapshot(root).map_err((error) => error.message())?
+    transaction = put(put(begin(base), "b", b"two"), "c", b"three")
+    commit(transaction).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def prove_crash_boundaries(base: Path) -> Result[None, str]:
+    """At each real process-exit boundary, reopen either the complete old root or the complete new root."""
+    boundaries = [
+        "staging-created",
+        "delta-written",
+        "delta-synced",
+        "delta-replaced",
+        "segment-installed",
+        "pages-staged",
+        "pages-installed",
+        "manifest-written",
+        "manifest-synced",
+        "manifest-replaced",
+        "manifest-directory-synced",
+        "current-written",
+        "current-synced",
+        "current-replaced",
+        "root-synced",
+    ]
+    for boundary in boundaries:
+        root = base.joinpath(boundary)
+        old = write_one(root, "a", "one").map_err((error) => error.message())?
+        mut command = proof_command("test_a_commit_interrupted_before_its_switch_leaves_the_last_generation_visible")?
+        command.env("INCAN_STORE_PROOF_CHILD", "crash").env("INCAN_STORE_PROOF_ROOT", root.0)
+        command.env("INCAN_STORE_CRASH_AFTER", boundary)
+        status = command.output().map_err((error) => str(error))?.status
+        stopped: i32 = 86
+        assert status.code() == Some(stopped), f"boundary {boundary} did not terminate the writer"
+        reopened = snapshot(root).map_err((error) => error.message())?
+        assert text(lookup(reopened, "a")) == "one"
+        if reopened.generation == old.generation:
+            assert text(lookup(reopened, "b")) == "<absent>"
+            assert text(lookup(reopened, "c")) == "<absent>"
+        else:
+            assert reopened.generation == old.generation + 1
+            assert text(lookup(reopened, "b")) == "two"
+            assert text(lookup(reopened, "c")) == "three"
+    println(f"S1 process-exit matrix: {len(boundaries)} boundaries, 0 partial snapshots")
+    return Ok(None)
+
+
+def await_file(path: Path) -> Result[None, str]:
+    """Bound a subprocess handshake; a failed child cannot leave the proof waiting indefinitely."""
+    for attempt in range(5000):
+        if path.is_file():
+            return Ok(None)
+        sleep(Duration.from_millis(2))
+    return Err(f"writer handshake timed out: {path.0}")
+
+
+def writer_child() -> Result[None, str]:
+    """Stage against the shared generation before both real writer processes are released together."""
+    root = Path(get_or("INCAN_STORE_PROOF_ROOT", ""))
+    role = get_or("INCAN_STORE_PROOF_ROLE", "")
+    key = get_or("INCAN_STORE_PROOF_KEY", "")
+    transaction = put(
+        begin(snapshot(root).map_err((error) => error.message())?),
+        key,
+        role.encode("utf-8"),
+        EXPECT_ABSENT,
+    )
+    root.joinpath(f"ready-{role}").write_bytes(b"ready").map_err((error) => error.message())?
+    await_file(root.joinpath("start"))?
+    match commit(transaction):
+        Ok(_) => return Ok(None)
+        Err(error) =>
+            if error.kind == "conflict":
+                native_exit(23)
+            return Err(error.message())
+
+
+def prove_concurrent_writers(base: Path) -> Result[None, str]:
+    """Disjoint simultaneous writers both land; rivals to one absent full key produce one commit and one conflict."""
+    for scenario in ["disjoint", "conflicting"]:
+        root = base.joinpath(scenario)
+        write_one(root, "anchor", "unchanged").map_err((error) => error.message())?
+        mut left_command = proof_command("test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_refused")?
+        mut right_command = proof_command("test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_refused")?
+        left_command.env("INCAN_STORE_PROOF_CHILD", "writer").env("INCAN_STORE_PROOF_ROOT", root.0)
+        right_command.env("INCAN_STORE_PROOF_CHILD", "writer").env("INCAN_STORE_PROOF_ROOT", root.0)
+        left_command.env("INCAN_STORE_PROOF_ROLE", "left").env("INCAN_STORE_PROOF_KEY", "left")
+        mut right_key = "right"
+        if scenario == "conflicting":
+            right_key = "left"
+        right_command.env("INCAN_STORE_PROOF_ROLE", "right").env("INCAN_STORE_PROOF_KEY", right_key)
+        mut left = left_command.spawn().map_err((error) => str(error))?
+        mut right = right_command.spawn().map_err((error) => str(error))?
+        await_file(root.joinpath("ready-left"))?
+        await_file(root.joinpath("ready-right"))?
+        root.joinpath("start").write_bytes(b"start").map_err((error) => error.message())?
+        left_status = left.wait().map_err((error) => str(error))?
+        right_status = right.wait().map_err((error) => str(error))?
+        seen = snapshot(root).map_err((error) => error.message())?
+        if scenario == "disjoint":
+            assert left_status.success() and right_status.success()
+            assert text(lookup(seen, "left")) == "left" and text(lookup(seen, "right")) == "right"
+        else:
+            conflict: i32 = 23
+            assert left_status.success() != right_status.success()
+            assert left_status.code() == Some(conflict) or right_status.code() == Some(conflict)
+            assert text(lookup(seen, "left")) in ["left", "right"]
+        assert text(lookup(seen, "anchor")) == "unchanged"
+    println("S1 concurrent processes: 2 disjoint commits; 1 rival commit and 1 conflict")
+    return Ok(None)

@@ -460,6 +460,39 @@ model Source with ReadsInt, ReadsStr:
         return value
 ```
 
+### Rust traits on a class
+
+A `class` adopts a trait imported with `from rust::...` the same way: `class Hooks with Callbacks`.
+
+- The class and the trait are concrete: neither has type parameters, and the trait declares only methods, no associated types or constants. Otherwise the adoption is refused (`INCAN-T0001`).
+- Each class method named like a trait method implements it. It is an instance method with a body and without type parameters; another method of that name is refused (`INCAN-T0001`). A method with a `for` target naming another trait implements only that trait.
+- A trait method the class does not declare keeps the trait's default.
+- Rust checks the implementation when the program is built. A missing required method (`E0046`) or a method whose receiver or signature differs from the trait's (`E0053`) refuses the build.
+- A class value passes to a Rust parameter that takes a reference to a trait object (`&dyn Trait`, `&mut (dyn Trait + Send)`) by a borrow of the value. A mutable borrow needs a `mut` binding; another binding is refused (`INCAN-T0001`). A Rust value passes the same way when its type implements the trait.
+- Every bound of the trait object holds: implementing the principal trait does not make a class `Send` or `Sync`. A build where the value cannot convert to the object, for example a class holding an `Rc`, is refused.
+
+A native struct field whose type a program cannot hold stays opaque: reading or writing it, or constructing the struct, is refused when the program is built. The struct's other fields stay usable.
+
+```incan
+# The host crate declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`,
+# `struct Config { pub flags: Vec<String> }` and `fn run(callbacks: &mut (dyn Callbacks + Send))`.
+from rust::host import Callbacks, Config, run
+
+class Hooks with Callbacks:
+    calls: int = 0
+    flag: str
+
+    def config(mut self, mut config: &mut Config) -> None:
+        self.calls += 1
+        config.flags.append(self.flag)
+
+def main() -> None:
+    mut hooks = Hooks(flag="first")
+    run(hooks)        # accepted: lends hooks as &mut (dyn Callbacks + Send)
+    shared = Hooks(flag="second")
+    run(shared)       # refused: needs a mutable borrow (INCAN-T0001)
+```
+
 ### `@requires(...)` (adopter contract)
 
 `@requires(field_a: TypeA, field_b: TypeB)` on a trait names fields that every model or class adopter declares, with compatible types.

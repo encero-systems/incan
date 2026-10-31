@@ -42,20 +42,25 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
+mod body_check;
 mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
+mod check_work;
+pub use check_work::CheckWork;
 mod check_expr;
 mod check_stmt;
 mod collect;
 mod collection_annotations;
 mod const_eval;
+mod declaration_views;
 mod decorated_method_receivers;
 mod derive_contract;
 mod derive_requirements;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
+mod iteration_borrows;
 mod json_member_requirements;
 mod lifetime_contracts;
 mod mut_arguments;
@@ -67,6 +72,8 @@ mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
+mod source_signatures;
+pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
 mod trait_bound_relations;
 mod type_info;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
@@ -506,6 +513,14 @@ struct CheckingNominalScope {
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
+    /// Test-only cold oracle bypasses local table extraction while retaining the original semantic operations.
+    #[cfg(test)]
+    legacy_body_checking: bool,
+    /// Per-body complete compatibility snapshots for cold-oracle comparisons, absent from production.
+    #[cfg(test)]
+    body_local_observations: Vec<(Span, String)>,
+    /// Actual stage entries for the current activation, reset before collecting one program.
+    check_work: CheckWork,
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
     /// Accumulated compile errors (non-fatal).
@@ -607,6 +622,8 @@ pub struct TypeChecker {
     pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
     /// Stack of active loop contexts, innermost last.
     pub loop_stack: Vec<LoopContext>,
+    /// Direct list places whose storage active statement loops still borrow.
+    iteration_borrows: Vec<iteration_borrows::IterationBorrow>,
     /// Active trait @requires context for default method bodies.
     pub current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait computed-property contract for default member bodies.
@@ -694,6 +711,8 @@ pub struct TypeChecker {
     pub const_eval_cache: HashMap<String, const_eval::ConstEvalResult>,
     /// Reusable typechecker output for downstream stages.
     pub type_info: TypeCheckInfo,
+    /// Current source-order boundary for borrowed declaration/environment readers.
+    visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.
     pub dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
     /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
@@ -946,6 +965,11 @@ impl TypeChecker {
     /// Native queries, statement-block tracking and hash-key inference each initialize their own empty state.
     pub fn new() -> Self {
         Self {
+            #[cfg(test)]
+            legacy_body_checking: false,
+            #[cfg(test)]
+            body_local_observations: Vec::new(),
+            check_work: CheckWork::default(),
             symbols: SymbolTable::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -988,6 +1012,7 @@ impl TypeChecker {
             generic_partial_target_span: None,
             generic_partial_target: None,
             loop_stack: Vec::new(),
+            iteration_borrows: Vec::new(),
             current_trait_requires: None,
             current_trait_properties: None,
             current_trait_name: None,
@@ -1018,6 +1043,7 @@ impl TypeChecker {
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
+            visibility_point: VisibilityPoint::default(),
             dependency_exports: HashMap::new(),
             dependency_member_symbols: HashMap::new(),
             dependency_member_type_aliases: HashMap::new(),
@@ -2949,24 +2975,17 @@ impl TypeChecker {
 
     /// Export the RFC 120 identities and active source bindings into lowering-facing artifacts.
     ///
-    /// Runs once at the end of checking, when every declaration has been defined. The legacy identity-only map keeps
-    /// local declaration facts available to existing consumers. The checked-binding map additionally preserves
-    /// imports and aliases with their target identities and all bindings introduced by a single declaration, so HIR
-    /// never has to reconstruct source resolution from spellings.
-    fn export_declaration_identities(&mut self) {
+    /// Runs once after declaration collection. Body-local symbols are exported separately after their owner is checked.
+    /// The legacy identity-only map keeps local declaration facts available to existing consumers. The
+    /// checked-binding map additionally preserves imports and aliases with their target identities and all bindings
+    /// introduced by a single declaration, so HIR never has to reconstruct source resolution from spellings.
+    fn export_module_declaration_bindings(&mut self) {
         for (span, identity) in self.symbols.local_declaration_identities() {
             self.type_info
                 .declarations
                 .declaration_identities
                 .insert(span, identity.clone());
         }
-        for (span, identity) in self.symbols.nested_declaration_identities() {
-            self.type_info
-                .declarations
-                .nested_declaration_identities
-                .insert(span, identity.clone());
-        }
-
         self.type_info.declarations.hir_bindings_by_span.clear();
         let bindings = self
             .symbols
@@ -2988,6 +3007,16 @@ impl TypeChecker {
                 .entry(span)
                 .or_default()
                 .push(binding);
+        }
+    }
+
+    /// Retain body-owned lexical identities after body checking without republishing the module header.
+    fn export_nested_declaration_identities(&mut self) {
+        for (span, identity) in self.symbols.nested_declaration_identities() {
+            self.type_info
+                .declarations
+                .nested_declaration_identities
+                .insert(span, identity.clone());
         }
     }
 
@@ -3092,8 +3121,7 @@ impl TypeChecker {
     ///   - `symbols.lookup(name)` → `Option<SymbolId>`
     ///   - `symbols.get(id)` → `Option<&Symbol>`
     pub fn lookup_symbol(&self, name: &str) -> Option<&Symbol> {
-        let id = self.symbols.lookup(name)?;
-        self.symbols.get(id)
+        self.check_environment().lookup(name).map(|binding| binding.symbol)
     }
 
     /// Return the generic-parameter name for a type-like placeholder visible in the current scope.
@@ -7037,6 +7065,12 @@ impl TypeChecker {
         result
     }
 
+    /// Return the actual entries performed by the most recent program activation. The observation does not retain
+    /// checker facts and never decides cache reuse, checking scope or publication readiness.
+    pub fn check_work(&self) -> CheckWork {
+        self.check_work
+    }
+
     /// Check one program while retaining semantic-only type metadata collected from its dependency imports.
     fn check_program_with_dependency_semantics(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
@@ -7055,15 +7089,24 @@ impl TypeChecker {
     ) -> Result<(), Vec<CompileError>> {
         self.reset_program_check(program, preserve_dependency_semantics);
         self.collect_program_check_declarations(program);
+        self.record_program_header_facts();
+        self.record_source_declaration_identities(program);
+        self.visibility_point = VisibilityPoint::Collected;
         self.prepare_program_body_facts();
         self.check_program_declaration_bodies(program);
         self.record_program_lowering_facts(program);
-        self.finish_program_check(program)
+        let result = self.finish_program_check(program);
+        self.visibility_point = VisibilityPoint::Finished;
+        result
     }
 
     /// Clear per-program observations before collecting declarations. Dependency semantic inventories survive only
     /// for an explicitly prepared imported program; symbol registration and alias validation keep their prior order.
     fn reset_program_check(&mut self, program: &Program, preserve_dependency_semantics: bool) {
+        #[cfg(test)]
+        self.body_local_observations.clear();
+        self.check_work = CheckWork::default();
+        self.visibility_point = VisibilityPoint::Collecting;
         self.checking_nominal_scope.get_mut().take();
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
@@ -7157,6 +7200,14 @@ impl TypeChecker {
         self.plan_closure_holding_callables(program);
     }
 
+    /// Publish declaration-owned identity, import and alias bindings once collection has settled them. Body checking
+    /// may add lexical identities, but it does not own or republish the module's header binding inventory.
+    fn record_program_header_facts(&mut self) {
+        self.export_module_declaration_bindings();
+        self.export_checked_import_bindings();
+        self.export_type_alias_targets();
+    }
+
     /// Retain private declaration-time native and nominal facts for body checking, reusing only matching mutation
     /// revisions. Finalization publishes the current inventory only after accumulated fatal diagnostics are absent.
     fn prepare_program_body_facts(&mut self) {
@@ -7184,20 +7235,21 @@ impl TypeChecker {
         self.validate_source_type_names = true;
         for decl in &program.declarations {
             if matches!(decl.node, Declaration::Const(_)) {
-                self.check_declaration(decl);
+                self.check_environment_declaration(decl);
             }
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
-                self.check_declaration(decl);
+                self.check_environment_declaration(decl);
             }
         }
         self.resolve_mut_arguments();
         self.refuse_copying_dict_lookups_of_uncopyable_values();
     }
 
-    /// Record checked layout, trait and import facts for later stages without publishing a nominal snapshot yet.
-    /// Native module validation precedes exporting inferred bounds and declaration identities.
+    /// Retain layout and trait facts after body checking without publishing a nominal snapshot yet. Native module
+    /// validation precedes inferred-bound and nested-identity export; module header bindings have already been
+    /// published.
     fn record_program_lowering_facts(&mut self, program: &Program) {
         self.type_info
             .c_abi
@@ -7217,10 +7269,7 @@ impl TypeChecker {
         // The module is checked; its inferred hashed type parameters now join its exported signatures (#1758).
         self.export_inferred_hash_key_bounds();
 
-        // ---- RFC 120: export the minted declaration identities for later stages ----
-        self.export_declaration_identities();
-        self.export_checked_import_bindings();
-        self.export_type_alias_targets();
+        self.export_nested_declaration_identities();
         self.record_binding_collision_diagnostics();
     }
 

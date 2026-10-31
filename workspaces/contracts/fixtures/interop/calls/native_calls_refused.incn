@@ -1,4 +1,4 @@
-# behavior: Unadmitted native calls, owned foreign fields and unsafe callback storage are refused (#2256)
+# behavior: Unadmitted native calls, unsafe methods and constructors, owned foreign fields and unsafe callback storage are refused (#2256, #2481)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
@@ -9,6 +9,8 @@
 #   Type 'bytes' has no constructor
 #   Integer literal 2147483648 does not fit in i32
 #   Unsafe Rust call `rust::std::env::set_var` is unsupported: unsafe interop is out of scope
+#   Unsafe Rust call `rust::std::mem::MaybeUninit.assume_init` is unsupported: unsafe interop is out of scope
+#   Unsafe Rust call `rust::std::string::String.from_utf8_unchecked` is unsupported: unsafe interop is out of scope
 #   Captured value 'handle'
 #   Send
 #   cannot be passed to a Rust generic parameter without retained callable bounds
@@ -28,12 +30,13 @@ from rust::std::cell import RefCell
 from rust::std::cmp import Ordering
 from rust::std::convert import identity
 from rust::std::env import VarError, set_var
-from rust::std::mem import size_of_val
+from rust::std::mem import MaybeUninit, size_of_val
 from rust::std::os::unix::process import CommandExt
 from rust::std::path import Path
 from rust::std::process import Command
 from rust::std::rc import Rc
 from rust::std::sync import Mutex
+from rust::std::string import String as RustString
 from rust::std::thread import spawn
 
 
@@ -110,6 +113,14 @@ def unsafe_rust_call() -> None:
         set_var("INCAN_INTEROP_UNSAFE_PROBE", "unused")
 
 
+def unsafe_rust_members() -> None:
+    """Refuse unsafe instance and associated calls under the same policy as free functions."""
+    value: MaybeUninit[int] = MaybeUninit.new(65)
+    value.assume_init()
+    unsafe:
+        RustString.from_utf8_unchecked([65u8])
+
+
 def captured_thread_callback() -> None:
     """Name the captured non-Send value before a Rust thread can retain it."""
     handle = Rc.new(3)
@@ -165,6 +176,7 @@ def main() -> None:
     oversized_process_group()
     # 2. Check that C acknowledgment does not authorize unsafe Rust calls.
     unsafe_rust_call()
+    unsafe_rust_members()
     # 3. Check captured callbacks against retained native storage bounds.
     captured_thread_callback()
     stored_native_callback()

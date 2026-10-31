@@ -1,0 +1,289 @@
+"""Serve disposable engine control state from Oven under the physical store's lifetime lock."""
+
+from rust::std::fs import symlink_metadata
+from rust::std::os::unix::fs import FileTypeExt
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant
+from std.encoding.hex import hexlify
+from std.fs import Path
+from pub::incan_platform.ipc import Connection, Listener, listen, readable, session_id, stale
+from decimal_text import digits_only
+from engine_channel import Channel, Envelope, SendOutcome
+from engine_endpoint import endpoint, owner_uid, transport
+from engine_messages import (
+    Accepted,
+    Cancelled,
+    Captured,
+    Complete,
+    Event,
+    Message,
+    Refused,
+    BindingOutcome,
+    CompletionStatus,
+    EffectDisposition,
+)
+from engine_state import Identity, ServiceState
+from engine_wire import Refusal, RefusalKind, zero_id
+from files import discard_file
+
+const MAX_CLIENTS: int = 16
+
+
+pub model Pending:
+    """An accepted control request awaiting its terminal producer-unavailable outcome."""
+
+    pub request: bytes
+    pub token: str
+    pub command: str
+
+
+pub class Client:
+    """A client's bounded volatile interests; disconnect releases exactly these reader pins and requests."""
+
+    pub channel: Channel
+    pub pending: list[Pending] = []
+    pub pins: list[str] = []
+    pub closed: bool = false
+
+
+pub def serve(arguments: list[str]) -> Result[None, Refusal]:
+    """Enter the internal service role in this executable; no standalone engine executable is created."""
+    if len(arguments) != 6:
+        return Err(
+            transport(
+                "internal engine requires store directory, store id, profile, service/compiler generations and idle seconds",
+            ),
+        )
+    root = Path(arguments[0])
+    uid = owner_uid(root)?
+    identity = Identity(
+        store_id=arguments[1],
+        profile=arguments[2],
+        service_generation=arguments[3],
+        compiler_generation=arguments[4],
+        uid=uid,
+    )
+    if arguments[5] == "" or len(arguments[5]) > 9 or not digits_only(arguments[5]) or int(arguments[5]) < 1:
+        return Err(transport("engine idle timeout must be positive seconds"))
+    return serve_at(root, identity, int(arguments[5]))
+
+
+pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None, Refusal]:
+    """Hold the store scheduling lock through startup, all client work and final socket withdrawal."""
+    selected = endpoint(root, identity)?
+    held = Path(selected.lock).try_lock_exclusive().map_err((error) => transport(error.message()))?
+    if held is None:
+        return Err(transport("another engine owns this store"))
+    withdraw_stale(selected.socket)?
+    mut listener = listen(selected.socket, false).map_err(transport)?
+    mut state = ServiceState(identity=identity, last_active=0)
+    outcome = event_loop(listener, state, idle)
+    discard_file(Path(selected.socket))
+    return outcome
+
+
+def withdraw_stale(path: str) -> Result[None, Refusal]:
+    """Remove only an actual stale socket; ordinary files, symlinks and live endpoints are refused."""
+    if not Path(path).exists():
+        return Ok(None)
+    found = symlink_metadata(path).map_err((error) => transport(str(error)))?
+    if not found.file_type().is_socket() or not stale(path):
+        return Err(transport("engine endpoint is occupied; refusing to replace it"))
+    discard_file(Path(path))
+    return Ok(None)
+
+
+def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Result[None, Refusal]:
+    """Poll bounded client state and release it after use; no decoded compilation closure enters this process."""
+    mut clients: list[Client] = []
+    clock = Instant.now()
+    while true:
+        match listener.poll().map_err(transport)?:
+            Some(connected) =>
+                if len(clients) < MAX_CLIENTS and not state.stopping:
+                    match greet(connected, state):
+                        Ok(client) => clients.append(client)
+                        Err(_) => pass
+            None => pass
+        for index in range(len(clients)):
+            mut client = clients[index]
+            service_client(client, state)
+            clients[index] = client
+        clients = [client for client in clients if not client.closed]
+        state.clients = len(clients)
+        if state.stopping or state.exits(int(clock.elapsed().as_millis()), idle * 1000):
+            return Ok(None)
+        sleep(Duration.from_millis(2))
+
+
+def greet(connected: Connection, state: ServiceState) -> Result[Client, Refusal]:
+    """Authenticate OS credentials and Hello before assigning a fresh nonzero session id."""
+    mut channel = Channel(transport=connected)
+    channel.transport.wait_at_most(2)
+    channel.transport.write_at_most(2)
+    first = channel.receive()?
+    if first.header.session != zero_id() or first.header.request != zero_id():
+        return Err(Refusal(kind=RefusalKind.Identity, detail="initial Hello must have zero identities"))
+    match first.message:
+        Message.Hello(hello) =>
+            peer = channel.transport.peer().map_err(transport)?
+            match state.negotiate(hello, peer.uid):
+                Err(reason) =>
+                    send_refusal(channel, zero_id(), reason, "Hello")?
+                    return Err(reason)
+                Ok(welcome) =>
+                    channel.session = session_id().map_err(transport)?
+                    send(channel, zero_id(), Message.Welcome(welcome))?
+                    channel.acknowledge(first)?
+                    return Ok(Client(channel=channel))
+        _ => return Err(Refusal(kind=RefusalKind.Schema, detail="Hello must be the first engine message"))
+
+
+def service_client(mut client: Client, mut state: ServiceState) -> None:
+    """One invalid connection retires only its own interests; other clients retain their requests."""
+    match poll_client(client, state):
+        Ok(_) => pass
+        Err(_) => close_client(client, state)
+
+
+def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
+    """Consume at most eight ready frames, then settle accepted requests within available credits."""
+    for _turn in range(8):
+        if not readable(client.channel.transport).map_err(transport)?:
+            break
+        frame = client.channel.receive()?
+        match handle(client, state, frame):
+            Err(reason) => send_refusal(client.channel, frame.header.request, reason, "request")?
+            Ok(_) => pass
+        client.channel.acknowledge(frame)?
+        if state.stopping:
+            return Ok(None)
+    return settle(client, state)
+
+
+def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Result[None, Refusal]:
+    """Handle the E1 control families; producer and query families have schemas but refuse execution."""
+    request = frame.header.request
+    match frame.message:
+        Message.Ack(_) => return Ok(None)
+        Message.Submit(submit) => return accept(client, state, request, submit.command, submit.input_selection)
+        Message.Cancel(cancel) =>
+            if cancel.interest_token not in [item.token for item in client.pending]:
+                return Err(
+                    Refusal(kind=RefusalKind.Identity, detail="interest belongs to another client or is complete"),
+                )
+            state.detach(request, cancel.interest_token)?
+            client.pending = [item for item in client.pending if item.token != cancel.interest_token]
+            return send(
+                client.channel,
+                request,
+                Message.Cancelled(
+                    Cancelled(interest_token=cancel.interest_token, effects_stopped=EffectDisposition.NoEffects),
+                ),
+            )
+        Message.Pin(pin) =>
+            state.pin(pin.lease_id)?
+            client.pins.append(pin.lease_id)
+            return send(client.channel, request, Message.Event(Event(status="Pinned", trace_handle=pin.lease_id)))
+        Message.Release(release) =>
+            if release.lease_id not in client.pins:
+                return Err(Refusal(kind=RefusalKind.Identity, detail="reader lease belongs to another client"))
+            state.release(release.lease_id)?
+            client.pins = [lease for lease in client.pins if lease != release.lease_id]
+            return send(client.channel, request, Message.Event(Event(status="Released", trace_handle=release.lease_id)))
+        Message.Drain(_) =>
+            state.draining = true
+            return send(client.channel, request, Message.Event(Event(status="Draining", trace_handle="")))
+        Message.Stop(_) =>
+            state.stopping = true
+            return send(client.channel, request, Message.Event(Event(status="Stopping", trace_handle="")))
+        _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
+
+
+def accept(
+    mut client: Client,
+    mut state: ServiceState,
+    request: bytes,
+    command: str,
+    work: str,
+) -> Result[None, Refusal]:
+    """Accept bounded control work, explicitly labeling the placeholder epoch until the capture producer lands."""
+    if len(client.pending) == 4 or client.channel.pending.held() > 4:
+        return Err(Refusal(kind=RefusalKind.Busy, detail="client admission window is full"))
+    token = f"{hexlify(client.channel.session)}:{hexlify(request)}"
+    state.accept(request, work, token)?
+    client.pending.append(Pending(request=request, token=token, command=command))
+    send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
+    send(client.channel, request, Message.Captured(Captured(epoch="pending-capture", snapshot="")))?
+    return send(client.channel, request, Message.Event(Event(status="CaptureUnavailable", trace_handle="")))
+
+
+def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
+    """Settle available requests, then replace the interest list after its iteration has ended."""
+    mut waiting: list[Pending] = []
+    for pending in client.pending:
+        if client.channel.pending.exhausted():
+            waiting.append(pending)
+            continue
+        send(
+            client.channel,
+            pending.request,
+            Message.Complete(
+                Complete(
+                    snapshot="",
+                    admission_proof="",
+                    result_handles="",
+                    binding_outcome=BindingOutcome.NotSelected,
+                    status=CompletionStatus.Unavailable,
+                    observation_handle="",
+                ),
+            ),
+        )?
+        state.detach(pending.request, pending.token)?
+    client.pending = waiting
+    return Ok(None)
+
+
+def close_client(mut client: Client, mut state: ServiceState) -> None:
+    """Drop only the disconnected client's volatile requests and scoped reader interests."""
+    for pending in client.pending:
+        state.detach(pending.request, pending.token)
+    for lease in client.pins:
+        state.release(lease)
+    client.closed = true
+
+
+def send(mut channel: Channel, request: bytes, message: Message) -> Result[None, Refusal]:
+    """Require an available credit at a handler boundary; admission gates leave room for all replies."""
+    match channel.send(request, message)?:
+        SendOutcome.Sent(_) => return Ok(None)
+        SendOutcome.Blocked =>
+            return Err(Refusal(kind=RefusalKind.Credit, detail="engine sender is blocked awaiting credit"))
+
+
+def send_refusal(mut channel: Channel, request: bytes, reason: Refusal, command: str) -> Result[None, Refusal]:
+    """Send a stable refusal code with context; receivers never parse prose to choose their next action."""
+    return send(
+        channel,
+        request,
+        Message.Refused(Refused(code=refusal_code(reason.kind), command=command, detail=reason.detail)),
+    )
+
+
+pub def refusal_code(kind: RefusalKind) -> int:
+    """The stable v1 refusal discriminants carried by Refused bodies."""
+    match kind:
+        RefusalKind.BadMagic => return 1
+        RefusalKind.Version => return 2
+        RefusalKind.Oversized => return 3
+        RefusalKind.ShortRead => return 4
+        RefusalKind.Reserved => return 5
+        RefusalKind.Flags => return 6
+        RefusalKind.Schema => return 7
+        RefusalKind.Identity => return 8
+        RefusalKind.Sequence => return 9
+        RefusalKind.Credit => return 10
+        RefusalKind.UnsupportedCommand => return 11
+        RefusalKind.Busy => return 12
+        RefusalKind.Draining => return 13
+        RefusalKind.Transport => return 14

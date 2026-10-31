@@ -7,6 +7,8 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export LC_ALL=C
+# Qualification never inherits a developer's Rust iteration policy.
+export INCAN_RUST_INCREMENTAL=0
 
 fail() {
     echo "release-dev8: $*" >&2
@@ -259,8 +261,8 @@ builder=$seed_oven
 build_source_closure
 
 # The candidate compiler must come from the clean tree: Oven compiles the Incan lowering with the seed's driver, then
-# the driver, and installs it with its Rust ABI cache into the build home. Relinking prepares the same compiler-only
-# home as lane builds, retaining the installed runtime/std closure while the source graph owns incan_lang.
+# the driver, and installs it with its Rust ABI cache into the build home. Relinking retains one installed native
+# support generation, with every selected producer validated against the current source graph.
 # A seed archive is never relabeled as its output.
 native driver-build relink-driver.sh --release
 native oven-build build-native-tools.sh oven --rebuild

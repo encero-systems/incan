@@ -123,7 +123,7 @@ fn retain_native_type_identities(modules: &mut [BodyIrModule], native: &[BodyIrM
     for module in modules {
         for body in &mut module.bodies {
             for (name, identity) in &identities {
-                body.named_type_identities
+                std::sync::Arc::make_mut(&mut body.named_type_identities)
                     .entry(name.clone())
                     .or_insert_with(|| identity.clone());
             }
@@ -403,8 +403,11 @@ fn complete_dependency_context(
         .get_mut(program.entry)
         .ok_or("selected Body IR entry is missing")?
         .loaf_callables = loaf_callables;
-    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
+    // A Rust layout's storage stays rustc's: find the Rust items bodies hold only once the layouts are taken, so a
+    // field no body reads does not pull its type's private items into the unit. A read field's value is a checked
+    // body local or external signature type, which still counts.
     let layouts = take_rust_layouts(&mut program.modules)?;
+    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
     let native_enums = take_rust_enums(&mut program.modules)?;
     let owners: std::collections::HashSet<_> = layouts
         .iter()
@@ -434,13 +437,17 @@ fn complete_dependency_context(
     program.modules.splice(program.own..program.own, held);
     program.entry += held_modules;
     program.own += held_modules;
+    // A program whose checked types hold no union selects no union layout; its producers' manifests stay unread.
+    let layouts = if incan_frontend::body_ir::reaches_union(&program.modules) {
+        native_union_layouts(loaves)
+    } else {
+        Vec::new()
+    };
     let entry_module = program
         .modules
         .get_mut(program.entry)
         .ok_or("selected Body IR entry is missing")?;
-    entry_module
-        .native_union_declarations
-        .extend(native_union_layouts(loaves));
+    entry_module.native_union_declarations.extend(layouts);
     Ok(program)
 }
 

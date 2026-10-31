@@ -97,6 +97,7 @@ impl TypeChecker {
     /// Such a lookup would complete with a copy of the entry, which the value type does not provide; a lookup whose
     /// result is only read is recorded read-only by then and is not refused.
     pub(in crate::typechecker) fn refuse_copying_dict_lookups_of_uncopyable_values(&mut self) {
+        self.check_work.dictionary_settlements += 1;
         for (span, value) in std::mem::take(&mut self.pending_uncopyable_dict_lookups) {
             if self.type_info.is_read_only_dict_lookup(span) {
                 continue;

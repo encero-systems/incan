@@ -1,0 +1,331 @@
+"""Bakery contracts: one bake per identity across projects and processes, views that cost nothing to lose, collection."""
+
+from rust::std::fs import Permissions, set_permissions
+from rust::std::os::unix::fs import PermissionsExt
+from rust::std::process import Command
+from std.fs import Path
+from std.fs.locking import FileLock
+from bakery import (
+    Fact,
+    claim,
+    claim_file,
+    collect,
+    fact_file,
+    find,
+    forget_verified,
+    lookup,
+    register_root,
+    seal,
+    staging,
+    staging_root,
+    verify_all,
+    repair_derived,
+)
+from segment_store import begin, commit, keys, put, readmit_payload, snapshot
+from files import make_directory, read, write as write_file
+from incan_units import compile_executable
+from scratch import scratch_directory
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_freshness import Key
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Create or replace a file, creating its directory."""
+    make_directory(path.parent())?
+    return write_file(path, text)
+
+
+def bake(store: Path, identity: str, content: str, reaches: list[str] = [], name: str = "") -> Result[bool, str]:
+    """Ask for `identity` the way Oven does; true when this call baked it, false when it found the unit."""
+    if found(find(store, identity)?):
+        return Ok(false)
+    held = claim(store, identity)?
+    if found(find(store, identity)?):
+        return Ok(false)
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), content)?
+    mut label = name
+    if label == "":
+        label = f"dep\t{identity}"
+    baked = seal(store, identity, staged, "library", label, reaches, "test")?
+    return Ok(baked.identity == identity)
+
+
+def claim_is_free(store: Path, identity: str) -> Result[bool, str]:
+    """Whether nobody holds the claim of `identity`; the probe's own lock is released when this returns."""
+    make_directory(claim_file(store, identity).parent())?
+    probe = claim_file(store, identity).try_lock_exclusive().map_err((error) => error.message())?
+    return Ok(locked(probe))
+
+
+def project_unit(root: Path) -> Result[UnitDescription, str]:
+    """A program unit of a project at `root` with one source and no Loaves."""
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
+    write(root.joinpath("src").joinpath("main.incn"), "def main() -> None:\n    pass\n")?
+    return Ok(
+        UnitDescription(
+            source=root.joinpath("src").joinpath("main.incn").0,
+            project_root=root.0,
+            source_root=root.joinpath("src").0,
+            package="app",
+            version="0.1.0",
+            profile="debug",
+            declared_features=[],
+            active_features=[],
+            loaves=[],
+            rust_crates=[],
+            contract_models=[],
+            c_headers=[],
+        ),
+    )
+
+
+def counted_toolchain(scratch: Path) -> Result[Toolchain, str]:
+    """A compiler that cannot start a worker, counts each compilation and writes a fixed executable."""
+    driver = scratch.joinpath("toolchain").joinpath("driver")
+    attempts = scratch.joinpath("attempts")
+    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    script += f"printf x >> '{attempts.0}'\nprintf 'compiled program' > \"$4\"\nexit 0\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    return Ok(Toolchain(driver=driver.0, sysroot="/rust/1.98.0", rust_abi=[], externs=[], search=[], registry_units=""))
+
+
+def attempts(scratch: Path) -> str:
+    """The compilations the counted compiler ran so far, one `x` each."""
+    match read(scratch.joinpath("attempts")):
+        Ok(text) => return text
+        Err(_) => return ""
+
+
+pub def test_two_projects_with_the_same_unit_compile_it_once_and_target_holds_only_views() -> Result[None, str]:
+    """
+    Two projects asking for one identity compile it once; deleting `target/` or editing a view costs only views.
+
+    1. The first project bakes; the second views the same fact without starting a compiler.
+    2. An edited view leaves the fact intact.
+    3. Deleting a project's `target/` recreates its view and compiles nothing.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    store = root.joinpath("home").joinpath("bakery")
+    toolchain = counted_toolchain(root)?
+    key = Key(digest=digest_of("a1"), parts=["compiler c", "sources s"])
+    first = project_unit(root.joinpath("one"))?
+    second = project_unit(root.joinpath("two"))?
+    first_output = root
+        .joinpath("one")
+        .joinpath("target")
+        .joinpath("incan")
+        .joinpath("debug")
+        .joinpath("bin")
+        .joinpath("app")
+    second_output = root
+        .joinpath("two")
+        .joinpath("target")
+        .joinpath("incan")
+        .joinpath("debug")
+        .joinpath("bin")
+        .joinpath("app")
+    # 1. One compilation serves both projects.
+    assert compile_executable(first, toolchain, first_output, key, false, Some(store))? == 0
+    assert compile_executable(second, toolchain, second_output, key, false, Some(store))? == 0
+    assert attempts(root) == "x"
+    assert read(second_output)? == "compiled program"
+    # 2. A view is the user's to change; the unit is not.
+    write_file(first_output, "stripped by the user")?
+    assert payload_text(store, key.digest, "app")? == "compiled program"
+    # 3. A deleted target directory is only views.
+    root.joinpath("two").joinpath("target").remove_tree().map_err((error) => error.message())?
+    assert compile_executable(second, toolchain, second_output, key, false, Some(store))? == 0
+    assert read(second_output)? == "compiled program"
+    assert attempts(root) == "x"
+    return Ok(None)
+
+
+pub def test_a_claimed_identity_is_baked_once_and_waiters_find_it() -> Result[None, str]:
+    """
+    While one baker holds an identity's claim, another asker cannot claim it; once it is published, the asker finds it.
+
+    1. A held claim excludes a second claimant.
+    2. The holder publishes; the next asker finds the unit and bakes nothing.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    identity = digest_of("b2")
+    # 1. The kernel lock is the claim: a second open of it does not get it while the first is held.
+    held = claim(store, identity)?
+    contended = claim_file(store, identity).try_lock_exclusive().map_err((error) => error.message())?
+    assert not locked(contended)
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), "baked once")?
+    baked = seal(store, identity, staged, "library", "dep", [], "test")?
+    assert baked.identity == identity
+    # 2. Under the claim the unit is found, so the waiter does not bake again.
+    assert not bake(store, identity, "baked twice")?
+    assert payload_text(store, identity, "payload")? == "baked once"
+    return Ok(None)
+
+
+pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() -> Result[None, str]:
+    """
+    A dead baker releases its claim; damage is reported until explicit recomputation or verified re-admission.
+
+    1. The dead baker's staging directory is not a unit, and its claim is free.
+    2. The next asker bakes the unit.
+    3. Lookup and verification report damage without changing it; explicit repair uses authoritative inputs.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    identity = digest_of("c3")
+    dead = staging_root(store).joinpath(f"{identity}.999999")
+    write(dead.joinpath("payload"), "half written")?
+    # 1. Nothing unpublished is ever found, and the kernel released the dead baker's lock.
+    assert not found(find(store, identity)?)
+    assert claim_is_free(store, identity)?
+    # 2. The next asker bakes.
+    assert bake(store, identity, "complete")?
+    assert payload_text(store, identity, "payload")? == "complete"
+    # A repair request cannot overwrite healthy immutable contents.
+    unneeded = staging(store, identity)?
+    write(unneeded.joinpath("payload"), "unrequested replacement")?
+    match repair_derived(store, identity, unneeded, "library", "dep", [], "verified-test-inputs"):
+        Ok(_) =>
+            assert false, "repair replaced an intact unit"
+        Err(error) =>
+            assert "intact" in error, error
+    assert payload_text(store, identity, "payload")? == "complete"
+    # 3. Damage is an error, and verification preserves evidence for an explicit owner repair.
+    payload = stored_payload(store, identity, "payload")?
+    match payload.write_text("damaged", "utf-8", "strict", None):
+        Ok(_) =>
+            assert false, "a stored payload file was writable"
+        Err(_) => pass
+    replacement = scratch.path().joinpath("verified-replacement")
+    payload.copy(replacement, true, true).map_err((error) => error.message())?
+    digest = payload.name()
+    damage(payload, "damaged!")?
+    forget_verified()
+    match find(store, identity):
+        Ok(_) =>
+            assert false, "damage became absence"
+        Err(error) =>
+            assert payload.0 in error and "integrity" in error, error
+    assert len(verify_all(store)?) == 1
+    assert read(payload)? == "damaged!"
+    readmit_payload(store, replacement, digest).map_err((error) => error.message())?
+    assert payload_text(store, identity, "payload")? == "complete"
+    damage(payload, "damaged!")?
+    forget_verified()
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), "rebaked")?
+    repair_derived(store, identity, staged, "library", "dep", [], "verified-test-inputs")?
+    assert store.joinpath("quarantine").is_dir()
+    assert payload_text(store, identity, "payload")? == "rebaked"
+    prove_codec_repair(store, identity)?
+    return Ok(None)
+
+
+pub def test_collection_is_refused_and_removes_nothing() -> Result[None, str]:
+    """`incan bakery gc` is refused until collection honors live snapshot leases, and nothing it could reach is removed."""
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    library = digest_of("d4")
+    orphan = digest_of("f6")
+    assert bake(store, library, "library")?
+    assert bake(store, orphan, "orphan")?
+    register_root(store, scratch.path().joinpath("project").0, library)?
+    match collect(store, -1):
+        Ok(_) =>
+            assert false, "collection ran without its lease protocol"
+        Err(reason) =>
+            assert "disabled" in reason, reason
+    assert found(find(store, library)?)
+    assert found(find(store, orphan)?)
+    return Ok(None)
+
+
+pub def test_the_name_record_answers_the_latest_identity_of_a_name() -> Result[None, str]:
+    """The name record returns the identity a name was last baked under, across merged deltas."""
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    assert not named(lookup(store, "dep")?)
+    for index in range(20):
+        assert bake(store, digest_of(f"{index}a"), f"{index}", [], "dep")?
+    assert lookup(store, "dep")? == Some(digest_of("19a"))
+    return Ok(None)
+
+
+def digest_of(prefix: str) -> str:
+    """A 64-character identity that starts with `prefix`."""
+    mut text = prefix
+    while len(text) < 64:
+        text += "0"
+    return text
+
+
+def stored_payload(store: Path, identity: str, relative: str) -> Result[Path, str]:
+    """The stored payload of one file of a baked unit."""
+    match find(store, identity)?:
+        None => return Err(f"{identity[:12]} is not baked")
+        Some(fact) =>
+            match fact_file(store, fact, relative):
+                Some(path) => return Ok(path)
+                None => return Err(f"{identity[:12]} has no {relative}")
+
+
+def payload_text(store: Path, identity: str, relative: str) -> Result[str, str]:
+    """The text of one file of a baked unit."""
+    return read(stored_payload(store, identity, relative)?)
+
+
+pub def found(fact: Option[Fact]) -> bool:
+    """Whether an ask found a baked unit."""
+    match fact:
+        Some(_) => return true
+        None => return false
+
+
+def named(identity: Option[str]) -> bool:
+    """Whether the name record answered an identity."""
+    match identity:
+        Some(_) => return true
+        None => return false
+
+
+def locked(lock: Option[FileLock]) -> bool:
+    """Whether a lock attempt got the lock."""
+    match lock:
+        Some(_) => return true
+        None => return false
+
+
+def damage(path: Path, text: str) -> Result[None, str]:
+    """Overwrite a stored payload file, as a stray tool would, past its read-only permissions."""
+    set_permissions(path.0, Permissions.from_mode(420)).map_err((error) => str(error))?
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def prove_codec_repair(store: Path, identity: str) -> Result[None, str]:
+    """A frame with a valid storage digest but invalid unit encoding is quarantined by its owning codec."""
+    view = snapshot(store).map_err((error) => error.message())?
+    unit_keys = [key for key in keys(view).map_err((error) => error.message())? if key.startswith("incan.bakery.unit\t") and key.endswith(
+        f"\t{identity}",
+    )]
+    assert len(unit_keys) == 1, f"expected one unit record, found {len(unit_keys)}"
+    commit(put(begin(view), unit_keys[0], b"invalid unit encoding")).map_err((error) => error.message())?
+    match find(store, identity):
+        Ok(_) =>
+            assert false, "a malformed unit was read as absence"
+        Err(error) =>
+            assert "integrity" in error, error
+    assert len(verify_all(store)?) == 1
+    before = len(store.joinpath("quarantine").iterdir().map_err((error) => error.message())?)
+    replacement = staging(store, identity)?
+    write(replacement.joinpath("payload"), "codec repaired")?
+    repair_derived(store, identity, replacement, "library", "dep", [], "verified-test-inputs")?
+    assert len(store.joinpath("quarantine").iterdir().map_err((error) => error.message())?) == before + 1, "codec damage was not quarantined"
+    assert payload_text(store, identity, "payload")? == "codec repaired"
+    return Ok(None)

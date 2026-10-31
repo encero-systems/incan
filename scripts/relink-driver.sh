@@ -33,7 +33,7 @@ emitted=$EPOCHREALTIME
 
 sysroot=$(jq -er '.sysroot' "$toolchain/toolchain.json")
 [[ $sysroot == /* ]] || sysroot=$toolchain/$sysroot
-# Compiler source owns incan_lang; the installed runtime/std generation remains the authority for every other root.
+# Validate compiler sources against the installed runtime/std generation's exact native producers.
 compiler_home=$toolchain_home/compiler-build
 zsh "$repo/scripts/prepare-compiler-home.sh" "$toolchain_home" "$compiler_home"
 export RUSTC=$sysroot/bin/rustc INCAN_STDLIB=${SELFBUILD_STDLIB:-$repo/loaves/stdlib} INCAN_HOME=$compiler_home

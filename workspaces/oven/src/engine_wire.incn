@@ -1,0 +1,187 @@
+"""Encode the bounded, language-neutral incan.engine/1 header and versioned binary fields."""
+
+from rust::std::string import String as RustString
+
+pub const HEADER_SIZE: int = 64
+pub const MAX_PAYLOAD: int = 65536
+pub const DATA_CREDITS: int = 8
+pub const CONTROL: int = 1
+const MAGIC: str = "INCENG01"
+
+
+pub enum RefusalKind:
+    """Stable control-channel failure categories; callers never parse diagnostic text."""
+
+    BadMagic
+    Version
+    Oversized
+    ShortRead
+    Reserved
+    Flags
+    Schema
+    Identity
+    Sequence
+    Credit
+    UnsupportedCommand
+    Busy
+    Draining
+    Transport
+
+
+pub model Refusal:
+    """Typed refusal with bounded human-readable context."""
+
+    pub kind: RefusalKind
+    pub detail: str
+
+
+pub model Header:
+    """Wire fields only: ids are exactly sixteen bytes, with no pointers or native layouts."""
+
+    pub tag: int
+    pub session: bytes = zero_id()
+    pub request: bytes = zero_id()
+    pub sequence: u64 = 0
+    pub length: int = 0
+    pub minor: int = 0
+    pub flags: int = 0
+
+
+pub def encode_header(header: Header) -> Result[bytes, Refusal]:
+    """Validate every bounded field before emitting the exact 64-byte little-endian header."""
+    validate_header(header)?
+    return Ok(
+        joined(
+            [
+                MAGIC.encode("utf-8"),
+                scalar(1, 2),
+                scalar(header.minor, 2),
+                scalar(header.tag, 2),
+                scalar(header.flags, 2),
+                header.session,
+                header.request,
+                wide(header.sequence, 8),
+                scalar(header.length, 4),
+                scalar(0, 4),
+            ],
+        ),
+    )
+
+
+pub def decode_header(raw: bytes) -> Result[Header, Refusal]:
+    """Refuse malformed headers before reading or allocating their declared payload."""
+    if len(raw) != HEADER_SIZE:
+        return Err(Refusal(kind=RefusalKind.ShortRead, detail="engine header must contain 64 bytes"))
+    if raw[:8] != MAGIC.encode("utf-8"):
+        return Err(Refusal(kind=RefusalKind.BadMagic, detail="expected INCENG01"))
+    if integer(raw[8:10]) != 1:
+        return Err(Refusal(kind=RefusalKind.Version, detail="unsupported engine major version"))
+    if integer(raw[60:64]) != 0:
+        return Err(Refusal(kind=RefusalKind.Reserved, detail="reserved header bytes must be zero"))
+    header = Header(
+        tag=int(integer(raw[12:14])),
+        flags=int(integer(raw[14:16])),
+        minor=int(integer(raw[10:12])),
+        session=raw[16:32],
+        request=raw[32:48],
+        sequence=integer(raw[48:56]),
+        length=int(integer(raw[56:60])),
+    )
+    validate_header(header)?
+    return Ok(header)
+
+
+pub def validate_header(header: Header) -> Result[None, Refusal]:
+    """Enforce the v1 field ranges, payload bound and absence of unknown required flags."""
+    if header.length < 0 or header.length > MAX_PAYLOAD:
+        return Err(Refusal(kind=RefusalKind.Oversized, detail="engine payload exceeds 65536 bytes"))
+    if len(header.session) != 16 or len(header.request) != 16:
+        return Err(Refusal(kind=RefusalKind.Identity, detail="engine identities must contain 16 bytes"))
+    if header.flags != 0 and header.flags != CONTROL:
+        return Err(Refusal(kind=RefusalKind.Flags, detail="unknown required engine flags"))
+    if header.minor != 0 or header.tag < 1 or header.tag > 65535:
+        return Err(Refusal(kind=RefusalKind.Version, detail="unsupported engine minor version or tag"))
+    return Ok(None)
+
+
+pub def scalar(value: int, width: int) -> bytes:
+    """Encode a previously range-checked nonnegative scalar in little-endian order."""
+    unsigned: u64 = value.wrapping_resize()
+    return wide(unsigned, width)
+
+
+pub def wide(value: u64, width: int) -> bytes:
+    """Encode a fixed-width scalar without native memory-layout casts."""
+    mut remaining = value
+    mut result: list[u8] = []
+    for _index in range(width):
+        byte: u8 = (remaining & 255u64).wrapping_resize()
+        result.append(byte)
+        remaining = remaining >> 8
+    return result
+
+
+pub def integer(raw: bytes) -> u64:
+    """Decode at most eight already-bounded little-endian bytes."""
+    mut value: u64 = 0
+    for index in range(len(raw) - 1, -1, -1):
+        byte: u64 = raw[index].wrapping_resize()
+        value = (value << 8) | byte
+    return value
+
+
+pub class Decoder:
+    """A bounded body cursor; every length is checked against remaining bytes before slicing."""
+
+    pub raw: bytes
+    pub offset: int = 0
+
+    def take(mut self, count: int) -> Result[bytes, Refusal]:
+        """Take exactly count bytes without allocating from an unvalidated length."""
+        if count < 0 or count > len(self.raw) - self.offset:
+            return Err(Refusal(kind=RefusalKind.ShortRead, detail="short engine body field"))
+        value = self.raw[self.offset:self.offset + count]
+        self.offset += count
+        return Ok(value)
+
+    def number(mut self, width: int) -> Result[u64, Refusal]:
+        """Read a fixed-width little-endian scalar."""
+        return Ok(integer(self.take(width)?))
+
+    def text(mut self) -> Result[str, Refusal]:
+        """Read a length-prefixed strict UTF-8 field within the complete frame's byte bound."""
+        size = int(self.number(4)?)
+        raw = self.take(size)?
+        return RustString
+            .from_utf8(raw)
+            .map((value) => str(value))
+            .map_err((_) => Refusal(kind=RefusalKind.Schema, detail="engine text is not UTF-8"))
+
+    def finish(self) -> Result[None, Refusal]:
+        """Reject trailing fields; v1 does not negotiate optional extensions."""
+        if self.offset != len(self.raw):
+            return Err(Refusal(kind=RefusalKind.Schema, detail="trailing engine body bytes"))
+        return Ok(None)
+
+
+pub def text(value: str) -> Result[bytes, Refusal]:
+    """Encode one bounded UTF-8 field; whole-body encoding enforces the combined bound."""
+    raw = value.encode("utf-8")
+    if len(raw) > MAX_PAYLOAD - 4:
+        return Err(Refusal(kind=RefusalKind.Oversized, detail="engine text exceeds frame bound"))
+    return Ok(joined([scalar(len(raw), 4), raw]))
+
+
+pub def joined(parts: list[bytes]) -> bytes:
+    """Join bounded protocol fields without relying on a native struct layout."""
+    mut result: list[u8] = []
+    for part in parts:
+        for byte in part:
+            octet: u8 = byte.wrapping_resize()
+            result.append(octet)
+    return result
+
+
+pub def zero_id() -> bytes:
+    """The all-zero initial session or uncorrelated control identity."""
+    return joined([scalar(0, 8), scalar(0, 8)])

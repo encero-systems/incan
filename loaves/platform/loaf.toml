@@ -1,0 +1,7 @@
+[project]
+name = "incan_platform"
+version = "0.6.0-dev.8"
+description = "The OS-facing layer below std: thin wrappers over OS and Rust facilities"
+
+[build]
+rust-edition = "2024"

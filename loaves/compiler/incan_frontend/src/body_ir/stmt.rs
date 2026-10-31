@@ -226,6 +226,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower an assignment statement while preserving its checked lexical binding decision.
     ///
+    /// A discard evaluates its checked value as an expression statement and creates no named local or write target.
     /// A plain inferred assignment and the internal `Reassign` spelling reuse the nearest active local when one is
     /// bound, falling back to a declaration for an otherwise unbound name. `let` and `mut` always declare a fresh
     /// local: those are the two source declaration forms that deliberately shadow an enclosing binding.
@@ -248,6 +249,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
         let value = self.lower_assignment_value(assignment, &mut ty, scope, out);
+        if assignment.name == "_" {
+            out.push(bir::Statement {
+                kind: bir::StatementKind::Expr { value },
+                span,
+            });
+            return;
+        }
         let Some(place) = self.assignment_target_place(assignment, ty, remaining, scope, span, out) else {
             return;
         };
