@@ -1,4 +1,4 @@
-# behavior: Error message fallback and authored string methods agree across display positions and provider boundaries
+# behavior: Error message fallback and authored string methods agree across display positions and provider boundaries, including primitive Error aliases and compatibility facade identity (RFC 168)
 # expect-stdout:
 #   1
 #   error buffer ended before read_exact size
@@ -13,13 +13,16 @@
 
 """Observe checked message fallback and authored string methods on local and provider-owned values."""
 
-from std.io import BytesIO
+from std.io import BytesIO, IoError
+from std.primitives.errors import Error as PrimitiveError, IoError as PrimitiveIoError
+from std.traits import error as legacy_errors
 from std.traits.error import Error
 from std.uuid import UUID
 
 
 model ParseFailure with Error:
     """Display a structured parse failure through its Error message."""
+
     field: str
     reason: str
 
@@ -30,6 +33,7 @@ model ParseFailure with Error:
 
 trait Reported with Error:
     """Render an adopter from within a trait default method."""
+
     def report(self) -> str:
         """Use the concrete adopter's checked display."""
         return f"reported: {self}"
@@ -37,6 +41,7 @@ trait Reported with Error:
 
 model DiskFull with Reported:
     """Adopt the default report with only an Error message."""
+
     path: str
 
     def message(self) -> str:
@@ -46,6 +51,7 @@ model DiskFull with Reported:
 
 model Loud with Reported:
     """Prefer an authored string method over the Error fallback."""
+
     def message(self) -> str:
         """Return the Error fallback text."""
         return "loud"
@@ -58,6 +64,30 @@ model Loud with Reported:
 def describe[E with Error](error: E) -> str:
     """Render an Error-bound type parameter through its checked display."""
     return f"failed: {error}"
+
+
+def describe_primitive[E with PrimitiveError](error: E) -> str:
+    """A primitive Error bound uses the same display and default source contract."""
+    match error.source():
+        None => pass
+        Some(_) =>
+            assert false, "the default source must stay absent"
+    return f"failed: {error}"
+
+
+def describe_qualified[E with legacy_errors.Error](error: E) -> str:
+    """A module-qualified old-home Error bound retains the original declaration."""
+    return f"failed: {error}"
+
+
+def as_primitive(error: IoError) -> PrimitiveIoError:
+    """A compatibility parameter returns the identical primitive nominal type."""
+    return error
+
+
+def as_legacy(error: PrimitiveIoError) -> IoError:
+    """The opposite direction requires no wrapper or conversion."""
+    return error
 
 
 def main() -> None:
@@ -77,6 +107,22 @@ def main() -> None:
         Err(error) => println(f"error {error}")
     # 2. Source values share the checked display rule.
     failure = ParseFailure(field="age", reason="not a number")
+    assert describe_primitive(failure) == describe(failure)
+    assert describe_qualified(failure) == describe(failure)
+    assert describe_primitive(Loud()) == "failed: LOUD"
+    provider = PrimitiveIoError(
+        kind="invalid_input",
+        detail="bad count",
+        operation="read",
+        position=4,
+        path=Some("input.bin"),
+    )
+    roundtrip = as_primitive(as_legacy(provider))
+    assert roundtrip.message() == "bad count"
+    assert roundtrip.operation == "read"
+    assert roundtrip.position == 4
+    assert roundtrip.path == Some("input.bin")
+    assert describe_primitive(roundtrip) == describe(roundtrip)
     println(f"error {failure}")
     println(str(failure))
     println(failure)

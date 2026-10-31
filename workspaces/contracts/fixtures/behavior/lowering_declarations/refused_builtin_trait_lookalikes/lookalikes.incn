@@ -1,0 +1,13 @@
+"""Source contracts whose names coincide with standard primitive traits."""
+
+
+pub trait Clone:
+    def tag(self) -> int
+
+
+pub trait Copy:
+    def tag(self) -> int
+
+
+pub trait Default:
+    def tag(self) -> int

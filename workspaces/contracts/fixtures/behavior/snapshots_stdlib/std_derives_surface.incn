@@ -1,4 +1,4 @@
-# behavior: derived Eq, Ord, Hash, Clone, Copy, Default and Debug compare (==, !=, <, >, <=, >=), key, copy, default and render models
+# behavior: derived Eq, Ord, Hash, Clone, Copy, Default and Debug compare (==, !=, <, >, <=, >=), key, copy, default and render models; primitive and compatibility aliases retain copying/default contracts (RFC 168)
 # expect-stdout:
 #   true false
 #   true true
@@ -9,7 +9,10 @@
 #   1 2
 
 from std.derives.comparison import Eq, Ord, Hash
-from std.derives.copying import Clone, Copy, Default
+from std.derives.copying import Clone, Copy, Default, Default as LegacyDefault
+from std.primitives.traits.copying import Default as PrimitiveDefault, Copy as PrimitiveCopy
+from std.derives import copying as legacy_copying
+from std.primitives.traits import copying as primitive_copying
 from std.derives.string import Debug
 
 
@@ -19,8 +22,45 @@ model Point:
     y: int = 0
 
 
+@derive(Default)
+model Settings:
+    attempts: int = 7
+
+
+def default_legacy[T with LegacyDefault]() -> T:
+    """A compatibility alias preserves field defaults in generic construction."""
+    return T.default()
+
+
+def default_primitive[T with PrimitiveDefault]() -> T:
+    """A primitive alias names the same derived constructor."""
+    return T.default()
+
+
+def default_legacy_module[T with legacy_copying.Default]() -> T:
+    """Qualified old-home Default resolves its primitive declaration."""
+    return T.default()
+
+
+def default_primitive_module[T with primitive_copying.Default]() -> T:
+    """Qualified primitive Default retains its executable constructor."""
+    return T.default()
+
+
+def copy_bounds[T with (Copy, PrimitiveCopy, legacy_copying.Copy, primitive_copying.Copy)](value: T) -> T:
+    """Copy's marker identity survives every supported importing form."""
+    return value
+
+
 def main() -> None:
+    assert Settings.default().attempts == 7
+    assert default_legacy[Settings]().attempts == 7
+    assert default_primitive[Settings]().attempts == 7
+    assert default_legacy_module[Settings]().attempts == 7
+    assert default_primitive_module[Settings]().attempts == 7
+    assert copy_bounds(9) == 9
     a = Point(x=1, y=2)
+    assert copy_bounds(a).x == 1
     b = Point(x=1, y=2)
     c = Point(x=2, y=0)
     println(f"{a == b} {a == c}")

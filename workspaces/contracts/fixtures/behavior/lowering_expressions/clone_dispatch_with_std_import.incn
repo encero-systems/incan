@@ -1,10 +1,13 @@
-# behavior: explicit standard trait imports retain derived Clone dispatch and Iterator's declared parameter, including repeated imports (#2256)
+# behavior: explicit standard trait imports retain derived Clone dispatch and Iterator's declared parameter, including repeated imports, primitive aliases, qualified bounds and forwarding (RFC 168, #2256)
 # expect-stdout:
 #   original 1
 #   copy 5
 #   7
 
-from std.derives.copying import Clone
+from std.derives.copying import Clone, Clone as LegacyClone
+from std.primitives.traits.copying import Clone as PrimitiveClone
+from std.derives import copying as legacy_copying
+from std.primitives.traits import copying as primitive_copying
 from std.derives.collection import Iterator
 from std.derives.collection import Iterator
 
@@ -16,6 +19,7 @@ model Counter:
 
 model Numbers with Iterator[int]:
     """Yield one value through the compiled generic trait's checked contract."""
+
     current: int
 
     def __next__(mut self) -> Option[int]:
@@ -26,8 +30,43 @@ model Numbers with Iterator[int]:
         return None
 
 
+def clone_legacy[T with LegacyClone](value: T) -> T:
+    """An old-home alias still selects the primitive Clone contract."""
+    return value.clone()
+
+
+def clone_primitive[T with PrimitiveClone](value: T) -> T:
+    """The primitive alias reaches the same executable slot."""
+    return value.clone()
+
+
+def clone_legacy_module[T with legacy_copying.Clone](value: T) -> T:
+    """A qualified compatibility import keeps its declaring trait identity."""
+    return value.clone()
+
+
+def clone_primitive_module[T with primitive_copying.Clone](value: T) -> T:
+    """A qualified primitive import needs no unqualified Clone binding."""
+    return value.clone()
+
+
+def forward_clone[T with LegacyClone](value: T) -> T:
+    """Forward a checked old-home bound to the same trait under its new name."""
+    return clone_primitive(value)
+
+
 def main() -> None:
     original = Counter(value=1)
+    assert clone_legacy(7) == 7
+    assert clone_primitive(7) == 7
+    assert clone_legacy_module(7) == 7
+    assert clone_primitive_module(7) == 7
+    assert forward_clone(7) == 7
+    assert clone_legacy(original).value == 1
+    assert clone_primitive(original).value == 1
+    assert clone_legacy_module(original).value == 1
+    assert clone_primitive_module(original).value == 1
+    assert forward_clone(original).value == 1
     mut copy = original.clone()
     copy.value = 5
     println(f"original {original.value}")
