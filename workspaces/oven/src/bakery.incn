@@ -761,9 +761,12 @@ def collect_staging(store: Path) -> Result[int, str]:
     mut cleared = 0
     for entry in directory.iterdir().map_err((error) => error.message())?:
         parts = entry.name().split(".")
-        if len(parts) != 2 or len(parts[0]) != 64 or not entry.is_dir() or entry.is_symlink():
+        if len(parts) != 2 or not entry.is_dir() or entry.is_symlink():
             continue
-        if not canonical_digest(parts[0]):
+        mut digest = parts[0]
+        if digest.startswith("sha256:"):
+            digest = digest[7:]
+        if not canonical_digest(digest):
             continue
         lock = claim_file(store, parts[0])
         make_directory(lock.parent())?
