@@ -119,6 +119,7 @@ pub def read_registry_units(
     1. The document is a closure of this version.
     2. The store's entries directory follows from the artifact of the first extern.
     3. Each unit is read with its store directory, and those directories are the search path.
+    4. Complete legacy producer edges, reporting that work separately from decoding the registry index.
     """
     # 1. Only a closure of this version describes units the way the rest of Oven reads them.
     clock = begin()
@@ -137,7 +138,9 @@ pub def read_registry_units(
         if unit.directory not in search:
             search.append(unit.directory)
     record_work("registry_index", path.0, clock)
+    completion_clock = begin()
     completed = complete_legacy(units, path)?
+    record_work("registry_completion", path.0, completion_clock)
     registry = RegistryUnits(
         units=completed,
         search=search,
