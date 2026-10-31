@@ -21,11 +21,11 @@ pub model Mapper[T, U]:
 
 
 pub trait Catalog[T with Clone]:
-    def item(self) -> T: ...
+    def item(self) -> T
 
 
 pub trait OrderedCatalog[T with Clone] with Catalog[T]:
-    def ordered(self) -> Self: ...
+    def ordered(self) -> Self
 
 
 pub model Parcel[T with Clone] with OrderedCatalog:
@@ -36,3 +36,69 @@ pub model Parcel[T with Clone] with OrderedCatalog:
 
     def ordered(self) -> Self:
         return self
+
+
+pub enum Outcome[T]:
+    """Preserve one declared enum across independently compiled closed payload types."""
+
+    Complete(T)
+    Need(list[str])
+
+
+pub def outcome_number() -> Outcome[int]:
+    return Outcome.Complete(1)
+
+
+pub def outcome_text() -> Outcome[str]:
+    return Outcome.Complete("one")
+
+
+pub def outcome_nested() -> Outcome[list[tuple[int, str]]]:
+    return Outcome.Complete([(2, "two")])
+
+
+pub def outcome_length(value: Outcome[str]) -> int:
+    match value:
+        Outcome.Complete(text) => return len(text)
+        Outcome.Need(_messages) => return 0
+
+
+pub def outcome_echo[T](value: Outcome[T]) -> Outcome[T]:
+    return value
+
+
+enum PrivateOutcome[T]:
+    Complete(T)
+
+
+def private_number() -> PrivateOutcome[int]:
+    return PrivateOutcome.Complete(3)
+
+
+def private_text() -> PrivateOutcome[str]:
+    return PrivateOutcome.Complete("three")
+
+
+pub def private_summary() -> str:
+    match private_number():
+        PrivateOutcome.Complete(number) =>
+            match private_text():
+                PrivateOutcome.Complete(text) => return f"{number}:{text}"
+
+
+@derive(PartialEq, Eq)
+pub enum Signal[T]:
+    Empty
+    Value(T)
+
+
+pub def empty_signal() -> Signal[int]:
+    return Signal.Empty
+
+
+pub enum Envelope[T]:
+    Entry(Outcome[T])
+
+
+pub def wrapped_outcome() -> Envelope[int]:
+    return Envelope.Entry(Outcome.Complete(5))

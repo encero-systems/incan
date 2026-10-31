@@ -1,0 +1,14 @@
+# behavior: a separately compiled generic enum carrying a callback remains cloneable when the callback input is a native non-Clone type (#2512)
+# expect-stdout:
+#   callback-cloned
+
+from rust::std::sync::atomic import AtomicI64
+from pub::callbacks import Callback
+
+def count(value: AtomicI64) -> int:
+    return 1
+
+def main() -> None:
+    callback: Callback[AtomicI64] = Callback.Apply(count)
+    copied = callback.clone()
+    println("callback-cloned")

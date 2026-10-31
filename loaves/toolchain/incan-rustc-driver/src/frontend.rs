@@ -624,14 +624,14 @@ fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclarat
     Ok(layouts.into_values().collect())
 }
 
-/// Select a native carrier or provider-owned Loaf layout. Generic models and classes publish one parameterized ADT;
-/// generic enum and newtype declarations keep their governed source storage until their native templates are supported.
+/// Select a native carrier or provider-owned Loaf layout. Generic models, classes and enums publish one parameterized
+/// ADT; generic newtypes keep their governed source storage until their native templates are supported.
 fn linked_type_item(identity: &CanonicalSymbolId, parameters: &[String]) -> Option<String> {
     incan_semantics_core::body_ir::native_nominal_item(identity).or_else(|| {
         (parameters.is_empty()
             || matches!(
                 identity.kind,
-                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class | SemanticSourceTargetKind::Enum
             ))
         .then(|| incan_semantics_core::body_ir::loaf_item_path(identity))
         .flatten()
