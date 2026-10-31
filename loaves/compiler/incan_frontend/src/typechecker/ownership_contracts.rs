@@ -11,6 +11,8 @@ mod flow;
 mod report;
 mod source;
 
+pub(super) use source::CallableSource;
+
 use super::TypeChecker;
 use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Type};
 use crate::diagnostics::CompileError;
@@ -44,7 +46,7 @@ pub(super) struct LocalMode {
 impl TypeChecker {
     /// Capture explicit input flow while the checked lexical frame and body-owned expression facts are active.
     /// Statement output owns the result; it is never rediscovered by lowering or published as a valid empty graph.
-    pub(super) fn record_explicit_input_flow(&mut self, function: &crate::ast::FunctionDecl, span: Span) {
+    pub(super) fn record_explicit_input_flow(&mut self, callable: CallableSource<'_>, span: Span) {
         let Some(identity) = self.current_body_identity().cloned() else {
             return;
         };
@@ -58,7 +60,7 @@ impl TypeChecker {
         {
             return;
         }
-        let output = match source::build(self, function, span) {
+        let output = match source::build(self, callable, span) {
             Ok(graph) => match flow::analyze(&graph) {
                 Ok(analysis) => {
                     self.errors.extend(report::conflicts(&graph, &analysis));
@@ -217,7 +219,7 @@ mod tests {
         let crate::ast::Declaration::Function(function) = &declaration.node else {
             return Err("expected function".into());
         };
-        let projected = super::source::build(&checker, function, declaration.span);
+        let projected = super::source::build(&checker, CallableSource::Function(function), declaration.span);
         let identity = checker
             .type_info
             .declarations
@@ -394,6 +396,76 @@ mod tests {
             let analysis = flow::analyze(&graph).map_err(|error| format!("{source}\n{error:?}"))?;
             assert_eq!(!analysis.conflicts.is_empty(), conflict, "{source}\n{analysis:?}");
         }
+        Ok(())
+    }
+
+    /// Methods retain their own receiver and parameter identities; local loans must not disappear merely because
+    /// their callable lives inside a model rather than at module scope.
+    #[test]
+    fn method_flow_preserves_receiver_permissions() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, conflict) in [
+            (
+                "model Counter:\n    value: int\n    def change(mut self, amount: Borrowed[int]) -> int:\n        mut view: BorrowedMut[int] = self.value\n        view += amount\n        return self.value\n",
+                false,
+            ),
+            (
+                "model Counter:\n    value: int\n    def change(self, amount: Borrowed[int]) -> int:\n        mut view: BorrowedMut[int] = self.value\n        view += amount\n        return self.value\n",
+                true,
+            ),
+            (
+                "model Counter:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
+                false,
+            ),
+        ] {
+            let checker = checked(source)?;
+            assert_eq!(checker.type_info.protocols.explicit_input_flow.len(), 1, "{source}");
+            let output = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .values()
+                .next()
+                .ok_or("missing method flow")?;
+            let InputFlow::Checked { analysis, .. } = output else {
+                return Err(format!("method flow unavailable: {output:?}\n{source}").into());
+            };
+            assert_eq!(!analysis.conflicts.is_empty(), conflict, "{source}\n{analysis:?}");
+            assert_eq!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0126")),
+                conflict
+            );
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0123"))
+            );
+        }
+        let checker = checked(
+            "model First:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\nmodel Second:\n    value: int\n    def read(self) -> int:\n        let view: Borrowed[int] = self.value\n        return view\n",
+        )?;
+        assert_eq!(checker.type_info.protocols.explicit_input_flow.len(), 2);
+        let mut receivers = std::collections::BTreeSet::new();
+        for output in checker.type_info.protocols.explicit_input_flow.values() {
+            let InputFlow::Checked { graph, analysis } = output else {
+                return Err(format!("missing distinct owner flow: {output:?}").into());
+            };
+            assert!(analysis.conflicts.is_empty());
+            receivers.extend(
+                graph
+                    .permissions
+                    .keys()
+                    .filter(|root| root.kind == incan_semantics_core::SemanticSourceTargetKind::Receiver),
+            );
+        }
+        assert_eq!(
+            receivers.len(),
+            2,
+            "same-spelled methods must retain distinct receivers"
+        );
         Ok(())
     }
 

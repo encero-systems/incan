@@ -7,7 +7,7 @@ use super::TypeChecker;
 use super::flow::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection};
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, FunctionDecl,
-    Span, Spanned, Statement,
+    MethodDecl, Param, Receiver, Span, Spanned, Statement,
 };
 use crate::symbols::{ResolvedType, SymbolKind};
 use incan_lang::lang::derives::DeriveId;
@@ -19,6 +19,14 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 pub(super) struct Unavailable {
     pub span: Span,
     pub reason: &'static str,
+}
+
+/// The source callable whose already prepared declaration facts govern this body. Methods retain a distinct
+/// receiver declaration; neither a synthetic function nor a name-based signature lookup replaces that identity.
+#[derive(Clone, Copy)]
+pub(in crate::typechecker) enum CallableSource<'a> {
+    Function(&'a FunctionDecl),
+    Method(&'a MethodDecl),
 }
 
 /// One enclosing loop owns its back-edge and the paths that leave it; nested loops cannot steal each other's exits.
@@ -44,24 +52,38 @@ struct Builder<'a> {
     loops: Vec<LoopEdges>,
 }
 
-/// Project a checked free-function body against its declaration and local contracts. Calls, escaping dependencies
+/// Project a checked callable body against its declaration and local contracts. Calls, escaping dependencies
 /// and other incomplete shapes remain explicit unavailable results rather than successful partial graphs.
-pub(super) fn build(checker: &TypeChecker, function: &FunctionDecl, span: Span) -> Result<Graph, Unavailable> {
-    let binding = checker
-        .type_info
-        .declarations
-        .function_bindings_by_span
-        .get(&span)
-        .ok_or(Unavailable {
-            span,
-            reason: "missing checked function header",
-        })?;
+pub(super) fn build(checker: &TypeChecker, callable: CallableSource<'_>, span: Span) -> Result<Graph, Unavailable> {
+    let (parameters, body, is_async, receiver, bindings) = match callable {
+        CallableSource::Function(function) => (
+            &function.params,
+            &function.body,
+            function.is_async(),
+            None,
+            &checker.type_info.declarations.function_bindings_by_span,
+        ),
+        CallableSource::Method(method) => (
+            &method.params,
+            method.body.as_ref().ok_or(Unavailable {
+                span,
+                reason: "abstract method has no body",
+            })?,
+            method.is_async(),
+            method.receiver_binding.as_ref().zip(method.receiver),
+            &checker.type_info.declarations.method_bindings_by_span,
+        ),
+    };
+    let binding = bindings.get(&span).ok_or(Unavailable {
+        span,
+        reason: "missing checked callable header",
+    })?;
     let identity = binding.identity.as_ref().ok_or(Unavailable {
         span,
         reason: "missing selected declaration identity",
     })?;
     let contract = checker.type_info.declarations.ownership_contracts.get(identity);
-    if function.is_async()
+    if is_async
         || contract.is_some_and(|contract| {
             contract.result_source.is_some()
                 || contract.modes.iter().any(|mode| {
@@ -114,43 +136,75 @@ pub(super) fn build(checker: &TypeChecker, function: &FunctionDecl, span: Span) 
         aliases: BTreeMap::new(),
         loops: Vec::new(),
     };
-    for (slot, parameter) in function.params.iter().enumerate() {
-        let root = checker
-            .type_info
-            .resolved_write_identity(parameter.span, &parameter.node.name)
-            .or_else(|| {
-                let selected = checker.symbols.lookup(&parameter.node.name)?;
-                let identity = checker.symbols.identity_of(selected)?;
-                (identity.kind == SemanticSourceTargetKind::Parameter && identity.declaration_span == parameter.span)
-                    .then_some(identity)
-            })
-            .ok_or(Unavailable {
-                span: parameter.span,
-                reason: "missing prepared parameter identity",
-            })?
-            .clone();
-        let mode = checker.checked_input_contract(identity, slot);
-        let writable = parameter.node.is_mut && mode.is_none_or(|mode| mode.mode != OwnershipMode::Borrowed);
-        let exclusive = mode.map_or(writable, |mode| {
-            mode.mode == OwnershipMode::BorrowedMut || (mode.mode == OwnershipMode::Owned && writable)
-        });
+    builder.inputs(parameters, identity)?;
+    if let Some((binding, receiver)) = receiver {
+        let root = builder.binding_root(&binding.node, binding.span, SemanticSourceTargetKind::Receiver)?;
+        let writable = receiver == Receiver::Mutable;
         builder.graph.permissions.insert(
-            root.clone(),
+            root,
             Permission {
-                exclusive,
+                exclusive: writable,
                 writable,
-                transferable: mode.is_none_or(|mode| mode.mode == OwnershipMode::Owned),
+                transferable: false,
             },
         );
-        if mode.is_some() {
-            builder.constrained.insert(root);
-        }
     }
-    builder.block(&function.body, vec![0])?;
+    builder.block(body, vec![0])?;
     Ok(builder.graph)
 }
 
 impl Builder<'_> {
+    /// Select a prepared local binding by its canonical identity and exact declaration token. During body checking
+    /// the declaration output may not be joined yet, so only the still-active exact frame may supply that identity.
+    fn binding_root(
+        &self,
+        name: &str,
+        span: Span,
+        kind: SemanticSourceTargetKind,
+    ) -> Result<CanonicalSymbolId, Unavailable> {
+        self.checker
+            .type_info
+            .resolved_write_identity(span, name)
+            .or_else(|| {
+                let selected = self.checker.symbols.lookup(name)?;
+                let identity = self.checker.symbols.identity_of(selected)?;
+                (identity.kind == kind && identity.declaration_span == span).then_some(identity)
+            })
+            .cloned()
+            .ok_or(Unavailable {
+                span,
+                reason: "missing prepared parameter identity",
+            })
+    }
+
+    /// Parameter slot contracts describe permissions independently of body use or the spelling of a shadowed mode.
+    fn inputs(&mut self, parameters: &[Spanned<Param>], identity: &CanonicalSymbolId) -> Result<(), Unavailable> {
+        for (slot, parameter) in parameters.iter().enumerate() {
+            let root = self.binding_root(
+                &parameter.node.name,
+                parameter.span,
+                SemanticSourceTargetKind::Parameter,
+            )?;
+            let mode = self.checker.checked_input_contract(identity, slot);
+            let writable = parameter.node.is_mut && mode.is_none_or(|mode| mode.mode != OwnershipMode::Borrowed);
+            let exclusive = mode.map_or(writable, |mode| {
+                mode.mode == OwnershipMode::BorrowedMut || (mode.mode == OwnershipMode::Owned && writable)
+            });
+            self.graph.permissions.insert(
+                root.clone(),
+                Permission {
+                    exclusive,
+                    writable,
+                    transferable: mode.is_none_or(|mode| mode.mode == OwnershipMode::Owned),
+                },
+            );
+            if mode.is_some() {
+                self.constrained.insert(root);
+            }
+        }
+        Ok(())
+    }
+
     /// Connect each current predecessor to one evaluated operation, preserving distinct branch paths.
     fn event(&mut self, incoming: Vec<usize>, event: Event, span: Span) -> Vec<usize> {
         let next = self.graph.nodes.len();
@@ -194,7 +248,7 @@ impl Builder<'_> {
     /// Read only checked storage projections. Properties and native accessors are calls, even when spelled as fields.
     fn place(&mut self, expression: &Spanned<Expr>) -> Result<Path, Unavailable> {
         match &expression.node {
-            Expr::Ident(_) => {
+            Expr::Ident(_) | Expr::SelfExpr => {
                 let identity = self
                     .checker
                     .type_info
@@ -254,7 +308,7 @@ impl Builder<'_> {
     /// Index computations run before access, exactly once; projection lookup itself is not another read of the owner.
     fn evaluate_place(&mut self, expression: &Spanned<Expr>, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
         match &expression.node {
-            Expr::Ident(_) => Ok(incoming),
+            Expr::Ident(_) | Expr::SelfExpr => Ok(incoming),
             Expr::Paren(base) | Expr::Field(base, _) => self.evaluate_place(base, incoming),
             Expr::Index(base, index) => {
                 let incoming = self.evaluate_place(base, incoming)?;
@@ -288,7 +342,7 @@ impl Builder<'_> {
             });
         }
         match &expression.node {
-            Expr::Ident(_) | Expr::Field(_, _) | Expr::Index(_, _) => {
+            Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 let place = self.place(expression)?;
                 let incoming = self.evaluate_place(expression, incoming)?;
                 let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
@@ -374,7 +428,7 @@ impl Builder<'_> {
     /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
     fn optional_place(&mut self, expression: &Spanned<Expr>) -> Result<Option<Path>, Unavailable> {
         match &expression.node {
-            Expr::Ident(_) | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
+            Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),
             _ => Ok(None),
         }

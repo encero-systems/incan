@@ -6924,7 +6924,13 @@ impl TypeChecker {
             std::mem::replace(&mut self.current_c_abi_raw_call_owner, prepared.c_abi_raw_call_owner);
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
         self.check_work.function_bodies += 1;
-        self.check_callable_body(&func.body, func.is_async(), span, yield_context, Some(func));
+        self.check_callable_body(
+            &func.body,
+            func.is_async(),
+            span,
+            yield_context,
+            super::ownership_contracts::CallableSource::Function(func),
+        );
         self.receiver_plan_inputs.current_function = previous_function;
         self.current_c_abi_raw_call_owner = previous_raw_owner;
         self.finish_prepared_callable(restore);
@@ -7581,7 +7587,13 @@ impl TypeChecker {
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
         if let Some(body) = &method.body {
             self.check_work.method_bodies += 1;
-            self.check_callable_body(body, method.is_async(), span, yield_context, None);
+            self.check_callable_body(
+                body,
+                method.is_async(),
+                span,
+                yield_context,
+                super::ownership_contracts::CallableSource::Method(method),
+            );
         }
         self.current_classmethod_self_ty = previous_classmethod;
         self.current_immutable_self_method = previous_immutable_self;

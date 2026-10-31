@@ -7,6 +7,7 @@
 
 use super::diagnostic_values::{AnchorFault, AnchoredDiagnostic, DiagnosticPositions};
 use super::mut_arguments::MutBodyLocal;
+use super::ownership_contracts::CallableSource;
 use super::type_info::{
     CAbiInteropArtifacts, CallArtifacts, ExpressionArtifacts, ProtocolArtifacts, ReferenceArtifacts,
     RustInteropArtifacts, TraitArtifacts, TypeCheckInfo,
@@ -702,7 +703,7 @@ impl TypeChecker {
         is_async: bool,
         span: Span,
         context: YieldContext,
-        ownership_source: Option<&FunctionDecl>,
+        ownership_source: CallableSource<'_>,
     ) {
         #[cfg(test)]
         if !self.legacy_body_checking {
@@ -715,16 +716,12 @@ impl TypeChecker {
         #[cfg(test)]
         if self.legacy_body_checking {
             self.check_callable_body_in_frame(body, is_async, context);
-            if let Some(function) = ownership_source {
-                self.record_explicit_input_flow(function, span);
-            }
+            self.record_explicit_input_flow(ownership_source, span);
             return;
         }
         let scope = BodyCheckScope::enter(self);
         self.check_callable_body_in_frame(body, is_async, context);
-        if let Some(function) = ownership_source {
-            self.record_explicit_input_flow(function, span);
-        }
+        self.record_explicit_input_flow(ownership_source, span);
         let mut local = scope.finish(self);
         local.owner = span;
         self.body_checks.push(BodyCheckInput::Local(local));
