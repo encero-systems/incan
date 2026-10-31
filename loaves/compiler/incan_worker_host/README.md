@@ -23,3 +23,5 @@
 - **Departed callers.** A caller that leaves while its activation compiles ends the worker with status 101, after the socket is withdrawn, as the short-lived command would have ended with it.
 
 The host's cases are in `loaves/compiler/incan_worker_host/tests/test_worker_host.incn`; `incan test` runs them from this directory, and CI runs them with the Oven tests.
+
+With `INCAN_ENGINE_TRACE` set to an existing directory, the host opens `engine-worker-<pid>.jsonl` once through `incan_platform.trace`. One `driver_request` span covers each admitted activation and is flushed before the reply. Its `host-monotonic-raw` nanoseconds share the engine's clock, while `INCAN_ENGINE_RUN` and `INCAN_ENGINE_REQUEST` carry caller correlation. An unavailable observer does not change a compiler reply or program stream; absent tracing starts no clock or writer.
