@@ -27,6 +27,13 @@ pub(crate) struct AnchoredDiagnostic {
     declarations: Vec<DeclarationSite>,
 }
 
+impl AnchoredDiagnostic {
+    /// Read severity without rebinding source positions; warning and lint values remain accepted predecessors.
+    pub(crate) fn kind(&self) -> crate::diagnostics::ErrorKind {
+        self.recipe.kind()
+    }
+}
+
 /// Owner declaration of an anchor, independent of where the declaration sits in its file.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct OwnerKey {

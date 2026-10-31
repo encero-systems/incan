@@ -58,6 +58,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+pub use free_function_oracle::verify_module as verify_free_function_inputs;
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
 pub use source_comparison::required_published_defaults as required_comparison_defaults;
@@ -149,6 +150,36 @@ pub fn build_body_ir_module(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
+    let mut module = build_module_seed(program, module_path, type_info, context);
+    retain_module_representations(&mut module, program, type_info, context.modules);
+    module
+}
+
+/// Construct the compatibility module before representation refinement. This remains the whole-module route;
+/// separating its seed lets the cold oracle compare individual representation operations from identical inputs.
+fn build_module_seed(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+) -> bir::BodyIrModule {
+    build_module_seed_observed(program, module_path, type_info, context, &mut |_, _, _, _| None)
+}
+
+/// Build the compatibility seed while exposing each free-function seed to an optional migration comparison. The
+/// observer can substitute an independently built seed for comparison and is absent from production fact selection.
+fn build_module_seed_observed(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+    observer: &mut dyn FnMut(
+        &ast::FunctionDecl,
+        ast::Span,
+        &BodyIrLoweringFacts<'_, '_>,
+        &bir::Body,
+    ) -> Option<bir::Body>,
+) -> bir::BodyIrModule {
     let provider_operations = context.provider_operations;
     let registry_package = context.registry_package;
     let module_identity = match context.library_package {
@@ -226,14 +257,14 @@ pub fn build_body_ir_module(
     };
     defaults::attach_nominal_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     defaults::attach_method_partial_defaults(program, &mut nominal_declarations, &lowering_facts);
-    let mut bodies = lower_source_bodies(program, &lowering_facts);
+    let mut bodies = lower_source_bodies(program, &lowering_facts, observer);
     let mut static_declarations = collect_source_storage(program, &lowering_facts, &constant_declarations);
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     retain_source_body_contracts(program, type_info, &mut bodies);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
-    let mut module = bir::BodyIrModule {
+    bir::BodyIrModule {
         runtime_callable_bindings: Vec::new(),
         string_conversion_contract: bir::StringConversionContract::Unselected,
         decorated_bindings,
@@ -257,9 +288,7 @@ pub fn build_body_ir_module(
         fieldless_enum_declarations,
         value_enum_declarations,
         bodies,
-    };
-    retain_module_representations(&mut module, program, type_info, context);
-    module
+    }
 }
 
 /// Collect explicit storage before computed constants; decoration and registry effects append their declarations
@@ -342,7 +371,16 @@ fn collect_published_constants(
 
 /// Lower executable declarations in source order using the module's already collected checked facts. Attribute
 /// externs and transparent native stubs supply compiler adapters rather than executable source bodies.
-fn lower_source_bodies(program: &ast::Program, facts: &BodyIrLoweringFacts<'_, '_>) -> Vec<bir::Body> {
+fn lower_source_bodies(
+    program: &ast::Program,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+    observer: &mut dyn FnMut(
+        &ast::FunctionDecl,
+        ast::Span,
+        &BodyIrLoweringFacts<'_, '_>,
+        &bir::Body,
+    ) -> Option<bir::Body>,
+) -> Vec<bir::Body> {
     program
         .declarations
         .iter()
@@ -361,7 +399,9 @@ fn lower_source_bodies(program: &ast::Program, facts: &BodyIrLoweringFacts<'_, '
                     Vec::new()
                 }
                 ast::Declaration::Function(function) => {
-                    vec![lower_function_body(function, decl.span, facts)]
+                    let body = lower_function_body(function, decl.span, facts);
+                    let selected = observer(function, decl.span, facts, &body);
+                    vec![selected.unwrap_or(body)]
                 }
                 ast::Declaration::Model(model) => lower_owner_member_bodies(
                     &model.methods,
@@ -2259,6 +2299,7 @@ mod collect;
 mod collection_context;
 mod decorated_bindings;
 mod entrypoint_effects;
+mod free_function_oracle;
 mod model_constants;
 mod published_methods;
 mod registry_descriptions;
@@ -2292,6 +2333,33 @@ use collect::*;
 pub use provider_ops::ProviderOperationCatalog;
 use provider_ops::ProviderOperationRecord;
 use reads::*;
+
+#[cfg(test)]
+mod representation_tests;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/union_layouts.rs"]
+mod legacy_union_layouts;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/opaque_returns.rs"]
+mod legacy_opaque_returns;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/shared_reads.rs"]
+mod legacy_shared_reads;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/source_comparison.rs"]
+mod legacy_source_comparison;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/trait_returns.rs"]
+mod legacy_trait_returns;
+
+#[cfg(test)]
+#[path = "body_ir/oracle/trait_values.rs"]
+mod legacy_trait_values;
 
 #[cfg(test)]
 mod tuple_destructure_interop_tests {
