@@ -82,16 +82,16 @@ def standard_graph(
     reader: ManifestReader,
 ) -> Result[GraphUnit, str]:
     """
-    Read a published standard graph, or cache a legacy source export entirely under the requesting project.
+    Read a published standard graph, or ask the home bakery for a checked legacy source export.
 
     1. A standard package compiled with a graph publishes it beside its artifacts.
-    2. Otherwise export the package's own source, under the requesting project's cache.
+    2. Otherwise export the package's own source through the home-wide checked export path.
     """
     # 1. A package compiled with a graph is read from the graph it published.
     graph = standard_artifact_dir(package, profile)?.joinpath(f"{package}.incngraph")
     if graph.is_file():
         return Ok(GraphUnit(path=graph, root=Path(f"@std/{package}"), package=package))
-    # 2. Any other is exported from its source, once, into the requesting project's own cache.
+    # 2. Any other is exported from its source once per content identity in the home bakery.
     rustc = rust_compiler(toolchain)
     demand = LocalDemand(project=source_root, domain=DependencyDomain.Target, features=[], defaults=true)
     facets = local_facets(demand, target_configuration(rustc)?, reader=reader)?

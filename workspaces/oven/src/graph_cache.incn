@@ -1,4 +1,4 @@
-"""Content-addressed inspection entries under the owning project's target directory."""
+"""Content-addressed inspection projections and source observations owned by the requesting home."""
 
 from rust::std::string import String as RustString
 from std.fs import Path
@@ -116,6 +116,45 @@ pub def tree_inputs(root: Path) -> Result[list[str], str]:
     return Ok(inputs)
 
 
+pub def content_facts(root: Path) -> Result[tuple[list[str], bool], str]:
+    """
+    Identify exact source bytes and logical alias bindings without retaining physical source anchors.
+
+    Source aliases inside the project name their resolved project-relative binding. An alias outside it cannot be
+    rendered under another project's root, so the caller must not retain that checked export.
+    """
+    observed = tree_inputs(root)?
+    mut base = root
+    if root.is_file():
+        base = root.parent()
+    canonical_root = base.resolve().map_err((error) => error.message())?
+    mut inputs: list[str] = []
+    mut portable = true
+    for index in range(0, len(observed), 2):
+        path = observed[index]
+        mut name = Path(path).name()
+        if path.startswith(root.0 + "/"):
+            name = path[len(root.0) + 1:]
+        inputs.extend(["file", name, observed[index + 1]])
+        canonical = Path(path).resolve().map_err((error) => error.message())?
+        if not canonical.0.startswith(canonical_root.0 + "/"):
+            portable = false
+        elif canonical.0 != path:
+            inputs.extend(["alias", name, canonical.0[len(canonical_root.0) + 1:]])
+    return Ok((inputs, portable))
+
+pub def interface_inputs(directory: Path, package: str) -> Result[list[str], str]:
+    """Identify only the interface and native fact cache the checker reads, excluding publication provenance."""
+    mut ledger = graph_observations(directory)?
+    mut inputs: list[str] = []
+    for suffix in ["incnlib", "rustabi"]:
+        path = directory.joinpath(f"{package}.{suffix}")
+        if path.is_file():
+            inputs.extend([suffix, ledger.digest(path)?])
+    save_observations(ledger)
+    return Ok(inputs)
+
+
 def graph_observations(root: Path) -> Result[Ledger, str]:
     """Keep inspection's optional observations in its own home, never inside a selected external source or artifact."""
     name = fingerprint([root.0])?
@@ -147,8 +186,8 @@ def observed_tree(root: Path, mut ledger: Ledger) -> Result[list[str], str]:
     return Ok(inputs)
 
 
-pub def cache_file(project: Path, digest: str) -> Result[Path, str]:
-    """Select a unit's immutable graph entry; only successful exports publish this path."""
-    directory = project.joinpath("target").joinpath("incan").joinpath("codegraph")
+pub def cache_file(digest: str) -> Result[Path, str]:
+    """Locate a home-owned projection; its key retains every anchor the rendered bytes depend on."""
+    directory = home()?.joinpath("cache").joinpath("codegraph-projections")
     make_directory(directory)?
     return Ok(directory.joinpath(f"{digest}.incngraph"))

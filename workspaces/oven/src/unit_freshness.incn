@@ -258,7 +258,7 @@ def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[s
     return Ok(contents)
 
 
-def vocabulary_facts(path: Path) -> Result[str, str]:
+pub def vocabulary_facts(path: Path) -> Result[str, str]:
     """Identify prepared vocabulary semantics and producer identities, excluding worker payload checksums and locations."""
     prepared = read_json(path)?
     worker = prepared.require("worker").map_err((error) => error.message())?

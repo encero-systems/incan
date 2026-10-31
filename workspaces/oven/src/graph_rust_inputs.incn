@@ -1,0 +1,124 @@
+"""Bind checked Rust graph exports to rustc's complete observed file and environment inputs."""
+
+from rust::std::process import Command
+from std.fs import Path
+from bakery import bakery, fact_file, find, lookup
+from files import make_directory, read
+from home import home
+from graph_exports import export_file, exported
+from invocation_identity import invocation_facts
+from rust_freshness import (
+    dependency_arguments,
+    dependency_inputs,
+    library_key,
+    relocate_dependencies,
+)
+from toolchain import Toolchain, rust_compiler
+from unit_freshness import Key, fingerprint
+
+
+pub def prior_export(
+    name: str,
+    project: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    toolchain: Toolchain,
+    compiler: str,
+) -> Result[Option[Path], str]:
+    """
+    Reconcile the previous export's portable dep-info in this project before selecting any graph.
+
+    Its old dependency list is a lookup hint only. A changed observed input selects another identity and a miss
+    discovers the dependencies again before publishing, including when an environment change selects new includes.
+    """
+    store = bakery()?
+    if let Some(identity) = lookup(store, name)?:
+        if let Some(fact) = find(store, identity)?:
+            if let Some(evidence) = fact_file(store, fact, "inputs.d"):
+                directory = observations_directory(project)?
+                match library_key(project, directory, evidence, arguments, environment, [], toolchain, compiler):
+                    Err(_) => pass
+                    Ok(key) =>
+                        if key.refusal == "":
+                            entry = export_file(export_identity(name, key)?)?
+                            if exported(entry)?:
+                                return Ok(Some(entry))
+    return Ok(None)
+
+
+pub def export_identity(name: str, key: Key) -> Result[str, str]:
+    """The graph producer's content identity includes both its input selector and the reconciled native input key."""
+    return fingerprint(["incan.codegraph.rust-observed/1", name, key.digest])
+
+
+pub def producer_name(inputs: list[str], project: Path, arguments: list[str]) -> Result[str, str]:
+    """Name a dependency-evidence hint by portable source inventory, selected entry and effective invocation facts."""
+    mut entry = arguments[0]
+    if entry.startswith(project.0 + "/"):
+        entry = entry[len(project.0) + 1:]
+    return Ok("graph-rust\t" + fingerprint(inputs + [entry] + invocation_facts(arguments, project, project))?)
+
+
+pub def discover(
+    project: Path,
+    directory: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    unstable: bool,
+    toolchain: Toolchain,
+) -> Result[bool, str]:
+    """Obtain rustc's real dep-info before naming an export; a normal refusal still receives its graph diagnostic."""
+    mut command = Command.new(rust_compiler(toolchain))
+    command.env_remove("RUSTC_BOOTSTRAP")
+    if unstable:
+        command.env("RUSTC_BOOTSTRAP", "1")
+    for name in sorted([key for key in environment.keys()]):
+        command.env(name, environment[name])
+    for argument in dependency_arguments(arguments, directory.joinpath("inputs.d")) + ["--sysroot", toolchain.sysroot]:
+        command.arg(argument)
+    result = command.output().map_err((error) => str(error))?
+    if result.status.code() is None:
+        return Err(f"Rust graph dependency discovery of {project.0} was interrupted")
+    return Ok(result.status.success())
+
+
+pub def portable_dependencies(project: Path, dependencies: Path) -> Result[bool, str]:
+    """External source locations have no declared portable binding, so their graph is produced without retention."""
+    root = project.resolve().map_err((error) => error.message())?
+    paths, _ = dependency_inputs(read(dependencies)?)?
+    for path in paths:
+        mut selected = Path(path)
+        if not path.startswith("/"):
+            selected = project.joinpath(path)
+        canonical = selected.resolve().map_err((error) => error.message())?
+        if not canonical.0.startswith(root.0 + "/"):
+            return Ok(false)
+    return Ok(true)
+
+
+pub def observed_key(
+    project: Path,
+    directory: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    toolchain: Toolchain,
+    compiler: str,
+) -> Result[Key, str]:
+    """Use the native producer's existing identity boundary for source, invocation, externs and observed environment."""
+    return library_key(
+        project, observations_directory(project)?, directory.joinpath("inputs.d"), arguments, environment, [],
+        toolchain, compiler,
+    )
+
+
+pub def finish_evidence(project: Path, directory: Path) -> Result[None, str]:
+    """Keep only portable dependency names beside a checked graph; physical observations remain request-local."""
+    relocate_dependencies(directory.joinpath("inputs.d"), project)?
+    return Ok(None)
+
+
+def observations_directory(project: Path) -> Result[Path, str]:
+    """Keep physical freshness hints outside immutable graph records and their portable dependency evidence."""
+    directory = home()?.joinpath("cache/codegraph-input-observations").joinpath(fingerprint([project.0])?)
+    make_directory(directory)?
+    return Ok(directory)

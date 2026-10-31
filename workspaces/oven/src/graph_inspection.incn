@@ -296,11 +296,8 @@ def response(
             snapshot = f"snapshot:{fingerprint([snapshot, observed])?}"
     if selected.stale != "":
         return json_text(snapshot_status(selected.stale, snapshot))
-    mut owner = Path(root)
-    if owner.is_file():
-        owner = owner.parent()
     inputs = presentation_inputs(paths, root, selected, snapshot, preferences)?
-    cached = Path(f"{cache_file(owner, fingerprint(inputs)?)?.0}.answer")
+    cached = Path(f"{cache_file(fingerprint(inputs)?)?.0}.answer")
     trace(f"graph answer lookup: {lookup.elapsed().as_millis()} ms")
     if cached.is_file():
         return read(cached)

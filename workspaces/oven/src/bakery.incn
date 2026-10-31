@@ -578,8 +578,11 @@ def repair_view(store: Path, fact: Fact, directory: Path) -> Result[None, str]:
 
     Build publication still swaps a complete directory. Readers already selected this unit through its fact marker;
     each damaged member is atomically replaced from its verified canonical payload instead of replacing its siblings.
-    Producer records already bound to intact views stay bound to them.
+    Producer records already bound to intact views stay bound to them. A linked directory is replaced without
+    modifying its referent.
     """
+    if directory.is_symlink():
+        return view_directory(store, fact, directory)
     for file in fact.files:
         target = directory.joinpath(file.path)
         if is_record(file) and target.is_file():

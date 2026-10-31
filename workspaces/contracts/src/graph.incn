@@ -2,11 +2,12 @@
 
 from std.encoding.hex import hexlify
 from std.fs import Path
+from std.tempfile import TemporaryDirectory
 from std.hash import file_digest
 from std.environ import get_or
 from std.json import JsonValue
-from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions
-from rust::std::os::unix::fs import MetadataExt, PermissionsExt
+from rust::std::fs import OpenOptions, Permissions, metadata, rename, set_permissions
+from rust::std::os::unix::fs import MetadataExt, PermissionsExt, symlink
 from compare import compare
 from files import (
     items,
@@ -25,6 +26,7 @@ from files import (
 from header import Header
 from run import Outcome, invoke
 from graph_context_contract import check_context
+from graph_relocation_contract import check_relocation
 from graph_mcp_contract import check_mcp
 from graph_lsp_contract import check_lsp
 from graph_process_contract import check_process
@@ -180,6 +182,7 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
     check_published_graph(incan, project)?
     check_lsp(incan, project)?
     check_process(incan, project)?
+    check_relocation(incan, project)?
     return Ok(failures)
 
 
@@ -386,6 +389,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     2. A consumer reads the published graph, though the provider's source has since become invalid.
     3. A corrupt view is restored; stored damage refuses lookup until exact bytes are explicitly re-admitted.
     4. A provider with no published graph is exported once, and the export is stable.
+    5. A linked directory view is replaced without modifying its referent.
     """
     provider = project.joinpath("deps").joinpath("checked")
     source = provider.joinpath("src").joinpath("lib.incn")
@@ -453,6 +457,30 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     stable = legacy.stdout == repeated.stdout and legacy.code == repeated.code
     if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
         return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
+    # 5. A linked directory is itself damaged; repair must never follow it into another directory.
+    check_linked_view(incan, project, publications[0], arguments, original.stdout)?
+    return Ok(None)
+
+
+def check_linked_view(
+    incan: str, project: Path, graph: Path, arguments: list[str], expected: str,
+) -> Result[None, str]:
+    """A linked library directory is rebuilt as a real view without repairing files in its referent."""
+    directory = graph.parent()
+    temporary = TemporaryDirectory.try_new_with("graph-view-", "", Some(directory.parent()))
+        .map_err((error) => error.message())?
+    referent = temporary.path().joinpath("original")
+    rename(directory.0, referent.0).map_err((error) => str(error))?
+    symlink(referent.0, directory.0).map_err((error) => str(error))?
+    bodies = library_artifacts(referent)?
+    remove(referent.joinpath(graph.name()))?
+    restored = invoke(incan, arguments, project)?
+    if restored.code != Some(0) or restored.stdout != expected:
+        return Err(f"linked library view could not be restored: {restored.stderr}")
+    if directory.is_symlink() or referent.joinpath(graph.name()).is_file():
+        return Err("graph repair followed a linked directory and changed its referent")
+    if library_artifacts(referent)? != bodies:
+        return Err("graph repair changed compiled bodies in a linked directory's referent")
     return Ok(None)
 
 
