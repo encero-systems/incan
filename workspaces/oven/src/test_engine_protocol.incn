@@ -377,6 +377,12 @@ def refused_body(decoded: Result[Message, Refusal]) -> bool:
 
 def process_lifecycle() -> Result[None, str]:
     """Two real starters share one lifetime lock; drain settles requests and a disconnected idle service exits."""
+    mut configured = spawn_detached(
+        "/bin/sh",
+        ["-c", "test \"$INCAN_PROCESS_PROBE\" = selected"],
+        {"INCAN_PROCESS_PROBE": "selected"},
+    )?
+    await_exit(configured, true)?
     scratch = scratch_directory()?
     root = scratch.path()
     root.joinpath("project").mkdir(true, true).map_err((error) => error.message())?
