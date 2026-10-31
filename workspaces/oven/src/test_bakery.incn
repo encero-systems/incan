@@ -13,6 +13,7 @@ from bakery import (
     fact_file,
     find,
     forget_verified,
+    verification_entries,
     lookup,
     library_directory,
     register_root,
@@ -148,6 +149,9 @@ pub def test_two_projects_with_the_same_unit_compile_it_once_and_target_holds_on
     # Development linkage must also start the requested view, so the host reports it as the executable image.
     made = obtain_executable(second, toolchain, second_output, key, true, Some(store))?
     assert made.launch.0 == second_output.0, "a development run replaced the view with its bakery payload"
+    assert verification_entries() > 0
+    forget_verified()
+    assert verification_entries() == 0, "request teardown retained verified payload metadata"
     return Ok(None)
 
 
