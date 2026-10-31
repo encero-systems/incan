@@ -96,7 +96,7 @@ def native_units(
     previous = read_receipt(receipt_path(root, request))?
     # 2. The key covers the compiler, the sources, the registry artifacts and the recorded libraries.
     digest = fingerprint(native_inputs(facets, request, toolchain, previous)?)?
-    entry = Path(f"{cache_file(root, digest)?.0}.native")
+    entry = Path(f"{cache_file(digest)?.0}.native")
     # 3. A preparation done before for this very key is read back, not repeated.
     if entry.is_file():
         return read_receipt(entry, true)

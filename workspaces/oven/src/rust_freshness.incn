@@ -287,7 +287,7 @@ def authored_files(root: Path, mut visited: set[str]) -> Result[list[str], str]:
     return Ok(paths)
 
 
-def dependency_inputs(text: str) -> Result[tuple[list[str], list[str]], str]:
+pub def dependency_inputs(text: str) -> Result[tuple[list[str], list[str]], str]:
     """Read rustc's first dependency rule and tracked environment names, never its recorded values."""
     mut paths: list[str] = []
     mut variables: list[str] = []
