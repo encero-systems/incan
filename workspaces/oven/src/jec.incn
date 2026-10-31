@@ -1,60 +1,26 @@
-"""Record opt-in work observations without granting caching or build authority."""
+"""Keep the existing JEC call surface as an adapter over platform observations."""
 
-from rust::std::process import id
-from rust::std::time import Instant
-from std.environ import get_or
-from std.fs import Path
-from std.json import JsonValue
+from pub::incan_platform.trace import Clock
+from trace_adapter import work_clock, work
 
 
-pub def begin() -> Option[Instant]:
-    """Read a work clock only when INCAN_JEC_TRACE names an existing output directory."""
-    if get_or("INCAN_JEC_TRACE", "") == "":
-        return None
-    return Some(Instant.now())
+pub def begin() -> Option[Clock]:
+    """Start only a requested JEC or canonical engine observation."""
+    return work_clock()
 
 
-pub def record(category: str, input: str, clock: Option[Instant], bytes: int = 0) -> None:
-    """
-    Append one measured operation to this process's trace; an unavailable trace never changes its caller's result.
-
-    Durations cover the named boundary and may overlap nested operations. Bytes count known read payloads;
-    allocations are unavailable rather than inferred from time or file size.
-    """
-    match clock:
-        None => return
-        Some(started) =>
-            fields = JsonValue.object(
-                {"schema": JsonValue.string("incan.jec/1"), "process": JsonValue.int(int(id())), "category": JsonValue.string(
-                    category,
-                ), "input": JsonValue.string(input), "nanoseconds": JsonValue.int(int(started.elapsed().as_nanos())), "bytes": JsonValue.int(
-                    bytes,
-                ), "allocations": JsonValue.null()},
-            )
-            match fields.to_json():
-                Err(_) => return
-                Ok(text) => append(text)
+pub def record(category: str, input: str, clock: Option[Clock], bytes: int = 0) -> None:
+    """Record measured work through the platform; the JEC switch selects its compatibility export."""
+    work(category, input, clock, bytes)
 
 
-pub def text_size(content: str, clock: Option[Instant]) -> int:
+pub def text_size(content: str, clock: Option[Clock]) -> int:
     """Count UTF-8 payload bytes only for an enabled observation."""
-    if clock is None:
-        return 0
-    return len(content.encode("utf-8"))
+    match clock:
+        None => return 0
+        Some(_) => return len(content.encode("utf-8"))
 
 
 pub def invocation_key(arguments: list[str]) -> str:
     """Identify the ordinary command and its input independently of private console and receipt paths."""
     return " ".join(arguments[:2])
-
-
-def append(text: str) -> None:
-    """Keep each process's observer output separate from program streams and other writers."""
-    directory = get_or("INCAN_JEC_TRACE", "")
-    if directory == "":
-        return
-    match Path(directory).joinpath(f"oven-{id()}.jsonl").open("a"):
-        Err(_) => pass
-        Ok(opened) =>
-            mut sink = opened
-            _ = sink.write(text + "\n")

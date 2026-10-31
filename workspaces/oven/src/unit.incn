@@ -10,6 +10,7 @@ from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
 from loaf_local_graph import LocalFacet
 from toolchain import NativeCrate, Toolchain
+from toolchain_access import ToolchainAccess
 from jec import begin, record
 
 pub const UNIT_DESCRIPTION_SCHEMA: str = "incan.unit/1"
@@ -74,6 +75,11 @@ pub model UnitDescription:
     pub vocab_admissions: list[str] = []
     pub vocab_policy: str = "locked-dependencies"
     pub vocab_desugarer: bool = false
+    # The rustc-internal access the Loaf declares (`[build]`); a description names it only when there is some.
+    pub toolchain_access: ToolchainAccess = ToolchainAccess()
+    # The resolved sysroot whose libraries an executable that links sysroot dependencies loads at run time. Oven binds
+    # it while admitting the declaration; it is part of the unit's identity and never of the compiler's description.
+    pub runtime_sysroot: str = ""
     # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
     pub facets: list[LocalFacet] = []
     # Source readings belong to this preparation and are not part of the compiler's public description.
@@ -82,26 +88,27 @@ pub model UnitDescription:
     pub selected_toolchain: Option[Toolchain] = None
 
     def to_json(self) -> JsonValue:
-        """The description as the compiler reads it."""
-        return JsonValue.object(
-            {"schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA), "source": JsonValue.string(self.source), "kind": JsonValue.string(
-                self.kind,
-            ), "program_entries": texts(self.program_entries), "project_root": JsonValue.string(self.project_root), "source_root": JsonValue.string(
-                self.source_root,
-            ), "package": JsonValue.string(self.package), "version": JsonValue.string(self.version), "profile": JsonValue.string(
-                self.profile,
-            ), "declared_features": texts(self.declared_features), "active_features": texts(self.active_features), "loaves": JsonValue.array(
-                [loaf.to_json() for loaf in self.loaves],
-            ), "rust_crates": texts(self.rust_crates), "contract_models": texts(self.contract_models), "c_headers": texts(
-                self.c_headers,
-            ), "vocab": optional_text(self.vocab), "vocab_entry": optional_text(self.vocab_entry), "vocabulary": JsonValue.bool(
-                self.vocabulary,
-            ), "vocab_admissions": texts(self.vocab_admissions), "vocab_policy": JsonValue.string(self.vocab_policy), "vocab_desugarer": JsonValue.bool(
-                self.vocab_desugarer,
-            ), "externs": JsonValue.array([item.to_json() for item in self.externs]), "search": texts(self.search), "search_index": optional_text(
-                self.search_index,
-            ), "rust_abi": texts(self.rust_abi)},
-        )
+        """The description as the compiler reads it; only a unit that declares access names `toolchain_access`."""
+        mut fields = {"schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA), "source": JsonValue.string(self.source), "kind": JsonValue.string(
+            self.kind,
+        ), "program_entries": texts(self.program_entries), "project_root": JsonValue.string(self.project_root), "source_root": JsonValue.string(
+            self.source_root,
+        ), "package": JsonValue.string(self.package), "version": JsonValue.string(self.version), "profile": JsonValue.string(
+            self.profile,
+        ), "declared_features": texts(self.declared_features), "active_features": texts(self.active_features), "loaves": JsonValue.array(
+            [loaf.to_json() for loaf in self.loaves],
+        ), "rust_crates": texts(self.rust_crates), "contract_models": texts(self.contract_models), "c_headers": texts(
+            self.c_headers,
+        ), "vocab": optional_text(self.vocab), "vocab_entry": optional_text(self.vocab_entry), "vocabulary": JsonValue.bool(
+            self.vocabulary,
+        ), "vocab_admissions": texts(self.vocab_admissions), "vocab_policy": JsonValue.string(self.vocab_policy), "vocab_desugarer": JsonValue.bool(
+            self.vocab_desugarer,
+        ), "externs": JsonValue.array([item.to_json() for item in self.externs]), "search": texts(self.search), "search_index": optional_text(
+            self.search_index,
+        ), "rust_abi": texts(self.rust_abi)}
+        if self.toolchain_access.declared():
+            fields["toolchain_access"] = self.toolchain_access.to_json()
+        return JsonValue.object(fields)
 
 
 def texts(items: list[str]) -> JsonValue:
@@ -219,6 +226,7 @@ def project_unit(
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
             vocab_entry=own.intent.vocab_entry,
+            toolchain_access=own.intent.toolchain_access,
             facets=active.facets,
             manifests=reader,
             selected_toolchain=active.toolchain,

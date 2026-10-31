@@ -45,8 +45,17 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 use super::TypeChecker;
+
+mod effects;
+#[cfg(test)]
+mod legacy;
+
 use super::helpers::collection_type_id;
 use super::receiver_change::ReceiverChange;
+pub(super) use effects::MutEffects;
+
+/// Exact callee/parameter projections selected by one caller's recorded pending arguments.
+pub(super) type MutEffectReads = HashMap<(CanonicalSymbolId, String), Option<bool>>;
 
 /// One declared parameter of a callable that has at least one caller-visible `mut` parameter.
 #[derive(Debug, Clone)]
@@ -88,6 +97,8 @@ pub(crate) enum MutArgumentCallee<'a> {
 /// One argument recorded at a call, resolved once every body of the module has been checked.
 #[derive(Debug, Clone)]
 struct PendingMutArgument {
+    /// Legacy argument traversal order, independent of producer completion.
+    order: usize,
     /// The callee's declaration identity, when the call resolved to one; `None` for a callable known only by its type.
     callee: Option<CanonicalSymbolId>,
     /// The callee's name as the refusal names it.
@@ -337,6 +348,34 @@ impl TypeChecker {
     /// Return the declaration identity of the function or method whose body is being checked, if any.
     pub(in crate::typechecker) fn current_body_identity(&self) -> Option<&CanonicalSymbolId> {
         self.mut_params.current.as_ref().map(|body| &body.identity)
+    }
+
+    /// Detach a validated declaration's mutation frame before its independent body producer is entered. Knowing a
+    /// concrete body exists belongs to its statement activation. Abstract methods retain the legacy known-callable
+    /// contribution with their declaration, without inventing a statement producer.
+    pub(in crate::typechecker) fn suspend_mut_param_body(
+        &mut self,
+        previous: MutParamBodyState,
+        has_statement_body: bool,
+    ) -> MutParamBodyState {
+        let prepared = MutParamBodyState(std::mem::replace(&mut self.mut_params.current, previous.0));
+        if has_statement_body && let Some(frame) = &prepared.0 {
+            self.mut_params.bodies_checked.remove(&frame.identity);
+        }
+        prepared
+    }
+
+    /// Consume a completed declaration's mutation inputs and mark this body known exactly once, without repeating
+    /// parameter classification or declaration validation.
+    pub(in crate::typechecker) fn resume_mut_param_body(
+        &mut self,
+        prepared: MutParamBodyState,
+        has_statement_body: bool,
+    ) -> MutParamBodyState {
+        if has_statement_body && let Some(frame) = &prepared.0 {
+            self.mut_params.bodies_checked.insert(frame.identity.clone());
+        }
+        MutParamBodyState(std::mem::replace(&mut self.mut_params.current, prepared.0))
     }
 
     /// Leave a body entered with [`Self::enter_mut_param_body`].
@@ -1335,6 +1374,7 @@ impl TypeChecker {
                 .filter(|ty| self.value_type_cannot_be_copied(ty))
                 .map(ToString::to_string);
             self.mut_params.pending.push(PendingMutArgument {
+                order: self.check_work.mutation_arguments,
                 callee: identity.clone(),
                 callee_name: callee_name.clone(),
                 param: slot.name.clone(),
@@ -1344,6 +1384,7 @@ impl TypeChecker {
                 span: value.span,
                 through_local,
             });
+            self.check_work.mutation_arguments += 1;
         }
     }
 
@@ -1568,108 +1609,6 @@ impl TypeChecker {
             binding: matches!(expr.node, Expr::Ident(_)).then(|| root.to_string()),
         }
     }
-
-    /// Decide every recorded argument once the module's bodies have been checked.
-    ///
-    /// A callee changes a caller-visible parameter when its body writes through it or through a view into it, calls a
-    /// method that may change it, uses it when it is a `Generator`, or passes it on to a parameter another callee
-    /// changes; a callee whose body this check did not read (an imported declaration, a trait method without a default,
-    /// a method reached by trait dispatch, a callable known only by its type) is taken to change it. An immutable
-    /// binding or field, an element or a static passed to a changed parameter is refused with `INCAN-T0117`, and so is
-    /// a `for` loop variable. An immutable binding or field, or a loop variable, passed to an unchanged one is
-    /// published for lowering as a copy, unless its type cannot be copied (a `Generator`, a type holding one),
-    /// which is refused with `INCAN-T0117` too.
-    pub(in crate::typechecker) fn resolve_mut_arguments(&mut self) {
-        self.check_work.mutation_settlements += 1;
-        let changed = self.mut_param_change_closure();
-        let pending = std::mem::take(&mut self.mut_params.pending);
-        for argument in pending {
-            let known_callee = argument.callee.as_ref().filter(|callee| {
-                self.mut_params.bodies_checked.contains(*callee)
-                    && !self.call_goes_through_a_reassigned_local(argument.through_local)
-            });
-            let change = match known_callee {
-                Some(_) => MutParameterChange::Changes,
-                None => MutParameterChange::MayChange,
-            };
-            let changes = known_callee.is_none_or(|callee| changed.contains(&(callee.clone(), argument.param.clone())));
-            let immutable_place = match &argument.place {
-                ArgumentPlace::Immutable { binding } => Some(match binding {
-                    Some(name) => MutArgumentPlace::Binding(name.clone()),
-                    None => MutArgumentPlace::Field,
-                }),
-                ArgumentPlace::Detached { place } => Some(place.clone()),
-                ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. } => None,
-            };
-            let Some(place) = immutable_place else {
-                continue;
-            };
-            let parameter = if argument.param.is_empty() {
-                MutParameterLabel::Position(argument.position)
-            } else {
-                MutParameterLabel::Named(&argument.param)
-            };
-            let error = if changes {
-                errors::immutable_argument_to_mut_parameter(
-                    parameter,
-                    &argument.callee_name,
-                    change,
-                    place,
-                    argument.span,
-                )
-            } else if let Some(value_type) = &argument.uncopyable_type {
-                errors::uncopyable_argument_to_mut_parameter(
-                    parameter,
-                    &argument.callee_name,
-                    value_type,
-                    place,
-                    argument.span,
-                )
-            } else {
-                // An element or a static already reaches the call as a copy of the stored value; a binding the caller
-                // cannot change, or a loop variable, handed to a parameter the callee never changes is accepted too:
-                // the call passes it as its parameter's own marker says.
-                continue;
-            };
-            let already_reported = self
-                .errors
-                .iter()
-                .any(|existing| existing.span == error.span && existing.message == error.message);
-            if !already_reported {
-                self.errors.push(error);
-            }
-        }
-    }
-
-    /// Return whether a call went through a local that is reassigned somewhere in the module, so the callable it runs
-    /// is not known at the call.
-    fn call_goes_through_a_reassigned_local(&self, through_local: Option<Span>) -> bool {
-        through_local.is_some_and(|local| self.mut_params.reassigned_locals.contains(&local))
-    }
-
-    /// Return every (callable, parameter) pair whose caller-visible parameter the callable changes, transitively.
-    fn mut_param_change_closure(&self) -> HashSet<(CanonicalSymbolId, String)> {
-        let mut changed = self
-            .mut_params
-            .changed
-            .iter()
-            .flat_map(|(identity, params)| params.iter().map(move |param| (identity.clone(), param.clone())))
-            .collect::<HashSet<_>>();
-        loop {
-            let mut grew = false;
-            for forward in &self.mut_params.forwards {
-                let callee_changes = !self.mut_params.bodies_checked.contains(&forward.callee)
-                    || self.call_goes_through_a_reassigned_local(forward.through_local)
-                    || changed.contains(&(forward.callee.clone(), forward.callee_param.clone()));
-                if callee_changes && changed.insert((forward.owner.clone(), forward.param.clone())) {
-                    grew = true;
-                }
-            }
-            if !grew {
-                return changed;
-            }
-        }
-    }
 }
 
 /// Return the parameters of a function type.
@@ -1885,5 +1824,124 @@ impl MutParamFacts {
         self.reassigned_locals.extend(local.reassigned_locals);
         self.pending.extend(local.pending);
         debug_assert!(local.current.is_none());
+    }
+}
+
+impl MutBodyLocal {
+    /// Move the prepared callable frame into its statement writer without giving the declaration producer its
+    /// body effects. The frame returns when that writer closes; the known-body contribution stays with the body.
+    pub(super) fn enter_statement_frame(&mut self, writer: &mut MutParamFacts) {
+        writer.current = self.current.take();
+        if let Some(frame) = &writer.current
+            && self.bodies_checked.remove(&frame.identity)
+        {
+            writer.bodies_checked.insert(frame.identity.clone());
+        }
+    }
+
+    /// Return only the active frame to the declaration operation that will restore its enclosing callable.
+    pub(super) fn return_statement_frame(&mut self, enclosing: &mut Self) {
+        enclosing.current = self.current.take();
+    }
+
+    /// Render this caller's pending argument decisions from final callee effects. No syntax or local inference is read.
+    pub(super) fn finalize_arguments(
+        &self,
+        effects: &MutEffects,
+        diagnostics: &mut Vec<(usize, crate::diagnostics::CompileError)>,
+    ) {
+        for argument in &self.pending {
+            let known_callee = argument.callee.as_ref().filter(|callee| {
+                effects.bodies_checked.contains(*callee)
+                    && !argument
+                        .through_local
+                        .is_some_and(|local| self.reassigned_locals.contains(&local))
+            });
+            let change = match known_callee {
+                Some(_) => MutParameterChange::Changes,
+                None => MutParameterChange::MayChange,
+            };
+            let changes =
+                known_callee.is_none_or(|callee| effects.changed.contains(&(callee.clone(), argument.param.clone())));
+            let immutable_place = match &argument.place {
+                ArgumentPlace::Immutable { binding } => Some(match binding {
+                    Some(name) => MutArgumentPlace::Binding(name.clone()),
+                    None => MutArgumentPlace::Field,
+                }),
+                ArgumentPlace::Detached { place } => Some(place.clone()),
+                ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. } => None,
+            };
+            let Some(place) = immutable_place else {
+                continue;
+            };
+            let parameter = if argument.param.is_empty() {
+                MutParameterLabel::Position(argument.position)
+            } else {
+                MutParameterLabel::Named(&argument.param)
+            };
+            let error = if changes {
+                errors::immutable_argument_to_mut_parameter(
+                    parameter,
+                    &argument.callee_name,
+                    change,
+                    place,
+                    argument.span,
+                )
+            } else if let Some(value_type) = &argument.uncopyable_type {
+                errors::uncopyable_argument_to_mut_parameter(
+                    parameter,
+                    &argument.callee_name,
+                    value_type,
+                    place,
+                    argument.span,
+                )
+            } else {
+                // An element or a static already reaches the call as a copy of the stored value; a binding the caller
+                // cannot change, or a loop variable, handed to a parameter the callee never changes is accepted too:
+                // the call passes it as its parameter's own marker says.
+                continue;
+            };
+            diagnostics.push((argument.order, error));
+        }
+    }
+}
+
+impl MutBodyLocal {
+    /// Remove finalized argument obligations while retaining all local effect, forwarding and reassignment evidence.
+    pub(super) fn clear_pending_arguments(&mut self) {
+        self.pending.clear();
+    }
+}
+
+impl MutBodyLocal {
+    /// Retain only effect projections that can change this caller's refusal. Reassigned and unknown callees remain
+    /// conservative and do not subscribe to a known body's more permissive effect projection.
+    pub(super) fn effect_reads(&self, effects: &MutEffects) -> MutEffectReads {
+        self.pending
+            .iter()
+            .filter_map(|argument| {
+                if matches!(argument.place, ArgumentPlace::Temporary | ArgumentPlace::Mutable { .. })
+                    || argument
+                        .through_local
+                        .is_some_and(|local| self.reassigned_locals.contains(&local))
+                {
+                    return None;
+                }
+                let callee = argument.callee.as_ref()?;
+                let key = (callee.clone(), argument.param.clone());
+                let value = effects
+                    .bodies_checked
+                    .contains(callee)
+                    .then(|| effects.changed.contains(&key));
+                Some((key, value))
+            })
+            .collect()
+    }
+}
+
+impl MutBodyLocal {
+    /// Return recorded argument count for a new invocation's traversal binding, without re-evaluating any argument.
+    pub(super) fn argument_count(&self) -> usize {
+        self.pending.len()
     }
 }

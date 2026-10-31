@@ -7,7 +7,10 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue
-from files import json_text, make_directory, read, remove, write as write_file
+from files import json_text, make_directory, read, read_json, remove, write as write_file
+from json_fields import required_items, required_text
+from registry_metadata import completion_selection
+from retained_readings import INSTALLED_DIGEST, installed_digest, recall, retain
 from segment_store import readmit_payload
 from bakery import fact_file, find, forget_verified, seal, staging
 from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
@@ -37,13 +40,15 @@ from rust_units import (
     linking,
     native_artifacts,
     package_environment,
+    read_registry_units,
     rust_library_producer_key,
     rust_library_graph_key,
 )
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
 from rust_target import compiler_version, deployment_target
-from toolchain import NativeCrate, Toolchain, admit_compiler_facts, read_toolchain
+from toolchain import NativeCrate, Toolchain, admit_compiler_facts, load_toolchain, read_toolchain, rust_compiler
+from toolchain_access import ToolchainAccess
 from compiler_facts import admit_fact
 from unit import UnitDescription, UnitLoaf
 from unit_rust import add_extern, compile_library_unit
@@ -62,6 +67,9 @@ from unit_freshness import (
     unit_key as selected_unit_key,
     fingerprint,
 )
+
+# The description digest of `ordinary_unit()` before units could declare rustc-internal access.
+const ORDINARY_DIGEST: str = "6dfc30122491a0de4d81120c513f24ebb60b12ba9093c09d182f1890c3d47b42"
 
 
 model Fixture:
@@ -203,6 +211,7 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     verify_source_move(scratch.path().joinpath("moved-entry"))?
     verify_project_entries(scratch.path().joinpath("project-entries"))?
     verify_invocation_identity(setup)?
+    verify_declared_access(setup)?
     verify_descriptor_selection(setup)?
     verify_published_identity(scratch.path().joinpath("publication"))?
     return Ok(None)
@@ -298,6 +307,91 @@ def verify_invocation_identity(setup: Fixture) -> Result[None, str]:
     return Ok(None)
 
 
+def driver_access() -> ToolchainAccess:
+    """The access a unit that enters rustc's driver declares."""
+    return ToolchainAccess(
+        unstable_features=["rustc_private"],
+        toolchain_components=["rustc-dev"],
+        sysroot_dependencies=["rustc_driver"],
+    )
+
+
+def ordinary_unit() -> UnitDescription:
+    """A unit that declares no access, described with fixed locations."""
+    return UnitDescription(
+        source="/checkout/project/src/main.incn",
+        project_root="/checkout/project",
+        source_root="/checkout/project/src",
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=["extra"],
+        active_features=["extra"],
+        loaves=[
+            UnitLoaf(key="dep", name="dep", dir="/checkout/project/target/dep", standard=false),
+            UnitLoaf(key="std", name="std", dir="/home/loaves/std/debug", standard=true),
+        ],
+        rust_crates=["regex"],
+        contract_models=[],
+        c_headers=[],
+    )
+
+
+def verify_declared_access(setup: Fixture) -> Result[None, str]:
+    """
+    Declared rustc-internal access is part of a unit's identity, and an undeclared unit's identity is unchanged.
+
+    1. An ordinary unit keeps the description digest it had before units could declare access, and its description
+       names no declaration.
+    2. Each kind of declared value changes the digest, in any order it is written; so does the sysroot a declared
+       executable loads its libraries from, but not a library's.
+    3. A declared sysroot library needs no producer record, because the compiler fingerprint identifies it; the same
+       library undeclared refuses the unit's identity.
+    """
+    # 1. The digest was recorded from the description of this unit before declarations existed.
+    assert description_digest(ordinary_unit())? == ORDINARY_DIGEST
+    assert "toolchain_access" not in json_text(ordinary_unit().to_json())?
+    # 2. A declaration is identity, and its written order is not.
+    first = description_digest(setup.unit)?
+    mut seen = [first]
+    for access in [
+        ToolchainAccess(unstable_features=["rustc_private"]),
+        ToolchainAccess(toolchain_components=["rustc-dev"]),
+        ToolchainAccess(sysroot_dependencies=["rustc_driver"]),
+        driver_access(),
+    ]:
+        mut changed = setup.unit
+        changed.toolchain_access = access
+        digest = description_digest(changed)?
+        assert digest not in seen
+        seen.append(digest)
+    mut reordered = setup.unit
+    reordered.toolchain_access = ToolchainAccess(sysroot_dependencies=["rustc_interface", "rustc_driver"])
+    mut sorted_unit = setup.unit
+    sorted_unit.toolchain_access = ToolchainAccess(sysroot_dependencies=["rustc_driver", "rustc_interface"])
+    assert description_digest(reordered)? == description_digest(sorted_unit)?
+    mut located = setup.unit
+    located.toolchain_access = driver_access()
+    located.runtime_sysroot = "/rust/1.98.0-aarch64-apple-darwin"
+    assert description_digest(located)? not in seen
+    mut library = located
+    library.kind = "library"
+    mut unlocated = library
+    unlocated.runtime_sysroot = ""
+    assert description_digest(library)? == description_digest(unlocated)?
+    # 3. The declared library is bound by its name; the compiler fingerprint already identifies the pinned toolchain.
+    sysroot_library = setup.root.joinpath("sysroot").joinpath("librustc_driver-0123456789abcdef.dylib")
+    write(sysroot_library, "rustc driver")?
+    mut linking = setup.unit
+    linking.externs = setup.unit.externs + [NativeCrate(name="rustc_driver", path=sysroot_library.0)]
+    assert unit_key(linking, setup.toolchain)?.refusal != ""
+    linking.toolchain_access = driver_access()
+    granted = unit_key(linking, setup.toolchain)?
+    assert granted.refusal == ""
+    assert granted.digest != unit_key(setup.unit, setup.toolchain)?.digest
+    return Ok(None)
+
+
 def verify_published_identity(scratch: Path) -> Result[None, str]:
     """A payload keeps its producer identity across admission, independently of provenance and payload digest."""
     source = scratch.joinpath("first/libunit.rlib")
@@ -357,6 +451,7 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     helper = reconcile(scratch.path(), testing)?
     assert helper.key != before.key
     verify_refusal_replay(scratch.path().joinpath("refusals"))?
+    verify_relocated_outcomes(scratch.path().joinpath("relocated"))?
     verify_check_replay(scratch.path().joinpath("checks"))?
     verify_import_records(scratch.path().joinpath("imports"))?
     return Ok(None)
@@ -416,8 +511,9 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     after the sysroot, as the worker would receive it.
 
     1. Replay an unchanged refusal with exact binary streams.
-    2. Recompile edited sources and malformed records.
-    3. Retry crashes, signals, I/O failures and success without artifacts.
+    2. Compile again once the unit declares access, which builds what its undeclared description refused.
+    3. Recompile edited sources and malformed records.
+    4. Retry crashes, signals, I/O failures and success without artifacts.
     """
     setup = fixture(scratch)?
     driver = Path(setup.toolchain.driver)
@@ -427,6 +523,7 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
     script += "[ \"$6\" = --certify ] && [ \"$8\" = --library ] || exit 2\n"
     script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\n"
+    script += "grep -q toolchain_access \"$2\" 2>/dev/null && exit 0\n"
     script += "case \"$mode\" in\nio) printf 'I/O failure' >&2; exit 1;;\nmissing) exit 0;;\nesac\n"
     script += "printf 'incan.compiler-refusal/1\\n' > \"$7\"\n"
     script += "printf '\\377out'; printf 'named refusal\\000tail' >&2\n"
@@ -453,11 +550,19 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     assert output == b"\xffout\xffout"
     assert error == b"named refusal\x00tailnamed refusal\x00tail"
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
-    # 2. Recompile edited sources and malformed records.
+    # 2. The declaration is part of the key, so the refusal kept for the undeclared unit is never replayed for it.
+    mut declared = setup.unit
+    declared.toolchain_access = driver_access()
+    granted = unit_key(declared, setup.toolchain)?
+    assert granted.digest != key.digest
+    granting = ["--unit", write_unit(declared, "app")?.0, "app", "app.rlib", setup.toolchain.sysroot]
+    assert compile_or_replay(declared, setup.toolchain, granting, options, cache, granted, "test")? == 0
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
+    # 3. Recompile edited sources and malformed records.
     write(source, "refuse edited")?
     edited = unit_key(setup.unit, setup.toolchain)?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
     # A damaged retained refusal is an error until its exact bytes are explicitly re-admitted.
     retained_path = retained_refusal(cache, edited)?
     replacement = scratch.joinpath("verified-refusal")
@@ -469,11 +574,11 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
             assert false, "a damaged refusal was treated as absence"
         Err(error) =>
             assert "integrity" in error, error
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
     readmit_payload(cache, replacement, retained_path.name()).map_err((error) => error.message())?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
-    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
-    # 3. Retry crashes, signals, I/O failures and success without artifacts.
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
+    # 4. Retry crashes, signals, I/O failures and success without artifacts.
     for mode in ["crash", "signal", "io", "missing"]:
         write(source, mode)?
         changed = unit_key(setup.unit, setup.toolchain)?
@@ -495,12 +600,74 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     return Ok(None)
 
 
+def verify_relocated_outcomes(scratch: Path) -> Result[None, str]:
+    """
+    A refusal and a check report retained in one project replay in a copy at another path in the copy's own locations,
+    byte for byte what a fresh compiler run for the copy prints. The counted compiler names the description and an
+    entry beside it.
+
+    1. Key the same project at two paths: the keys agree, because only content enters them.
+    2. Produce each outcome in the first project, replay it in the second, and produce it fresh there with its own store.
+    """
+    first = fixture(scratch.joinpath("first"))?
+    second = fixture(scratch.joinpath("second"))?
+    attempts = scratch.joinpath("attempts")
+    driver = Path(first.toolchain.driver)
+    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    script += f"printf x >> '{attempts.0}'\nprevious=''\n"
+    script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\nprevious=$argument\ndone\n"
+    script += "certified=check\n[ \"$1\" = --unit ] && certified=refusal\n"
+    script += "printf 'incan.compiler-%s/1\\n' \"$certified\" > \"$receipt\"\n"
+    script += "printf 'refused: %s\\n' \"$2\"; printf '%s/src/main.incn:1:1: refused\\n' \"${2%/target/*}\" >&2\nexit 1\n"
+    write(driver, script)?
+    make_executable(driver)?
+    # 1. Key the same project at two paths: the keys agree, because only content enters them.
+    mut consumer = second.toolchain
+    consumer.driver = driver.0
+    produced = unit_key(first.unit, first.toolchain)?
+    relocated = unit_key(second.unit, consumer)?
+    assert produced.digest == relocated.digest, "the same project at another path has another key"
+    # 2. Only the first project's run and the fresh run start the compiler; the replay reads the record.
+    store = scratch.joinpath("bakery")
+    mut expected = ""
+    for kind in ["refusal", "check"]:
+        original = outcome_streams(kind, first, first.toolchain, store, produced, scratch.joinpath(f"{kind}-produced"))?
+        replayed = outcome_streams(kind, second, consumer, store, relocated, scratch.joinpath(f"{kind}-replayed"))?
+        alone = scratch.joinpath(f"{kind}-alone")
+        fresh = outcome_streams(kind, second, consumer, alone, relocated, scratch.joinpath(f"{kind}-fresh"))?
+        expected += "xx"
+        assert read(attempts)? == expected, f"the {kind} at another path was not replayed"
+        assert replayed == fresh, replayed
+        assert second.root.0 in replayed and first.root.0 not in replayed and replayed != original, replayed
+    return Ok(None)
+
+
+def outcome_streams(
+    kind: str,
+    setup: Fixture,
+    toolchain: Toolchain,
+    store: Path,
+    key: Key,
+    console: Path,
+) -> Result[str, str]:
+    """Compile or check `setup` with a request-local console; what that console received, as one text."""
+    mut selected = toolchain
+    selected.console = console.0
+    description = setup.root.joinpath("target").joinpath("incan").joinpath("units").joinpath("app.json")
+    if kind == "check":
+        assert check_or_replay(setup.unit, selected, description, "text", store, key)? == 1
+    else:
+        invocation = ["--unit", description.0, "app", "app.rlib", setup.toolchain.sysroot]
+        assert compile_or_replay(setup.unit, selected, invocation, ["--library"], store, key, "test")? == 1
+    return Ok(read(Path(f"{console.0}.out"))? + "\n--\n" + read(Path(f"{console.0}.err"))?)
+
+
 def verify_check_replay(scratch: Path) -> Result[None, str]:
     """
     Exercise check replay with a counted compiler that cannot start a worker, so every check is one process.
 
     1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
-    2. Check again for another report format and after an edit.
+    2. Check again once the unit declares access, for another report format, and after an edit.
     3. Check again after crashes, signals, uncertified failures and statuses no report has.
     """
     setup = fixture(scratch)?
@@ -517,38 +684,43 @@ def verify_check_replay(scratch: Path) -> Result[None, str]:
     script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nrefuse*) exit 1;;\nesac\nexit 0\n"
     write(driver, script)?
     make_executable(driver)?
-    text = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "text"]
+    description = Path("unit.json")
     # 1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
     write(source, "pass")?
     passing = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, passing)? == 0
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, passing)? == 0
     write(source, "refuse")?
     refused = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, refused)? == 1
     mut expected = "xx"
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
     mut capturing = setup.toolchain
     capturing.console = scratch.joinpath("console").0
-    assert check_or_replay(setup.unit, capturing, text, record, refused)? == 1
+    assert check_or_replay(setup.unit, capturing, description, "text", record, refused)? == 1
     assert Path(f"{capturing.console}.out").read_bytes().map_err((error) => error.message())? == b"\xffreport"
     assert Path(f"{capturing.console}.err").read_bytes().map_err((error) => error.message())? == b"warning\x00tail"
-    # 2. Check again for another report format and after an edit.
-    json = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "json"]
-    assert check_or_replay(setup.unit, setup.toolchain, json, record, refused)? == 1
+    # 2. Check again once the unit declares access, for another report format, and after an edit.
+    mut declared = setup.unit
+    declared.toolchain_access = driver_access()
+    declared_key = unit_key(declared, setup.toolchain)?
+    assert check_or_replay(declared, setup.toolchain, description, "text", record, declared_key)? == 1
+    expected += "x"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
+    assert check_or_replay(setup.unit, setup.toolchain, description, "json", record, refused)? == 1
     write(source, "refuse edited")?
     edited = unit_key(setup.unit, setup.toolchain)?
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
-    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, edited)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, edited)? == 1
     expected += "xx"
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
     # 3. Check again after crashes, signals, uncertified failures and statuses no report has.
     for mode in ["crash", "signal", "io", "status"]:
         write(source, mode)?
         changed = unit_key(setup.unit, setup.toolchain)?
-        first_status = check_or_replay(setup.unit, setup.toolchain, text, record, changed)?
-        assert check_or_replay(setup.unit, setup.toolchain, text, record, changed)? == first_status
+        first_status = check_or_replay(setup.unit, setup.toolchain, description, "text", record, changed)?
+        assert check_or_replay(setup.unit, setup.toolchain, description, "text", record, changed)? == first_status
         expected += "xx"
         assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected, mode
     return Ok(None)
@@ -696,7 +868,8 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
 pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     """
     Compiler, native, ABI, recorded producer selection, target and deployment changes each invalidate a unit's
-    generation, and an unchanged compiler is not asked for its target again.
+    generation, and an unchanged compiler is not asked for its target again. An unchanged installation's files are
+    hashed once per home and its registry closure is completed once per generation.
     """
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
@@ -737,6 +910,9 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     assert reconcile(scratch.path(), setup)?.key != before.key
     # The compiler's own answers are part of its identity, and an unchanged compiler is not asked them again.
     check_compiler_probes(scratch.path(), setup.toolchain)?
+    # What every project learns from the installation is learned once per home.
+    check_installed_digest(scratch.path())?
+    check_registry_completion(scratch.path())?
     # Older installed producers can be used locally, but their bytes cannot invent an input identity.
     remove(record_path(Path(setup.toolchain.externs[0].path)))?
     legacy = unit_key(setup.unit, setup.toolchain)?
@@ -777,6 +953,77 @@ def check_compiler_probes(scratch: Path, toolchain: Toolchain) -> Result[None, s
     assert compiler_fingerprint(probing)? != first
     assert read(probes)? == asked + "--print deployment-target\n" + asked
     return Ok(None)
+
+
+def check_installed_digest(scratch: Path) -> Result[None, str]:
+    """
+    An installed file, such as the pinned `rustc_driver` library, is hashed once per generation for the whole home.
+
+    1. A settled file's first digest is the digest of its bytes.
+    2. While its generation is unchanged, the retained digest answers and its bytes are not read again.
+    3. A rewritten file is hashed again.
+    """
+    # 1. The first ask hashes the bytes.
+    library = scratch.joinpath("rust").joinpath("lib").joinpath("librustc_driver-test.dylib")
+    write(library, "driver library one")?
+    settled(library)?
+    assert installed_digest(library)? == file_digest(library)?
+    # 2. A retained answer that is not the bytes' digest shows that the bytes were not read again.
+    retain(library, INSTALLED_DIGEST, observe(library)?, JsonValue.string("retained"))
+    assert installed_digest(library)? == "retained"
+    # 3. A rewrite in place, even with its modification time put back, is another generation.
+    rewrite_in_place(library, "driver library two")?
+    assert installed_digest(library)? == file_digest(library)?
+    return Ok(None)
+
+
+def check_registry_completion(scratch: Path) -> Result[None, str]:
+    """
+    A registry closure is completed from its producers' metadata once per closure generation and pinned compiler.
+
+    1. A settled closure of one installed producer entry is completed from that producer's metadata.
+    2. While the closure and its entry are unchanged, the retained completion answers.
+    3. A rewritten closure is completed again.
+    """
+    # 1. One installed producer entry, linked into a closure of its own.
+    toolchain = load_toolchain()?
+    installed = Path(toolchain.registry_units)
+    item = required_items(read_json(installed)?, "units")?[0]
+    entry = required_text(item, "entry")?.replace(":", "-")
+    source = installed.parent().joinpath("entries").joinpath(entry)
+    directory = scratch.joinpath("registry")
+    make_directory(directory.joinpath("entries"))?
+    linked = directory.joinpath("entries").joinpath(entry)
+    linked.symlink_to(source).map_err((error) => error.message())?
+    artifact = JsonValue.string(f"entries/{entry}/artifacts/{sole_artifact(source)?}")
+    externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": artifact})})
+    closure = directory.joinpath("closure.json")
+    document = {"schema": JsonValue.string("incan.oven.closure/1"), "externs": externs, "units": JsonValue.array([item])}
+    write(closure, json_text(JsonValue.object(document))?)?
+    settled(closure)?
+    first = read_registry_units(closure)?.units[0]
+    assert first.name != "" and first.crate_hash != ""
+    # 2. A retained completion that names the crate otherwise shows that no producer metadata was read again.
+    selection = completion_selection(rust_compiler(toolchain))?
+    observed = observe(closure)?
+    rows = recall(closure, selection, observed.stamp).unwrap_or(JsonValue.null()).as_array().unwrap_or([])
+    assert len(rows) == 1
+    mut row = rows[0].as_object().unwrap_or({})
+    row["name"] = JsonValue.string("retained")
+    retain(closure, selection, observed, JsonValue.array([JsonValue.object(row)]))
+    assert read_registry_units(closure)?.units[0].name == "retained"
+    # 3. Another closure generation is completed again from the producer's metadata.
+    rewrite_in_place(closure, read(closure)?)?
+    assert read_registry_units(closure)?.units[0].name == first.name
+    return Ok(None)
+
+
+def sole_artifact(entry: Path) -> Result[str, str]:
+    """The file name of the one library an installed producer entry holds."""
+    for candidate in entry.joinpath("artifacts").iterdir().map_err((error) => error.message())?:
+        if candidate.name().startswith("lib"):
+            return Ok(candidate.name())
+    return Err(f"{entry.0} holds no library")
 
 
 def probing_rustc(path: Path, probes: Path, release: str) -> Result[None, str]:

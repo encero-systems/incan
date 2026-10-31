@@ -405,7 +405,7 @@ pub(super) fn lower_function_body(
 /// declaration span (#1121) — mirroring exactly how [`lower_function_body`] consumes `function_bindings` for top-level
 /// `def` parameters. This lookup can only miss (falling back to [`IncanType::Unknown`], matching
 /// `lower_function_body`'s own fallback) when the typechecker genuinely produced no fact for this declaration, such as
-/// a method belonging to a declaration kind excluded from `TypeChecker::check_method_with_self_ty`'s call sites; it is
+/// a declaration that never reached method signature preparation; it is
 /// not the normal path for an ordinarily checked method. This does not change the accuracy of ownership facts computed
 /// for actual *reads* of those parameters inside the body: those go through [`BodyBuilder::resolve_ty`] at each read's
 /// own span, which is populated uniformly for every checked expression regardless of whether it sits in a function or a
@@ -736,7 +736,7 @@ fn retain_parameter_ownership(
 }
 
 /// Reconstruct the concrete `self` type for a method declared on `owner_name`, mirroring how
-/// `check_method_with_self_ty` (`loaves/compiler/incan_frontend/src/typechecker/check_decl.rs`) derives its own `self`
+/// `concrete_method_self_type` (`loaves/compiler/incan_frontend/src/typechecker/check_decl.rs`) derives its own `self`
 /// binding's type: a bare [`IncanType::Named`] for a non-generic owner, or an [`IncanType::Generic`] instantiated with
 /// the owner's own type parameters (as type variables) for a generic owner. That typechecker-side resolved type is
 /// transient checker state, not persisted anywhere in [`TypeCheckInfo`], so lowering rebuilds the equivalent type

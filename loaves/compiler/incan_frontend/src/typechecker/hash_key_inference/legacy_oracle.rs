@@ -197,7 +197,7 @@ impl TypeChecker {
 impl TypeChecker {
     /// Run the frozen pre-split declaration/check sequence for comparisons. This oracle is compiled only into the
     /// frontend test harness and is never an input or fallback for a record activation.
-    pub(super) fn legacy_check_program(
+    pub(in crate::typechecker) fn legacy_check_program(
         &mut self,
         program: &crate::ast::Program,
     ) -> Result<(), Vec<crate::diagnostics::CompileError>> {

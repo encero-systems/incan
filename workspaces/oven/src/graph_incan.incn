@@ -6,7 +6,7 @@ from features import FeatureRequest
 from files import json_text, make_directory, read, remove
 from graph_cache import cache_file, is_unchecked, publish_unchecked, tree_inputs
 from publication import publish, publish_binary
-from unit_freshness import artifact_identity, cache_identities, fingerprint, native_identities
+from unit_freshness import artifact_identity, cache_identities, fingerprint, linked_natives, native_identities
 from unit_compiler import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
@@ -116,7 +116,7 @@ def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -
     search directories and the authored files of its project and of the Loaves it reaches.
     """
     head = [EXPORT_DOMAIN, artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, json_text(ready.to_json())?]
-    mut inputs = head + native_identities(ready.externs)? + cache_identities(toolchain.rust_abi)?
+    mut inputs = head + native_identities(linked_natives(ready))? + cache_identities(toolchain.rust_abi)?
     inputs = inputs + ready.search + tree_inputs(project)?
     for loaf in ready.loaves:
         inputs = inputs + tree_inputs(Path(loaf.dir))?

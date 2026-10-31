@@ -2,7 +2,21 @@
 
 from rust::std::io import Write
 from rust::std::os::unix::net import UnixStream
-from std.json import JsonValue
+from std.json import JsonValue, parse
+from std.fs import Path
+from pub::incan_platform.trace import (
+    SCHEMA,
+    MAX_TEXT,
+    TraceError,
+    Counters,
+    begin as trace_begin,
+    complete,
+    encode,
+    record,
+    append as trace_append,
+    flush as flush_trace,
+    MAX_RECORD,
+)
 from pub::incan_platform.ipc import MAX_FRAME, dial, length_of, listen, padded
 from owner_protocol import Reply, Request, receive_document, reply_of, request_of, send_document
 from scratch import scratch_directory
@@ -43,6 +57,7 @@ def refused_request(result: Result[Request, str]) -> bool:
 pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     """A document survives a frame in both directions; the bound is a refusal before any allocation."""
     scratch = scratch_directory()?
+    trace_contract(scratch.path().0)?
     path = scratch.path().joinpath("o.sock").0
     mut listener = listen(path, true)?
     mut client = dial(path)?
@@ -98,3 +113,102 @@ pub def test_a_broken_client_leaves_the_next_request_healthy() -> Result[None, s
     send_document(client, Request(command="status", generation="abc").to_json())?
     assert request_of(receive_document(server)?)?.command == "status"
     return Ok(None)
+
+
+def trace_contract(directory: str) -> Result[None, str]:
+    """Disabled observation is empty; a parent and child round-trip with counters and monotonic durations."""
+    match trace_begin(false):
+        None => pass
+        Some(_) => return Err("disabled observation started a clock")
+    parent_clock = match trace_begin(true):
+        Some(value) => value
+        None => return Err("enabled parent did not start")
+
+    child_clock = match trace_begin(true):
+        Some(value) => value
+        None => return Err("enabled child did not start")
+
+    child = complete(
+        child_clock,
+        "test",
+        "read",
+        "quote\"\\\n\tλ",
+        Counters(bytes=17, records=2, calls=3),
+        run="run",
+        request="request",
+        work="work",
+        parent=parent_clock.span,
+        snapshot="snapshot",
+    )
+    parent = complete(parent_clock, "test", "request", "root", run="run", request="request", work="work")
+    child_text = encode(child).map_err((_) => "child encoding failed")?
+    parent_text = encode(parent).map_err((_) => "parent encoding failed")?
+    decoded = parse(child_text).map_err((error) => error.message())?
+    root = parse(parent_text).map_err((error) => error.message())?
+    assert trace_value(root, "span")?.expect_int().map_err((error) => error.message())? == parent.span
+    assert trace_value(decoded, "schema")?.expect_str().map_err((error) => error.message())? == SCHEMA
+    assert trace_value(decoded, "key")?.expect_str().map_err((error) => error.message())? == child.key
+    assert trace_value(decoded, "parent")?.expect_int().map_err((error) => error.message())? == parent.span
+    assert trace_value(decoded, "bytes")?.expect_int().map_err((error) => error.message())? == 17
+    assert trace_value(decoded, "records")?.expect_int().map_err((error) => error.message())? == 2
+    assert trace_value(decoded, "calls")?.expect_int().map_err((error) => error.message())? == 3
+    assert trace_value(decoded, "cpu_ns")?.is_null()
+    assert child.clock_id == parent.clock_id and child.clock_id != ""
+    for key in ["run", "request", "work", "producer", "operation", "snapshot", "thread", "outcome", "clock_id"]:
+        assert trace_value(decoded, key)?.expect_str().map_err((error) => error.message())? != ""
+    assert child.start_ns >= parent.start_ns and child.end_ns <= parent.end_ns
+    record(directory + "/spans.jsonl", child).map_err((_) => "trace output failed")?
+    flush_trace().map_err((_) => "trace flush failed")?
+    mut saved = Path(directory + "/spans.jsonl").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert saved == child_text
+    # More than one buffer is drained without losing, reordering or splitting encoded records.
+    mut expected = child_text
+    while len(expected) < MAX_RECORD * 2:
+        trace_append(directory + "/spans.jsonl", child_text).map_err((_) => "batched append failed")?
+        expected += child_text
+    flush_trace().map_err((_) => "batch flush failed")?
+    saved = Path(directory + "/spans.jsonl").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert saved == expected
+    assert trace_refused(trace_append(directory + "/missing/spans.jsonl", child_text))
+    assert trace_refused(record("-", parent))
+    mut oversized = "x"
+    while len(oversized) <= MAX_TEXT:
+        oversized = oversized + oversized
+    assert trace_refused(encode(complete(child_clock, "test", "read", oversized)))
+    mut invalid = child
+    invalid.end_ns = invalid.start_ns - 1
+    assert trace_refused(encode(invalid))
+    record("", invalid).map_err((_) => "disabled output encoded an event")?
+    mut quoted = "\""
+    while len(quoted) < MAX_TEXT:
+        quoted = quoted + quoted
+    crowded = complete(
+        child_clock,
+        quoted,
+        quoted,
+        quoted,
+        run=quoted,
+        request=quoted,
+        work=quoted,
+        snapshot=quoted,
+        outcome=quoted,
+    )
+    match encode(crowded):
+        Err(TraceError.RecordBound) => pass
+        Err(_) => return Err("wrong refusal for an oversized encoded record")
+        Ok(_) => return Err("oversized encoded record was accepted")
+    return Ok(None)
+
+
+def trace_refused[T](result: Result[T, TraceError]) -> bool:
+    """Whether a malformed observation or unavailable channel was refused."""
+    match result:
+        Err(_) => return true
+        Ok(_) => return false
+
+
+def trace_value(document: JsonValue, key: str) -> Result[JsonValue, str]:
+    """A required observation field; absence is a broken schema."""
+    match document.get(key):
+        Some(value) => return Ok(value)
+        None => return Err(f"missing {key}")

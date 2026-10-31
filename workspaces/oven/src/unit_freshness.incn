@@ -190,8 +190,24 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
     return fingerprint(
         [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
             unit.vocab_admissions,
-        ),
+        ) + access_facts(unit),
     )
+
+
+def access_facts(unit: UnitDescription) -> list[str]:
+    """
+    The declared rustc-internal access, and the sysroot an executable that links its libraries loads them from. An
+    undeclared unit has none, so its identity is the one it had before units could declare access.
+    """
+    mut facts = unit.toolchain_access.identity_lines()
+    if unit.runtime_sysroot != "" and unit.kind != "library":
+        facts.append(f"runtime-sysroot={unit.runtime_sysroot}")
+    return facts
+
+
+pub def linked_natives(unit: UnitDescription) -> list[NativeCrate]:
+    """The unit's native crates except its declared sysroot libraries, which the compiler fingerprint identifies."""
+    return [native for native in unit.externs if native.name not in unit.toolchain_access.sysroot_dependencies]
 
 
 pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
@@ -209,7 +225,7 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
     # 1. An edit to any authored file the compilation reads changes the key; an untouched file costs no read.
     sources = source_contents(unit, project)?
     # 2. A rebuilt library, native crate or ABI cache the unit links changes the key of the unit linking it.
-    artifacts = loaf_identities(unit)? + native_identities(unit.externs)? + cache_identities(unit.rust_abi)?
+    artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))? + cache_identities(unit.rust_abi)?
     # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
     key = assembled(compiler, described, sources, artifacts)?
     return Ok(

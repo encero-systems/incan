@@ -47,6 +47,7 @@ mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
+pub(crate) use body_check::CheckedBodyView;
 pub use check_work::CheckWork;
 mod check_expr;
 mod check_stmt;
@@ -57,6 +58,7 @@ mod declaration_views;
 mod decorated_method_receivers;
 mod derive_contract;
 mod derive_requirements;
+mod diagnostic_values;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
@@ -516,11 +518,27 @@ pub struct TypeChecker {
     /// Test-only cold oracle bypasses local table extraction while retaining the original semantic operations.
     #[cfg(test)]
     legacy_body_checking: bool,
+    /// Verification-only declaration activations; a statement producer may not run inside any of them.
+    #[cfg(test)]
+    active_declaration_checks: Vec<Span>,
     /// Per-body complete compatibility snapshots for cold-oracle comparisons, absent from production.
     #[cfg(test)]
     body_local_observations: Vec<(Span, String)>,
+    /// Verification-only enclosing writers needed to reconstruct complete snapshots inside nominal declarations.
+    #[cfg(test)]
+    body_enclosing_observations: Vec<body_check::BodyLocal>,
     /// Actual stage entries for the current activation, reset before collecting one program.
     check_work: CheckWork,
+    /// Invocation-owned local outputs waiting for explicit finalization; never an engine cache.
+    body_checks: Vec<body_check::BodyCheckInput>,
+    /// Completed invocation-owned body values exposed to the record adapter.
+    checked_bodies: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Locally settled open-value diagnostics rendered at the legacy final stage.
+    body_open_diagnostics: Vec<CompileError>,
+    /// Completed declaration/default/initializer outputs, separate from callable statement outputs.
+    checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
+    diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
     /// Accumulated compile errors (non-fatal).
@@ -543,7 +561,7 @@ pub struct TypeChecker {
     pub consumed_iterator_bindings: HashMap<String, Span>,
     /// `dict.get(key)` calls whose value type cannot be copied, with that type's name; refused at the end of checking
     /// unless the lookup turned out to be only read (see `check_expr/dict_lookups.rs`).
-    pending_uncopyable_dict_lookups: Vec<(Span, String)>,
+    pending_uncopyable_dict_lookups: Vec<(usize, Span, String)>,
     /// Locals bound directly to a module static (`live = counts`), which read the static's storage like the static
     /// itself does, with the name of the static each one aliases.
     static_alias_bindings: HashMap<SymbolId, String>,
@@ -968,8 +986,17 @@ impl TypeChecker {
             #[cfg(test)]
             legacy_body_checking: false,
             #[cfg(test)]
+            active_declaration_checks: Vec::new(),
+            #[cfg(test)]
             body_local_observations: Vec::new(),
+            #[cfg(test)]
+            body_enclosing_observations: Vec::new(),
             check_work: CheckWork::default(),
+            body_checks: Vec::new(),
+            checked_bodies: Vec::new(),
+            checked_declarations: Vec::new(),
+            diagnostic_owner_ranges: Vec::new(),
+            body_open_diagnostics: Vec::new(),
             symbols: SymbolTable::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -7105,7 +7132,14 @@ impl TypeChecker {
     fn reset_program_check(&mut self, program: &Program, preserve_dependency_semantics: bool) {
         #[cfg(test)]
         self.body_local_observations.clear();
+        #[cfg(test)]
+        self.body_enclosing_observations.clear();
         self.check_work = CheckWork::default();
+        self.body_checks.clear();
+        self.checked_bodies.clear();
+        self.checked_declarations.clear();
+        self.diagnostic_owner_ranges.clear();
+        self.body_open_diagnostics.clear();
         self.visibility_point = VisibilityPoint::Collecting;
         self.checking_nominal_scope.get_mut().take();
         self.validate_source_type_names = false;
@@ -7243,8 +7277,15 @@ impl TypeChecker {
                 self.check_environment_declaration(decl);
             }
         }
-        self.resolve_mut_arguments();
-        self.refuse_copying_dict_lookups_of_uncopyable_values();
+        #[cfg(test)]
+        if self.legacy_body_checking {
+            self.legacy_resolve_mut_arguments();
+            self.refuse_copying_dict_lookups_of_uncopyable_values();
+        } else {
+            self.settle_body_checks(program);
+        }
+        #[cfg(not(test))]
+        self.settle_body_checks(program);
     }
 
     /// Retain layout and trait facts after body checking without publishing a nominal snapshot yet. Native module
@@ -7292,6 +7333,7 @@ impl TypeChecker {
             }
         }
         self.settle_open_value_destinations();
+        self.errors.append(&mut self.body_open_diagnostics);
         if let Err(error) = self.loaves.validate_demands() {
             self.errors
                 .push(CompileError::type_error(error.to_string(), Span::default()));

@@ -529,7 +529,7 @@ def case_failures(
             Err(reason) => failures.append(reason)
             Ok(found) => failures = found
     elif fixture.family == "check" and header.declares("check-edits"):
-        match compare_check_edits(incan, project, header, command(fixture, header)):
+        match compare_check_edits(incan, project, header, command(fixture, header), fixture):
             Err(reason) => failures.append(reason)
             Ok(found) => failures = found
     elif fixture.family == "format":

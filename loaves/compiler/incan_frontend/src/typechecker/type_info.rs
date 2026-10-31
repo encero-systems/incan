@@ -844,6 +844,8 @@ pub(crate) struct BodyIrOpenCall {
     pub parameters: Vec<String>,
     pub result: ResolvedType,
     pub bindings: HashMap<String, ResolvedType>,
+    /// This complete lexical group has passed explicit destination settlement.
+    pub settled: bool,
     pub invalidated: bool,
 }
 
@@ -1243,18 +1245,13 @@ pub struct DeclarationArtifacts {
     pub capabilities: BTreeMap<CanonicalSymbolId, CapabilityDeclarationInfo>,
     /// Module-local function declarations keyed by declaration span, preserving same-name overloads.
     pub function_bindings_by_span: HashMap<crate::ast::Span, FunctionBindingInfo>,
-    /// Concrete class/model/trait method declarations keyed by declaration span (#1121).
+    /// Checked method signatures keyed by revision-local declaration span (#1121).
     ///
-    /// Method names are not unique the way top-level function names are: two owners can declare a method with the
-    /// same name, and one owner can declare same-name overloads. Declaration span is therefore the only key that
-    /// stays collision-safe without inventing a separate declaration-identity scheme, mirroring
-    /// `function_bindings_by_span`. Body IR lowering (`loaves/compiler/incan_frontend/src/body_ir.rs`) consumes this
-    /// instead of re-resolving raw AST parameter annotations, so aliased and generic method parameter types match
-    /// the checked callable signature exactly rather than a local re-parse. Populated for every method checked
-    /// through `TypeChecker::check_method_with_self_ty` (trait defaults included, keyed by the trait method's own
-    /// span), so static methods (no receiver) are covered the same as instance methods. Newtype and enum methods
-    /// are checked through the same function and so also populate this table, even though Body IR does not lower
-    /// their bodies (#1102's own deliberate scope) — the fact simply goes unread for those owners.
+    /// This distinguishes same-name methods on different owners and same-owner overloads, mirroring
+    /// `function_bindings_by_span`. Method declaration preparation records the resolved parameters and return type
+    /// for concrete, trait-default and abstract declarations that reach signature validation. Model, class, newtype
+    /// and enum methods use the same boundary. Body IR consumes these checked facts rather than re-resolving raw
+    /// annotations; the record adapter supplies persistent identity separately from this source-revision handle.
     pub method_bindings_by_span: HashMap<crate::ast::Span, FunctionBindingInfo>,
     /// Body IR-only getter signatures and receiver provenance, keyed by the exact property declaration span.
     /// Legacy property metadata and callable binding tables remain unchanged.

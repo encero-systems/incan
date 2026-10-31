@@ -4,7 +4,7 @@
 pub use incan_semantics_core::HirSourceSpan as Span;
 
 /// A node with source location
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Spanned<T> {
     pub node: T,
     pub span: Span,
@@ -13,6 +13,8 @@ pub struct Spanned<T> {
     /// Only meaningful on `Spanned<Statement>` nodes from indented statement blocks (function bodies, `if` / `while` /
     /// `for` bodies, match blocks, vocab blocks, etc.): a single newline between statements yields `0`; two or more
     /// consecutive newlines collapse to `1`. All other `Spanned<T>` uses keep the default `0` from [`Spanned::new`].
+    /// Formatter layout is not syntax meaning, so semantic serialization omits it.
+    #[serde(skip)]
     pub leading_blank_lines: u8,
     /// Positive package features required for this compilation-unit declaration to participate.
     ///
@@ -39,6 +41,16 @@ impl<T> Spanned<T> {
     }
 }
 
+/// Serialize a vocabulary or language descriptor value that has no `serde` form of its own by its exact derived
+/// `Debug` spelling. The derived spelling is deterministic and covers every field, so no meaning is omitted; any
+/// coordinates it happens to carry make a semantic digest stricter, never weaker.
+pub(crate) fn serialize_debug<T: std::fmt::Debug, S: serde::Serializer>(
+    value: &T,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&format!("{value:?}"))
+}
+
 /// Identifier (interned string index in practice, String for simplicity here)
 pub type Ident = String;
 
@@ -46,7 +58,7 @@ pub type Ident = String;
 ///
 /// This is intentionally minimal for now; only `pub` is supported for top-level declarations that allow visibility
 /// control (for example `const` and `static`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub enum Visibility {
     #[default]
     Private,
@@ -105,7 +117,7 @@ impl Program {
 }
 
 /// Top-level declarations
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Declaration {
     Import(super::ImportDecl),
     Const(super::ConstDecl),

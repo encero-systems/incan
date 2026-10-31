@@ -18,17 +18,18 @@ from std.encoding.hex import hexlify
 from codegen import remap_arguments, rust_arguments, rust_incremental_arguments, rust_metadata, unit_metadata
 from driver_command import driver_command
 from files import json_text, parse_json, read, read_json
-from home import dependency_artifact_dir, unit_ledger
+from home import dependency_artifact_dir
 from json_fields import field, required_items, required_text, strings
 from intake import library_source, read_project, ManifestReader
 from native_closure_input import NativeClosureInput
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
-from observation import SETTLE_SECONDS, load_ledger, observe, trace
+from observation import observe, trace
 from jec import begin, record as record_work
 from publication import place, publish
 from rust_activation import DependencyDomain
 from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits, is_dynamic_library
 from registry_metadata import complete_legacy
+from retained_readings import installed_digest
 from rust_target import (
     compiler_sysroot,
     compiler_version,
@@ -37,8 +38,9 @@ from rust_target import (
     inherited_deployment_selection,
     target_configuration,
 )
-from toml_fields import optional_string, optional_strings, read_manifest, required_string
+from toml_fields import optional_string, read_manifest, required_string
 from toolchain import NativeCrate, Toolchain, load_toolchain, located
+from toolchain_access import BINARY_SEPARATOR, read_access
 from unit_freshness import (
     Key,
     artifact_identity,
@@ -135,7 +137,7 @@ pub def read_registry_units(
         if unit.directory not in search:
             search.append(unit.directory)
     record_work("registry_index", path.0, clock)
-    completed = complete_legacy(units)?
+    completed = complete_legacy(units, path)?
     registry = RegistryUnits(
         units=completed,
         search=search,
@@ -361,26 +363,25 @@ def library_type(document: TomlValue, library: Path) -> Result[str, str]:
 
 
 def read_binaries(document: TomlValue, root: Path) -> Result[RustBinaries, str]:
-    """The `[[rust.bin]]` crates, and whether any needs unstable features or the toolchain's own libraries."""
+    """The `[[rust.bin]]` crates, and whether any declares unstable features or links the toolchain's own libraries."""
+    manifest = root.joinpath("loaf.toml").0
     mut crates: list[Tuple[str, str]] = []
     mut unstable = false
     mut sysroot = false
-    for binary in declared_binaries(document)?:
+    binaries = declared_binaries(document)?
+    for index in range(len(binaries)):
+        binary = binaries[index]
         name = required_string(binary, "name")?
         path = required_string(binary, "path")?
         crates.append((name, root.joinpath(path).0))
-        if declares_any(binary, "unstable_features")?:
+        values = binary.as_table().map_err((error) => error.message())?
+        field = ["rust", "bin", str(index)]
+        access = read_access(values, BINARY_SEPARATOR, manifest, field).map_err((error) => error.message())?
+        if len(access.unstable_features) > 0:
             unstable = true
-        if declares_any(binary, "sysroot_dependencies")?:
+        if len(access.sysroot_dependencies) > 0:
             sysroot = true
     return Ok(RustBinaries(crates=crates, unstable=unstable, sysroot=sysroot))
-
-
-def declares_any(table: TomlValue, key: str) -> Result[bool, str]:
-    """Whether a manifest table declares a non-empty list of strings at `key`."""
-    match optional_strings(table, key)?:
-        Some(names) => return Ok(len(names) > 0)
-        None => return Ok(false)
 
 
 pub def facet_slot(facet: LocalFacet, profile: str) -> str:
@@ -482,7 +483,7 @@ pub def prepared_build(request: RustBuild) -> Result[RustBuild, str]:
                     return Err(reason)
     prepared.installed = native_artifacts(selected.externs)
     if prepared.native_compiler == "":
-        prepared.native_compiler = native_compiler_fingerprint(prepared.rustc, prepared.project)?
+        prepared.native_compiler = native_compiler_fingerprint(prepared.rustc)?
     return Ok(prepared)
 
 
@@ -496,10 +497,10 @@ pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
     return artifacts
 
 
-def native_compiler_fingerprint(rustc: str, project: str) -> Result[str, str]:
+def native_compiler_fingerprint(rustc: str) -> Result[str, str]:
     """Identify the actual pinned compiler and SDK by content after resolving the installation's sysroot alias."""
     compiler = Path(rustc).resolve().map_err((error) => error.message())?
-    libraries = toolchain_libraries(compiler.0, project)?
+    libraries = toolchain_libraries(compiler.0)?
     version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
     return fingerprint(
         [
@@ -1020,7 +1021,7 @@ pub def rust_library_producer_key(
     """Reconcile a Rust producer with the actual compiler and exact inputs, independently of installed Incan Loaves."""
     mut compiler = request.native_compiler
     if compiler == "":
-        compiler = native_compiler_fingerprint(request.rustc, request.project)?
+        compiler = native_compiler_fingerprint(request.rustc)?
     return library_key(
         Path(facet.project),
         directory,
@@ -1399,7 +1400,7 @@ pub def compile_binary(
     # 2. The binary links the root's own library first when it has one, then everything the facet links.
     mut libraries: Option[ToolchainLibraries] = None
     if declared.sysroot:
-        libraries = Some(toolchain_libraries(request.rustc, facet.project)?)
+        libraries = Some(toolchain_libraries(request.rustc)?)
     environment = binary_environment(request.rustc, facet.project, declared, crate_id, libraries)?
     # 3. A binary that loads the toolchain's own libraries can find them, wherever its `sysroot` link points.
     if let Some(selected) = libraries:
@@ -1553,7 +1554,7 @@ def binary_key(
                     refusal="unit identity refused: absolute runtime search path",
                 ),
             )
-    compiler = native_compiler_fingerprint(request.rustc, request.project)?
+    compiler = native_compiler_fingerprint(request.rustc)?
     facts = arguments + [f"domain={facet.domain.value()}", f"unstable={declared.unstable}"]
     return library_key(
         Path(facet.project),
@@ -1577,18 +1578,18 @@ pub def binary_environment(
     """The package and pinned-driver identity environment shared by binary compilation and analysis."""
     mut environment = package_environment(project, declared, name)
     if declared.sysroot:
-        libraries = binary_libraries(rustc, project, retained)?
+        libraries = binary_libraries(rustc, retained)?
         for variable in sorted([key for key in libraries.environment.keys()]):
             value = libraries.environment[variable]
             environment[variable] = value
     return Ok(environment)
 
 
-def binary_libraries(rustc: str, project: str, retained: Option[ToolchainLibraries]) -> Result[ToolchainLibraries, str]:
+def binary_libraries(rustc: str, retained: Option[ToolchainLibraries]) -> Result[ToolchainLibraries, str]:
     """Reuse the binary's selected toolchain libraries during both argument and environment construction."""
     match retained:
         Some(selected) => return Ok(selected)
-        None => return toolchain_libraries(rustc, project)
+        None => return toolchain_libraries(rustc)
 
 
 model ToolchainLibraries:
@@ -1605,7 +1606,7 @@ model ToolchainLibraries:
     environment: Dict[str, str]
 
 
-def toolchain_libraries(rustc: str, project: str) -> Result[ToolchainLibraries, str]:
+def toolchain_libraries(rustc: str) -> Result[ToolchainLibraries, str]:
     """
     The pinned toolchain's one `rustc_driver` library (in `lib`) and its identity.
 
@@ -1613,7 +1614,8 @@ def toolchain_libraries(rustc: str, project: str) -> Result[ToolchainLibraries, 
     2. The toolchain's `lib` holds exactly one `rustc_driver`. The rustc-dev component keeps a byte-identical copy in
        `lib/rustlib/<host>/lib`, but only the copy in `lib` finds the libraries it loads itself, such as a Linux
        toolchain's shared LLVM: an ELF loader resolves a library's dependencies through that library's own runpath.
-    3. Its identity is the compiler's version output and the digest of the library's bytes.
+    3. Its identity is the compiler's version output and the digest of the library's bytes, which the home hashes once
+       per library generation (see `retained_readings`).
     """
     # 1. The sysroot and host triple are the pinned compiler's own, so the library found is the one it was built with.
     sysroot = compiler_sysroot(rustc)?
@@ -1635,9 +1637,7 @@ def toolchain_libraries(rustc: str, project: str) -> Result[ToolchainLibraries, 
         return Err(f"{holds}; the rustc component gives exactly one")
     # 3. The identity is content, not location: the compiler's version output and the digest of the library's bytes.
     library = found[0]
-    mut observations = load_ledger(unit_ledger(project, "rustc-driver"), SETTLE_SECONDS, "")
-    digest = observations.digest(library)?
-    observations.save()?
+    digest = installed_digest(library)?
     environment: Dict[str, str] = {"INCAN_DRIVER_RUSTC_IDENTITY": compiler, "INCAN_DRIVER_LIBRARY": f"{relative}/{library.name()}", "INCAN_DRIVER_LIBRARY_DIGEST": digest}
     mut origin = "$ORIGIN"
     if host.endswith("apple-darwin"):

@@ -108,10 +108,44 @@ pub struct UnitDescription {
     pub search_index: Option<PathBuf>,
     /// Rust ABI caches supplied by the toolchain for this unit.
     pub rust_abi: Vec<PathBuf>,
+    /// The rustc-internal access the unit's Loaf declares; a description names it only when there is some, and the
+    /// compiler grants nothing else.
+    #[serde(default, skip_serializing_if = "ToolchainAccess::is_empty")]
+    pub toolchain_access: ToolchainAccess,
     /// The `search` directories the description itself lists, without the index's. A library unit's native closure
     /// publishes these; a consumer of the same toolchain generation adds the index through its own description.
     #[serde(skip)]
     pub own_search: Vec<PathBuf>,
+}
+
+/// The rustc-internal access a Loaf declares (`[build]`), which Oven admitted against the pinned toolchain and bound
+/// into the description: its sysroot dependencies are among the unit's `externs`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolchainAccess {
+    /// Unstable features of the pinned compiler the unit's crate enables, such as `rustc_private`.
+    #[serde(default)]
+    pub unstable_features: Vec<String>,
+    /// Components of the pinned toolchain the unit requires, such as `rustc-dev`.
+    #[serde(default)]
+    pub toolchain_components: Vec<String>,
+    /// Libraries of the pinned toolchain the unit links, such as `rustc_driver`.
+    #[serde(default)]
+    pub sysroot_dependencies: Vec<String>,
+}
+
+impl ToolchainAccess {
+    /// Whether the unit declares no access at all.
+    pub fn is_empty(&self) -> bool {
+        self.unstable_features.is_empty()
+            && self.toolchain_components.is_empty()
+            && self.sysroot_dependencies.is_empty()
+    }
+
+    /// Whether an executable of the unit loads toolchain libraries at run time.
+    pub fn links_sysroot(&self) -> bool {
+        !self.sysroot_dependencies.is_empty()
+    }
 }
 
 /// A toolchain generation's search index, as Oven publishes it.

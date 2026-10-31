@@ -40,6 +40,47 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 use incan_semantics_core::{SemanticRegistrySubjectKind, SemanticRegistryValue, SurfaceModifierTypeCheck};
 use std::collections::{HashMap, HashSet};
 
+/// Prepared lexical inputs of a validated callable, detached between declaration and statement producers.
+/// Declaration validation has completed before this value crosses into statement checking. The bootstrap adapter
+/// retains the exact symbol scope so generic and parameter identities are not recreated at the boundary.
+struct PreparedCallableCheck {
+    scope: crate::symbols::PreparedScope,
+    annotation_owner: Option<super::AnnotationOwner>,
+    bound_details: HashMap<String, Vec<TypeBoundInfo>>,
+    mutable_bindings: HashSet<String>,
+    mut_param_body: super::mut_arguments::MutParamBodyState,
+    return_error_type: Option<ResolvedType>,
+    yield_context: YieldContext,
+    has_statement_body: bool,
+}
+
+/// Enclosing scratch restored after a prepared callable's statement producer returns.
+struct CallableCheckRestore {
+    annotation_owner: Option<super::AnnotationOwner>,
+    mutable_bindings: HashSet<String>,
+    mut_param_body: super::mut_arguments::MutParamBodyState,
+}
+
+/// A function's final declaration inputs and its native-call and receiver context.
+pub(super) struct PreparedFunctionCheck {
+    callable: PreparedCallableCheck,
+    function: Option<Span>,
+    c_abi_raw_call_owner: Option<super::CBindingRawCallOwner>,
+}
+
+/// Checked property receiver and return inputs, retaining the exact lexical scope without re-resolving annotations.
+struct PreparedPropertyCheck {
+    scope: crate::symbols::PreparedScope,
+    return_error_type: Option<ResolvedType>,
+}
+
+/// A method's final declaration inputs and its receiver and classmethod context.
+pub(super) struct PreparedMethodCheck {
+    callable: PreparedCallableCheck,
+    immutable_self_method: Option<String>,
+    classmethod_self_ty: Option<ResolvedType>,
+}
+
 /// Structural equality for trait method signatures (RFC 042 diamond / obligation merging).
 fn method_infos_identical(a: &MethodInfo, b: &MethodInfo) -> bool {
     a.receiver == b.receiver
@@ -2412,18 +2453,14 @@ impl TypeChecker {
     pub fn check_declaration(&mut self, decl: &Spanned<Declaration>) {
         match &decl.node {
             Declaration::Import(_) => {} // Already handled
-            Declaration::Const(konst) => self.check_const(konst, decl.span),
-            Declaration::Static(static_decl) => self.check_static(static_decl, decl.span),
-            Declaration::Model(model) => {
-                self.validate_protected_type_param_bindings(&model.type_params, decl.span);
-                self.check_model(model);
-                self.record_declared_display_route(&model.name, decl.span);
+            Declaration::Const(konst) => {
+                self.check_declaration_owner(decl.span, |checker| checker.check_const(konst, decl.span))
             }
-            Declaration::Class(class) => {
-                self.validate_protected_type_param_bindings(&class.type_params, decl.span);
-                self.check_class(class);
-                self.record_declared_display_route(&class.name, decl.span);
+            Declaration::Static(static_decl) => {
+                self.check_declaration_owner(decl.span, |checker| checker.check_static(static_decl, decl.span))
             }
+            Declaration::Model(model) => self.check_model(model, decl.span),
+            Declaration::Class(class) => self.check_class(class, decl.span),
             Declaration::Trait(tr) => {
                 self.validate_protected_type_param_bindings(&tr.type_params, decl.span);
                 self.check_trait(tr);
@@ -3646,7 +3683,9 @@ impl TypeChecker {
                     incan_lang::lang::stdlib::stdlib_json_trait_id_for_identity(module, name)
                 });
                 match protocol {
-                    Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Serialize) => vec!["serde::Serialize".to_owned()],
+                    Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Serialize) => {
+                        vec!["serde::Serialize".to_owned()]
+                    }
                     Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Deserialize) => {
                         vec!["serde::Deserialize".to_owned()]
                     }
@@ -3724,11 +3763,12 @@ impl TypeChecker {
             .unwrap_or_default()
     }
 
-    /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
-    fn check_model(&mut self, model: &ModelDecl) {
+    /// Validate a model declaration and defaults, returning its exact lexical inputs before member checking begins.
+    fn prepare_model_declaration(&mut self, model: &ModelDecl) -> (crate::symbols::PreparedScope, bool) {
         self.symbols.enter_scope(ScopeKind::Model);
         self.refuse_unbounded_model_members(model);
 
+        // ---- Declared derives ----
         self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
         self.reject_registry_description_decorators(&model.decorators, "model");
         // Validate @derive decorators
@@ -3758,7 +3798,7 @@ impl TypeChecker {
             .iter()
             .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
 
-        // Define type parameters
+        // ---- Generic binders and trait adoptions ----
         for param in &model.type_params {
             self.symbols.define_with_target_kind(
                 Symbol {
@@ -3788,6 +3828,7 @@ impl TypeChecker {
             .collect::<Vec<_>>();
         self.refuse_awaitable_adoptions(&model.name, &resolved_trait_adoptions);
 
+        // ---- Field metadata and checked defaults ----
         let mut method_names = HashSet::new();
         if let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name) {
             method_names.extend(info.methods.keys().cloned());
@@ -3806,6 +3847,28 @@ impl TypeChecker {
 
         self.check_model_fields(model, active_model_fields);
 
+        (self.symbols.suspend_scope(), has_validate)
+    }
+
+    /// Check model members only after its declaration producer has returned final field and default inputs. Keep
+    /// post-member derive validation in its legacy position without enclosing a body in the declaration producer.
+    fn check_model(&mut self, model: &ModelDecl, span: Span) {
+        let index = self.body_checks.len();
+        let (scope, has_validate) = self.check_declaration_owner(span, |checker| {
+            checker.validate_protected_type_param_bindings(&model.type_params, span);
+            checker.prepare_model_declaration(model)
+        });
+        self.symbols.resume_scope(scope);
+        self.check_model_members(model, index);
+        self.continue_declaration_owner(index, |checker| {
+            checker.complete_model_declaration(model, has_validate);
+            checker.symbols.exit_scope();
+            checker.record_declared_display_route(&model.name, span);
+        });
+    }
+
+    /// Check each model member in source order against the same prepared nominal scope used by its declaration.
+    fn check_model_members(&mut self, model: &ModelDecl, declaration: usize) {
         // Check methods
         let active_model_methods = model
             .methods
@@ -3815,7 +3878,9 @@ impl TypeChecker {
         for method in active_model_methods {
             self.check_method_with_owner_type_params(&method.node, method.span, &model.name, &model.type_params);
         }
-        self.check_method_partials(&model.name, &model.method_partials);
+        self.continue_declaration_owner(declaration, |checker| {
+            checker.check_method_partials(&model.name, &model.method_partials)
+        });
         let active_model_properties = model
             .properties
             .iter()
@@ -3824,7 +3889,11 @@ impl TypeChecker {
         for property in active_model_properties {
             self.check_property(property, &model.name, &model.type_params);
         }
+    }
 
+    /// Complete declaration-only derive checks after model member validation, without revisiting its fields or
+    /// defaults.
+    fn complete_model_declaration(&mut self, model: &ModelDecl, has_validate: bool) {
         if has_validate {
             self.check_validate_derive_model(model);
         }
@@ -3840,8 +3909,6 @@ impl TypeChecker {
             &member_spans,
             &model.methods,
         );
-
-        self.symbols.exit_scope();
     }
 
     /// Check explicit model trait conformance after its binders exist, then retain implied derive methods and
@@ -3931,6 +3998,7 @@ impl TypeChecker {
             });
             if let Some(default) = &field.node.default {
                 let field_ty = self.resolve_type_checked(&field.node.ty);
+                self.check_work.field_defaults += 1;
                 let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
                 if !self.types_compatible(&default_ty, &field_ty)
                     && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
@@ -4233,12 +4301,15 @@ impl TypeChecker {
         }
     }
 
-    /// Validate a class declaration after collection, including inheritance, field metadata, traits, and methods.
-    fn check_class(&mut self, class: &ClassDecl) {
+    /// Validate a class declaration and field defaults without entering any member statement producer.
+    fn prepare_class_declaration(
+        &mut self,
+        class: &ClassDecl,
+    ) -> (crate::symbols::PreparedScope, Vec<ResolvedTraitAdoption>) {
         self.symbols.enter_scope(ScopeKind::Class);
         self.refuse_unbounded_class_members(class);
 
-        // Define type parameters before resolving class fields, trait adoptions, and method signatures.
+        // ---- Generic scope and derives ----
         for param in &class.type_params {
             self.symbols.define_with_target_kind(
                 Symbol {
@@ -4267,6 +4338,7 @@ impl TypeChecker {
             self.errors.push(errors::unknown_symbol(base, Span::default()));
         }
 
+        // ---- Trait and field validation ----
         let resolved_trait_adoptions = self.check_class_trait_adoptions(class, &derives);
         let active_class_fields = class
             .fields
@@ -4296,6 +4368,28 @@ impl TypeChecker {
 
         self.check_class_fields(class, active_class_fields);
 
+        (self.symbols.suspend_scope(), resolved_trait_adoptions)
+    }
+
+    /// Check class members after its field/default producer returns, then complete its declaration-only surface
+    /// checks at their original traversal point. No class declaration evaluation encloses a statement producer.
+    fn check_class(&mut self, class: &ClassDecl, span: Span) {
+        let index = self.body_checks.len();
+        let (scope, adoptions) = self.check_declaration_owner(span, |checker| {
+            checker.validate_protected_type_param_bindings(&class.type_params, span);
+            checker.prepare_class_declaration(class)
+        });
+        self.symbols.resume_scope(scope);
+        self.check_class_members(class, index);
+        self.continue_declaration_owner(index, |checker| {
+            checker.complete_class_declaration(class, &adoptions);
+            checker.symbols.exit_scope();
+            checker.record_declared_display_route(&class.name, span);
+        });
+    }
+
+    /// Check each class member in source order using its prepared nominal scope and canonical field identities.
+    fn check_class_members(&mut self, class: &ClassDecl, declaration: usize) {
         // Check methods
         let active_class_methods = class
             .methods
@@ -4305,7 +4399,9 @@ impl TypeChecker {
         for method in active_class_methods {
             self.check_method_with_owner_type_params(&method.node, method.span, &class.name, &class.type_params);
         }
-        self.check_method_partials(&class.name, &class.method_partials);
+        self.continue_declaration_owner(declaration, |checker| {
+            checker.check_method_partials(&class.name, &class.method_partials)
+        });
         let active_class_properties = class
             .properties
             .iter()
@@ -4314,11 +4410,15 @@ impl TypeChecker {
         for property in active_class_properties {
             self.check_property(property, &class.name, &class.type_params);
         }
+    }
+
+    /// Complete class trait-surface and derive checks after its independently checked members.
+    fn complete_class_declaration(&mut self, class: &ClassDecl, resolved_trait_adoptions: &[ResolvedTraitAdoption]) {
         if let Some(TypeInfo::Class(info)) = self.lookup_type_info(&class.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&class.methods);
             self.validate_multi_instantiation_trait_surface(
                 &class.name,
-                &resolved_trait_adoptions,
+                resolved_trait_adoptions,
                 &info.method_overloads,
                 &method_spans,
             );
@@ -4335,8 +4435,6 @@ impl TypeChecker {
             &member_spans,
             &class.methods,
         );
-
-        self.symbols.exit_scope();
     }
 
     /// Validate class decorators and retain explicit/native derive selection, excluding automatic Debug where its
@@ -4585,6 +4683,7 @@ impl TypeChecker {
             });
             if let Some(default) = &field.node.default {
                 let field_ty = self.resolve_type_checked(&field.node.ty);
+                self.check_work.field_defaults += 1;
                 let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
                 if !self.types_compatible(&default_ty, &field_ty)
                     && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
@@ -4751,15 +4850,7 @@ impl TypeChecker {
             .filter(|method| self.member_binding_is_active(method.span))
             .collect::<Vec<_>>();
         for method in active_trait_methods {
-            self.validate_decorators_allowing_user_defined(&method.node.decorators);
-            self.reject_registry_description_decorators(&method.node.decorators, "trait method");
-            let prev_method_seen = self.current_trait_missing_requires_emitted.take();
-            self.current_trait_missing_requires_emitted = Some(std::collections::HashSet::new());
-            // Trait methods are checked against `Self` (the eventual adopter type). Abstract methods have no body, but
-            // their parameter, return, target, and generic-bound annotations still form part of the public trait API.
-            self.check_method_with_self_ty(&method.node, method.span, ResolvedType::SelfType, &tr.type_params);
-            self.current_trait_missing_requires_emitted = prev_method_seen;
-            self.apply_user_defined_method_decorators(&method.node, &tr.name);
+            self.check_trait_method(&method.node, method.span, tr);
         }
         self.check_method_partials(&tr.name, &tr.method_partials);
         let active_trait_properties = tr
@@ -4783,6 +4874,28 @@ impl TypeChecker {
         self.current_trait_name = prev_trait_name;
         self.current_trait_missing_requires_emitted = prev_missing_emitted;
         self.symbols.exit_scope();
+    }
+
+    /// Prepare one trait method's metadata/defaults, consume its body once, and retain post-body decoration
+    /// at the original traversal point. Abstract methods validate their declaration without entering statements.
+    fn check_trait_method(&mut self, method: &MethodDecl, span: Span, tr: &TraitDecl) {
+        let index = self.body_checks.len();
+        let (prepared, previous_seen) = self.check_declaration_owner(span, |checker| {
+            checker.validate_decorators_allowing_user_defined(&method.decorators);
+            checker.reject_registry_description_decorators(&method.decorators, "trait method");
+            let previous = checker.current_trait_missing_requires_emitted.replace(HashSet::new());
+            let prepared = checker.prepare_method_declaration(method, span, ResolvedType::SelfType, &tr.type_params);
+            (prepared, previous)
+        });
+        self.check_prepared_method(method, span, prepared);
+        #[cfg(test)]
+        if method.body.is_some() {
+            self.observe_body_local(span);
+        }
+        self.current_trait_missing_requires_emitted = previous_seen;
+        self.continue_declaration_owner(index, |checker| {
+            checker.apply_user_defined_method_decorators(method, &tr.name)
+        });
     }
 
     /// Return Rust trait metadata for a direct `rust::...` import used in a `with` clause.
@@ -6686,11 +6799,16 @@ impl TypeChecker {
         }
     }
 
-    /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
-    pub(super) fn check_function_in_scope(&mut self, func: &FunctionDecl, decl_span: Span) {
+    /// Produce function validation, defaults and prepared lexical inputs without checking any statement.
+    pub(super) fn prepare_function_declaration(
+        &mut self,
+        func: &FunctionDecl,
+        decl_span: Span,
+    ) -> PreparedFunctionCheck {
         self.check_work.function_declarations += 1;
         self.symbols.enter_scope(ScopeKind::Function);
 
+        // ---- Declaration metadata and generic bounds ----
         self.validate_decorators_allowing_user_defined(&func.decorators);
         self.record_native_attribute_applications(&func.decorators, decl_span);
         self.check_registry_description_decorators(
@@ -6704,24 +6822,9 @@ impl TypeChecker {
         let fixture_args = self.check_function_fixture_marker(func);
         self.validate_surface_modifier_typecheck_actions(&func.surface_modifiers, &func.return_type);
 
-        // Define type parameters so explicit generic bounds are visible in function-level type resolution.
-        for param in &func.type_params {
-            self.symbols.define_with_target_kind(
-                Symbol {
-                    name: param.name.clone(),
-                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
-                    span: param.span,
-                    scope: 0,
-                },
-                SemanticSourceTargetKind::GenericBinder,
-            );
-        }
-        self.refuse_unsupported_callable_markers(&func.type_params, CallableMarkerOwner::Callable);
-        self.validate_type_param_bound_type_names(&func.type_params);
-        let active_bounds = self.type_param_bound_details_from_type_params(&func.type_params);
-        self.current_type_param_bound_details.push(active_bounds);
-        let previous_annotation_owner = self.enter_annotation_owner(&func.name, &func.type_params);
+        let previous_annotation_owner = self.prepare_function_generic_context(func);
 
+        // ---- Signature defaults and frame bindings ----
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
         let return_type = self.resolve_callable_return_annotation(&func.return_type);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
@@ -6741,6 +6844,7 @@ impl TypeChecker {
             self.bind_checked_callable_parameter(param, resolved_ty);
         }
 
+        // ---- Yield and native-call contexts ----
         let has_yield = any_expr_in_body(&func.body, |expr| matches!(expr, Expr::Yield(_)));
         // RFC 006 requires a reachable `yield`: one after an unconditional `return` in its block never runs.
         let has_reachable_yield = has_yield && super::reachability::body_has_reachable_yield(&func.body);
@@ -6774,23 +6878,125 @@ impl TypeChecker {
                     declaration_span: decl_span,
                 });
         let previous_function = self.receiver_plan_inputs.current_function.replace(decl_span);
+        PreparedFunctionCheck {
+            callable: self.suspend_prepared_callable(
+                previous_annotation_owner,
+                previous_mutable_bindings,
+                mut_param_body,
+                yield_context,
+                true,
+            ),
+            function: std::mem::replace(&mut self.receiver_plan_inputs.current_function, previous_function),
+            c_abi_raw_call_owner: std::mem::replace(
+                &mut self.current_c_abi_raw_call_owner,
+                previous_c_abi_raw_call_owner,
+            ),
+        }
+    }
+
+    /// Bind a function's declared generic parameters and bounds before checking its defaults or frame.
+    fn prepare_function_generic_context(&mut self, func: &FunctionDecl) -> Option<super::AnnotationOwner> {
+        // Define type parameters so explicit generic bounds are visible in function-level type resolution.
+        for param in &func.type_params {
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                    span: param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
+        }
+        self.refuse_unsupported_callable_markers(&func.type_params, CallableMarkerOwner::Callable);
+        self.validate_type_param_bound_type_names(&func.type_params);
+        let active_bounds = self.type_param_bound_details_from_type_params(&func.type_params);
+        self.current_type_param_bound_details.push(active_bounds);
+        self.enter_annotation_owner(&func.name, &func.type_params)
+    }
+
+    /// Consume a completed function declaration's lexical frame exactly once. Decoration is separate post-body work;
+    /// no declaration validation or default expression is repeated by this consumer.
+    pub(super) fn check_prepared_function(&mut self, func: &FunctionDecl, span: Span, prepared: PreparedFunctionCheck) {
+        let previous_function = std::mem::replace(&mut self.receiver_plan_inputs.current_function, prepared.function);
+        let previous_raw_owner =
+            std::mem::replace(&mut self.current_c_abi_raw_call_owner, prepared.c_abi_raw_call_owner);
+        let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
         self.check_work.function_bodies += 1;
-        self.check_callable_body_in_frame(&func.body, func.is_async(), yield_context);
+        self.check_callable_body(&func.body, func.is_async(), span, yield_context);
         self.receiver_plan_inputs.current_function = previous_function;
-        self.current_c_abi_raw_call_owner = previous_c_abi_raw_call_owner;
+        self.current_c_abi_raw_call_owner = previous_raw_owner;
+        self.finish_prepared_callable(restore);
+    }
+
+    /// Preserve function decorator application after statement checking while retaining its facts and diagnostics
+    /// with the declaration output. Builtin-only decorators need no post-body expression producer.
+    pub(super) fn complete_function_declaration(&mut self, function: &FunctionDecl, span: Span, index: usize) {
+        if function
+            .decorators
+            .iter()
+            .any(|decorator| self.is_user_defined_decorator_candidate(&decorator.node))
+        {
+            self.continue_declaration_owner(index, |checker| {
+                checker.apply_user_defined_function_decorators(function, span)
+            });
+        }
+    }
+
+    /// Detach the completed declaration's exact lexical frame and checked contexts. Defaults and parameter bindings
+    /// have already been checked; the next producer receives values, not a callback into declaration validation.
+    fn suspend_prepared_callable(
+        &mut self,
+        previous_annotation_owner: Option<super::AnnotationOwner>,
+        previous_mutable_bindings: HashSet<String>,
+        previous_mut_param_body: super::mut_arguments::MutParamBodyState,
+        yield_context: YieldContext,
+        has_statement_body: bool,
+    ) -> PreparedCallableCheck {
+        let Some(bound_details) = self.current_type_param_bound_details.pop() else {
+            unreachable!("callable preparation requires its installed generic-bound frame");
+        };
+        PreparedCallableCheck {
+            scope: self.symbols.suspend_scope(),
+            annotation_owner: std::mem::replace(&mut self.annotation_owner, previous_annotation_owner),
+            bound_details,
+            mutable_bindings: std::mem::replace(&mut self.mutable_bindings, previous_mutable_bindings),
+            mut_param_body: self.suspend_mut_param_body(previous_mut_param_body, has_statement_body),
+            return_error_type: self.current_return_error_type.take(),
+            yield_context,
+            has_statement_body,
+        }
+    }
+
+    /// Enter a completed callable declaration's prepared frame without resolving annotations, defaults or bindings
+    /// again. The symbol table resumes the exact scope, preserving identity and shadowing semantics.
+    fn enter_prepared_callable(&mut self, prepared: PreparedCallableCheck) -> (CallableCheckRestore, YieldContext) {
+        self.symbols.resume_scope(prepared.scope);
+        self.current_type_param_bound_details.push(prepared.bound_details);
+        self.current_return_error_type = prepared.return_error_type;
+        let restore = CallableCheckRestore {
+            annotation_owner: std::mem::replace(&mut self.annotation_owner, prepared.annotation_owner),
+            mutable_bindings: std::mem::replace(&mut self.mutable_bindings, prepared.mutable_bindings),
+            mut_param_body: self.resume_mut_param_body(prepared.mut_param_body, prepared.has_statement_body),
+        };
+        (restore, prepared.yield_context)
+    }
+
+    /// Restore the enclosing scratch after consuming its prepared statement inputs. The declaration scope and its
+    /// generic identities were created once by preparation, never rebound by the statement producer.
+    fn finish_prepared_callable(&mut self, restore: CallableCheckRestore) {
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
-        self.annotation_owner = previous_annotation_owner;
-        self.exit_mut_param_body(mut_param_body);
-        self.mutable_bindings = previous_mutable_bindings;
+        self.annotation_owner = restore.annotation_owner;
+        self.exit_mut_param_body(restore.mut_param_body);
+        self.mutable_bindings = restore.mutable_bindings;
         self.symbols.exit_scope();
-        self.apply_user_defined_function_decorators(func, decl_span);
     }
 
     /// Check one callable's statements inside its already bound declaration frame. Defaults and declaration validation
     /// remain with the caller and are not repeated here. Iterator and C-span flow state belongs to this body and is
     /// restored before another body enters; checked output and pending decisions stay in the active body's writer.
-    fn check_callable_body_in_frame(
+    pub(super) fn check_callable_body_in_frame(
         &mut self,
         body: &[Spanned<Statement>],
         is_async: bool,
@@ -7039,8 +7245,8 @@ impl TypeChecker {
 
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
     ///
-    /// `method_span` is forwarded to [`Self::check_method_with_self_ty`] unchanged; see that method's docs for why
-    /// it is required (#1121 declaration-identity keying).
+    /// `method_span` selects the exact checked declaration binding consumed by Body IR, including same-name
+    /// overloads and methods on different nominal owners (#1121).
     fn check_method_with_owner_type_params(
         &mut self,
         method: &MethodDecl,
@@ -7048,6 +7254,30 @@ impl TypeChecker {
         owner: &str,
         owner_params: &[TypeParam],
     ) {
+        let index = self.body_checks.len();
+        let prepared = self.check_declaration_owner(method_span, |checker| {
+            checker.prepare_owned_method(method, method_span, owner, owner_params)
+        });
+        if let Some((prepared, previous_owner)) = prepared {
+            self.check_prepared_method(method, method_span, prepared);
+            #[cfg(test)]
+            self.observe_body_local(method_span);
+            self.current_method_owner = previous_owner;
+            self.continue_declaration_owner(index, |checker| {
+                checker.apply_user_defined_method_decorators(method, owner)
+            });
+        }
+    }
+
+    /// Validate concrete-method metadata before its signature and defaults. A missing concrete body retains the
+    /// existing early refusal and decorator behavior; no statement producer is fabricated for that declaration.
+    fn prepare_owned_method(
+        &mut self,
+        method: &MethodDecl,
+        span: Span,
+        owner: &str,
+        owner_params: &[TypeParam],
+    ) -> Option<(PreparedMethodCheck, Option<String>)> {
         self.validate_decorators_allowing_user_defined(&method.decorators);
         let declaration_name = format!("{owner}.{}", method.name);
         self.check_registry_description_decorators(
@@ -7062,35 +7292,40 @@ impl TypeChecker {
                 method.return_type.span,
             ));
             self.apply_user_defined_method_decorators(method, owner);
-            return;
+            return None;
         }
-        let owner_type_params = self
+        let self_ty = self.concrete_method_self_type(owner);
+        let previous_owner = self.current_method_owner.replace(owner.to_string());
+        Some((
+            self.prepare_method_declaration(method, span, self_ty, owner_params),
+            previous_owner,
+        ))
+    }
+
+    /// Select the collected owner's exact generic surface for a method's `Self`. Each owner parameter is the body's
+    /// own fixed type, preserving the existing field and constructor checking rule (#1561).
+    fn concrete_method_self_type(&self, owner: &str) -> ResolvedType {
+        let parameters = self
             .lookup_type_info(owner)
             .map(|info| match info {
-                TypeInfo::Model(model) => model.type_params.clone(),
-                TypeInfo::Class(class) => class.type_params.clone(),
-                TypeInfo::Newtype(newtype) => newtype.type_params.clone(),
-                TypeInfo::Enum(enum_info) => enum_info.type_params.clone(),
-                TypeInfo::Builtin | TypeInfo::TypeAlias => Vec::new(),
+                TypeInfo::Model(model) => model.type_params.as_slice(),
+                TypeInfo::Class(class) => class.type_params.as_slice(),
+                TypeInfo::Newtype(newtype) => newtype.type_params.as_slice(),
+                TypeInfo::Enum(enum_info) => enum_info.type_params.as_slice(),
+                TypeInfo::Builtin | TypeInfo::TypeAlias => &[],
             })
-            .unwrap_or_default();
-        let previous_owner = self.current_method_owner.replace(owner.to_string());
-        // Inside the owner's methods its type parameters are the body's own, each one fixed type: `self` of a
-        // `model Box[T]` is a `Box[T]` of that `T`, so a field of type `T` takes only a `T` (#1561).
-        let owner_self_ty = if owner_type_params.is_empty() {
+            .unwrap_or(&[]);
+        if parameters.is_empty() {
             ResolvedType::Named(owner.to_string())
         } else {
             ResolvedType::Generic(
                 owner.to_string(),
-                owner_type_params
+                parameters
                     .iter()
-                    .map(|type_param| ResolvedType::Named(type_param.clone()))
+                    .map(|parameter| ResolvedType::Named(parameter.clone()))
                     .collect(),
             )
-        };
-        self.check_method_with_self_ty(method, method_span, owner_self_ty, owner_params);
-        self.current_method_owner = previous_owner;
-        self.apply_user_defined_method_decorators(method, owner);
+        }
     }
 
     /// Validate a model or class computed property body using the concrete nominal owner as immutable `self`.
@@ -7115,18 +7350,34 @@ impl TypeChecker {
                     .collect(),
             )
         };
-        self.check_property_with_self_ty(&property.node, property.span, owner_self_ty, owner_params);
+        let prepared = self.check_declaration_owner(property.span, |checker| {
+            checker.prepare_property_declaration(&property.node, property.span, owner_self_ty, owner_params)
+        });
+        self.symbols.resume_scope(prepared.scope);
+        self.current_return_error_type = prepared.return_error_type;
+        if let Some(body) = &property.node.body {
+            self.check_property_body(body, property.span);
+        }
+        self.current_return_error_type = None;
+        self.symbols.exit_scope();
+        #[cfg(test)]
+        if property.node.body.is_some() {
+            self.observe_body_local(property.span);
+        }
         self.current_method_owner = previous_owner;
     }
 
-    /// Check a computed property body with the supplied `self` type.
-    fn check_property_with_self_ty(
+    /// Validate a computed property receiver and return annotation without entering its statement producer.
+    fn prepare_property_declaration(
         &mut self,
         property: &PropertyDecl,
         property_span: Span,
         self_ty: ResolvedType,
         owner_params: &[TypeParam],
-    ) {
+    ) -> PreparedPropertyCheck {
+        self.check_work.property_declarations += 1;
+
+        // ---- Receiver scope ----
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: Some(Receiver::Immutable),
         });
@@ -7158,6 +7409,7 @@ impl TypeChecker {
         // `self` resolve to it.
         self.record_write_target_identity(property_span, "self");
 
+        // ---- Checked receiver identity and return ----
         let receiver_identity = self
             .symbols
             .lookup("self")
@@ -7176,18 +7428,13 @@ impl TypeChecker {
         self.symbols.set_return_type(effective_return_type);
         self.current_return_error_type = return_type.result_err_type().cloned();
 
-        if let Some(body) = &property.body {
-            let prev_in_async_body = self.in_async_body;
-            self.in_async_body = false;
-            self.check_statement_block(body);
-            self.in_async_body = prev_in_async_body;
+        PreparedPropertyCheck {
+            scope: self.symbols.suspend_scope(),
+            return_error_type: self.current_return_error_type.take(),
         }
-
-        self.current_return_error_type = None;
-        self.symbols.exit_scope();
     }
 
-    /// Check a method body with the concrete owner type used for `Self` in annotations and classmethod constructors.
+    /// Validate a method declaration and prepare its concrete `Self` frame without checking its statements.
     ///
     /// Generic owners pass `Owner[T, ...]` here so return checking and `cls(...)` constructor calls see the same
     /// generic surface that call sites use. Trait default methods may still pass bare `Self` because their eventual
@@ -7197,16 +7444,18 @@ impl TypeChecker {
     /// unwrapped from). It keys [`DeclarationArtifacts::method_bindings_by_span`](
     /// super::type_info::DeclarationArtifacts::method_bindings_by_span), recorded below once ordinary parameters are
     /// resolved, so Body IR lowering (#1121) can retrieve the checked callable signature for this exact declaration
-    /// instead of re-resolving raw AST annotations. Span is the only key that stays collision-safe across same-name
-    /// methods on different owners and same-owner overloads, mirroring `function_bindings_by_span`.
-    pub(super) fn check_method_in_scope(
+    /// instead of re-resolving raw AST annotations. This revision-local span distinguishes same-name methods on
+    /// different owners and same-owner overloads; persistent identity is supplied separately by the record adapter.
+    pub(super) fn prepare_method_declaration(
         &mut self,
         method: &MethodDecl,
         method_span: Span,
         self_ty: ResolvedType,
         owner_params: &[TypeParam],
-    ) {
+    ) -> PreparedMethodCheck {
         self.check_work.method_declarations += 1;
+
+        // ---- Declaration and receiver inputs ----
         self.validate_protected_type_param_bindings(&method.type_params, method_span);
         self.refuse_receiver_on_static_method(method, method_span);
         self.symbols.enter_scope(ScopeKind::Method {
@@ -7243,6 +7492,7 @@ impl TypeChecker {
             self.current_classmethod_self_ty = Some(self_ty.clone());
         }
 
+        // ---- Parameter bindings and return contract ----
         // Define parameters, capturing each checked callable-parameter fact once so it can be recorded for Body IR
         // lowering below without re-resolving the annotation (and re-emitting any of its diagnostics) a second time.
         let mut checked_params = Vec::with_capacity(method.params.len());
@@ -7282,19 +7532,38 @@ impl TypeChecker {
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();
 
+        // ---- Prepared inputs ----
+        PreparedMethodCheck {
+            callable: self.suspend_prepared_callable(
+                previous_annotation_owner,
+                previous_mutable_bindings,
+                mut_param_body,
+                yield_context,
+                method.body.is_some(),
+            ),
+            immutable_self_method: std::mem::replace(
+                &mut self.current_immutable_self_method,
+                previous_immutable_self_method,
+            ),
+            classmethod_self_ty: std::mem::replace(&mut self.current_classmethod_self_ty, previous_classmethod_self_ty),
+        }
+    }
+
+    /// Consume a method's validated declaration frame without nesting statement checking inside validation.
+    /// Abstract methods restore the same prepared context but never enter a statement producer.
+    pub(super) fn check_prepared_method(&mut self, method: &MethodDecl, span: Span, prepared: PreparedMethodCheck) {
+        let previous_immutable_self =
+            std::mem::replace(&mut self.current_immutable_self_method, prepared.immutable_self_method);
+        let previous_classmethod =
+            std::mem::replace(&mut self.current_classmethod_self_ty, prepared.classmethod_self_ty);
+        let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
         if let Some(body) = &method.body {
             self.check_work.method_bodies += 1;
-            self.check_callable_body_in_frame(body, method.is_async(), yield_context);
+            self.check_callable_body(body, method.is_async(), span, yield_context);
         }
-
-        self.current_return_error_type = None;
-        self.current_classmethod_self_ty = previous_classmethod_self_ty;
-        self.current_type_param_bound_details.pop();
-        self.annotation_owner = previous_annotation_owner;
-        self.current_immutable_self_method = previous_immutable_self_method;
-        self.mutable_bindings = previous_mutable_bindings;
-        self.exit_mut_param_body(mut_param_body);
-        self.symbols.exit_scope();
+        self.current_classmethod_self_ty = previous_classmethod;
+        self.current_immutable_self_method = previous_immutable_self;
+        self.finish_prepared_callable(restore);
     }
 
     /// Refine owner binders before declaring the method's own generic binders and resolving an explicit trait
