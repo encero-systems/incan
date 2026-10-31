@@ -215,6 +215,28 @@ pub def graph_response(arguments: list[str], preferences: Dict[str, int] = {}) -
 
 
 def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) -> Result[str, str]:
+    """Prepare one command and render its answer; no prepared facts outlive the command."""
+    return prepare_inspection(selected)?.respond(preferences)
+
+
+pub model PreparedInspection:
+    """One request's graph selection, shared by its snapshot probe and response and dropped with that request."""
+
+    pub paths: list[GraphUnit]
+    pub root: str
+    pub selected: GraphOptions
+    pub toolchain: Toolchain
+
+    def snapshot(self) -> Result[str, str]:
+        """Identify the exact prepared inputs used by feedback and the answer in this request."""
+        return snapshot_identity(self.paths, self.root, self.selected.strict)
+
+    def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
+        """Render the admitted request over its prepared graph without reopening the dependency closure."""
+        return response(self.paths, self.root, self.selected, self.toolchain, preferences)
+
+
+pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection, str]:
     """
     Prepare and render a validated graph request; CLI syntax failures never enter this boundary.
 
@@ -236,7 +258,7 @@ def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) 
         paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain, selected.query == "defs")?
     trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
-    return response(paths, path.0, selected, toolchain, preferences)
+    return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain))
 
 
 def entry_source(path: Path) -> Path:
