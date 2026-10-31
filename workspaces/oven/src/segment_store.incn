@@ -36,8 +36,7 @@ and live lock precede that switch. A transaction whose writes are all already pr
 
 from rust::std::process import id, exit as process_exit
 from rust::std::rc import Rc
-from jec import begin as begin_work, record as record_work
-from pub::incan_platform.trace import Operation
+from pub::incan_platform.trace import Clock, Operation, WorkObserver
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.environ import get_or
@@ -62,6 +61,27 @@ pub const EXPECT_ANY: int = 0
 pub const EXPECT_ABSENT: int = 1
 pub const EXPECT_ABSENT_OR_DAMAGED: int = 2
 pub const EXPECT_REPAIR: int = 3
+static WORK: WorkObserver = WorkObserver()
+
+
+pub def observe_work(observer: WorkObserver) -> None:
+    """
+    Set this process's work observer before using the store; an empty observer disables observation.
+
+    The caller owns tracing policy and flushing. Configure once before starting store work, never between an
+    operation's start and completion. The store's default observer touches no clock or output channel.
+    """
+    WORK = observer
+
+
+def begin_work() -> Option[Clock]:
+    """Start a store operation through the caller's observer."""
+    return WORK.begin()
+
+
+def record_work(operation: Operation, key: str, clock: Option[Clock]) -> None:
+    """Complete a store operation without importing consumer policy."""
+    WORK.record(operation, key, clock, 0)
 
 
 pub enum Lookup:

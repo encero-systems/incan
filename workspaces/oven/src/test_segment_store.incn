@@ -12,6 +12,8 @@ from std.io import BytesIO
 from store_index import Entry, Location, build, entries as index_entries
 from std.fs import Path
 from pub::incan_platform.durability import sync_ordered
+from pub::incan_platform.trace import Clock, Operation, WorkObserver, begin as begin_span
+from segment_store import observe_work
 from scratch import scratch_directory
 from segment_store import (
     EXPECT_ABSENT,
@@ -43,6 +45,8 @@ from segment_store import (
     repair_current,
     quarantine_record,
 )
+
+static observed_work: dict[str, int] = {}
 
 
 def text(found: Result[Lookup, StoreError]) -> str:
@@ -83,12 +87,14 @@ def count_files(directory: Path) -> int:
 pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_and_absence_apart() -> Result[None, str]:
     """
     A reader's snapshot answers from its own generation; a tombstone is not absence, and a full key is not its locator.
+    A caller-supplied observer sees publication work independently of the store's consumer.
 
     1. An empty store is generation 0, and every key is absent.
     2. Each commit adds one generation; a snapshot taken earlier still answers from its own.
     3. A deleted key answers `Deleted`; a never-written key answers `Absent`.
     """
     scratch = scratch_directory()?
+    verify_work_observer(scratch.path().joinpath("observed"))?
     root = scratch.path().joinpath("store")
     empty = snapshot(root).map_err((error) => error.message())?
     assert empty.generation == 0
@@ -684,3 +690,38 @@ def pinned_collection(root: Path) -> Result[Snapshot, str]:
     )
     old.pin = None
     return Ok(old)
+
+
+def observed_start() -> Option[Clock]:
+    """Use the platform clock without depending on any Oven adapter."""
+    return begin_span(true)
+
+
+def observed_finish(operation: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
+    """Record only names and scalar counters; the observer never changes publication."""
+    assert key != ""
+    assert bytes >= 0
+    match clock:
+        Some(_) => observed_work[operation.key()] = observed_work.get(operation.key(), 0) + 1
+        None =>
+            assert false, "enabled store work lost its clock"
+
+
+def verify_work_observer(root: Path) -> Result[None, str]:
+    """A caller sees all six work spans, and removing it disables further callbacks."""
+    observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
+    _ = write_one(root, "key", "value").map_err((error) => error.message())?
+    for operation in [
+        "store_lock",
+        "store_file_sync",
+        "store_file_write",
+        "store_file_rename",
+        "store_directory_sync",
+        "store_durable_sync",
+    ]:
+        assert observed_work.get(operation, 0) > 0, f"missing store observation: {operation}"
+    calls = observed_work.get("store_lock", 0)
+    observe_work(WorkObserver())
+    _ = write_one(root, "key", "next").map_err((error) => error.message())?
+    assert observed_work.get("store_lock", 0) == calls, "disabled observer still received work"
+    return Ok(None)

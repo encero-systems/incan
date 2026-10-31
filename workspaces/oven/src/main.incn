@@ -34,7 +34,8 @@ from graph_mcp import serve_graph, parse_path
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import HELP_HINT, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage
-from pub::incan_platform.trace import flush as flush_trace
+from pub::incan_platform.trace import WorkObserver, flush as flush_trace
+from segment_store import observe_work
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
@@ -56,6 +57,7 @@ pub model Options:
 
 def main() -> None:
     """Dispatch the CLI and drain observations on normal return; explicit exits drain at their own boundary."""
+    observe_work(WorkObserver(start=Some(begin_work), finish=Some(record_work)))
     command_line()
     _ = flush_trace()
 
