@@ -154,7 +154,7 @@ build_standard_packages() {
         export SELFBUILD_PROFILE=$profile
         export SELFBUILD_ADMITTED_STDLIB=$out/${prefix}standards/$profile-admitted.txt
         : > "$SELFBUILD_ADMITTED_STDLIB"
-        for package in core testing async system codecs compression web data observability vocab interop; do
+        for package in core testing async system primitives codecs compression web data observability vocab interop; do
             native "${prefix}std-$package-$profile" build-native-stdlib.sh "$package"
         done
     done

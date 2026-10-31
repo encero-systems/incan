@@ -1,4 +1,4 @@
-# behavior: graph readers share preparation, preserve body views and linked referents, and agree on identity and freshness
+# behavior: graph readers share preparation, preserve body views and linked referents, complete ambient standard imports, and agree on identity and freshness
 # graph-commands:
 #   src/main.incn --query defs helper
 #   src/main.incn --query callers helper
@@ -11,17 +11,18 @@
 #   src/main.incn --query callers contextual_helper
 # expect-stdout-contains:
 #   declaration provider::helper src/provider.incn:1
-#   call main src/main.incn:28
-#   call provider::helper src/main.incn:28
-#   reference provider::helper src/main.incn:28
+#   call main src/main.incn:29
+#   call provider::helper src/main.incn:29
+#   reference provider::helper src/main.incn:29
 #   import provider::helper src/main.incn:22
 #   declaration graph_checked::main::checked_helper deps/checked/src/lib.incn:6
-#   call main src/main.incn:29
+#   call main src/main.incn:30
 #   declaration graph_context::main::contextual_helper context/src/lib.incn:1
 #   call graph_context::main::contextual context/src/lib.incn:8
 from provider import helper
 from pub::checked import checked_helper
 from rust::serde_json import Value
+from std.primitives import hexlify
 
 def main() -> None:
     """Call a provider whose definition lives in another module."""
