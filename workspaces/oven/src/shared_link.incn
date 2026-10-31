@@ -11,7 +11,7 @@ const SCHEMA: str = "incan.native-shared/1"
 
 
 pub def development_link(unit: UnitDescription, requested: bool) -> bool:
-    """Only debug run and test requests select shared linkage; libraries and build requests retain static linkage."""
+    """Requested debug executables use shared linkage; libraries and release programs retain static linkage."""
     return requested and unit.profile == "debug" and unit.kind != "library"
 
 

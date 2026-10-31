@@ -462,6 +462,7 @@ def check_service_reuse(mut channel: Channel, root: Path, source: Path, turn: in
                 match read_program(root, value.result_handles)?:
                     None => return Err("completed program descriptor is missing")
                     Some(unit) =>
+                        assert Path(f"{unit.binary}.native-shared.json").is_file()
                         output = Command.new(unit.binary).output().map_err((error) => str(error))?
                         assert output.status.success()
                         assert output.stdout == b"hello\x0a"
