@@ -51,6 +51,9 @@ use super::{ConstValue, const_eval};
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct TypeCheckInfo {
+    /// Optional migration-oracle owners, captured only by an explicitly requested oracle activation. They are not
+    /// serialized, are not retained by idle workers, and never authorize a production record read.
+    pub(crate) body_ir_oracle_inputs: Option<super::BodyIrOracleInputs>,
     /// Trait hierarchy metadata consumed by trait impl and default-method lowering.
     pub traits: TraitArtifacts,
     /// Derive expansion metadata imported from dependency modules and manifests.
