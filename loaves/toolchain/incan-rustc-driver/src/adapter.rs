@@ -529,9 +529,9 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                 .iter()
                 .map(|ty| tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, ty)))
                 .collect();
+            let output = tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, &external.return_type));
             if signature.inputs() != parameters
-                || signature.output()
-                    != tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, &external.return_type))
+                || signature.output() != output
                 || signature.c_variadic()
                 || signature.safety().is_unsafe()
             {
@@ -539,7 +539,9 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                     tcx,
                     PlanError::Invalid {
                         function: external.path.clone(),
-                        reason: "external metadata differs from the admitted safe scalar signature".into(),
+                        reason: format!(
+                            "external metadata differs from the admitted safe scalar signature: native {signature:?}, admitted {parameters:?} -> {output:?}"
+                        ),
                     },
                 );
             }
@@ -583,6 +585,10 @@ fn add_source_backed_declarations(
     for value in &plan.enums {
         let span = sources.span(&value.span)?;
         krate.items.extend(enum_items(value, generator, span));
+    }
+    for value in &plan.generic_enums {
+        let span = sources.span(&value.span)?;
+        krate.items.extend(crate::generic_enums::items(value, generator, span));
     }
     for model in &plan.generic_models {
         let span = sources.span(&model.span)?;

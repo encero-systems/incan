@@ -78,6 +78,8 @@ pub from pub::incan_mir_plan import (
     GenericLayoutType,
     GenericLayoutField,
     GenericModelDeclaration,
+    GenericEnumDeclaration,
+    GenericEnumVariant,
     PlanType,
     Projection,
     Rvalue,

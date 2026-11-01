@@ -782,6 +782,7 @@ pub model Plan:
     pub programs: list[str] = []
     # A library publishes each generic ADT once; concrete layouts alias its instantiations.
     pub generic_models: list[GenericModelDeclaration] = []
+    pub generic_enums: list[GenericEnumDeclaration] = []
 
 
 @derive(Clone, PartialEq)
@@ -813,6 +814,25 @@ pub model GenericModelDeclaration:
     pub source_name: str
     pub parameters: list[str]
     pub fields: list[GenericLayoutField]
+    pub derives: list[str]
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model GenericEnumVariant:
+    """One authored variant with generic payload types in declaration order."""
+
+    pub name: str
+    pub fields: list[GenericLayoutType]
+
+
+@derive(Clone, PartialEq)
+pub model GenericEnumDeclaration:
+    """One provider-owned generic enum template; closed plans alias it with exact type arguments."""
+
+    pub name: str
+    pub parameters: list[str]
+    pub variants: list[GenericEnumVariant]
     pub derives: list[str]
     pub span: SourceSpan
 
