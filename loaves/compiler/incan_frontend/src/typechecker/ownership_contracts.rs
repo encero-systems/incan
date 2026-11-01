@@ -8,13 +8,13 @@ use incan_semantics_core::SymbolOrigin;
 
 mod admission;
 mod checked;
-mod flow;
+pub(super) mod flow;
 pub(super) mod projection;
 mod report;
 mod source;
 
 pub(super) use admission::direct_function_boundary;
-pub(super) use source::CallableSource;
+pub(super) use source::{CallableSource, Unavailable};
 
 use super::TypeChecker;
 use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Type};
@@ -330,6 +330,58 @@ mod tests {
                 "unsupported collection admitted: {source}"
             );
         }
+        Ok(())
+    }
+
+    /// Owned local destinations retain their exact initializer event; a later read of the same place cannot stand
+    /// in for that event, and a second destination cannot acquire the first destination's initializer authority.
+    #[test]
+    fn owned_local_initializers_retain_exact_source_events() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def inspect(value: Owned[int]) -> int:\n    let held: Owned[int] = (value)\n    assert value == 1\n    return held\n";
+        let graph = source_graph(source)?.map_err(|error| format!("{error:?}"))?;
+        assert_eq!(graph.owned_locals.len(), 1);
+        assert!(
+            flow::analyze(&graph)
+                .map_err(|error| format!("{error:?}"))?
+                .conflicts
+                .is_empty()
+        );
+        let (destination, initializer) = graph
+            .owned_locals
+            .first_key_value()
+            .ok_or("missing owned initializer")?;
+        assert_eq!(destination.declaration_name, "held");
+        let stored = initializer.source.as_ref().ok_or("missing stored source")?;
+        let index = initializer.access_node.ok_or("missing initializer event")?;
+        let other = graph.nodes.iter().enumerate().find_map(|(candidate, node)| {
+            (candidate != index && matches!(&node.event, flow::Event::Access { place, access: flow::Access::Read, .. } if place == stored)).then_some(candidate)
+        }).ok_or("missing later read of the same place")?;
+        let mut wrong = graph.clone();
+        wrong
+            .owned_locals
+            .get_mut(destination)
+            .ok_or("missing destination")?
+            .access_node = Some(other);
+        assert!(flow::analyze(&wrong).is_err());
+        let mut absent = graph.clone();
+        absent
+            .owned_locals
+            .get_mut(destination)
+            .ok_or("missing destination")?
+            .access_node = None;
+        assert!(flow::analyze(&absent).is_err());
+        let mut outside = graph.clone();
+        outside
+            .owned_locals
+            .get_mut(destination)
+            .ok_or("missing destination")?
+            .access_node = Some(graph.nodes.len());
+        assert!(flow::analyze(&outside).is_err());
+        let mut missing_owner = graph.clone();
+        missing_owner
+            .permissions
+            .remove(&flow::Root::Binding(destination.clone()));
+        assert!(flow::analyze(&missing_owner).is_err());
         Ok(())
     }
 

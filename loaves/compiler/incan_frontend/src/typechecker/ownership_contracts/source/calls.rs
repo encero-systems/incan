@@ -39,7 +39,7 @@ impl Builder<'_> {
         if !matches!(callee.node, Expr::Ident(_)) {
             return Err(Unavailable {
                 span,
-                reason: "callee evaluation needs checked access facts",
+                reason: "callee evaluation needs checked access facts".into(),
             });
         }
         self.apply_call(None, arguments, span, incoming)
@@ -57,7 +57,7 @@ impl Builder<'_> {
         if builtin == BuiltinFnId::Len && arguments.len() != 1 {
             return Err(Unavailable {
                 span,
-                reason: "length observer needs one checked argument",
+                reason: "length observer needs one checked argument".into(),
             });
         }
         for argument in arguments {
@@ -66,7 +66,7 @@ impl Builder<'_> {
                 _ => {
                     return Err(Unavailable {
                         span,
-                        reason: "observer argument expansion is not projected",
+                        reason: "observer argument expansion is not projected".into(),
                     });
                 }
             };
@@ -100,7 +100,7 @@ impl Builder<'_> {
             if !supported {
                 return Err(Unavailable {
                     span: expression.span,
-                    reason: "observer may invoke an unprojected display or length operation",
+                    reason: "observer may invoke an unprojected display or length operation".into(),
                 });
             }
             incoming = self.expression(expression, incoming, false)?;
@@ -126,7 +126,7 @@ impl Builder<'_> {
             .get(&span)
             .ok_or(Unavailable {
                 span,
-                reason: "call has no selected explicit input access facts",
+                reason: "call has no selected explicit input access facts".into(),
             })?;
         let contract = self
             .checker
@@ -136,18 +136,18 @@ impl Builder<'_> {
             .get(&call.callee)
             .ok_or(Unavailable {
                 span,
-                reason: "selected callable contract is missing",
+                reason: "selected callable contract is missing".into(),
             })?;
         if call.owner.as_ref() != Some(&self.owner) {
             return Err(Unavailable {
                 span,
-                reason: "call facts belong to a different callable",
+                reason: "call facts belong to a different callable".into(),
             });
         }
         if call.receiver.is_some() != receiver.is_some() {
             return Err(Unavailable {
                 span,
-                reason: "selected receiver contract does not match call syntax",
+                reason: "selected receiver contract does not match call syntax".into(),
             });
         }
         if contract.result_source.is_some()
@@ -164,17 +164,17 @@ impl Builder<'_> {
         {
             return Err(Unavailable {
                 span,
-                reason: "call needs returned, default or packed-argument dependency facts",
+                reason: "call needs returned, default or packed-argument dependency facts".into(),
             });
         }
         let result = self.checker.type_info.expr_type(span).ok_or(Unavailable {
             span,
-            reason: "missing call result type",
+            reason: "missing call result type".into(),
         })?;
         if !plain_result(result) {
             return Err(Unavailable {
                 span,
-                reason: "call result needs retained dependency facts",
+                reason: "call result needs retained dependency facts".into(),
             });
         }
         let mut paired = TypeChecker::arguments_with_parameter_slots(&call.parameters, arguments)
@@ -184,7 +184,7 @@ impl Builder<'_> {
         if paired.len() != arguments.len() {
             return Err(Unavailable {
                 span,
-                reason: "unpacked call requires checked argument expansion",
+                reason: "unpacked call requires checked argument expansion".into(),
             });
         }
         // ---- Existing call evaluation policy, separate from written provenance ----
@@ -211,7 +211,7 @@ impl Builder<'_> {
         for (written_position, (expression, slot)) in paired {
             let slot = slot.ok_or(Unavailable {
                 span: expression.span,
-                reason: "missing selected argument slot",
+                reason: "missing selected argument slot".into(),
             })?;
             let mode = contract
                 .modes
@@ -236,7 +236,7 @@ impl Builder<'_> {
                     Some(OwnershipMode::Reference) => {
                         return Err(Unavailable {
                             span,
-                            reason: "returned input reference is not an invocation mode",
+                            reason: "returned input reference is not an invocation mode".into(),
                         });
                     }
                 },
@@ -247,7 +247,7 @@ impl Builder<'_> {
         if self.graph.invocations.insert(span, invocation).is_some() {
             return Err(Unavailable {
                 span,
-                reason: "invocation has more than one checked argument binding",
+                reason: "invocation has more than one checked argument binding".into(),
             });
         }
         // ---- Invocation retains every loan, independently of callee body use ----
@@ -300,7 +300,7 @@ impl Builder<'_> {
                 .map(|outgoing| (outgoing, None)),
             _ => Err(Unavailable {
                 span: expression.span,
-                reason: "ordinary argument requires inferred access or mutable binding facts",
+                reason: "ordinary argument requires inferred access or mutable binding facts".into(),
             }),
         }
     }
@@ -318,12 +318,12 @@ impl Builder<'_> {
         }
         let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
             span: expression.span,
-            reason: "temporary argument has no checked type",
+            reason: "temporary argument has no checked type".into(),
         })?;
         if !plain_result(ty) {
             return Err(Unavailable {
                 span: expression.span,
-                reason: "temporary argument needs retained dependency facts",
+                reason: "temporary argument needs retained dependency facts".into(),
             });
         }
         let outgoing = self.expression(expression, incoming, true)?;

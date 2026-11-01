@@ -1,10 +1,10 @@
 # Explicit ownership annotations
 
-Ownership annotations are being introduced in stages. The checker and Body IR admit a limited direct-input profile described below; native qualification of that profile is still pending. Other ownership boundaries are refused with `INCAN-T0123`. Unannotated functions retain their ordinary parameter and return behavior.
+This reference describes ownership annotation syntax and source-checking diagnostics. Its direct-input subset is specified below; other ownership boundaries are refused with `INCAN-T0123`. Source acceptance does not establish native execution support. Unannotated functions retain their ordinary parameter and return behavior.
 
 ## Annotation names
 
-| Annotation | Requested access | Execution |
+| Annotation | Requested access | Source acceptance |
 | --- | --- | --- |
 | `Borrowed[T]` | Shared access to existing storage | Direct-input profile only |
 | `BorrowedMut[T]` | Exclusive borrowed access; `mut` separately permits writes | Direct-input profile only |
@@ -17,10 +17,10 @@ Explicit ownership inside a tuple, outcome, field or callable annotation is also
 
 ## Direct-input profile
 
-Synchronous free functions can use direct `Borrowed[T]`, `BorrowedMut[T]` and `Owned[T]` parameters when the complete body retains checked access and storage facts. The initial profile requires fixed parameters without defaults, generic binders or decorators and straight-line direct access. It preserves existing storage for shared and exclusive inputs, including scalar values, and transfers an owned non-Copy root without adding a repair clone.
+Synchronous free functions can use direct `Borrowed[T]`, `BorrowedMut[T]` and `Owned[T]` parameters within the following restrictions. Functions require fixed parameters without defaults, generic binders or decorators and straight-line direct access. It preserves existing storage for shared and exclusive inputs, including scalar values, and transfers an owned non-Copy root without adding a repair clone.
 
 ```incan
-# Accepted by source checking and Body IR; native qualification is pending.
+# accepted by source checking
 def replace(mut value: BorrowedMut[int]) -> None:
     value = 9
 
@@ -31,9 +31,9 @@ def main() -> int:
     return value
 ```
 
-The same source profile admits local `Borrowed[T]` and `BorrowedMut[T]` aliases when the referent is Copy and the source is a checked local or stored-field path. Reads and writes use that original place; the alias does not allocate an independent value or acquire a separate drop obligation. The checked loan ends after the alias's last use, allowing later access through the original owner. Non-Copy aliases and explicit owned locals remain refused.
+The same source profile admits local `Borrowed[T]` and `BorrowedMut[T]` aliases when the referent is Copy and the source is a local or stored-field path. Reads and writes use that original place; the alias does not allocate an independent value or acquire a separate drop obligation. The borrow ends after the alias's last use, allowing later access through the original owner. Non-Copy aliases and explicit owned locals remain refused.
 
-Methods, returned dependencies, indirect calls, indexed access, conditional transfers and projected non-Copy transfers remain refused. Every calling body also needs its own checked access proof. A valid parameter annotation or a borrowed native signature alone cannot grant that proof. Native call resolution checks the caller independently of the selected callee, including when persisted caller data contains only ordinary parameters.
+Methods, returned dependencies, indirect calls, indexed access, conditional transfers and projected non-Copy transfers remain refused. These restrictions apply to callers as well as callees, including callers whose own parameters have no explicit ownership annotations.
 
 ## Result-source syntax
 
@@ -59,14 +59,14 @@ For checked function and method bodies with direct input contracts or explicit l
 ```incan
 # refused: INCAN-T0123; the replacement also produces INCAN-T0126
 def update(mut value: Owned[int]) -> int:
-    let view: Borrowed[int] = value  # borrow origin
-    value = 2                      # conflicts with the live borrow
-    return view                    # dependent use keeps it live
+    let view: Borrowed[int] = value
+    value = 2  # refused: INCAN-T0126, overlapping live borrow
+    return view
 ```
 
-Selected free-function and method calls retain their declared input access through the invocation, independently of whether the callee reads or writes the argument. A fresh scalar or owned string/byte expression can supply temporary storage for that call. Borrowing an existing variable through parentheses preserves that variable’s permissions; it does not create a fresh writable owner. The analysis currently requires direct input contracts, complete fixed arguments, and scalar or owned string/byte results without retained dependencies.
+Selected free-function and method calls retain their declared input access through the invocation, independently of whether the callee reads or writes the argument. A fresh scalar or owned string/byte expression can supply temporary storage for that call. Borrowing an existing variable through parentheses preserves that variable’s permissions; it does not create a fresh writable owner. This call-access rule requires direct input contracts, complete fixed arguments, and scalar or owned string/byte results without retained dependencies.
 
-Analysis alone does not authorize execution. Only the complete direct-input profile above can pass the current Body IR admission boundary. Returned dependencies, captures, suspension, unprojected calls and other source shapes whose complete dependency facts are unavailable still receive the execution refusal. The absence of `INCAN-T0126` is not proof that such a body has a complete ownership analysis.
+The absence of `INCAN-T0126` does not imply acceptance. Bodies outside the direct-input subset receive `INCAN-T0123`, including returned dependencies, captures and suspension.
 
 ## Place-binding migration warning
 
@@ -83,7 +83,7 @@ def main() -> None:
     title = "new"
 ```
 
-`INCAN-T0125` is emitted for a new local initialized from an existing local, parameter, stored field or known list/dictionary element. Bare, `let` and `mut` declarations are included. Ordinary value-type annotations such as `int` do not suppress the warning. An explicit ownership annotation states its own access request and does not receive this migration warning; explicit local borrowing remains refused. Calls, constructor results, computed properties and explicit clone results do not receive this warning. The warning does not alter runtime behavior.
+`INCAN-T0125` is emitted for a new local initialized from an existing local, parameter, stored field or known list/dictionary element. Bare, `let` and `mut` declarations are included. Ordinary value-type annotations such as `int` do not suppress the warning. An explicit ownership annotation states its own access request and does not receive this migration warning. The direct-input subset defines which explicit local borrows are accepted. Calls, constructor results, computed properties and explicit clone results do not receive this warning. The warning does not alter runtime behavior.
 
 ## Related explanation
 

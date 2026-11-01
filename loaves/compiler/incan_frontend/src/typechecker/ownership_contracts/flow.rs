@@ -10,7 +10,7 @@ use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
 /// One source storage projection. Dynamic indices conservatively overlap every element projection.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Projection {
+pub(in crate::typechecker) enum Projection {
     /// A checked stored field's declaration, independent of its public spelling.
     Field(CanonicalSymbolId),
     /// An element without a checked disjointness proof. The evaluated index identity distinguishes containment;
@@ -21,7 +21,7 @@ pub(super) enum Projection {
 /// A declared storage owner or a bounded argument temporary. Temporary identities retain the real expression,
 /// invocation and callable ancestry; they are not invented declarations and cannot escape into local bindings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Root {
+pub(in crate::typechecker) enum Root {
     /// Canonical parameter, receiver or local declaration with checked binding permissions.
     Binding(CanonicalSymbolId),
     /// Fresh argument storage bounded by one invocation; it never supplies a declaration identity.
@@ -34,7 +34,7 @@ pub(super) enum Root {
 
 /// Source place identity; lexical shadowing changes the root even when the spelling is unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct Place {
+pub(in crate::typechecker) struct Place {
     pub root: Root,
     pub projection: Vec<Projection>,
 }
@@ -58,7 +58,7 @@ impl Place {
 
 /// Checked permissions are independent: exclusive access does not itself grant writes or ownership transfer.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Permission {
+pub(in crate::typechecker) struct Permission {
     pub exclusive: bool,
     pub writable: bool,
     pub transferable: bool,
@@ -66,18 +66,18 @@ pub(super) struct Permission {
 
 /// Per-callable loan identity, allocated once for a resolved borrow expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct LoanId(pub usize);
+pub(in crate::typechecker) struct LoanId(pub usize);
 
 /// Shared or exclusive access, with mutation permission stored independently on the loan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LoanKind {
+pub(in crate::typechecker) enum LoanKind {
     Shared,
     Exclusive,
 }
 
 /// A nonescaping dependency created at a graph node, optionally reborrowed through another loan.
 #[derive(Debug, Clone)]
-pub(super) struct Loan {
+pub(in crate::typechecker) struct Loan {
     pub source: Place,
     pub kind: LoanKind,
     pub writable: bool,
@@ -87,7 +87,7 @@ pub(super) struct Loan {
 
 /// The operation's checked value semantics; Copy reads never masquerade as consuming transfers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Access {
+pub(in crate::typechecker) enum Access {
     Read,
     Write,
     Move,
@@ -96,7 +96,7 @@ pub(super) enum Access {
 
 /// A resolved ownership event. Evaluation order and branch/loop edges belong to the source graph builder.
 #[derive(Debug, Clone)]
-pub(super) enum Event {
+pub(in crate::typechecker) enum Event {
     Nothing,
     Borrow(LoanId),
     Access {
@@ -108,7 +108,7 @@ pub(super) enum Event {
 
 /// One operation and its actual successors; an empty successor set terminates this path.
 #[derive(Debug, Clone)]
-pub(super) struct Node {
+pub(in crate::typechecker) struct Node {
     pub event: Event,
     pub successors: Vec<usize>,
     pub span: HirSourceSpan,
@@ -116,7 +116,7 @@ pub(super) struct Node {
 
 /// One evaluated source argument retains its declaration slot and the loan created for that invocation.
 #[derive(Debug, Clone)]
-pub(super) struct InvocationArgument {
+pub(in crate::typechecker) struct InvocationArgument {
     pub span: HirSourceSpan,
     pub slot: usize,
     pub written_position: usize,
@@ -127,21 +127,79 @@ pub(super) struct InvocationArgument {
 
 /// Evaluation order, original written positions and receiver borrowing belong to this exact selected invocation.
 #[derive(Debug, Clone)]
-pub(super) struct Invocation {
+pub(in crate::typechecker) struct Invocation {
     pub callee: CanonicalSymbolId,
     pub receiver: Option<LoanId>,
     pub arguments: Vec<InvocationArgument>,
 }
 
+/// An explicit owned declaration retains its initializer and the exact event reading or transferring a stored
+/// source. Fresh computed values have neither a source place nor an access node; their evaluation remains in CFG.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct OwnedInitialization {
+    pub initializer: HirSourceSpan,
+    pub source: Option<Place>,
+    pub access_node: Option<usize>,
+}
+
+/// Stored initializer events belong to one explicit destination and must read/move its exact source within the
+/// initializer's expansion-bearing range. This validates retained links; it never discovers them by searching spans.
+fn validate_owned_initializations(graph: &Graph) -> Result<(), InvalidGraph> {
+    let mut sources = BTreeSet::new();
+    for (destination, initializer) in &graph.owned_locals {
+        if destination.kind != incan_semantics_core::SemanticSourceTargetKind::Local
+            || graph.local_loans.contains_key(destination)
+            || graph
+                .permissions
+                .get(&Root::Binding(destination.clone()))
+                .is_none_or(|permission| !permission.transferable)
+        {
+            return Err(InvalidGraph("owned initializer has no independent local owner"));
+        }
+        match (&initializer.source, initializer.access_node) {
+            (None, None) => {}
+            (Some(source), Some(index)) => {
+                if matches!(&source.root, Root::Binding(root) if root == destination)
+                    || !graph.permissions.contains_key(&source.root)
+                    || !sources.insert(index)
+                {
+                    return Err(InvalidGraph("owned initializer has an invalid or reused source access"));
+                }
+                let node = graph
+                    .nodes
+                    .get(index)
+                    .ok_or(InvalidGraph("owned initializer access is outside callable"))?;
+                if node.span.expansion != initializer.initializer.expansion
+                    || node.span.start < initializer.initializer.start
+                    || node.span.end > initializer.initializer.end
+                    || !matches!(&node.event, Event::Access { place, access: Access::Read | Access::Move, .. } if place == source)
+                {
+                    return Err(InvalidGraph(
+                        "owned initializer access differs from its retained source",
+                    ));
+                }
+            }
+            _ => {
+                return Err(InvalidGraph(
+                    "owned initializer source and access must be retained together",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The resolved input of one callable analysis. Unknown identities or malformed edges must refuse validation.
 #[derive(Debug, Clone)]
-pub(super) struct Graph {
+pub(in crate::typechecker) struct Graph {
     /// Exact source callable that produced this graph; a map key alone cannot authenticate a borrowed graph.
     pub owner: CanonicalSymbolId,
     pub permissions: BTreeMap<Root, Permission>,
     pub loans: Vec<Loan>,
     /// Explicit local declarations retain their selected loan independently of display spelling.
     pub local_loans: BTreeMap<CanonicalSymbolId, LoanId>,
+    /// Canonical owned destinations are distinct from local aliases and invocation-bounded argument owners.
+    pub owned_locals: BTreeMap<CanonicalSymbolId, OwnedInitialization>,
     /// Argument-to-loan bindings are retained at construction; lowering must not recover them from similar spans.
     pub invocations: BTreeMap<HirSourceSpan, Invocation>,
     pub nodes: Vec<Node>,
@@ -150,7 +208,7 @@ pub(super) struct Graph {
 
 /// Source conflict category, independent of human diagnostic wording or native compiler diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum ConflictKind {
+pub(in crate::typechecker) enum ConflictKind {
     Permission,
     ActiveLoan(LoanId),
     Moved(usize),
@@ -159,14 +217,14 @@ pub(super) enum ConflictKind {
 
 /// One conflicting operation with its source anchor and dependency origin.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct Conflict {
+pub(in crate::typechecker) struct Conflict {
     pub node: usize,
     pub kind: ConflictKind,
 }
 
 /// Validated liveness facts and source conflicts. A successful analysis can still contain user-program conflicts.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Analysis {
+pub(in crate::typechecker) struct Analysis {
     pub live_before: Vec<BTreeSet<LoanId>>,
     pub live_after: Vec<BTreeSet<LoanId>>,
     pub conflicts: Vec<Conflict>,
@@ -174,11 +232,11 @@ pub(super) struct Analysis {
 
 /// Refuse a malformed checker graph instead of treating missing identities or edges as safe.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct InvalidGraph(pub &'static str);
+pub(in crate::typechecker) struct InvalidGraph(pub &'static str);
 
 /// Analyze resolved edges with backward loan liveness and forward may-move facts. These monotone finite sets
 /// converge over loop back-edges without a timeout or a textual last-use approximation.
-pub(super) fn analyze(graph: &Graph) -> Result<Analysis, InvalidGraph> {
+pub(in crate::typechecker) fn analyze(graph: &Graph) -> Result<Analysis, InvalidGraph> {
     let validated = validate(graph)?;
     let (live_before, live_after) = liveness(graph, &validated);
     let states = incoming_states(graph, &live_before, &live_after);
@@ -211,6 +269,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
         return Err(InvalidGraph("missing entry node"));
     }
     validate_invocations(graph)?;
+    validate_owned_initializations(graph)?;
     let mut origins = vec![None; graph.loans.len()];
     let mut destinations = BTreeSet::new();
     for (local, loan) in &graph.local_loans {
@@ -680,6 +739,7 @@ mod tests {
             .into(),
             loans,
             local_loans: BTreeMap::new(),
+            owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             nodes: events
                 .into_iter()

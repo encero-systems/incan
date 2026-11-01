@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/2"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/2"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/4"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/4"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -79,9 +79,7 @@ pub def encode_record(record: CheckedRecord) -> Result[bytes, CodecFault]:
     return Ok("".join(fragments).encode())
 
 
-pub def decode_record(
-    encoded: bytes, profile: str, owner: str, root: str,
-) -> Result[CheckedRecord, CodecFault]:
+pub def decode_record(encoded: bytes, profile: str, owner: str, root: str) -> Result[CheckedRecord, CodecFault]:
     """
     Decode a complete canonical record, then bind its semantic identity without accepting stale coordinates.
 
@@ -106,10 +104,14 @@ pub def decode_record(
         size = decimal(tokens[offset + 3])?
         if size > MAX_FIELDS or offset + 4 + size > len(tokens):
             return Err(CodecFault.Malformed)
-        fields.append(CanonicalField(
-            family=tokens[offset], node=tokens[offset + 1], selector=tokens[offset + 2],
-            values=tokens[offset + 4:offset + 4 + size],
-        ))
+        fields.append(
+            CanonicalField(
+                family=tokens[offset],
+                node=tokens[offset + 1],
+                selector=tokens[offset + 2],
+                values=tokens[offset + 4:offset + 4 + size],
+            ),
+        )
         offset += 4 + size
     if offset != len(tokens):
         return Err(CodecFault.Malformed)
@@ -138,21 +140,46 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
         return Err(CodecFault.Malformed)
     if len(record.fields) > MAX_FIELDS:
         return Err(CodecFault.Limit)
-    mut previous = ""
+    mut previous_family = ""
+    mut previous_node = ""
+    mut previous_selector = ""
     for field in record.fields:
         # Field names are versioned schema vocabulary, never native field offsets or Debug spellings.
         if field.family not in [
-            "type", "binding", "reference", "write", "builtin", "parameter", "signature", "diagnostic",
-            "status", "default", "final-type", "native-call", "target", "identifier", "effect", "ownership",
+            "type",
+            "binding",
+            "binding-type",
+            "reference",
+            "write",
+            "builtin",
+            "parameter",
+            "signature",
+            "diagnostic",
+            "status",
+            "default",
+            "final-type",
+            "native-call",
+            "target",
+            "identifier",
+            "effect",
+            "mutation",
+            "ownership",
+            "input-call",
+            "input-local",
+            "input-flow",
         ]:
             return Err(CodecFault.Unsupported(field.family))
-        key = field.family + "\x00" + field.node + "\x00" + field.selector
-        if key <= previous or len(field.values) > MAX_FIELDS:
-            return Err(CodecFault.Malformed)
-        if "\x00" in field.family or "\x00" in field.node or "\x00" in field.selector:
+        if (
+            field.family < previous_family
+            or (field.family == previous_family and field.node < previous_node)
+            or (field.family == previous_family and field.node == previous_node and field.selector <= previous_selector)
+            or len(field.values) > MAX_FIELDS
+        ):
             return Err(CodecFault.Malformed)
         validate_field(field)?
-        previous = key
+        previous_family = field.family
+        previous_node = field.node
+        previous_selector = field.selector
     return Ok(None)
 
 
@@ -218,7 +245,11 @@ pub def from_native_fields(rows: list[list[str]]) -> Result[CheckedRecord, Codec
             return Err(CodecFault.Malformed)
         fields.append(CanonicalField(family=row[0], node=row[1], selector=row[2], values=row[3:]))
     record = CheckedRecord(
-        profile=header[4], owner=header[1], root=header[2], family=read_family(header[3])?, fields=fields,
+        profile=header[4],
+        owner=header[1],
+        root=header[2],
+        family=read_family(header[3])?,
+        fields=fields,
     )
     validate(record)?
     return Ok(record)
@@ -241,6 +272,33 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         if field.selector not in ["expr", "body-expr", "assignment", "destination"]:
             return Err(CodecFault.Unsupported(field.selector))
         end = type_end(values, 0, 0)?
+    elif field.family == "binding-type":
+        if field.selector != "body" or field.node == "" or len(values) == 0 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        end = type_end(values, 1, 0)?
+    elif field.family == "mutation":
+        if field.node == "":
+            return Err(CodecFault.Malformed)
+        if field.selector == "reassigned":
+            if values != ["true"]:
+                return Err(CodecFault.Malformed)
+            end = 1
+        elif field.selector == "changed":
+            if len(values) < 2 or values[0] == "":
+                return Err(CodecFault.Malformed)
+            size = decimal(values[1])?
+            if size != len(values) - 2:
+                return Err(CodecFault.Malformed)
+            mut previous = ""
+            for name in values[2:]:
+                if name <= previous:
+                    return Err(CodecFault.Malformed)
+                previous = name
+            end = len(values)
+        else:
+            return Err(CodecFault.Malformed)
+    elif field.family in ["input-call", "input-local", "input-flow"]:
+        end = input_field_end(field)?
     elif field.family == "ownership":
         if field.selector != "contract" or field.node == "":
             return Err(CodecFault.Malformed)
@@ -432,3 +490,199 @@ def ownership_end(values: list[str]) -> Result[int, CodecFault]:
         if identity == "":
             return Err(CodecFault.Malformed)
     return Ok(end + size)
+
+
+class InputFields:
+    """Read bounded ownership primitives; native identities and source anchors remain opaque nonempty handles."""
+
+    values: list[str]
+    offset: int = 0
+    strict_indices: bool = true
+
+    def position(self) -> int:
+        return self.offset
+
+    def parameters(mut self) -> Result[None, CodecFault]:
+        self.offset = parameters_end(self.values, self.offset, 0)?
+        return Ok(None)
+
+    def value_type(mut self) -> Result[None, CodecFault]:
+        self.offset = type_end(self.values, self.offset, 0)?
+        return Ok(None)
+
+    def token(mut self) -> Result[str, CodecFault]:
+        if self.offset >= len(self.values):
+            return Err(CodecFault.Malformed)
+        value = self.values[self.offset]
+        self.offset += 1
+        return Ok(value)
+
+    def tag(mut self, allowed: list[str]) -> Result[str, CodecFault]:
+        value = self.token()?
+        if value not in allowed:
+            return Err(CodecFault.Malformed)
+        return Ok(value)
+
+    def handle(mut self) -> Result[None, CodecFault]:
+        if self.token()? == "":
+            return Err(CodecFault.Malformed)
+        return Ok(None)
+
+    def number(mut self) -> Result[int, CodecFault]:
+        return decimal(self.token()?)
+
+    def count(mut self) -> Result[int, CodecFault]:
+        value = self.number()?
+        if value > len(self.values) - self.offset:
+            return Err(CodecFault.Malformed)
+        return Ok(value)
+
+    def index(mut self, limit: int) -> Result[None, CodecFault]:
+        if self.number()? >= limit and self.strict_indices:
+            return Err(CodecFault.Malformed)
+        return Ok(None)
+
+    def optional_index(mut self, limit: int) -> Result[None, CodecFault]:
+        if self.tag(["none", "some"])? == "some":
+            self.index(limit)?
+        return Ok(None)
+
+    def root(mut self) -> Result[None, CodecFault]:
+        kind = self.tag(["binding", "temporary"])?
+        self.handle()?
+        if kind == "temporary":
+            self.handle()?
+            self.handle()?
+        return Ok(None)
+
+    def place(mut self) -> Result[None, CodecFault]:
+        self.root()?
+        size = self.count()?
+        for _ in range(size):
+            self.tag(["field", "element"])?
+            self.handle()?
+        return Ok(None)
+
+    def ordered(self, previous: str, start: int) -> Result[str, CodecFault]:
+        """A map key uses framed UTF-8 tokens, never native identity order or ambiguous separators."""
+        mut parts: list[str] = []
+        for value in self.values[start:self.offset]:
+            parts.append(str(len(value.encode())) + ":" + value)
+        key = "".join(parts)
+        if key <= previous:
+            return Err(CodecFault.Malformed)
+        return Ok(key)
+
+    def graph(mut self, strict_indices: bool) -> Result[None, CodecFault]:
+        """Retain every permission, dependency, invocation and edge; indices address this graph's own inventories."""
+        self.strict_indices = strict_indices
+        self.handle()?
+        entry = self.number()?
+        permissions = self.count()?
+        mut previous = ""
+        for _ in range(permissions):
+            start = self.offset
+            self.root()?
+            previous = self.ordered(previous, start)?
+            for _ in range(3):
+                self.tag(["true", "false"])?
+        loans = self.count()?
+        for _ in range(loans):
+            self.place()?
+            self.tag(["shared", "exclusive"])?
+            self.tag(["true", "false"])?
+            self.optional_index(loans)?
+            self.handle()?
+        locals = self.count()?
+        previous = ""
+        for _ in range(locals):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.index(loans)?
+        owned = self.count()?
+        previous = ""
+        mut initializer_nodes: list[int] = []
+        for _ in range(owned):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.handle()?
+            has_source = self.tag(["none", "some"])? == "some"
+            if has_source:
+                self.place()?
+            has_access = self.tag(["none", "some"])? == "some"
+            if has_access:
+                initializer_nodes.append(self.number()?)
+            if has_source != has_access and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        invocations = self.count()?
+        previous = ""
+        for _ in range(invocations):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.handle()?
+            self.optional_index(loans)?
+            arguments = self.count()?
+            for _ in range(arguments):
+                self.handle()?
+                self.number()?
+                self.number()?
+                self.tag(["inferred", "shared", "exclusive", "owned"])?
+                self.optional_index(loans)?
+                if self.tag(["none", "some"])? == "some":
+                    self.place()?
+        nodes = self.count()?
+        if entry >= nodes and self.strict_indices:
+            return Err(CodecFault.Malformed)
+        for index in initializer_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for _ in range(nodes):
+            event = self.tag(["nothing", "borrow", "access"])?
+            if event == "borrow":
+                self.index(loans)?
+            elif event == "access":
+                self.place()?
+                self.tag(["read", "write", "move", "replace"])?
+                self.optional_index(loans)?
+            successors = self.count()?
+            for _ in range(successors):
+                self.index(nodes)?
+            self.handle()?
+        return Ok(None)
+
+
+def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
+    """Versioned ownership grammar: invocation contracts, local modes and complete anchored control-flow facts."""
+    if field.node == "":
+        return Err(CodecFault.Malformed)
+    mut reader = InputFields(values=field.values)
+    reader.tag(["1"])?
+    if field.family == "input-call" and field.selector == "contract":
+        if reader.tag(["none", "some"])? == "some":
+            reader.handle()?
+        reader.handle()?
+        reader.tag(["none", "shared", "exclusive"])?
+        reader.parameters()?
+    elif field.family == "input-local" and field.selector == "mode":
+        reader.handle()?
+        reader.handle()?
+        reader.tag(["Borrowed", "BorrowedMut", "Owned", "Reference"])?
+        reader.tag(["true", "false"])?
+        reader.handle()?
+        reader.value_type()?
+    elif field.family == "input-flow" and field.selector == "graph":
+        state = reader.tag(["checked", "invalid", "unavailable"])?
+        if state == "unavailable":
+            reader.handle()?
+            reader.handle()?
+            reader.handle()?
+        else:
+            reader.graph(state == "checked")?
+            if state == "invalid":
+                reader.handle()?
+    else:
+        return Err(CodecFault.Malformed)
+    return Ok(reader.position())
