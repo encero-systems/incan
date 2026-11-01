@@ -32,6 +32,9 @@ impl Builder<'_> {
         {
             return self.observer_call(builtin, arguments, span, incoming);
         }
+        if self.checker.type_info.constructor_field_binding(span).is_some() {
+            return self.model_construction(callee, arguments, span, incoming);
+        }
         if !matches!(callee.node, Expr::Ident(_)) {
             return Err(Unavailable {
                 span,

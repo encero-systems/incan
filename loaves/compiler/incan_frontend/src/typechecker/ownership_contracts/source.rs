@@ -15,6 +15,7 @@ use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod calls;
+mod values;
 
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -382,6 +383,7 @@ impl Builder<'_> {
                 ))
             }
             Expr::Literal(_) => Ok(incoming),
+            Expr::FString(parts) => self.formatted_text(parts, incoming),
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, expression.span, incoming)

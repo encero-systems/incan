@@ -297,3 +297,39 @@ fn missing_local_alias_proof_never_creates_owned_storage() -> Result<(), Box<dyn
     )));
     Ok(())
 }
+
+/// Complete fresh model construction and primitive formatting preserve the nested storage passed to a direct input.
+#[test]
+fn constructed_nested_models_keep_direct_input_authority() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "model Address:\n    city: str\n    postcode: str\nmodel Customer:\n    address: Address\n    name: str\ndef rename(mut city: BorrowedMut[str], replacement: Borrowed[str]) -> None:\n    city = f\"{replacement}\"\ndef main() -> None:\n    mut customer = Customer(address=Address(city=\"Delft\", postcode=\"2611\"), name=\"Ada\")\n    replacement = \"Rotterdam\"\n    rename(customer.address.city, replacement)\n    assert customer.address.city == \"Rotterdam\"\n    assert customer.address.postcode == \"2611\"\n    assert replacement == \"Rotterdam\"\n",
+        false,
+    )?;
+    for body in &module.bodies {
+        assert!(
+            body.first_representation_gap().is_none(),
+            "{}: {:?}",
+            body.name,
+            body.first_representation_gap()
+        );
+    }
+    Ok(())
+}
+
+/// A model's omitted field computation and a non-Copy source field transfer need their own access/storage proof.
+#[test]
+fn construction_defaults_and_noncopy_place_fields_stay_refused() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "model Page:\n    title: str = \"default\"\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    page = Page()\n    return read(1)\n",
+        "model Page:\n    title: str\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    title = \"stored\"\n    page = Page(title=title)\n    return read(1)\n",
+    ] {
+        let module = staged(source, false)?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == "main")
+            .ok_or("no caller")?;
+        assert!(body.first_representation_gap().is_some());
+    }
+    Ok(())
+}
