@@ -73,6 +73,7 @@ pub(super) fn lower_getter_body(
         type_parameters: Vec::new(),
         return_type: returned,
         checked_input_profile: None,
+        explicit_input_bindings: Vec::new(),
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,

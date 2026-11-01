@@ -266,6 +266,7 @@ pub(super) fn finish_static_initializer_body(
         span,
         return_type: ty.clone(),
         checked_input_profile: None,
+        explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -374,6 +375,7 @@ pub(super) fn lower_function_body(
         span: hir_span(decl_span),
         return_type: owner_return_type,
         checked_input_profile,
+        explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -525,6 +527,7 @@ pub(super) fn lower_method_body(
         span: hir_span(decl_span),
         return_type: owner_return_type,
         checked_input_profile: None,
+        explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,

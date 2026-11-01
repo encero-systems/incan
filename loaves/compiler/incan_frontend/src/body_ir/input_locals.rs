@@ -1,9 +1,9 @@
 //! Explicit local declarations project checked loans to existing storage and owned initializers to new owners.
 
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan};
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
-use super::{BodyBuilder, ast, bir};
+use super::{BodyBuilder, ast, bir, hir_span};
 use crate::typechecker::CheckedInputSource;
 
 mod owned;
@@ -55,12 +55,14 @@ impl BodyBuilder<'_, '_> {
                 .local_mode(&identity)
                 .ok_or("explicit local alias has no checked annotation")?;
             if mode == OwnershipMode::Owned {
+                self.retain_input_local_binding(assignment, &identity, IncanInputAccess::Owned);
                 return self.lower_owned_input_binding(assignment, remaining, scope, span, out, &identity);
             }
             if !matches!(mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut) {
                 return Err("explicit returned local requires checked dependency materialization".into());
             }
             let loan = proof.local_loan(&identity, assignment.value.span)?;
+            self.retain_input_local_binding(assignment, &identity, loan.access);
             let ty = self.checked_type(loan.value_type);
             if self.resolve_ty(assignment.value.span) != ty {
                 return Err("explicit local loan cannot coerce or copy its source".into());
@@ -83,5 +85,20 @@ impl BodyBuilder<'_, '_> {
                 .insert(destination, LocalInputAlias { place, writable });
             Ok(())
         })())
+    }
+
+    /// Record the binding's obligation before lowering it, so a body that later refuses still names every explicit
+    /// local it declared.
+    fn retain_input_local_binding(
+        &mut self,
+        assignment: &ast::AssignmentStmt,
+        identity: &CanonicalSymbolId,
+        access: IncanInputAccess,
+    ) {
+        self.input_local_bindings.push(bir::ExplicitInputBinding {
+            declaration: hir_span(assignment.name_span),
+            identity: Some(identity.clone()),
+            access,
+        });
     }
 }

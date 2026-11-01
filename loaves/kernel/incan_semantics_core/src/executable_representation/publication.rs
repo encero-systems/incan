@@ -171,6 +171,10 @@ pub(super) fn project_compiled_frame(
         .next_back()
         .map_or(0, |local| local.index() + 1);
     frame.locals.truncate(retained_slots);
+    // Explicit binding obligations stay; their session-local checker identities do not.
+    for binding in &mut frame.explicit_input_bindings {
+        binding.identity = None;
+    }
     for local in &mut frame.locals {
         local.identity = None;
         if audit.local_slots.contains(&local.id) {
@@ -302,6 +306,9 @@ pub(super) fn project_body(
     for local in &mut body.locals {
         local.identity = None;
         audit.ty(&local.ty)?;
+    }
+    for binding in &mut body.explicit_input_bindings {
+        binding.identity = None;
     }
     audit.parameters(&mut body.params)?;
     audit.statements(&mut body.block.stmts)?;
