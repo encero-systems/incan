@@ -1,3 +1,4 @@
+# behavior: importing an ordinary function preserves the provider's source-only trait alias metadata
 # expect-stdout:
 #   42
 from pub::provider import ping
