@@ -832,3 +832,55 @@ fn ordinary_copy_helper_retains_caller_profile_and_value_operand() -> Result<(),
     );
     Ok(())
 }
+
+/// An explicit local in an otherwise ordinary body keeps its obligation on the body: losing the checked profile
+/// refuses the body and its call to an ordinary helper instead of leaving a body that no longer looks explicit.
+#[test]
+fn explicit_local_requires_profile_when_callee_is_ordinary() -> Result<(), Box<dyn std::error::Error>> {
+    let module = admitted(
+        "def add(value: int) -> int:\n    return value + 1\ndef use(value: int) -> int:\n    let view: Borrowed[int] = value\n    return add(view)\n",
+    )?;
+    let caller = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "use")
+        .ok_or("missing caller")?;
+    let callee = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "add")
+        .ok_or("missing callee")?;
+    assert!(
+        caller
+            .params
+            .iter()
+            .all(|parameter| parameter.input_access.is_inferred())
+    );
+    assert!(
+        callee
+            .params
+            .iter()
+            .all(|parameter| parameter.input_access.is_inferred())
+    );
+    assert!(caller.checked_input_profile.is_some());
+    assert!(matches!(
+        caller.explicit_input_bindings.as_slice(),
+        [bir::ExplicitInputBinding {
+            identity: Some(_),
+            access: incan_semantics_core::IncanInputAccess::Shared,
+            ..
+        }]
+    ));
+    assert!(callee.explicit_input_bindings.is_empty());
+    assert!(caller.input_profile_gap().is_none());
+    assert!(caller.input_call_profile_gap(callee).is_none());
+    let mut stripped = caller.clone();
+    stripped.checked_input_profile = None;
+    assert!(
+        stripped.input_profile_gap().is_some(),
+        "explicit local obligation was erased with the profile"
+    );
+    assert!(stripped.input_call_profile_gap(callee).is_some());
+    assert!(stripped.first_representation_gap().is_some());
+    Ok(())
+}

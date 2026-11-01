@@ -1198,6 +1198,8 @@ struct BodyBuilder<'type_info, 'source> {
     input_paths_checked: bool,
     /// Actual whole non-Copy Owned initializer assignments retained for staged conditional cleanup.
     input_owned_initializers: Vec<bir::CheckedOwnedInitializer>,
+    /// Explicit local bindings, retained on the body so they still require a profile if the profile is lost.
+    input_local_bindings: Vec<bir::ExplicitInputBinding>,
     /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
     input_if_scopes: Vec<bir::ScopeId>,
     /// Canonical provider context that requires an explicit refusal for ambiguous bare builtin spellings.
@@ -1346,6 +1348,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             input_transfer_subjects: std::collections::BTreeSet::new(),
             input_paths_checked: false,
             input_owned_initializers: Vec::new(),
+            input_local_bindings: Vec::new(),
             input_if_scopes: Vec::new(),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
             retain_nominal_carriers: lowering_facts.retain_nominal_carriers,
