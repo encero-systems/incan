@@ -713,7 +713,9 @@ def loaf_item_signature(
                 if parameter.input_access != frame.params[index].input_access:
                     return Err("invalid Body IR Loaf function-item input access contract")
                 input = call_parameter_type(builder, frame, frame.params[index])?
-            None => pass
+            None =>
+                if parameter.input_access != IncanInputAccess.Inferred:
+                    return Err("unsupported native Loaf function-item explicit input access without a provider frame")
         signature.append(input)
     mut result = item_result(builder, declaration.return_type)?
     match declaration.declaration_frame():
