@@ -1811,10 +1811,29 @@ mod tests {
             .swap(0, 1);
         *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
         assert!(analysis.conflicts.is_empty());
+        let reordered_graph = graph.clone();
         assert!(
             facts.checked_input_body(owner).is_err(),
             "accepted reordered complete invocation arguments"
         );
+        for corruption in 0..5 {
+            let mut graph = reordered_graph.clone();
+            let invocation = graph.invocations.get_mut(span).ok_or("missing invocation")?;
+            match corruption {
+                0 => invocation.completion_node = usize::MAX,
+                1 => invocation.final_accesses[0] = usize::MAX,
+                2 => invocation.arguments[0].evaluation.start_node = usize::MAX,
+                3 => invocation.arguments[0].evaluation.end_node = usize::MAX,
+                _ => invocation.arguments[0].evaluation.source_node = Some(usize::MAX),
+            }
+            assert!(
+                matches!(
+                    flow::analyze(&graph),
+                    Err(flow::InvalidGraph("invocation event link is outside callable"))
+                ),
+                "accepted out-of-range invocation link {corruption}"
+            );
+        }
         Ok(())
     }
 
@@ -1886,6 +1905,135 @@ mod tests {
         assert!(
             checker.type_info.direct_input_admission(&owner, function).is_err(),
             "accepted outer loan ending before later argument mutation"
+        );
+        Ok(())
+    }
+
+    /// A fresh argument's complete nested evaluation belongs inside its retained interval. A marker from the
+    /// nested call cannot stand in for the outer argument's start merely because their full source spans agree.
+    #[test]
+    fn invocation_intervals_cover_nested_argument_effects() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def produce(value: Owned[int]) -> int:\n    return value\ndef consume(value: Owned[int]) -> int:\n    return value\ndef use(value: int) -> int:\n    return consume(produce(value))\n";
+        let mut checker = checked(source)?;
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) if function.name == "use" => Some(function),
+                _ => None,
+            })
+            .ok_or("missing use function")?;
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .find(|owner| owner.declaration_name == "use")
+            .cloned()
+            .ok_or("missing owner")?;
+        assert!(checker.type_info.direct_input_admission(&owner, function)?.is_some());
+        let InputFlow::Checked { graph, analysis } = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .get_mut(&owner)
+            .ok_or("missing flow")?
+        else {
+            return Err("missing checked flow".into());
+        };
+        let nested_completion = graph
+            .invocations
+            .values()
+            .find(|call| call.callee.declaration_name == "produce")
+            .ok_or("missing nested call")?
+            .completion_node;
+        graph
+            .invocations
+            .values_mut()
+            .find(|call| call.callee.declaration_name == "consume")
+            .ok_or("missing outer call")?
+            .arguments[0]
+            .evaluation
+            .start_node = nested_completion;
+        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+        assert!(analysis.conflicts.is_empty());
+        assert!(
+            checker.type_info.direct_input_admission(&owner, function).is_err(),
+            "accepted argument interval omitting its nested evaluation"
+        );
+        let mut facts = checked(source)?.type_info;
+        let InputFlow::Checked { graph, .. } = facts
+            .protocols
+            .explicit_input_flow
+            .get_mut(&owner)
+            .ok_or("missing flow")?
+        else {
+            return Err("missing checked flow".into());
+        };
+        let (nested_span, nested) = graph
+            .invocations
+            .iter_mut()
+            .find(|(_, call)| call.callee.declaration_name == "produce")
+            .ok_or("missing nested call")?;
+        let nested_span = *nested_span;
+        nested.arguments.clear();
+        facts
+            .protocols
+            .explicit_input_calls
+            .get_mut(&nested_span)
+            .ok_or("missing selected call")?
+            .parameters
+            .clear();
+        assert!(
+            facts.checked_input_body(&owner).is_err(),
+            "accepted invocation without its canonical explicit input slot"
+        );
+        Ok(())
+    }
+
+    /// Explicit Owned requests copy trivial values; a persisted event cannot silently turn that read into a move.
+    #[test]
+    fn invocation_transfer_kind_uses_checked_copy_facts() -> Result<(), Box<dyn std::error::Error>> {
+        let mut checker = checked(
+            "def read(value: Owned[int]) -> int:\n    return value\ndef use(value: int) -> int:\n    return read(value)\n",
+        )?;
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .find(|owner| owner.declaration_name == "use")
+            .cloned()
+            .ok_or("missing owner")?;
+        let InputFlow::Checked { graph, analysis } = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .get_mut(&owner)
+            .ok_or("missing flow")?
+        else {
+            return Err("missing checked flow".into());
+        };
+        let source_node = graph
+            .invocations
+            .values()
+            .next()
+            .and_then(|call| call.arguments.first())
+            .and_then(|argument| argument.evaluation.source_node)
+            .ok_or("missing Copy source event")?;
+        let flow::Event::Access { access, .. } = &mut graph.nodes[source_node].event else {
+            return Err("missing Copy access".into());
+        };
+        *access = flow::Access::Move;
+        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+        assert!(analysis.conflicts.is_empty());
+        assert!(
+            checker.type_info.checked_input_body(&owner).is_err(),
+            "accepted consuming event for Copy input"
         );
         Ok(())
     }

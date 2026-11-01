@@ -383,6 +383,21 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
 /// Invocation bindings retain a complete slot map and actual source loans through the call boundary.
 fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
     for (span, invocation) in &graph.invocations {
+        let evaluations = invocation
+            .receiver_evaluation
+            .iter()
+            .chain(invocation.arguments.iter().map(|argument| &argument.evaluation));
+        if std::iter::once(invocation.completion_node)
+            .chain(invocation.final_accesses.iter().copied())
+            .chain(evaluations.flat_map(|evaluation| {
+                [evaluation.start_node, evaluation.end_node]
+                    .into_iter()
+                    .chain(evaluation.source_node)
+            }))
+            .any(|index| index >= graph.nodes.len())
+        {
+            return Err(InvalidGraph("invocation event link is outside callable"));
+        }
         let mut slots = BTreeSet::new();
         let mut written_positions = BTreeSet::new();
         for argument in &invocation.arguments {
