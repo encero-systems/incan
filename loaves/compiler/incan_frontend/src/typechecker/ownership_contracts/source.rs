@@ -423,7 +423,7 @@ impl Builder<'_> {
         for expression in expressions {
             let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
                 span: expression.span,
-                reason: "missing checked operand type",
+                reason: "missing checked operand type".into(),
             })?;
             if self.copy_value(ty) {
                 continue;
@@ -472,7 +472,7 @@ impl Builder<'_> {
         {
             return Err(Unavailable {
                 span: operation,
-                reason: "operation has more than one dependency binding",
+                reason: "operation has more than one dependency binding".into(),
             });
         }
         Ok(incoming)

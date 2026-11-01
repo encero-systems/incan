@@ -228,6 +228,8 @@ def ownership_record_controls() -> Result[None, str]:
 def input_protocol_controls() -> Result[None, str]:
     """Execute the real Incan codec on checked loans, source conflicts and unsupported-flow refusals."""
     cases = [
+        ("def observe(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n", "observe"),
+        ("def compare(value: Borrowed[str]) -> bool:\n    let view: Borrowed[str] = value\n    return view == \"yes\"\n", "compare"),
         ("def read(value: Borrowed[int]) -> int:\n    return value\ndef use() -> int:\n    value = 3\n    return read(value)\n", "use"),
         ("def replace(mut value: BorrowedMut[int]) -> int:\n    mut alias: BorrowedMut[int] = value\n    alias = 7\n    return value\n", "replace"),
         ("def consume(value: Owned[str]) -> bool:\n    return value == \"yes\"\ndef use() -> int:\n    value = \"yes\"\n    consume(value)\n    return len(value)\n", "use"),
@@ -236,7 +238,6 @@ def input_protocol_controls() -> Result[None, str]:
         ("def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n", "fresh"),
         ("def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n", "copy"),
         ("def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n", "transfer"),
-
     ]
     for source, owner in cases:
         moved = "# ownership anchors moved\n" + source
@@ -246,6 +247,7 @@ def input_protocol_controls() -> Result[None, str]:
         decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err((_) => "input decode")?
         assert decoded == record
         owned_initializer_grammar(record)?
+        operation_dependency_grammar(record)?
         input_graph_refusals(record)?
         current = from_native_fields(fixture_projection(moved, owner, false).map_err((error) => error.to_string())?).map_err(
             (_) => "input moved",
@@ -258,7 +260,7 @@ def input_protocol_controls() -> Result[None, str]:
             if field.family in ["input-call", "input-local", "input-flow"]:
                 input_field_refusals(record, field)?
         obsolete = CheckedRecord(
-            profile="incan.checker-free-functions/3",
+            profile="incan.checker-free-functions/4",
             owner=record.owner,
             root=record.root,
             family=record.family,
@@ -266,7 +268,7 @@ def input_protocol_controls() -> Result[None, str]:
         )
         match encode_record(obsolete):
             Err(CodecFault.ProfileMismatch) => pass
-            _ => return Err("profile 3 accepted owned initializer facts")
+            _ => return Err("profile 4 accepted operation dependency facts")
     return Ok(None)
 
 
@@ -301,7 +303,7 @@ def input_field_refusals(record: CheckedRecord, field: CanonicalField) -> Result
 def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
     """Owned destinations keep exact initializer links; malformed checked links cannot cross the codec."""
     prefix = ["1", "checked", "owner", "0", "0", "0", "0"]
-    suffix = ["0", "1", "nothing", "0", "node"]
+    suffix = ["0", "0", "1", "nothing", "0", "node"]
     first = ["a", "initializer-a", "none", "none"]
     second = ["b", "initializer-b", "none", "none"]
     valid = prefix + ["2"] + first + second + suffix
@@ -339,14 +341,64 @@ def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
     return Ok(None)
 
 
+def operation_dependency_grammar(record: CheckedRecord) -> Result[None, str]:
+    """Retain operation completion and exact operand dependencies, bounding their graph-local references."""
+    # One shared loan; its borrower remains live through the operation's completion and final read.
+    place = ["binding", "source", "0"]
+    mut prefix = ["1", "checked", "owner", "0", "1", "binding", "source", "false", "false", "false"]
+    prefix += ["1"] + place + ["shared", "false", "none", "loan-anchor", "1", "alias", "0", "0"]
+    operand = ["operand-anchor"] + place + ["0", "2"]
+    operation = ["operation-anchor", "1", "1"] + operand
+    mut suffix = ["0", "3", "borrow", "0", "1", "1", "loan-anchor"]
+    suffix += ["nothing", "1", "2", "operation-anchor", "access"] + place
+    suffix += ["read", "some", "0", "0", "operand-anchor"]
+    field = CanonicalField(
+        family="input-flow",
+        node="owner-node",
+        selector="graph",
+        values=prefix + ["1"] + operation + suffix,
+    )
+    retained = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[field],
+    )
+    encoded = encode_record(retained).map_err((_) => "operation dependency grammar encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
+        (_) => "operation dependency grammar decode",
+    )?
+    assert decoded == retained
+    malformed = [
+        prefix + ["1", "operation-anchor", "3", "1"] + operand + suffix,
+        prefix + ["1", "operation-anchor", "1", "1", "operand-anchor"] + place + ["1", "2"] + suffix,
+        prefix + ["1", "operation-anchor", "1", "1", "operand-anchor"] + place + ["0", "3"] + suffix,
+        prefix + ["2"] + operation + operation + suffix,
+        prefix + ["2", "z-operation", "1", "1"] + operand + ["a-operation", "1", "1"] + operand + suffix,
+    ]
+    for values in malformed:
+        broken = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
+        )
+        match encode_record(broken):
+            Err(CodecFault.Malformed) => pass
+            _ => return Err("malformed checked operation dependency accepted")
+    return Ok(None)
+
+
 def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
     """Checked indices are bounded; an explicitly invalid graph retains its fault instead of acquiring authority."""
-    # One no-op node, no storage permissions, loans, local destinations or invocations.
-    graph = ["owner", "0", "0", "0", "0", "0", "0", "1", "nothing", "0", "node"]
+    # One no-op node, no storage permissions, loans, local destinations, operations or invocations.
+    graph = ["owner", "0", "0", "0", "0", "0", "0", "0", "1", "nothing", "0", "node"]
     malformed = [
         ["1", "checked", "owner", "1"] + graph[2:],
-        ["1", "checked"] + graph[:8] + ["borrow", "0", "0", "node"],
-        ["1", "checked"] + graph[:9] + ["1", "1", "node"],
+        ["1", "checked"] + graph[:9] + ["borrow", "0", "0", "node"],
+        ["1", "checked"] + graph[:10] + ["1", "1", "node"],
         ["1", "checked", "owner", "00"] + graph[2:],
     ]
     for values in malformed:

@@ -4,8 +4,8 @@
 use super::types::next;
 use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
-    Access, Event, Graph, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node, OwnedInitialization,
-    Permission, Place, Projection, Root,
+    Access, Event, Graph, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node, OperandDependency,
+    OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::BTreeMap;
@@ -154,6 +154,21 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         owned.push((key, row));
     }
     ordered_fields(owned, fields)?;
+    let mut operations = Vec::new();
+    for (span, operation) in &graph.operations {
+        let mut row = vec![anchor(positions, *span)?];
+        let key = canonical_key(&row);
+        row.push(operation.completion_node.to_string());
+        row.push(operation.operands.len().to_string());
+        for operand in &operation.operands {
+            row.push(anchor(positions, operand.operand)?);
+            place(positions, &operand.source, &mut row)?;
+            row.push(operand.loan.0.to_string());
+            row.push(operand.final_access.to_string());
+        }
+        operations.push((key, row));
+    }
+    ordered_fields(operations, fields)?;
     let mut invocations = Vec::new();
     for (span, invocation) in &graph.invocations {
         let mut row = vec![anchor(positions, *span)?];
@@ -381,6 +396,35 @@ impl Reader<'_> {
                 return Err(NodeBindingError::MissingNode);
             }
         }
+        let mut operations = BTreeMap::new();
+        let mut previous = String::new();
+        for _ in 0..self.count()? {
+            let before = self.values.as_slice();
+            let operation = self.semantic_span()?;
+            ordered_key(&mut previous, before, self.values.len())?;
+            let completion_node = self.number()?;
+            let mut operands = Vec::new();
+            for _ in 0..self.count()? {
+                operands.push(OperandDependency {
+                    operand: self.semantic_span()?,
+                    source: self.place()?,
+                    loan: LoanId(self.number()?),
+                    final_access: self.number()?,
+                });
+            }
+            if operations
+                .insert(
+                    operation,
+                    OperationInputs {
+                        completion_node,
+                        operands,
+                    },
+                )
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
         let mut invocations = BTreeMap::new();
         let mut previous = String::new();
         for _ in 0..self.count()? {
@@ -469,6 +513,7 @@ impl Reader<'_> {
             loans,
             local_loans,
             owned_locals,
+            operations,
             invocations,
             nodes,
         })

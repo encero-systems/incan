@@ -143,7 +143,7 @@ pub(crate) fn project(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             if declaration { "declaration" } else { "final" }.into(),
-            "incan.checker-free-functions/4".into(),
+            "incan.checker-free-functions/5".into(),
         ],
     );
     Ok(fields)
@@ -161,7 +161,7 @@ fn restore(
         .first()
         .filter(|header| header.len() == 5)
         .ok_or(NodeBindingError::MissingOwner)?;
-    if header[0] != "header" || header[4] != "incan.checker-free-functions/4" {
+    if header[0] != "header" || header[4] != "incan.checker-free-functions/5" {
         return Err(NodeBindingError::Unsupported("record profile"));
     }
     if header[1] != positions.nodes.owner().render_compact() {
@@ -841,7 +841,7 @@ pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Field
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             "local".into(),
-            "incan.checker-free-functions/4".into(),
+            "incan.checker-free-functions/5".into(),
         ],
     );
     Ok(fields)

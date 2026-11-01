@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/4"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/4"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/5"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/5"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -616,6 +616,20 @@ class InputFields:
                 initializer_nodes.append(self.number()?)
             if has_source != has_access and self.strict_indices:
                 return Err(CodecFault.Malformed)
+        operations = self.count()?
+        previous = ""
+        mut operation_nodes: list[int] = []
+        for _ in range(operations):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            operation_nodes.append(self.number()?)
+            operands = self.count()?
+            for _ in range(operands):
+                self.handle()?
+                self.place()?
+                self.index(loans)?
+                operation_nodes.append(self.number()?)
         invocations = self.count()?
         previous = ""
         for _ in range(invocations):
@@ -637,6 +651,9 @@ class InputFields:
         if entry >= nodes and self.strict_indices:
             return Err(CodecFault.Malformed)
         for index in initializer_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for index in operation_nodes:
             if index >= nodes and self.strict_indices:
                 return Err(CodecFault.Malformed)
         for _ in range(nodes):

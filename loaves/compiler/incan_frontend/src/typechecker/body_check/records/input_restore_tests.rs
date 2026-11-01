@@ -113,3 +113,66 @@ fn owned_initializer_restore_requires_the_exact_source_event() -> Result<(), Box
     }
     Ok(())
 }
+
+/// Operation-specific invalid facts retain their exact refusal; neither a successful label nor another fault can
+/// authorize missing completion or consumption nodes after restoration.
+#[test]
+fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        "def observe(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
+    let (program, checker, owner) = fixture(source, "observe")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let fields = project(&checker, &program, owner, false)?;
+    let checked = fields
+        .into_iter()
+        .find(|row| row.first().is_some_and(|family| family == "input-flow"))
+        .ok_or("missing observed operation graph")?;
+    let mut reader = Reader {
+        positions: &positions,
+        values: checked[5..].iter(),
+    };
+    let graph = reader.graph()?;
+    reader.finish()?;
+    assert_eq!(graph.operations.len(), 1);
+    for completion in [true, false] {
+        let mut altered = graph.clone();
+        let missing_node = altered.nodes.len();
+        let operation = altered.operations.values_mut().next().ok_or("missing operation")?;
+        if completion {
+            operation.completion_node = missing_node;
+        } else {
+            operation.operands.first_mut().ok_or("missing operand")?.final_access = missing_node;
+        }
+        let fault = crate::typechecker::ownership_contracts::flow::analyze(&altered)
+            .err()
+            .ok_or("invalid operation unexpectedly analyzed")?;
+        let mut row = checked[..5].to_vec();
+        super::input_flow::project(&positions, &altered, &mut row)?;
+        let mut refused = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut refused, &row).is_err());
+        assert!(refused.protocols.explicit_input_flow.is_empty());
+
+        row[4] = "invalid".into();
+        row.push(fault.0.into());
+        let mut retained = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        restore(&positions, &mut retained, &row)?;
+        assert!(matches!(retained.protocols.explicit_input_flow.get(&graph.owner),
+            Some(InputFlow::Invalid { graph: restored, fault: actual })
+                if actual == &fault && restored.operations.len() == altered.operations.len()));
+
+        *row.last_mut().ok_or("missing operation fault")? = "missing entry node".into();
+        let mut mismatched = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut mismatched, &row).is_err());
+        assert!(mismatched.protocols.explicit_input_flow.is_empty());
+    }
+    Ok(())
+}
