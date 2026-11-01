@@ -5,6 +5,7 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
     IncanCallableParam,
     IncanCallableParamKind,
+    IncanInputAccess,
 )
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
@@ -217,12 +218,16 @@ def generic_callable_input(
     """
     match parameter.ty:
         RustType.TypeVar(_name) =>
-            if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
+            if (
+                parameter.kind != IncanCallableParamKind.Normal
+                or parameter.is_mut
+                or parameter.input_access != IncanInputAccess.Inferred
+            ):
                 return Err("unsupported Body IR generic callable field input ownership")
             return generic_field_type(constructors, module, parameter.ty, parameters)
         _ => pass
     component = callable_component(parameter.ty)?
-    storage = packed_input(component, parameter.kind, parameter.is_mut, parameter.native_owned)?
+    storage = packed_input(component, parameter.kind, parameter.is_mut, parameter.native_owned, parameter.input_access)?
     return Ok(GenericLayoutType.Concrete(storage))
 
 

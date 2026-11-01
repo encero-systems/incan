@@ -93,6 +93,7 @@ def representation_type(
                         is_partial_preset=false,
                         is_mut=parameter.is_mut,
                         native_owned=parameter.native_owned,
+                        input_access=parameter.input_access,
                     ),
                 )
             return function_type(retained, representation_type(declarations, constructors, result))

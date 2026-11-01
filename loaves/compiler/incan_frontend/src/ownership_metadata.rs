@@ -132,3 +132,84 @@ impl<T, I> OwnershipContract<T, I> {
 /// Native checked projection; source positions are not stored in its relationship payload.
 pub type CheckedOwnershipContract =
     OwnershipContract<crate::symbols::ResolvedType, incan_semantics_core::CanonicalSymbolId>;
+
+/// Translate only direct input modes. A retained Reference is a result dependency, never an input passing mode.
+pub(crate) fn source_input_access(
+    mode: incan_lang::lang::types::ownership::OwnershipMode,
+) -> Option<incan_semantics_core::IncanInputAccess> {
+    use incan_lang::lang::types::ownership::OwnershipMode;
+    use incan_semantics_core::IncanInputAccess;
+    match mode {
+        OwnershipMode::Borrowed => Some(IncanInputAccess::Shared),
+        OwnershipMode::BorrowedMut => Some(IncanInputAccess::Exclusive),
+        OwnershipMode::Owned => Some(IncanInputAccess::Owned),
+        OwnershipMode::Reference => None,
+    }
+}
+
+/// Resolve only a direct canonical input request. Nested dependencies and returned Reference modes require a
+/// later representation; absence of metadata grants ordinary inference, never an explicit access mode.
+pub(crate) fn direct_input_access(
+    contract: Option<&CheckedOwnershipContract>,
+    slot: usize,
+) -> Result<incan_semantics_core::IncanInputAccess, &'static str> {
+    Ok(direct_input_mode(contract, slot)?
+        .map_or(incan_semantics_core::IncanInputAccess::Inferred, |(_, access)| access))
+}
+
+/// Keep the source mode and its payload together after validating the selected structural slot.
+fn direct_input_mode(
+    contract: Option<&CheckedOwnershipContract>,
+    slot: usize,
+) -> Result<
+    Option<(
+        &AccessMode<crate::symbols::ResolvedType>,
+        incan_semantics_core::IncanInputAccess,
+    )>,
+    &'static str,
+> {
+    let Some(contract) = contract else { return Ok(None) };
+    if contract.schema_version != 1 {
+        return Err("unsupported checked input ownership contract schema");
+    }
+    let mut modes = contract
+        .modes
+        .iter()
+        .filter(|mode| mode.component.parameter == Some(slot));
+    let Some(mode) = modes.next() else { return Ok(None) };
+    if modes.next().is_some() || !mode.component.children.is_empty() {
+        return Err("nested input ownership requires a dependency representation");
+    }
+    let access =
+        source_input_access(mode.mode).ok_or("returned reference ownership is not an executable input contract")?;
+    Ok(Some((mode, access)))
+}
+
+/// Expose an instantiated input's value type only after its canonical declaration authorizes a direct mode.
+/// The closed argument is retained instead of substituting the declaration's potentially open underlying type.
+/// Same-spelled user types without an owning contract remain untouched. Fixed payload structure must agree;
+/// a declaration binder may close consistently but cannot erase a concrete component mismatch.
+pub(crate) fn input_value_type<'a>(
+    contract: Option<&CheckedOwnershipContract>,
+    slot: usize,
+    parameter: &'a crate::symbols::ResolvedType,
+) -> Result<&'a crate::symbols::ResolvedType, &'static str> {
+    let Some((mode, _)) = direct_input_mode(contract, slot)? else {
+        return Ok(parameter);
+    };
+    let crate::symbols::ResolvedType::Generic(_, arguments) = parameter else {
+        return Err("selected ownership contract does not match its parameter metadata");
+    };
+    let [underlying] = arguments.as_slice() else {
+        return Err("selected ownership input requires exactly one value type");
+    };
+    if !input_payload::matches(&mode.underlying, underlying) {
+        return Err("selected ownership input payload differs from its checked declaration");
+    }
+    Ok(underlying)
+}
+
+mod input_payload;
+
+#[cfg(test)]
+mod tests;

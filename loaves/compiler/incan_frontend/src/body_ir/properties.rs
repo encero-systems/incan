@@ -72,6 +72,7 @@ pub(super) fn lower_getter_body(
         span,
         type_parameters: Vec::new(),
         return_type: returned,
+        checked_input_profile: None,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -89,6 +90,7 @@ pub(super) fn lower_getter_body(
             span,
             default: bir::CallableParamDefault::Required,
             mutable: false,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
             native_owned: false,
         }],
         param_locals: vec![receiver],

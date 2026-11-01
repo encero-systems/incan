@@ -191,6 +191,7 @@ mod tests {
                 has_default: false,
                 is_partial_preset: false,
                 is_mut: false,
+                input_access: crate::IncanInputAccess::Inferred,
                 native_owned: false,
             })
             .collect::<Vec<_>>();

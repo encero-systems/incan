@@ -26,7 +26,7 @@ fn decorated_parameter_matches(
     left: &crate::IncanCallableParam,
     right: &crate::body_ir::CallableParam,
 ) -> bool {
-    if left.kind != right.kind || left.native_owned != right.native_owned {
+    if left.kind != right.kind || left.native_owned != right.native_owned || left.input_access != right.input_access {
         return false;
     }
     match body.locals.get(right.local.index()).map(|local| &local.origin) {

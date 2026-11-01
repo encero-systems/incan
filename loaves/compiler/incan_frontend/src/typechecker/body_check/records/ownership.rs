@@ -131,28 +131,33 @@ fn number(value: &str) -> Result<usize, NodeBindingError> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{fixture_projection, verify_fixture};
+    use super::super::{NodeBindingError, fixture_projection, verify_fixture};
 
-    /// A source contract survives canonical primitive round trips, source movement and name-independent slot encoding.
+    /// Declaration contracts survive source movement and name-independent slot encoding. Body records refuse the
+    /// newer flow payload until their versioned Incan schema can preserve the entire ownership proof.
     #[test]
     fn checked_ownership_records_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let source = "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
         let moved = format!("# moved source\n{source}");
-        for declaration in [true, false] {
-            let fields = fixture_projection(source, "view", declaration)?;
-            assert!(
-                fields
-                    .iter()
-                    .any(|row| row.first().is_some_and(|family| family == "ownership"))
-            );
-            assert_eq!(fields, fixture_projection(&moved, "view", declaration)?);
-            verify_fixture(&moved, "view", fields.clone())?;
-            let missing: Vec<_> = fields.iter().filter(|row| row[0] != "ownership").cloned().collect();
-            assert!(verify_fixture(source, "view", missing).is_err());
-            let mut obsolete = fields;
-            obsolete[0][4] = "incan.checker-free-functions/1".into();
-            assert!(verify_fixture(source, "view", obsolete).is_err());
-        }
+        // Declaration contracts keep their portable profile. Bodies now own source-flow facts; version 2 cannot
+        // erase those facts and must refuse until its Incan-owned schema gains the complete flow representation.
+        let fields = fixture_projection(source, "view", true)?;
+        assert!(
+            fields
+                .iter()
+                .any(|row| row.first().is_some_and(|family| family == "ownership"))
+        );
+        assert_eq!(fields, fixture_projection(&moved, "view", true)?);
+        verify_fixture(&moved, "view", fields.clone())?;
+        let missing: Vec<_> = fields.iter().filter(|row| row[0] != "ownership").cloned().collect();
+        assert!(verify_fixture(source, "view", missing).is_err());
+        let mut obsolete = fields;
+        obsolete[0][4] = "incan.checker-free-functions/1".into();
+        assert!(verify_fixture(source, "view", obsolete).is_err());
+        assert!(matches!(
+            fixture_projection(source, "view", false),
+            Err(NodeBindingError::Unsupported("ProtocolArtifacts.explicit_input_flow"))
+        ));
         Ok(())
     }
 }

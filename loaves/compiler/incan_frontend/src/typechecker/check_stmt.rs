@@ -926,7 +926,26 @@ impl TypeChecker {
     /// trait-typed locals must not proceed to codegen because Rust has no valid bare trait type for `let` annotations.
     fn check_assignment_binding(&mut self, assign: &AssignmentStmt, span: Span) {
         let target_span = assign.name_span;
-        let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
+        let new_local = Self::binding_introduces_name(assign.binding)
+            || (self.lookup_variable_info_in_scope_chain(&assign.name).is_none()
+                && self.lookup_static_info(&assign.name).is_none());
+        let defer_local = new_local
+            && self
+                .current_body_identity()
+                .is_some_and(|owner| owner.kind == incan_semantics_core::SemanticSourceTargetKind::Function);
+        let annotated_ty = assign
+            .ty
+            .as_ref()
+            .map(|ty_ann| self.resolve_type_checked_for_input(ty_ann, defer_local));
+        let explicit_mode = assign
+            .ty
+            .as_ref()
+            .zip(annotated_ty.as_ref())
+            .and_then(|(annotation, ty)| self.explicit_root_contract(&annotation.node, ty));
+        let annotated_ty = explicit_mode
+            .as_ref()
+            .map(|mode| mode.underlying.clone())
+            .or(annotated_ty);
         // `let` and `mut` are declaration forms: they introduce a binding that may deliberately shadow an active
         // outer one, so they never resolve against the scope chain. Only a bare `x = value` asks "does this name
         // already exist somewhere out there", and the two halves have to move together — walking outward without
@@ -1013,10 +1032,15 @@ impl TypeChecker {
             return;
         }
 
-        self.warn_place_binding_migration(assign);
+        if explicit_mode.is_none() {
+            self.warn_place_binding_migration(assign);
+        }
 
         // New binding
-        let is_mutable = matches!(assign.binding, BindingKind::Mutable);
+        let is_mutable = matches!(assign.binding, BindingKind::Mutable)
+            && explicit_mode
+                .as_ref()
+                .is_none_or(|mode| mode.mode != incan_lang::lang::types::ownership::OwnershipMode::Borrowed);
 
         if is_mutable {
             self.mutable_bindings.insert(assign.name.clone());
@@ -1024,6 +1048,34 @@ impl TypeChecker {
 
         let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
         self.declare_assignment_binding(assign, ty, is_mutable, introduces_binding, span);
+        self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
+    }
+
+    /// Preserve the requested mode on this exact newly declared local and callable. Capturing it before lookup is
+    /// changed prevents a binding named like a prelude mode from rewriting its own or another body's contract.
+    fn record_explicit_local_mode(
+        &mut self,
+        assign: &AssignmentStmt,
+        explicit_mode: Option<crate::ownership_metadata::AccessMode<ResolvedType>>,
+        is_mutable: bool,
+    ) {
+        if let Some(mode) = explicit_mode
+            && let Some(annotation) = &assign.ty
+            && let Some(identity) = self.type_info.resolved_write_identity(assign.name_span, &assign.name)
+            && identity.declaration_span == assign.name_span
+            && let Some(owner) = self.current_body_identity().cloned()
+        {
+            self.type_info.protocols.explicit_local_modes.insert(
+                identity.clone(),
+                super::ownership_contracts::LocalMode {
+                    owner,
+                    mode: mode.mode,
+                    value_type: mode.underlying,
+                    writable: is_mutable,
+                    annotation: annotation.span,
+                },
+            );
+        }
     }
 
     /// Settle a new local's declared or inferred carrier after its value has checked. Unsupported trait annotations

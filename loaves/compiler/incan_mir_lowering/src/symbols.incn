@@ -5,6 +5,7 @@ from rust::incan_semantics_core import (
     IncanPrimitiveType as Primitive,
     IncanCallableParam,
     IncanCallableParamKind,
+    IncanInputAccess,
     NumericTypeId,
     RuntimeBuiltinType,
 )
@@ -105,8 +106,17 @@ def parameter_component(parameter: &IncanCallableParam) -> str:
     return (
         encoded + flag_component(parameter.has_default) + flag_component(parameter.is_partial_preset) + flag_component(
             parameter.is_mut,
-        ) + flag_component(parameter.native_owned)
+        ) + flag_component(parameter.native_owned) + input_access_component(parameter.input_access)
     )
+
+
+def input_access_component(access: &IncanInputAccess) -> str:
+    """Keep explicit access contracts distinct even when their underlying value and binding mutability agree."""
+    match access:
+        IncanInputAccess.Inferred => return "_access_inferred"
+        IncanInputAccess.Shared => return "_access_shared"
+        IncanInputAccess.Exclusive => return "_access_exclusive"
+        IncanInputAccess.Owned => return "_access_owned"
 
 
 def parameter_kind_component(kind: &IncanCallableParamKind) -> str:
