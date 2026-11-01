@@ -2691,6 +2691,14 @@ impl TypeCheckInfo {
                 let Some(identity) = identity else {
                     return IncanType::Named(name);
                 };
+                // A generated SDK result has an exact provider binding even when a source declaration shadows its
+                // short name. Keep that retained binding instead of erasing it into the local spelling.
+                if name != identity.declaration_name
+                    && self.declarations.body_ir_native_type_identities.get(&name) == Some(identity)
+                    && incan_semantics_core::body_ir::native_nominal_item(identity).is_some()
+                {
+                    return IncanType::Named(name);
+                }
                 let Some(key) = incan_semantics_core::body_ir::nominal_carrier_key(identity) else {
                     return IncanType::Named(identity.declaration_name.clone());
                 };

@@ -2777,10 +2777,17 @@ impl TypeChecker {
         let name = surface_types::as_str(SurfaceTypeId::FieldInfo);
         let module = vec![stdlib::STDLIB_ROOT.to_owned(), stdlib::STDLIB_REFLECTION.to_owned()];
         if let Some(identity) = self.loaf_member_identity(&module, name) {
+            let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+                return ResolvedType::FrozenList(Box::new(ResolvedType::Named(name.to_owned())));
+            };
+            let mut path = module_path.clone();
+            path.push(identity.declaration_name.clone());
+            let carrier = crate::typechecker::canonical_public_library_type_name(library, &path.join("::"));
             self.type_info
                 .declarations
                 .body_ir_native_type_identities
-                .insert(name.to_owned(), identity);
+                .insert(carrier.clone(), identity);
+            return ResolvedType::FrozenList(Box::new(ResolvedType::Named(carrier)));
         }
         ResolvedType::FrozenList(Box::new(ResolvedType::Named(name.to_owned())))
     }
