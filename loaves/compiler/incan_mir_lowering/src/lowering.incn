@@ -102,6 +102,7 @@ from rust::std::string import String as RustString
 from rust::std::primitive import str as RustStr
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import (
+    IncanInputAccess,
     IncanType as RustType,
     HirSourceSpan as RustSpan,
     generic,
@@ -2659,8 +2660,14 @@ def lift_closure(
                 # A closure checked against a callable type whose input is `mut` takes that input as the borrow too.
                 mutable = parameter.mutable or parameter_storage_type(declared, true) == arguments[position]
                 mut storage = parameter_storage_type(declared, mutable)
-                if parameter.native_owned:
-                    storage = packed_input(declared, parameter.kind, parameter.mutable, true)?
+                if parameter.native_owned or parameter.input_access != IncanInputAccess.Inferred:
+                    storage = packed_input(
+                        declared,
+                        parameter.kind,
+                        parameter.mutable,
+                        parameter.native_owned,
+                        parameter.input_access,
+                    )?
                 bind_closure_input(lifted, destination, position + 1, arguments[position], storage, span)?
                 position += 1
             _ =>
@@ -5613,7 +5620,7 @@ pub def call_parameter_type(
         builder.intrinsics,
     )?
     ty = parameter_representation(body, int(parameter.local.index()), declared)?
-    if parameter.mutable and lacks_exclusive_parameter(ty):
+    if parameter.input_access == IncanInputAccess.Inferred and parameter.mutable and lacks_exclusive_parameter(ty):
         return Err("unsupported Body IR mutable tuple or iterator parameter")
     return stored_parameter_type(body, parameter, ty)
 
@@ -5623,11 +5630,16 @@ def stored_parameter_type(body: &RustBody, parameter: &RustCallableParam, ty: Pl
     A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 
     Call materialization, frame locals and constructor signatures use this same storage decision so an escaping
-    generator never captures a borrow of a caller's list snapshot. Explicit and mutable borrows remain refused.
+    generator never captures a borrow of a caller's list snapshot. Explicit inputs select their checked access first;
+    deferred producers still refuse that contract until retained dependencies are represented.
     """
+    if parameter.input_access != IncanInputAccess.Inferred:
+        if body.is_generator():
+            return Err("unsupported Body IR explicit input access in a deferred producer")
+        return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
     if body.is_generator() and not parameter.mutable:
         return Ok(ty)
-    return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned)
+    return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
 
 
 def lacks_exclusive_parameter(ty: PlanType) -> bool:
@@ -9822,6 +9834,10 @@ def frame_locals(
                 )?
         index = int(local.id.index()) + 1
         ty = local_representation(body, index - 1, ty)
+        for parameter in body.params:
+            if parameter.local == local.id and parameter.input_access != IncanInputAccess.Inferred:
+                if index in taking or index in iterators or index in pairs:
+                    return Err("unsupported Body IR explicit input iteration storage")
         if index in pairs:
             ty = pair_generator_type(ty)
         if index in taking:
@@ -9885,9 +9901,9 @@ pub def frame_parameter_type(
         int(parameter.local.index()),
         body_frame_type(constructors, nominals, enums, body, local, intrinsics, file)?,
     )?
-    if parameter.mutable and lacks_exclusive_parameter(ty):
+    if parameter.input_access == IncanInputAccess.Inferred and parameter.mutable and lacks_exclusive_parameter(ty):
         return Err("unsupported Body IR mutable tuple or iterator parameter")
-    if ty == PlanType.FrozenStr and parameter.mutable:
+    if parameter.input_access == IncanInputAccess.Inferred and ty == PlanType.FrozenStr and parameter.mutable:
         return Err("unsupported Body IR mutable FrozenStr parameter: mutable scalar parameter representation")
     return stored_parameter_type(body, parameter, ty)
 
