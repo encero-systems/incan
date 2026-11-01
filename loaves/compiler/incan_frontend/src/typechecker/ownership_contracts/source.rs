@@ -18,6 +18,7 @@ use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod calls;
+mod operations;
 mod values;
 
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
@@ -56,6 +57,7 @@ struct Builder<'a> {
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
     constrained: BTreeSet<Root>,
+    borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
 }
 
@@ -152,6 +154,7 @@ pub(super) fn build(
             entry: 0,
         },
         constrained: BTreeSet::new(),
+        borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
         loops: Vec::new(),
     };
@@ -218,6 +221,9 @@ impl Builder<'_> {
                 },
             );
             if mode.is_some() {
+                if mode.is_some_and(|mode| matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut)) {
+                    self.borrowed_inputs.insert(Root::Binding(root.clone()));
+                }
                 self.constrained.insert(Root::Binding(root));
             }
         }
@@ -397,85 +403,24 @@ impl Builder<'_> {
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
             Expr::Binary(left, operation, right) => {
                 let incoming = self.expression(left, incoming, false)?;
+                let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
                 let mut outgoing = self.expression(right, incoming.clone(), false)?;
+                let (evaluated, right_dependency) = self.retain_operation_operand(right, outgoing)?;
+                outgoing = evaluated;
                 if matches!(operation, BinaryOp::And | BinaryOp::Or) {
                     outgoing.extend(incoming);
                 }
-                self.finish_operation(expression.span, &[left, right], outgoing)
+                self.finish_operation(
+                    expression.span,
+                    left_dependency.into_iter().chain(right_dependency).collect(),
+                    outgoing,
+                )
             }
             _ => Err(Unavailable {
                 span: expression.span,
                 reason: "expression needs checked call or dependency access facts".into(),
             }),
         }
-    }
-
-    /// A non-Copy alias operand remains borrowed until the enclosing operation consumes it. Evaluating a later
-    /// operand cannot mutate the same storage merely because the alias's textual occurrence was evaluated first.
-    /// Fresh computed results have their own storage; Copy reads retain the ordinary snapshot behavior.
-    fn finish_operation(
-        &mut self,
-        operation: Span,
-        expressions: &[&Spanned<Expr>],
-        mut incoming: Vec<usize>,
-    ) -> Result<Vec<usize>, Unavailable> {
-        let mut retained = Vec::new();
-        for expression in expressions {
-            let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
-                span: expression.span,
-                reason: "missing checked operand type".into(),
-            })?;
-            if self.copy_value(ty) {
-                continue;
-            }
-            if let Some(path) = self.optional_place(expression)?
-                && let Some(loan) = path.through
-            {
-                retained.push((expression.span, path.place, loan));
-            }
-        }
-        if retained.is_empty() {
-            return Ok(incoming);
-        }
-        let completion_node = self.graph.nodes.len();
-        incoming = self.event(incoming, Event::Nothing, operation);
-        let mut operands = Vec::new();
-        for (operand, source, loan) in retained {
-            let final_access = self.graph.nodes.len();
-            incoming = self.event(
-                incoming,
-                Event::Access {
-                    place: source.clone(),
-                    access: Access::Read,
-                    through: Some(loan),
-                },
-                operand,
-            );
-            operands.push(OperandDependency {
-                operand,
-                source,
-                loan,
-                final_access,
-            });
-        }
-        if self
-            .graph
-            .operations
-            .insert(
-                operation,
-                OperationInputs {
-                    completion_node,
-                    operands,
-                },
-            )
-            .is_some()
-        {
-            return Err(Unavailable {
-                span: operation,
-                reason: "operation has more than one dependency binding".into(),
-            });
-        }
-        Ok(incoming)
     }
 
     /// Use the checker's derive relation for transfer proofs rather than the legacy ABI adaptation heuristic.

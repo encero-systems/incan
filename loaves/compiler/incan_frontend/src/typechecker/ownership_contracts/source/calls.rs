@@ -105,9 +105,11 @@ impl Builder<'_> {
                 });
             }
             incoming = self.expression(expression, incoming, false)?;
-            operands.push(expression);
+            let (evaluated, dependency) = self.retain_operation_operand(expression, incoming)?;
+            incoming = evaluated;
+            operands.extend(dependency);
         }
-        self.finish_operation(span, &operands, incoming)
+        self.finish_operation(span, operands, incoming)
     }
 
     /// Apply one canonical call, evaluating its receiver before written arguments. The receiver's declared access

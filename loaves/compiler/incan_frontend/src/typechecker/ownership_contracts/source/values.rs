@@ -159,8 +159,10 @@ impl Builder<'_> {
                 });
             }
             incoming = self.expression(expr, incoming, false)?;
-            operands.push(expr);
+            let (evaluated, dependency) = self.retain_operation_operand(expr, incoming)?;
+            incoming = evaluated;
+            operands.extend(dependency);
         }
-        self.finish_operation(span, &operands, incoming)
+        self.finish_operation(span, operands, incoming)
     }
 }

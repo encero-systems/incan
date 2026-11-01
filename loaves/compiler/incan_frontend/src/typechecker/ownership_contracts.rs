@@ -57,6 +57,18 @@ pub(super) struct InputCall {
 }
 
 impl TypeChecker {
+    /// The body writer starts with isolated references. Retain the prepared parameter bindings before statement
+    /// checking can shadow their names, so source admission and persisted restoration use the same canonical facts.
+    pub(super) fn retain_callable_input_bindings(&mut self, callable: CallableSource<'_>) {
+        let parameters = match callable {
+            CallableSource::Function(function) => &function.params,
+            CallableSource::Method(method) => &method.params,
+        };
+        for parameter in parameters {
+            self.record_write_target_identity(parameter.span, &parameter.node.name);
+        }
+    }
+
     /// Capture explicit input flow while the checked lexical frame and body-owned expression facts are active.
     /// Statement output owns the result; it is never rediscovered by lowering or published as a valid empty graph.
     pub(super) fn record_explicit_input_flow(&mut self, callable: CallableSource<'_>, span: Span) {
@@ -1309,7 +1321,13 @@ mod tests {
         else {
             return Err("missing checked graph".into());
         };
-        let loan = *graph.local_loans.values().next().ok_or("missing alias loan")?;
+        let loan = graph
+            .operations
+            .values()
+            .flat_map(|operation| &operation.operands)
+            .next()
+            .ok_or("missing operation loan")?
+            .loan;
         let consumption = graph
             .nodes
             .iter_mut()
@@ -1353,7 +1371,7 @@ mod tests {
             .next()
             .cloned()
             .ok_or("missing owner")?;
-        for corruption in 0..7 {
+        for corruption in 0..10 {
             let mut facts = checker.type_info.clone();
             let InputFlow::Checked { graph, analysis } = facts
                 .protocols
@@ -1372,12 +1390,22 @@ mod tests {
                 3 => inputs.completion_node = 0,
                 4 => dependency.operand.start += 1,
                 5 => dependency.loan = flow::LoanId(graph.loans.len()),
-                _ => {
+                6 => {
                     let flow::Root::Binding(root) = &mut dependency.source.root else {
                         return Err("expected declared source".into());
                     };
                     root.declaration_name = "foreign".into();
                 }
+                7 => {
+                    let parent = graph.loans[dependency.loan.0].parent.ok_or("missing parent")?;
+                    dependency.loan = parent;
+                    let flow::Event::Access { through, .. } = &mut graph.nodes[dependency.final_access].event else {
+                        return Err("missing final read".into());
+                    };
+                    *through = Some(parent);
+                }
+                8 => graph.loans[dependency.loan.0].parent = None,
+                _ => graph.loans[dependency.loan.0].kind = flow::LoanKind::Exclusive,
             }
             // Recompute when structurally possible; retained analysis alone must not be the refusal mechanism.
             if let Ok(recomputed) = flow::analyze(graph) {
@@ -1388,6 +1416,73 @@ mod tests {
                 "accepted corruption {corruption}"
             );
         }
+        Ok(())
+    }
+
+    /// A restored graph cannot move an earlier text read past a later mutation to erase the source-order conflict.
+    #[test]
+    fn operation_reads_cannot_move_after_later_operands() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    print(value, replace(value))\n";
+        let mut checker = checked(source)?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126"))
+        );
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) if function.name == "inspect" => Some(function),
+                _ => None,
+            })
+            .ok_or("missing inspect")?;
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .find(|owner| owner.declaration_name == "inspect")
+            .cloned()
+            .ok_or("missing owner")?;
+        let InputFlow::Checked { graph, analysis } = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .get_mut(&owner)
+            .ok_or("missing flow")?
+        else {
+            return Err("missing checked flow".into());
+        };
+        let dependency = graph
+            .operations
+            .values()
+            .flat_map(|operation| &operation.operands)
+            .next()
+            .ok_or("missing operand")?;
+        let origin = graph
+            .nodes
+            .iter()
+            .position(|node| matches!(node.event, flow::Event::Borrow(id) if id == dependency.loan))
+            .ok_or("missing creation")?;
+        let read = origin.checked_sub(1).ok_or("missing evaluated read")?;
+        // This fixture has one read/loan pair followed by one invocation borrow/read pair.
+        assert!(origin + 2 < graph.nodes.len());
+        graph.nodes.swap(read, origin + 1);
+        graph.nodes.swap(origin, origin + 2);
+        let count = graph.nodes.len();
+        for (index, node) in graph.nodes.iter_mut().enumerate() {
+            node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
+        }
+        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+        assert!(analysis.conflicts.is_empty(), "{analysis:?}");
+        assert!(
+            checker.type_info.direct_input_admission(&owner, function).is_err(),
+            "accepted reordered operand evaluation"
+        );
         Ok(())
     }
 

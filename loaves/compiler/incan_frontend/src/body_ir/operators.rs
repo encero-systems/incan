@@ -37,7 +37,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(expression.span);
         if read.fact == bir::OwnershipFact::Borrow
             && !ty.abi_v0_facts().ownership.is_trivially_copy()
-            && matches!(self.input_alias_source(expression), Some(Ok(_)))
+            && matches!(self.checked_borrow_source(expression), Some(Ok(_)))
         {
             // The checked loan includes the operation's consumption point, so later operands cannot invalidate
             // this storage. Materializing an owned text temporary here would silently repair the explicit borrow.

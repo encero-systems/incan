@@ -717,11 +717,13 @@ impl TypeChecker {
         self.check_work.body_local_checks += 1;
         #[cfg(test)]
         if self.legacy_body_checking {
+            self.retain_callable_input_bindings(ownership_source);
             self.check_callable_body_in_frame(body, is_async, context);
             self.record_explicit_input_flow(ownership_source, span);
             return;
         }
         let scope = BodyCheckScope::enter(self);
+        self.retain_callable_input_bindings(ownership_source);
         self.check_callable_body_in_frame(body, is_async, context);
         self.record_explicit_input_flow(ownership_source, span);
         let mut local = scope.finish(self);

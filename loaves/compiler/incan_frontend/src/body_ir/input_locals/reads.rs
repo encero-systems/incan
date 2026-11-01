@@ -6,6 +6,22 @@ use super::super::{BodyBuilder, ast, bir, hir_span};
 use crate::typechecker::CheckedInputSource;
 
 impl BodyBuilder<'_, '_> {
+    /// Retained operation dependencies cover direct borrowed parameters as well as local aliases. A parameter's
+    /// native reference carrier alone is insufficient; the completed source proof must own the read relationship.
+    pub(in super::super) fn checked_borrow_source(
+        &self,
+        expression: &ast::Spanned<ast::Expr>,
+    ) -> Option<Result<CheckedInputSource, &'static str>> {
+        if let Ok(Some(proof)) = &self.input_body {
+            match proof.operation_operand_source(expression.span) {
+                Ok(Some(source)) => return Some(Ok(source)),
+                Err(reason) => return Some(Err(reason)),
+                Ok(None) => {}
+            }
+        }
+        self.input_alias_source(expression)
+    }
+
     /// Resolve a canonical alias through static stored fields. Each extra field must have its own checked identity;
     /// a property, index or display-name match cannot extend a loan's authenticated physical place.
     pub(in super::super) fn input_alias_source(
@@ -64,16 +80,16 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// Keep alias reads independent of the original owner's source-name countdown. Reading a Copy referent
-    /// produces a value; every non-Copy alias read remains a borrow. The source proof has already rejected consuming
-    /// or escaping uses, so this cannot manufacture ownership from a shared or exclusive loan.
-    pub(in super::super) fn lower_input_alias_value(
+    /// Keep alias reads independent of the original owner's source-name countdown, while direct parameter reads
+    /// consume their own occurrence. Copy referents produce values; non-Copy reads retain the checked source borrow.
+    /// The source proof rejects consuming or escaping uses, so this cannot manufacture ownership from a loan.
+    pub(in super::super) fn lower_checked_borrow_value(
         &mut self,
         expression: &ast::Spanned<ast::Expr>,
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
-        let source = self.input_alias_source(expression)?;
+        let source = self.checked_borrow_source(expression)?;
         let result = (|| {
             let CheckedInputSource::Place { root, fields } = source? else {
                 return Err("local alias has no original source storage".to_owned());
@@ -86,6 +102,7 @@ impl BodyBuilder<'_, '_> {
             } else {
                 bir::OwnershipFact::Borrow
             };
+            self.consume_input_source_read(expression, &place);
             Ok(bir::Operand::place(place, fact, false))
         })();
         Some(match result {
