@@ -113,3 +113,211 @@ fn owned_initializer_restore_requires_the_exact_source_event() -> Result<(), Box
     }
     Ok(())
 }
+
+/// Operation-specific invalid facts retain their exact refusal; neither a successful label nor another fault can
+/// authorize missing completion or consumption nodes after restoration.
+#[test]
+fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        "def observe(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
+    let (program, checker, owner) = fixture(source, "observe")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let fields = project(&checker, &program, owner, false)?;
+    let checked = fields
+        .into_iter()
+        .find(|row| row.first().is_some_and(|family| family == "input-flow"))
+        .ok_or("missing observed operation graph")?;
+    let mut reader = Reader {
+        positions: &positions,
+        values: checked[5..].iter(),
+    };
+    let graph = reader.graph()?;
+    reader.finish()?;
+    assert_eq!(graph.operations.len(), 1);
+    for completion in [true, false] {
+        let mut altered = graph.clone();
+        let missing_node = altered.nodes.len();
+        let operation = altered.operations.values_mut().next().ok_or("missing operation")?;
+        if completion {
+            operation.completion_node = missing_node;
+        } else {
+            operation.operands.first_mut().ok_or("missing operand")?.final_access = missing_node;
+        }
+        let fault = crate::typechecker::ownership_contracts::flow::analyze(&altered)
+            .err()
+            .ok_or("invalid operation unexpectedly analyzed")?;
+        let mut row = checked[..5].to_vec();
+        super::input_flow::project(&positions, &altered, &mut row)?;
+        let mut refused = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut refused, &row).is_err());
+        assert!(refused.protocols.explicit_input_flow.is_empty());
+
+        row[4] = "invalid".into();
+        row.push(fault.0.into());
+        let mut retained = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        restore(&positions, &mut retained, &row)?;
+        assert!(matches!(retained.protocols.explicit_input_flow.get(&graph.owner),
+            Some(InputFlow::Invalid { graph: restored, fault: actual })
+                if actual == &fault && restored.operations.len() == altered.operations.len()));
+
+        *row.last_mut().ok_or("missing operation fault")? = "missing entry node".into();
+        let mut mismatched = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut mismatched, &row).is_err());
+        assert!(mismatched.protocols.explicit_input_flow.is_empty());
+    }
+    Ok(())
+}
+
+/// Invocation-specific out-of-range links restore only as their exact structural refusal, never as successful
+/// input authority or a differently labeled fault.
+#[test]
+fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def read(value: Borrowed[int]) -> int:\n    return value\ndef forward(value: Borrowed[int]) -> int:\n    return read(value)\n";
+    let (program, checker, owner) = fixture(source, "forward")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let view = checker.checked_body(owner).ok_or("missing invocation body")?;
+    let mut fields = Vec::new();
+    super::project(&positions, &view.local, &mut fields)?;
+    let checked = fields
+        .into_iter()
+        .find(|row| row.first().is_some_and(|family| family == "input-flow"))
+        .ok_or("missing invocation graph")?;
+    let mut reader = Reader {
+        positions: &positions,
+        values: checked[5..].iter(),
+    };
+    let graph = reader.graph()?;
+    reader.finish()?;
+    assert_eq!(graph.invocations.len(), 1);
+    let mut positive = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    restore(&positions, &mut positive, &checked)?;
+    let mut positive_fields = Vec::new();
+    super::project(&positions, &positive, &mut positive_fields)?;
+    assert_eq!(positive_fields, vec![checked.clone()]);
+
+    for field in 0..5 {
+        let mut altered = graph.clone();
+        let missing_node = altered.nodes.len();
+        let invocation = altered.invocations.values_mut().next().ok_or("missing invocation")?;
+        let argument = invocation.arguments.first_mut().ok_or("missing invocation argument")?;
+        match field {
+            0 => argument.evaluation.start_node = missing_node,
+            1 => argument.evaluation.end_node = missing_node,
+            2 => argument.evaluation.source_node = Some(missing_node),
+            3 => invocation.completion_node = missing_node,
+            _ => *invocation.final_accesses.first_mut().ok_or("missing final loan use")? = missing_node,
+        }
+        let fault = crate::typechecker::ownership_contracts::flow::analyze(&altered)
+            .err()
+            .ok_or("invalid invocation unexpectedly analyzed")?;
+        assert_eq!(fault.0, "invocation event link is outside callable");
+        let mut row = checked[..5].to_vec();
+        super::input_flow::project(&positions, &altered, &mut row)?;
+        let mut refused = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut refused, &row).is_err());
+        assert!(refused.protocols.explicit_input_flow.is_empty());
+        row[4] = "invalid".into();
+        row.push(fault.0.into());
+        let mut retained = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        restore(&positions, &mut retained, &row)?;
+        let mut restored_fields = Vec::new();
+        super::project(&positions, &retained, &mut restored_fields)?;
+        assert_eq!(restored_fields, vec![row.clone()]);
+        assert!(matches!(retained.protocols.explicit_input_flow.get(&graph.owner),
+            Some(InputFlow::Invalid { graph: restored, fault: actual })
+                if actual == &fault && restored.invocations.len() == altered.invocations.len()));
+        *row.last_mut().ok_or("missing invocation fault")? = "missing entry node".into();
+        let mut mismatched = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut mismatched, &row).is_err());
+        assert!(mismatched.protocols.explicit_input_flow.is_empty());
+    }
+    Ok(())
+}
+
+/// Checked Copy choices survive independently of graph access tags; empty and duplicate owner maps remain distinct.
+#[test]
+fn checked_copy_restore_retains_exact_type_decisions() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def keep(value: Owned[int]) -> int:\n    return value\n";
+    let (program, checker, owner) = fixture(source, "keep")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let view = checker.checked_body(owner).ok_or("missing Copy owner body")?;
+    let mut fields = Vec::new();
+    super::project(&positions, &view.local, &mut fields)?;
+    let row = fields
+        .into_iter()
+        .find(|row| row.first().is_some_and(|family| family == "input-copy"))
+        .ok_or("missing checked Copy decisions")?;
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    restore(&positions, &mut restored, &row)?;
+    let mut roundtrip = Vec::new();
+    super::project(&positions, &restored, &mut roundtrip)?;
+    assert_eq!(roundtrip, vec![row.clone()]);
+    assert!(restore(&positions, &mut restored, &row).is_err());
+    let mut after_duplicate = Vec::new();
+    super::project(&positions, &restored, &mut after_duplicate)?;
+    assert_eq!(after_duplicate, roundtrip);
+
+    let prefix = row[..5].to_vec();
+    for entries in [
+        vec!["2", "str", "false", "int", "true"],
+        vec!["2", "int", "true", "int", "false"],
+        vec!["1", "int", "maybe"],
+        vec!["1", "callable", "00", "int", "false"],
+        vec!["2", "int", "true"],
+    ] {
+        let mut malformed = prefix.clone();
+        malformed.extend(entries.into_iter().map(str::to_owned));
+        let mut refused = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut refused, &malformed).is_err());
+        assert!(refused.protocols.explicit_input_copy.is_empty());
+    }
+    let mut callable = prefix.clone();
+    callable.extend(["1", "callable", "0", "int", "false"].into_iter().map(str::to_owned));
+    let mut retained_callable = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    restore(&positions, &mut retained_callable, &callable)?;
+    let mut callable_fields = Vec::new();
+    super::project(&positions, &retained_callable, &mut callable_fields)?;
+    assert_eq!(callable_fields, vec![callable]);
+    let mut empty = prefix;
+    empty.push("0".into());
+    let mut retained_empty = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    restore(&positions, &mut retained_empty, &empty)?;
+    assert_eq!(retained_empty.protocols.explicit_input_copy.len(), 1);
+    let mut empty_fields = Vec::new();
+    super::project(&positions, &retained_empty, &mut empty_fields)?;
+    assert_eq!(empty_fields, vec![empty]);
+    Ok(())
+}

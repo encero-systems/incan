@@ -21,7 +21,43 @@ pub(crate) struct CheckedLocalInputLoan<'a> {
     pub source: CheckedInputSource,
 }
 
+/// An owned declaration receives either an authenticated stored value or a fresh checked initializer. It creates
+/// independent destination storage; the optional source describes the transferred value, never a retained loan.
+pub(crate) struct CheckedOwnedLocal<'a> {
+    /// Underlying checked value type, without the source annotation wrapper.
+    pub value_type: &'a ResolvedType,
+    /// Exact source owner and field path, or no owner for a fresh initializer.
+    pub source: Option<CheckedInputSource>,
+}
+
 impl<'a> CheckedInputBody<'a> {
+    /// Select the initializer retained by this exact declaration. The body proof has already authenticated its
+    /// event index, Copy/Move agreement and canonical destination; no source-span search reconstructs the edge.
+    pub(crate) fn owned_local(
+        &self,
+        destination: &CanonicalSymbolId,
+        initializer: HirSourceSpan,
+    ) -> Result<CheckedOwnedLocal<'a>, &'static str> {
+        let retained = self
+            .graph
+            .owned_locals
+            .get(destination)
+            .ok_or("owned local has no retained initializer")?;
+        let mode = self
+            .facts
+            .protocols
+            .explicit_local_modes
+            .get(destination)
+            .ok_or("owned local has no checked annotation")?;
+        if retained.initializer != initializer || mode.mode != OwnershipMode::Owned {
+            return Err("owned initializer differs from its checked declaration");
+        }
+        Ok(CheckedOwnedLocal {
+            value_type: &mode.value_type,
+            source: retained.source.as_ref().map(calls::project_source).transpose()?,
+        })
+    }
+
     /// Select the exact declaration and initializer whose loan this body already authenticated. A matching name,
     /// another initializer span or an index lacking evaluated-storage identity cannot authorize an alias.
     pub(crate) fn local_loan(

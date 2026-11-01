@@ -54,13 +54,63 @@ impl TypeCheckInfo {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
         }
         proof.validate_direct_call_storage()?;
+        proof.validate_assertion_transfers(function)?;
+        proof.validate_operation_coverage(function)?;
         Ok(Some(proof))
     }
 }
 
 impl CheckedInputBody<'_> {
-    /// Only checked Copy referents with static owner/field places have local alias storage in this stage. An owned
-    /// local is a different transfer operation; non-Copy alias reads need no-repair consumer facts of their own.
+    /// An assertion message executes only on failure. Moving a stored owner there needs conditional cleanup even
+    /// though the surrounding source contains no `if`; fresh failure-local values and Copy inputs need no such join.
+    fn validate_assertion_transfers(&self, function: &FunctionDecl) -> Result<(), &'static str> {
+        for statement in &function.body {
+            let Statement::Assert(assertion) = &statement.node else {
+                continue;
+            };
+            let Some(message) = &assertion.message else {
+                continue;
+            };
+            for (span, invocation) in &self.graph.invocations {
+                if span.expansion != message.span.expansion
+                    || span.start < message.span.start
+                    || span.end > message.span.end
+                {
+                    continue;
+                }
+                let call = self
+                    .facts
+                    .protocols
+                    .explicit_input_calls
+                    .get(span)
+                    .ok_or("assertion call has no checked inputs")?;
+                for argument in &invocation.arguments {
+                    if argument.access != IncanInputAccess::Owned
+                        || !argument
+                            .source
+                            .as_ref()
+                            .is_some_and(|source| matches!(source.root, super::flow::Root::Binding(_)))
+                    {
+                        continue;
+                    }
+                    let parameter = call
+                        .parameters
+                        .get(argument.slot)
+                        .ok_or("assertion input has no checked slot")?;
+                    if !self
+                        .facts
+                        .checked_input_copy_value(self.canonical_owner(), &parameter.ty)?
+                    {
+                        return Err("explicit stored transfer in an assertion message requires conditional cleanup");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Local aliases preserve existing storage. Owned locals use their exact initializer relationship; a whole
+    /// non-Copy owner may transfer, while projected transfers still require partial-drop obligations.
     fn validate_local_storage(&self) -> Result<(), &'static str> {
         for (local, mode) in self
             .facts
@@ -69,12 +119,41 @@ impl CheckedInputBody<'_> {
             .iter()
             .filter(|(_, mode)| &mode.owner == self.canonical_owner())
         {
+            if mode.mode == incan_lang::lang::types::ownership::OwnershipMode::Owned {
+                let initializer = self
+                    .graph
+                    .owned_locals
+                    .get(local)
+                    .ok_or("owned local has no checked initializer")?;
+                let retained = self.owned_local(local, initializer.initializer)?;
+                let copy = crate::typechecker::semantic_type_from_resolved(retained.value_type)
+                    .abi_v0_facts()
+                    .ownership
+                    .is_trivially_copy();
+                if initializer.source.is_some()
+                    && copy
+                        != self
+                            .facts
+                            .checked_input_copy_value(self.canonical_owner(), retained.value_type)?
+                {
+                    return Err("checked Copy semantics require a compatible native input carrier");
+                }
+                if !copy
+                    && initializer
+                        .source
+                        .as_ref()
+                        .is_some_and(|source| !source.projection.is_empty())
+                {
+                    return Err("explicit projected transfer requires checked drop obligations");
+                }
+                continue;
+            }
             if !matches!(
                 mode.mode,
                 incan_lang::lang::types::ownership::OwnershipMode::Borrowed
                     | incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut
             ) {
-                return Err("explicit owned or returned local needs its own storage projection");
+                return Err("explicit returned local needs its own storage projection");
             }
             let loan = self
                 .graph
@@ -82,14 +161,7 @@ impl CheckedInputBody<'_> {
                 .get(local)
                 .and_then(|id| self.graph.loans.get(id.0))
                 .ok_or("explicit local alias has no checked source loan")?;
-            let retained = self.local_loan(local, loan.span)?;
-            if !crate::typechecker::semantic_type_from_resolved(retained.value_type)
-                .abi_v0_facts()
-                .ownership
-                .is_trivially_copy()
-            {
-                return Err("non-Copy local alias requires checked value-consumption projection");
-            }
+            self.local_loan(local, loan.span)?;
         }
         Ok(())
     }
@@ -116,6 +188,15 @@ impl CheckedInputBody<'_> {
                     .abi_v0_facts()
                     .ownership
                     .is_trivially_copy();
+                if argument.source.is_some()
+                    && matches!(argument.access, IncanInputAccess::Owned | IncanInputAccess::Inferred)
+                    && copy
+                        != self
+                            .facts
+                            .checked_input_copy_value(self.canonical_owner(), &parameter.ty)?
+                {
+                    return Err("checked Copy semantics require a compatible native input carrier");
+                }
                 if argument.access == IncanInputAccess::Inferred && !copy && argument.source.is_some() {
                     return Err("ordinary non-Copy input requires its inferred access proof");
                 }

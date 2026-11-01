@@ -1,0 +1,22 @@
+"""Value places for scalar storage borrowed by a native frame, distinct from logical reference values."""
+
+from pub::incan_mir_plan import Local, Place, PlanType, Projection
+from numerics import numeric_carrier
+
+
+pub def scalar_storage_place(locals: &list[Local], reference_values: &list[int], source: Place) -> Result[Place, str]:
+    """Read a borrowed Copy scalar through its actual storage without allocating, cloning or consuming a reference value."""
+    if source.projection != Projection.Whole:
+        return Ok(source)
+    for reference in reference_values:
+        if source.local == reference:
+            return Ok(source)
+    match locals[source.local].ty:
+        (PlanType.ScalarRef(elements) | PlanType.ScalarMutRef(elements)) =>
+            if len(elements) != 1:
+                return Err("invalid Body IR scalar reference storage arity")
+            referent = elements[0]
+            if numeric_carrier(referent) or referent in [PlanType.Bool, PlanType.Unit, PlanType.Decimal]:
+                return Ok(Place(local=source.local, projection=Projection.Deref(referent), span=source.span))
+        _ => pass
+    return Ok(source)

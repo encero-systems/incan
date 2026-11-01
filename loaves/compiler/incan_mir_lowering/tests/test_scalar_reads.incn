@@ -1,0 +1,48 @@
+"""Borrowed scalar frame storage reads its value while logical reference values retain their native carrier."""
+
+from pub::incan_mir_plan import Local, Place, PlanType, Projection, source_span
+from scalar_reads import scalar_storage_place
+
+
+pub def test_borrowed_scalar_storage_reads_the_same_place() -> Result[None, str]:
+    """Numeric, Boolean and unit reads dereference the original slot without a clone or temporary slot."""
+    span = source_span(file="scalar_reads.incn", line=3, column=7)
+    source = Place(local=0, projection=Projection.Whole, span=span)
+    references: list[int] = []
+    for ty in [PlanType.Int, PlanType.Float, PlanType.I32, PlanType.U16, PlanType.Bool, PlanType.Unit, PlanType.Decimal]:
+        for storage in [PlanType.ScalarRef([ty]), PlanType.ScalarMutRef([ty])]:
+            locals = [Local(ty=storage, span=span)]
+            assert scalar_storage_place(locals, references, source)? == Place(
+                local=0,
+                projection=Projection.Deref(ty),
+                span=span,
+            )
+            assert scalar_storage_place(locals, [0], source)? == source
+    return Ok(None)
+
+
+pub def test_scalar_reads_preserve_existing_projections_and_other_carriers() -> Result[None, str]:
+    """Already dereferenced exclusive storage and logical reference fields keep their complete checked paths."""
+    span = source_span(file="scalar_reads.incn", line=4, column=2)
+    source = Place(local=0, projection=Projection.Whole, span=span)
+    references: list[int] = []
+    for ty in [
+        PlanType.Int,
+        PlanType.StringRef,
+        PlanType.ScalarRef([PlanType.StringRef]),
+        PlanType.ScalarMutRef([PlanType.StringRef]),
+    ]:
+        assert scalar_storage_place([Local(ty=ty, span=span)], references, source)? == source
+    locals = [Local(ty=PlanType.ScalarMutRef([PlanType.Int]), span=span)]
+    projected = Place(local=0, projection=Projection.Deref(PlanType.Int), span=span)
+    assert scalar_storage_place(locals, references, projected)? == projected
+    field = Place(local=0, projection=Projection.Field(1, PlanType.ScalarRef([PlanType.Int])), span=span)
+    assert scalar_storage_place(locals, references, field)? == field
+    invalid_elements: list[list[PlanType]] = [[], [PlanType.Int, PlanType.Bool]]
+    for elements in invalid_elements:
+        for storage in [PlanType.ScalarRef(elements), PlanType.ScalarMutRef(elements)]:
+            match scalar_storage_place([Local(ty=storage, span=span)], references, source):
+                Err(_reason) => pass
+                Ok(_place) =>
+                    assert false
+    return Ok(None)

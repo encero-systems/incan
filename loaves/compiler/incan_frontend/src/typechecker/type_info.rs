@@ -1894,6 +1894,9 @@ pub struct ProtocolArtifacts {
     /// Explicit input flow is body-owned. The native executable gate remains closed until the complete projection
     /// and storage contract agree; record profiles without this payload must refuse rather than discard it.
     pub(in crate::typechecker) explicit_input_flow: BTreeMap<CanonicalSymbolId, super::ownership_contracts::InputFlow>,
+    /// Body-owned decisions from the checker's Copy relation, independent of the flow graph. Exact checked types
+    /// select their retained decision; missing evidence never falls back to an ABI or source-name heuristic.
+    pub(in crate::typechecker) explicit_input_copy: BTreeMap<CanonicalSymbolId, HashMap<ResolvedType, bool>>,
     /// Receiver value identities retained only for Body IR before synthetic truthiness dispatch reuses their spans.
     /// The legacy reference at that span still selects `__bool__`; this separate record never changes that table.
     pub(crate) body_ir_truthiness_receivers: HashMap<crate::ast::Span, CanonicalSymbolId>,

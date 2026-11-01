@@ -1490,6 +1490,8 @@ mod tests {
     #[test]
     fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
         for version in [
+            37,
+            38,
             super::OLDEST_SUPPORTED_VERSION - 1,
             EXECUTABLE_REPRESENTATION_VERSION + 1,
         ] {

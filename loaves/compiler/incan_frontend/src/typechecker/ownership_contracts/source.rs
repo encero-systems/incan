@@ -5,18 +5,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::TypeChecker;
 use super::flow::{
-    Access, Event, Graph, Loan, LoanId, LoanKind, Node, OwnedInitialization, Permission, Place, Projection, Root,
+    Access, Event, Graph, Loan, LoanId, LoanKind, Node, OperandDependency, OperationInputs, OwnedInitialization,
+    Permission, Place, Projection, Root,
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, FunctionDecl,
     MethodDecl, Param, Receiver, Span, Spanned, Statement,
 };
 use crate::symbols::{ResolvedType, SymbolKind};
-use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod calls;
+mod operations;
 mod values;
 
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
@@ -55,6 +56,7 @@ struct Builder<'a> {
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
     constrained: BTreeSet<Root>,
+    borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
 }
 
@@ -142,6 +144,7 @@ pub(super) fn build(
             local_loans: BTreeMap::new(),
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
+            operations: BTreeMap::new(),
             nodes: vec![Node {
                 event: Event::Nothing,
                 successors: Vec::new(),
@@ -150,6 +153,7 @@ pub(super) fn build(
             entry: 0,
         },
         constrained: BTreeSet::new(),
+        borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
         loops: Vec::new(),
     };
@@ -216,6 +220,9 @@ impl Builder<'_> {
                 },
             );
             if mode.is_some() {
+                if mode.is_some_and(|mode| matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut)) {
+                    self.borrowed_inputs.insert(Root::Binding(root.clone()));
+                }
                 self.constrained.insert(Root::Binding(root));
             }
         }
@@ -387,7 +394,7 @@ impl Builder<'_> {
             }
             Expr::Literal(_) => Ok(incoming),
             Expr::List(entries) => self.scalar_list(entries, incoming),
-            Expr::FString(parts) => self.formatted_text(parts, incoming),
+            Expr::FString(parts) => self.formatted_text(parts, expression.span, incoming),
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, expression.span, incoming)
@@ -395,11 +402,18 @@ impl Builder<'_> {
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
             Expr::Binary(left, operation, right) => {
                 let incoming = self.expression(left, incoming, false)?;
+                let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
                 let mut outgoing = self.expression(right, incoming.clone(), false)?;
+                let (evaluated, right_dependency) = self.retain_operation_operand(right, outgoing)?;
+                outgoing = evaluated;
                 if matches!(operation, BinaryOp::And | BinaryOp::Or) {
                     outgoing.extend(incoming);
                 }
-                Ok(outgoing)
+                self.finish_operation(
+                    expression.span,
+                    left_dependency.into_iter().chain(right_dependency).collect(),
+                    outgoing,
+                )
             }
             _ => Err(Unavailable {
                 span: expression.span,
@@ -412,15 +426,7 @@ impl Builder<'_> {
     /// Shared references copy their address; exclusive references transfer access. Missing Copy evidence never
     /// authorizes duplication, including inside tuples and native carriers with incomplete trait metadata.
     fn copy_value(&self, ty: &ResolvedType) -> bool {
-        match ty {
-            ResolvedType::Ref(_) => true,
-            ResolvedType::RefMut(_) => false,
-            ResolvedType::Tuple(items) => items.iter().all(|item| self.copy_value(item)),
-            _ => matches!(
-                self.checker.derive_support(ty, DeriveId::Copy),
-                super::super::derive_requirements::DeriveSupport::Supported
-            ),
-        }
+        self.checker.input_copy_value(ty)
     }
 
     /// Patterns need binding-specific dependency transfer and are unavailable until their checked projection exists.

@@ -361,6 +361,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(value) = self.lower_checked_expression_value(expr, scope, span, out) {
             return value;
         }
+        if let Some(value) = self.lower_checked_borrow_value(expr, scope, out) {
+            return value;
+        }
         self.lower_expression_form(expr, scope, span, out)
     }
 

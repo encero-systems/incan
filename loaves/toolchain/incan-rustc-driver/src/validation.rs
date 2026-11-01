@@ -514,7 +514,7 @@ fn span(source: &SourceSpan) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Check the parameter-local convention and all nodes in one function. Exact shared scalar inputs borrow caller
+/// Check the parameter-local convention and all nodes in one function. Exact scalar inputs borrow caller
 /// storage; return types keep their separate lifetime and representation gate. Validated future boxing frames also
 /// admit the exact native inputs whose loans their constructor lifetime retains.
 fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
@@ -1584,10 +1584,11 @@ fn shared_reference(ty: &Scalar) -> bool {
     )
 }
 
-/// Source inputs additionally admit checked borrows of owned text and exact copyable scalar referents. Owned return
-/// and stored-value admission remain governed by `source_signature_type` rather than this parameter-only boundary.
+/// Source inputs additionally admit checked borrows of owned text and exact scalar referents, including exclusive
+/// inputs. Owned return and stored-value admission remain governed by `source_signature_type` rather than this
+/// parameter-only boundary.
 fn source_parameter_type(ty: &Scalar) -> bool {
-    if let Scalar::ScalarRef(elements) = ty {
+    if let Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) = ty {
         return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
     }
     source_signature_type(ty)
@@ -3791,3 +3792,7 @@ fn library_argument_is_borrowed(ty: &PlanType) -> bool {
             | PlanType::ClosureRef(..)
     )
 }
+
+#[cfg(test)]
+#[path = "validation/scalar_inputs_tests.rs"]
+mod scalar_inputs_tests;
