@@ -383,6 +383,7 @@ impl Builder<'_> {
                 ))
             }
             Expr::Literal(_) => Ok(incoming),
+            Expr::List(entries) => self.scalar_list(entries, incoming),
             Expr::FString(parts) => self.formatted_text(parts, incoming),
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {

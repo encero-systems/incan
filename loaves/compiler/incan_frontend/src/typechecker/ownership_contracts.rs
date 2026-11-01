@@ -303,6 +303,36 @@ mod tests {
         Ok(())
     }
 
+    /// A builtin collection-length read observes a transferred owner just as a primitive read does. Literal
+    /// construction cannot hide that transfer, and source-defined length hooks retain their separate refusal.
+    #[test]
+    fn collection_length_observes_transferred_storage() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def consume(values: Owned[list[int]]) -> int:\n    return len(values)\ndef main() -> None:\n    values = [1, 2, 3]\n    consume(values)\n    assert len(values) == 3\n";
+        let checker = checked(source)?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{:?}",
+            checker.errors
+        );
+        for source in [
+            "def collect(value: Borrowed[str]) -> None:\n    values = [value]\n",
+            "def collect(values: Borrowed[list[int]]) -> None:\n    copied = [*values]\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0123")),
+                "unsupported collection admitted: {source}"
+            );
+        }
+        Ok(())
+    }
+
     /// Registry-selected primitive observers retain reads after transfer; user functions and nominal hooks do not
     /// acquire the builtin's access contract merely by being named print or len.
     #[test]

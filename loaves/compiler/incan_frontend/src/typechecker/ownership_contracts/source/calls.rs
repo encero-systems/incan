@@ -11,6 +11,7 @@ use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::IncanInputAccess;
 
 impl Builder<'_> {
@@ -71,10 +72,18 @@ impl Builder<'_> {
             };
             let ty = self.checker.type_info.expr_type(expression.span);
             let supported = match builtin {
-                BuiltinFnId::Len => matches!(
-                    ty,
-                    Some(ResolvedType::Str | ResolvedType::FrozenStr | ResolvedType::Bytes | ResolvedType::FrozenBytes)
-                ),
+                BuiltinFnId::Len => {
+                    matches!(
+                        ty,
+                        Some(
+                            ResolvedType::Str
+                                | ResolvedType::FrozenStr
+                                | ResolvedType::Bytes
+                                | ResolvedType::FrozenBytes
+                        )
+                    ) || matches!(ty, Some(ResolvedType::Generic(name, arguments))
+                        if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1)
+                }
                 BuiltinFnId::Print => matches!(
                     ty,
                     Some(
