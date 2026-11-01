@@ -514,6 +514,26 @@ mod tests {
                 "def compound(mut value: BorrowedMut[int]) -> int:\n    value += 1\n    return value\n",
                 false,
             ),
+            (
+                "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def branch(flag: bool) -> None:\n    let value: Owned[str] = \"owned\"\n    if flag:\n        consume(value)\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def branch(value: Owned[str], flag: bool) -> None:\n    if flag:\n        consume(value)\n    else:\n        return\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def branch(flag: bool) -> None:\n    mut value = \"owned\"\n    if flag:\n        consume(value)\n    value = \"new\"\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                true,
+            ),
         ] {
             let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
             let analysis = flow::analyze(&graph).map_err(|error| format!("{source}\n{error:?}"))?;
