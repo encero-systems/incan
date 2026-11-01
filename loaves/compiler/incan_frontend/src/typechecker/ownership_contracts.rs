@@ -8,6 +8,7 @@ use incan_semantics_core::SymbolOrigin;
 
 mod admission;
 mod checked;
+mod copy;
 pub(super) mod flow;
 pub(super) mod projection;
 mod report;
@@ -57,6 +58,18 @@ pub(super) struct InputCall {
 }
 
 impl TypeChecker {
+    /// The body writer starts with isolated references. Retain the prepared parameter bindings before statement
+    /// checking can shadow their names, so source admission and persisted restoration use the same canonical facts.
+    pub(super) fn retain_callable_input_bindings(&mut self, callable: CallableSource<'_>) {
+        let parameters = match callable {
+            CallableSource::Function(function) => &function.params,
+            CallableSource::Method(method) => &method.params,
+        };
+        for parameter in parameters {
+            self.record_write_target_identity(parameter.span, &parameter.node.name);
+        }
+    }
+
     /// Capture explicit input flow while the checked lexical frame and body-owned expression facts are active.
     /// Statement output owns the result; it is never rediscovered by lowering or published as a valid empty graph.
     pub(super) fn record_explicit_input_flow(&mut self, callable: CallableSource<'_>, span: Span) {
@@ -79,6 +92,7 @@ impl TypeChecker {
         {
             return;
         }
+        self.retain_input_copy_values(&identity, span);
         let output = match source::build(self, callable, span, &identity) {
             Ok(graph) => match flow::analyze(&graph) {
                 Ok(analysis) => {

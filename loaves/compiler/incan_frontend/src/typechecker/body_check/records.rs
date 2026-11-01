@@ -143,7 +143,7 @@ pub(crate) fn project(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             if declaration { "declaration" } else { "final" }.into(),
-            "incan.checker-free-functions/4".into(),
+            "incan.checker-free-functions/7".into(),
         ],
     );
     Ok(fields)
@@ -161,7 +161,7 @@ fn restore(
         .first()
         .filter(|header| header.len() == 5)
         .ok_or(NodeBindingError::MissingOwner)?;
-    if header[0] != "header" || header[4] != "incan.checker-free-functions/4" {
+    if header[0] != "header" || header[4] != "incan.checker-free-functions/7" {
         return Err(NodeBindingError::Unsupported("record profile"));
     }
     if header[1] != positions.nodes.owner().render_compact() {
@@ -528,7 +528,10 @@ fn validate(view: &CheckedBodyView) -> Result<(), NodeBindingError> {
 
 /// Recreate every supported local map directly from the selected field's typed primitives.
 fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -> Result<(), NodeBindingError> {
-    if matches!(row[0].as_str(), "input-call" | "input-local" | "input-flow") {
+    if matches!(
+        row[0].as_str(),
+        "input-call" | "input-local" | "input-flow" | "input-copy"
+    ) {
         return inputs::restore(positions, local, row);
     }
     let span = positions.span(&row[1])?;
@@ -841,7 +844,7 @@ pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Field
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             "local".into(),
-            "incan.checker-free-functions/4".into(),
+            "incan.checker-free-functions/7".into(),
         ],
     );
     Ok(fields)

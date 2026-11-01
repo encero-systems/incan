@@ -76,7 +76,7 @@ impl BodyBuilder<'_, '_> {
                     }
                     let place = self.lower_expr_to_place(expression, scope, out);
                     self.authenticate_input_place(&place, &root, &fields)?;
-                    self.explicit_place_operand(place, &ty, argument.access)?
+                    self.explicit_place_operand(place, &ty, argument.access, expression)?
                 }
                 Some(CheckedInputSource::Temporary) | None => {
                     let value = self.lower_boundary_value(expression, Some(&ty), scope, out);
@@ -133,14 +133,26 @@ impl BodyBuilder<'_, '_> {
 
     /// Borrow in place or transfer the actual owner. Conditional and partial moves need drop obligations beyond
     /// the current static moved-out set; they must not be repaired by cloning or suppressing another path's drop.
-    fn explicit_place_operand(
+    pub(super) fn explicit_place_operand(
         &mut self,
         place: bir::Place,
         ty: &IncanType,
         access: IncanInputAccess,
+        expression: &ast::Spanned<ast::Expr>,
     ) -> Result<bir::Operand, String> {
         let local = place.local_id().ok_or("explicit source input has no local storage")?;
-        let copy = ty.abi_v0_facts().ownership.is_trivially_copy();
+        let copy = self
+            .input_body
+            .as_ref()
+            .map_err(|reason| reason.to_string())?
+            .as_ref()
+            .ok_or("explicit input has no owning source body proof")?
+            .value_is_copy(expression.span)?;
+        if matches!(access, IncanInputAccess::Owned | IncanInputAccess::Inferred)
+            && copy != ty.abi_v0_facts().ownership.is_trivially_copy()
+        {
+            return Err("checked Copy semantics require a compatible native input carrier".into());
+        }
         let (fact, last_use) = match access {
             IncanInputAccess::Shared => (bir::OwnershipFact::Borrow, false),
             IncanInputAccess::Exclusive => (bir::OwnershipFact::MutBorrow, false),
@@ -160,13 +172,13 @@ impl BodyBuilder<'_, '_> {
                 return Err("ordinary non-Copy input requires its inferred access proof".into());
             }
         };
-        self.consume_place_read(&place);
+        self.consume_input_source_read(expression, &place);
         Ok(bir::Operand::place(place, fact, last_use))
     }
 
     /// A fresh value may own temporary storage for the invocation. Existing places must use the authenticated
     /// source route; a Clone operand never becomes an explicit ownership transfer by changing its tag.
-    fn explicit_temporary_operand(
+    pub(super) fn explicit_temporary_operand(
         &mut self,
         mut value: bir::Operand,
         ty: IncanType,

@@ -4,8 +4,8 @@
 use super::types::next;
 use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
-    Access, Event, Graph, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node, OwnedInitialization,
-    Permission, Place, Projection, Root,
+    Access, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node,
+    OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::BTreeMap;
@@ -61,13 +61,25 @@ fn loan_option(value: Option<LoanId>, fields: &mut Vec<String>) {
     }
 }
 
+/// Retain exact producer-linked evaluation boundaries and source access; restoration never rediscovers them.
+fn input_evaluation(value: &InputEvaluation, fields: &mut Vec<String>) {
+    fields.extend([value.start_node.to_string(), value.end_node.to_string()]);
+    match value.source_node {
+        Some(node) => fields.extend(["some".into(), node.to_string()]),
+        None => fields.push("none".into()),
+    }
+}
+
 /// Frame map keys unambiguously using UTF-8 byte lengths, independently of current native identity ordering.
-fn canonical_key(values: &[String]) -> String {
+pub(super) fn canonical_key(values: &[String]) -> String {
     values.iter().map(|value| format!("{}:{value}", value.len())).collect()
 }
 
 /// Emit map entries in the same portable order that the Incan grammar and native rebinder require.
-fn ordered_fields(mut entries: Vec<(String, Vec<String>)>, fields: &mut Vec<String>) -> Result<(), NodeBindingError> {
+pub(super) fn ordered_fields(
+    mut entries: Vec<(String, Vec<String>)>,
+    fields: &mut Vec<String>,
+) -> Result<(), NodeBindingError> {
     entries.sort_by(|left, right| left.0.cmp(&right.0));
     fields.push(entries.len().to_string());
     let mut previous = String::new();
@@ -82,7 +94,7 @@ fn ordered_fields(mut entries: Vec<(String, Vec<String>)>, fields: &mut Vec<Stri
 }
 
 /// Require exact canonical order before current handles normalize the persisted map into native collections.
-fn ordered_key(previous: &mut String, before: &[String], remaining: usize) -> Result<(), NodeBindingError> {
+pub(super) fn ordered_key(previous: &mut String, before: &[String], remaining: usize) -> Result<(), NodeBindingError> {
     let consumed = before
         .len()
         .checked_sub(remaining)
@@ -154,6 +166,21 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         owned.push((key, row));
     }
     ordered_fields(owned, fields)?;
+    let mut operations = Vec::new();
+    for (span, operation) in &graph.operations {
+        let mut row = vec![anchor(positions, *span)?];
+        let key = canonical_key(&row);
+        row.push(operation.completion_node.to_string());
+        row.push(operation.operands.len().to_string());
+        for operand in &operation.operands {
+            row.push(anchor(positions, operand.operand)?);
+            place(positions, &operand.source, &mut row)?;
+            row.push(operand.loan.0.to_string());
+            row.push(operand.final_access.to_string());
+        }
+        operations.push((key, row));
+    }
+    ordered_fields(operations, fields)?;
     let mut invocations = Vec::new();
     for (span, invocation) in &graph.invocations {
         let mut row = vec![anchor(positions, *span)?];
@@ -182,7 +209,18 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
                 }
                 None => row.push("none".into()),
             }
+            input_evaluation(&argument.evaluation, &mut row);
         }
+        match &invocation.receiver_evaluation {
+            Some(evaluation) => {
+                row.push("some".into());
+                input_evaluation(evaluation, &mut row);
+            }
+            None => row.push("none".into()),
+        }
+        row.push(invocation.completion_node.to_string());
+        row.push(invocation.final_accesses.len().to_string());
+        row.extend(invocation.final_accesses.iter().map(usize::to_string));
         invocations.push((key, row));
     }
     ordered_fields(invocations, fields)?;
@@ -304,6 +342,22 @@ impl Reader<'_> {
         }
         Ok(Place { root, projection })
     }
+    /// Restore explicit graph-local links without substituting current analysis or source-span guesses.
+    fn input_evaluation(&mut self) -> Result<InputEvaluation, NodeBindingError> {
+        let start_node = self.number()?;
+        let end_node = self.number()?;
+        let source_node = match self.token()? {
+            "none" => None,
+            "some" => Some(self.number()?),
+            _ => return Err(NodeBindingError::MissingNode),
+        };
+        Ok(InputEvaluation {
+            start_node,
+            end_node,
+            source_node,
+        })
+    }
+
     /// Restore the full graph without consulting checked current-state payloads. The caller must run analysis.
     ///
     /// The record holds the graph's sections in this order, each a count-prefixed run its own reader decodes.
@@ -315,6 +369,7 @@ impl Reader<'_> {
             loans: self.list(Self::loan)?,
             local_loans: self.ordered_map(Self::identity, |reader| Ok(LoanId(reader.number()?)))?,
             owned_locals: self.ordered_map(Self::identity, Self::owned_initialization)?,
+            operations: self.ordered_map(Self::semantic_span, Self::operation)?,
             invocations: self.ordered_map(Self::semantic_span, Self::invocation)?,
             nodes: self.list(Self::node)?,
         })
@@ -389,15 +444,35 @@ impl Reader<'_> {
             access_node: self.optional(Self::number)?,
         })
     }
-    /// An invocation: its callee, its receiver's loan and its arguments.
+    /// An operation's inputs: the node that completes it and each operand's dependency.
+    fn operation(&mut self) -> Result<OperationInputs, NodeBindingError> {
+        Ok(OperationInputs {
+            completion_node: self.number()?,
+            operands: self.list(Self::operand)?,
+        })
+    }
+    /// An operand's dependency: its span, its source place, its loan and the node of its final access.
+    fn operand(&mut self) -> Result<OperandDependency, NodeBindingError> {
+        Ok(OperandDependency {
+            operand: self.semantic_span()?,
+            source: self.place()?,
+            loan: LoanId(self.number()?),
+            final_access: self.number()?,
+        })
+    }
+    /// An invocation: its callee, receiver loan and arguments, then how its receiver is evaluated, the node that
+    /// completes it and the nodes of its final accesses.
     fn invocation(&mut self) -> Result<Invocation, NodeBindingError> {
         Ok(Invocation {
             callee: self.identity()?,
             receiver: self.loan_option()?,
             arguments: self.list(Self::invocation_argument)?,
+            receiver_evaluation: self.optional(Self::input_evaluation)?,
+            completion_node: self.number()?,
+            final_accesses: self.list(Self::number)?,
         })
     }
-    /// An invocation argument: its span, slot, written position, access, loan and source place.
+    /// An invocation argument: its span, slot, written position, access, loan, source place and evaluation.
     fn invocation_argument(&mut self) -> Result<InvocationArgument, NodeBindingError> {
         Ok(InvocationArgument {
             span: self.semantic_span()?,
@@ -406,6 +481,7 @@ impl Reader<'_> {
             access: self.input_access()?,
             loan: self.loan_option()?,
             source: self.optional(Self::place)?,
+            evaluation: self.input_evaluation()?,
         })
     }
     /// An argument's access mode as the callee declares it.

@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
+mod operations;
+pub(in crate::typechecker) use operations::{OperandDependency, OperationInputs};
+
 /// One source storage projection. Dynamic indices conservatively overlap every element projection.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::typechecker) enum Projection {
@@ -114,6 +117,15 @@ pub(in crate::typechecker) struct Node {
     pub span: HirSourceSpan,
 }
 
+/// Producer-owned boundaries cover the entire evaluation, including fresh values and nested calls. A stored
+/// value or borrow additionally names its final source event; the consumer must never recover it by span search.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct InputEvaluation {
+    pub start_node: usize,
+    pub end_node: usize,
+    pub source_node: Option<usize>,
+}
+
 /// One evaluated source argument retains its declaration slot and the loan created for that invocation.
 #[derive(Debug, Clone)]
 pub(in crate::typechecker) struct InvocationArgument {
@@ -123,6 +135,7 @@ pub(in crate::typechecker) struct InvocationArgument {
     pub access: IncanInputAccess,
     pub loan: Option<LoanId>,
     pub source: Option<Place>,
+    pub evaluation: InputEvaluation,
 }
 
 /// Evaluation order, original written positions and receiver borrowing belong to this exact selected invocation.
@@ -131,6 +144,9 @@ pub(in crate::typechecker) struct Invocation {
     pub callee: CanonicalSymbolId,
     pub receiver: Option<LoanId>,
     pub arguments: Vec<InvocationArgument>,
+    pub receiver_evaluation: Option<InputEvaluation>,
+    pub completion_node: usize,
+    pub final_accesses: Vec<usize>,
 }
 
 /// An explicit owned declaration retains its initializer and the exact event reading or transferring a stored
@@ -202,6 +218,8 @@ pub(in crate::typechecker) struct Graph {
     pub owned_locals: BTreeMap<CanonicalSymbolId, OwnedInitialization>,
     /// Argument-to-loan bindings are retained at construction; lowering must not recover them from similar spans.
     pub invocations: BTreeMap<HirSourceSpan, Invocation>,
+    /// Observer and operator dependencies retain their evaluated operand and exact consumption event.
+    pub operations: BTreeMap<HirSourceSpan, OperationInputs>,
     pub nodes: Vec<Node>,
     pub entry: usize,
 }
@@ -270,6 +288,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
     }
     validate_invocations(graph)?;
     validate_owned_initializations(graph)?;
+    operations::validate_operations(graph)?;
     let mut origins = vec![None; graph.loans.len()];
     let mut destinations = BTreeSet::new();
     for (local, loan) in &graph.local_loans {
@@ -364,6 +383,21 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
 /// Invocation bindings retain a complete slot map and actual source loans through the call boundary.
 fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
     for (span, invocation) in &graph.invocations {
+        let evaluations = invocation
+            .receiver_evaluation
+            .iter()
+            .chain(invocation.arguments.iter().map(|argument| &argument.evaluation));
+        if std::iter::once(invocation.completion_node)
+            .chain(invocation.final_accesses.iter().copied())
+            .chain(evaluations.flat_map(|evaluation| {
+                [evaluation.start_node, evaluation.end_node]
+                    .into_iter()
+                    .chain(evaluation.source_node)
+            }))
+            .any(|index| index >= graph.nodes.len())
+        {
+            return Err(InvalidGraph("invocation event link is outside callable"));
+        }
         let mut slots = BTreeSet::new();
         let mut written_positions = BTreeSet::new();
         for argument in &invocation.arguments {
@@ -739,6 +773,7 @@ mod tests {
             .into(),
             loans,
             local_loans: BTreeMap::new(),
+            operations: BTreeMap::new(),
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             nodes: events
