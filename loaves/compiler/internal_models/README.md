@@ -18,7 +18,7 @@
 - **Canonical values.** A checker record is a profile, a checked stable owner, a position-free semantic root and ordered fields. Native objects never enter the codec, and an unsupported capability is refused, never silently omitted.
 - **Compatibility.** `incan_mir_lowering` re-exports the `records` and `record_service` names from its facade.
 
-The cases are in `loaves/compiler/internal_models/tests/test_record_scope.incn` and `loaves/compiler/internal_models/tests/canonical_record_controls.incn`. The canonical controls compare against the frontend's native adapter, which stays out of this Loaf's manifest, so `scripts/test-checker-records.sh OVEN EVIDENCE_DIRECTORY` runs them in an isolated project that adds it.
+The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls](./tests/canonical_record_controls.incn) cover these contracts. The canonical controls compare against the frontend's native adapter, which stays out of this Loaf's manifest, so `scripts/test-checker-records.sh OVEN EVIDENCE_DIRECTORY` runs them in an isolated project that adds it.
 
 ## Ownership record profile
 
@@ -38,3 +38,4 @@ The Incan codec validates primitive shapes, counts, indices and canonical orderi
 This is still a bounded free-function profile. Pending mutation decisions, forwarding edges, callable-value bindings, loop-view state, active mutation frames and other unrepresented checker capabilities refuse projection. They never become empty successful facts. Profile 3 is not accepted as profile 4. Owned initializer relationships are retained explicitly; neither source-span searches nor current checker payloads reconstruct a missing relationship. The existing 64 KiB record and 4,096-field limits are unchanged.
 
 The canonical codec tests execute Incan encode/decode round trips and compare the complete restored selected owner with an independent fresh check after source positions move. They also remove ownership facts and corrupt versions, map order, counts and graph references. Passing the primitive Rust adapters alone is insufficient evidence for this boundary.
+

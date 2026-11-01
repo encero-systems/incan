@@ -1,0 +1,25 @@
+"""Low-level value and host primitives, independent of other standard packages."""
+
+const _HEX_LOWER: str = "0123456789abcdef"
+
+
+pub def hexlify(data: bytes) -> str:
+    """
+    Encode bytes as lowercase hexadecimal text, with two characters per byte.
+
+    Args:
+        data: Bytes to encode, including an empty value.
+
+    Returns:
+        Lowercase hexadecimal text in input byte order.
+    """
+    mut out = ""
+    for value in data:
+        number = int(value)
+        out = out + _hex_digit(number // 16) + _hex_digit(number % 16)
+    return out
+
+
+def _hex_digit(value: int) -> str:
+    """Return one lowercase hexadecimal digit for a value in `0..15`."""
+    return _HEX_LOWER[value:value + 1]

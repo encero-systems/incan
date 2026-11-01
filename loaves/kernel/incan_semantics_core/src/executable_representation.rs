@@ -51,13 +51,14 @@ use crate::body_ir::{
 /// Version 35 retains expansion contexts in every checked source span and canonical identity.
 /// Version 36 appends the typed C span bridge operations.
 /// Version 37 carries explicit input access independently of binding mutability and native collection ownership.
-/// Version 39 carries a source-owned explicit-input body profile. Version 38 belongs to the isolated reflection
-/// layout; neither layout is compatible with this one. Their combined generation uses its own version.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 39;
+/// Version 38 retains checked generic value metadata; version 39 adds a source-owned explicit-input body profile.
+/// Version 40 combines the input and reflection contracts. Their independently developed positional layouts are
+/// incompatible with this combined representation and require regenerated providers.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 40;
 
-/// Version 39 adds a positional body field. Earlier providers must be rebuilt; missing source admission cannot be
-/// recovered from a native input ABI or silently shifted onto the next body field.
-const OLDEST_SUPPORTED_VERSION: u32 = 39;
+/// Only the combined layout is admitted. Missing input authority cannot be reconstructed from a native ABI, and
+/// reflection discriminants from an independent layout cannot be interpreted as this generation's operations.
+const OLDEST_SUPPORTED_VERSION: u32 = 40;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -1386,7 +1387,7 @@ mod tests {
     }
 
     /// Synthetic module context used only for codec and public-closure invariants.
-    fn module(bodies: Vec<Body>) -> BodyIrModule {
+    pub(super) fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
             runtime_callable_bindings: Vec::new(),
             decorated_bindings: Vec::new(),
@@ -1489,6 +1490,8 @@ mod tests {
     #[test]
     fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
         for version in [
+            37,
+            38,
             super::OLDEST_SUPPORTED_VERSION - 1,
             EXECUTABLE_REPRESENTATION_VERSION + 1,
         ] {

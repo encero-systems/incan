@@ -57,6 +57,7 @@ model Wrapped:
 
 - `@derive(...)` names derives from the catalog. `json` needs `from std.serde import json`, and `Serialize` and `Deserialize` need their import from `std.serde.json`.
 - `@derive(...)` also names a trait imported by name that its module lists in `__derives__` (`from codec import Encode`, then `@derive(Encode)`), or a module that declares `__derives__` (`import codec`, then `@derive(codec)`, which names each trait in the module's `__derives__` list). A model or class adopts each such trait as a `with` clause adopts it: the trait's methods, default methods included, are called on the type (`item.tag()`), and the type satisfies a bound on the trait.
+- A module's `__derives__` entries may refer to imported traits, including renamed imports. The adopting type implements the original trait; the bundle does not create a new trait identity. Importing the bundle under another name or combining it with another bundle that names the same trait does not create a second adoption. A distinct user trait with the same name does not satisfy the original trait's bounds.
 - An `enum` or `newtype` adopts such a trait in the same way.
 - `@derive(...)` also names a derive imported from a Rust crate (`from rust::serde import Serialize`, then `@derive(Serialize)`); it applies to the type as the same name in `@rust.derive(...)` does.
 - A derive on a generic declaration holds for each instantiation whose type arguments implement it. A field, payload or underlying type that is one of the declaration's type parameters meets the derive's **Requires** entry.
@@ -473,9 +474,9 @@ A `class` adopts a trait imported with `from rust::...` the same way: `class Hoo
 
 A native struct field whose type a program cannot hold stays opaque: reading or writing it, or constructing the struct, is refused when the program is built. The struct's other fields stay usable.
 
+The host API used below declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`, `struct Config { pub flags: Vec<String> }` and `fn run(callbacks: &mut (dyn Callbacks + Send))`.
+
 ```incan
-# The host crate declares `trait Callbacks { fn config(&mut self, _config: &mut Config) {} }`,
-# `struct Config { pub flags: Vec<String> }` and `fn run(callbacks: &mut (dyn Callbacks + Send))`.
 from rust::host import Callbacks, Config, run
 
 class Hooks with Callbacks:

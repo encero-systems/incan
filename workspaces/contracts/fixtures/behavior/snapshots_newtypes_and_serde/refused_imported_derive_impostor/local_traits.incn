@@ -1,0 +1,5 @@
+__derives__ = [Deserialize]
+
+pub trait Deserialize:
+    def label(self) -> str:
+        return "local"

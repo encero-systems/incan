@@ -3,6 +3,8 @@
 #   Some("Ann")
 #   name=Ann
 #   Some("Bo")
+#   1
+#   name:str
 
 model User:
     pub name: str
@@ -19,7 +21,15 @@ def reflect_values[T](value: T) -> None:
         println(f"{field}={item}")
 
 
+def reflect_metadata[T](value: T) -> None:
+    """Read immutable field descriptions without changing generic field-value results."""
+    println(len(value.__fields__()))
+    for field in value.__fields__():
+        println(f"{field.name}:{field.type_name}")
+
+
 def main() -> None:
     reflect_values(User(name="Ann"))
     pet_name = Pet(name="Bo").__field_value__("name")
     println(f"{pet_name:?}")
+    reflect_metadata(User(name="Ann"))
