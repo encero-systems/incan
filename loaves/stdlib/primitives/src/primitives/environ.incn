@@ -1,6 +1,7 @@
 """Precise current-process environment observations without defaults or conversion policy."""
 
 from rust::std::env import VarError, var as env_var
+from rust::std::string import String as RustString
 
 
 pub enum EnvironErrorKind(str):
@@ -37,7 +38,8 @@ pub def read(key: str) -> Result[str, EnvironErrorKind]:
         The non-Unicode error payload is discarded without being formatted, so observed environment values never
         appear in an error. `EnvironErrorKind.Other` remains reserved for future host mappings.
     """
-    if len(key) == 0 or key.contains("=") or key.contains("\0"):
+    # Inspect the actual UTF-8 bytes; text escape spelling must not determine key validity.
+    if len(key) == 0 or key.contains("=") or RustString.as_bytes(key).contains(0u8):
         return Err(EnvironErrorKind.InvalidKey)
 
     match env_var(key):

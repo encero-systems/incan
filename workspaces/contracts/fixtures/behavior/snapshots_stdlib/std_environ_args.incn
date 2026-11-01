@@ -1,4 +1,4 @@
-# behavior: environment primitives preserve precise observations, facade defaults, and the process argument vector (RFC 168)
+# behavior: environment primitives preserve precise observations, actual-NUL validation, facade defaults, and the process argument vector (RFC 168, #2501, #1668)
 # expect-stdout:
 #   help
 
@@ -34,7 +34,7 @@ def precise_observations() -> None:
         Err(EnvironErrorKind.Missing) => pass
         _ =>
             assert false
-    for key in ["", "bad=key", "bad\\0key"]:
+    for key in ["", "bad=key"]:
         match read(key):
             Err(kind) =>
                 same: LegacyKind = kind
@@ -78,12 +78,28 @@ def facade_observations() -> None:
             assert false
 
 
+def nul_key_observation(key: str) -> None:
+    """Reject an actual NUL byte through both layers, independently of text escape syntax."""
+    assert len(key) == 7
+    match read(key):
+        Err(EnvironErrorKind.InvalidKey) => pass
+        _ =>
+            assert false
+    match get(key):
+        Err(error) =>
+            assert error.kind() == EnvironErrorKind.InvalidKey
+        Ok(_) =>
+            assert false
+
+
 def main() -> Result[None, str]:
     """Run a controlled child for observations, then retain the original argument-vector output."""
     arguments = args().map_err((error) => error.message())?
     if subcommand(arguments) == "observe":
         precise_observations()
         facade_observations()
+        raw_key = RustString.from_utf8(b"bad\x00key").map_err((error) => str(error))?
+        nul_key_observation(str(raw_key))
         return Ok(None)
     executable = current_exe().map_err((error) => str(error))?
     output = Command

@@ -1,4 +1,4 @@
-# behavior: Unix environment observations preserve non-Unicode categories and redact values through both standard layers (RFC 168)
+# behavior: Unix environment observations accept legal backslash-zero keys and preserve non-Unicode categories with redacted values through both standard layers (RFC 168, #2501)
 # expect-stdout:
 #   nonunicode-redacted-ok
 
@@ -17,6 +17,16 @@ def main() -> Result[None, str]:
     """Require precise non-Unicode failure and retained redaction through every facade."""
     arguments = args().map_err((error) => error.message())?
     if len(arguments) > 1:
+        match read("INCAN_BACKSLASH\\0KEY"):
+            Ok(value) =>
+                assert value == "legal-key"
+            Err(_) =>
+                assert false
+        match get("INCAN_BACKSLASH\\0KEY"):
+            Ok(value) =>
+                assert value == "legal-key"
+            Err(_) =>
+                assert false
         match read("INCAN_NONUNICODE"):
             Err(EnvironErrorKind.NotUnicode) => pass
             _ =>
@@ -38,7 +48,13 @@ def main() -> Result[None, str]:
         return Ok(None)
     executable = current_exe().map_err((error) => str(error))?
     raw = OsString.from_vec(b"\xffhidden-value")
-    output = Command.new(executable).arg("child").env("INCAN_NONUNICODE", raw).output().map_err((error) => str(error))?
+    output = Command
+        .new(executable)
+        .arg("child")
+        .env("INCAN_NONUNICODE", raw)
+        .env("INCAN_BACKSLASH\\0KEY", "legal-key")
+        .output()
+        .map_err((error) => str(error))?
     if not output.status.success():
         return Err(RustString.from_utf8(output.stderr).map_err((error) => str(error))?)
     assert len(output.stdout) == 0

@@ -34,6 +34,8 @@ from std.primitives.environ import EnvironErrorKind, read
 
 A key is invalid when it is empty or contains `=` or NUL.
 
+NUL validation examines the actual key bytes. A literal backslash followed by `0` is not a NUL character and does not itself make a key invalid.
+
 For a program started by `incan run`, the first argument names its executable view under the project's `target/` directory. Oven executes that view; a host executable-path query such as `rust::std::env::current_exe()` therefore reports the view's location, subject to the host's path resolution. `args()` itself does not resolve or authenticate its first argument.
 
 ```incan
