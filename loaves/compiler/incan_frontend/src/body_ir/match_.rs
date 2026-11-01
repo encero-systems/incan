@@ -1,6 +1,6 @@
 //! Lowering for `match` expressions and their patterns.
 
-use super::control_flow::intersect_range_layouts;
+use super::control_flow::intersect_local_states;
 use super::primitives::*;
 use super::reads::*;
 use super::refusals::*;
@@ -165,7 +165,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         // Code after a match must be valid for whichever arm matched. Preserve a layout fact only when every
         // arm leaves it true; no-arm matches conservatively retain no constructed-layout fact.
-        self.materialized_range_locals = intersect_range_layouts(range_layouts_after_arms);
+        self.materialized_range_locals = intersect_local_states(range_layouts_after_arms);
 
         let ty = self.resolve_ty(expr_span);
         self.push_assign_temp(
