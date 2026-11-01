@@ -1,4 +1,4 @@
-# behavior: Scalar borrows read caller values, and exclusive borrows write the same caller storage (#2500).
+# behavior: Scalar and text borrows preserve caller storage through reads, replacement and forwarding (#2500).
 # expect-stdout:
 #   1
 #   2
@@ -89,6 +89,36 @@ def echo_owned(value: Owned[str]) -> str:
     return value
 
 
+model TextAddress:
+    city: str
+    postcode: str
+
+
+model TextCustomer:
+    address: TextAddress
+    name: str
+
+
+def replace_text(mut city: BorrowedMut[str], replacement: Borrowed[str]) -> None:
+    """Replacement drops the previous string in the borrowed slot, preserving its containing owner."""
+    city = f"{replacement}"
+
+
+def forward_text(mut city: BorrowedMut[str], replacement: Borrowed[str]) -> None:
+    """Forward both reference kinds without losing the original storage or constructing a copy."""
+    replace_text(city, replacement)
+
+
+def append_text(mut text: BorrowedMut[str]) -> None:
+    """Read the prior string before replacing it through the same exclusive input."""
+    text = f"{text}!"
+
+
+def clear_text(mut text: BorrowedMut[str]) -> None:
+    """A literal replacement uses the same projected ownership path as formatting."""
+    text = ""
+
+
 def main() -> None:
     """Observe shared reads and exclusive writes through the original caller storage."""
     mut enabled = true
@@ -123,4 +153,20 @@ def main() -> None:
     assert width_owned("fresh text") == 10
     text = echo_owned("moved literal")
     assert text == "moved literal"
+    mut customer = TextCustomer(address=TextAddress(city="Delft", postcode="2611"), name="Ada")
+    replacement = "Rotterdam"
+    replace_text(customer.address.city, replacement)
+    assert customer.address.city == "Rotterdam"
+    forward_text(customer.address.city, "Leiden")
+    append_text(customer.address.city)
+    assert customer.address.city == "Leiden!"
+    assert customer.address.postcode == "2611"
+    assert customer.name == "Ada"
+    assert replacement == "Rotterdam"
+    mut local = "old"
+    forward_text(local, replacement)
+    append_text(local)
+    assert local == "Rotterdam!"
+    clear_text(local)
+    assert local == ""
     println("scalar value reads passed")
