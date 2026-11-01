@@ -108,6 +108,37 @@ impl TypeCheckInfo {
             }
         }
 
+        // ---- Exact owned initializer relationships ----
+        for (local, initializer) in &graph.owned_locals {
+            let mode = self
+                .protocols
+                .explicit_local_modes
+                .get(local)
+                .ok_or("owned initializer has no checked annotation")?;
+            if &mode.owner != owner
+                || mode.mode != OwnershipMode::Owned
+                || self.expr_type(initializer.initializer) != Some(&mode.value_type)
+            {
+                return Err("owned initializer differs from its checked owner or value type");
+            }
+            if let Some(index) = initializer.access_node {
+                let node = graph
+                    .nodes
+                    .get(index)
+                    .ok_or("owned initializer has no checked source event")?;
+                let flow::Event::Access { access, .. } = node.event else {
+                    return Err("owned initializer has no read or transfer event");
+                };
+                let copy = super::super::semantic_type_from_resolved(&mode.value_type)
+                    .abi_v0_facts()
+                    .ownership
+                    .is_trivially_copy();
+                if (copy && access != flow::Access::Read) || (!copy && access != flow::Access::Move) {
+                    return Err("owned initializer access differs from its checked Copy or transfer contract");
+                }
+            }
+        }
+
         // ---- Canonical value declarations and complete borrow coverage ----
         for (local, mode) in self
             .protocols
@@ -124,6 +155,9 @@ impl TypeCheckInfo {
             match mode.mode {
                 OwnershipMode::Borrowed | OwnershipMode::BorrowedMut if !graph.local_loans.contains_key(local) => {
                     return Err("local borrow annotation has no source loan destination");
+                }
+                OwnershipMode::Owned if !graph.owned_locals.contains_key(local) => {
+                    return Err("owned local annotation has no retained initializer");
                 }
                 OwnershipMode::Reference => return Err("returned local dependencies require a later ownership stage"),
                 _ => {}

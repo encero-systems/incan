@@ -4,7 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::TypeChecker;
-use super::flow::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection, Root};
+use super::flow::{
+    Access, Event, Graph, Loan, LoanId, LoanKind, Node, OwnedInitialization, Permission, Place, Projection, Root,
+};
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, FunctionDecl,
     MethodDecl, Param, Receiver, Span, Spanned, Statement,
@@ -138,6 +140,7 @@ pub(super) fn build(
             permissions: BTreeMap::new(),
             loans: Vec::new(),
             local_loans: BTreeMap::new(),
+            owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             nodes: vec![Node {
                 event: Event::Nothing,
@@ -533,6 +536,30 @@ impl Builder<'_> {
             }
         }
         let incoming = self.expression(&assignment.value, incoming, true)?;
+        if mode.is_some_and(|mode| mode.mode == OwnershipMode::Owned) {
+            let access_node = if source.is_some() {
+                let [node] = incoming.as_slice() else {
+                    return Err(Unavailable {
+                        span: assignment.value.span,
+                        reason: "owned initializer needs one final stored access",
+                    });
+                };
+                Some(*node)
+            } else {
+                None
+            };
+            let retained = OwnedInitialization {
+                initializer: assignment.value.span,
+                source: source.as_ref().map(|source| source.place.clone()),
+                access_node,
+            };
+            if self.graph.owned_locals.insert(root.clone(), retained).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "owned local has more than one initializer",
+                });
+            }
+        }
         if let Some(path) = self.aliases.get(&root).cloned() {
             return Ok(self.event(
                 incoming,
