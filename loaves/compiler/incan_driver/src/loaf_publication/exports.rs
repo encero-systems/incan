@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_frontend::ast::{Declaration, ImportKind};
+use incan_frontend::ast::{Declaration, ImportItem, ImportKind};
 use incan_frontend::library_exports::{CheckedNamedExport, LibraryExportBindingRegistry};
 use incan_frontend::module::canonicalize_source_module_segments;
 use incan_frontend::{ParsedModule, diagnostics};
@@ -58,17 +58,7 @@ impl<'a> LibraryReexportResolver<'a> {
                 continue;
             }
 
-            let checked_external_import = match &import.kind {
-                ImportKind::RustFrom {
-                    crate_name,
-                    path,
-                    items,
-                    ..
-                } => Some(("rust", crate_name, path, items)),
-                ImportKind::PubFrom { library, path, items } => Some(("pub", library, path, items)),
-                _ => None,
-            };
-            if let Some((namespace, provider, path, items)) = checked_external_import {
+            if let Some((source_path, items)) = Self::checked_provider_import(&import.kind) {
                 let Some(exports_by_name) = entrypoint_exports else {
                     errors.push(diagnostics::errors::library_reexport_unknown_module(
                         &module_key(&lib_module.path_segments),
@@ -77,9 +67,6 @@ impl<'a> LibraryReexportResolver<'a> {
                     ));
                     continue;
                 };
-                let mut source_segments = vec![namespace.to_string(), provider.clone()];
-                source_segments.extend(path.iter().cloned());
-                let source_path = source_segments.join("::");
 
                 for item in items {
                     let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
@@ -145,6 +132,45 @@ impl<'a> LibraryReexportResolver<'a> {
         }
 
         if errors.is_empty() { Ok(resolved) } else { Err(errors) }
+    }
+
+    /// Identify provider imports whose checked bindings already retain their admitted declaration identities.
+    ///
+    /// The checker resolves and authorizes standard namespaces before publication. Their source spelling uses
+    /// `From`, but their exports belong to a provider just like `pub::` imports, not to this library's local modules.
+    /// This classification grants no namespace ownership and never reconstructs an identity from a package name.
+    fn checked_provider_import(kind: &ImportKind) -> Option<(String, &[ImportItem])> {
+        match kind {
+            ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } => {
+                let source = std::iter::once("rust")
+                    .chain(std::iter::once(crate_name.as_str()))
+                    .chain(path.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join("::");
+                Some((source, items))
+            }
+            ImportKind::PubFrom { library, path, items } => {
+                let source = std::iter::once("pub")
+                    .chain(std::iter::once(library.as_str()))
+                    .chain(path.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join("::");
+                Some((source, items))
+            }
+            ImportKind::From { module, items }
+                if !module.is_absolute
+                    && module.parent_levels == 0
+                    && module.segments.first().is_some_and(|root| root == "std") =>
+            {
+                Some((module.to_rust_path(), items))
+            }
+            _ => None,
+        }
     }
 
     /// Append each checked direct binding group once, preserving its overloads and source order. The collision
