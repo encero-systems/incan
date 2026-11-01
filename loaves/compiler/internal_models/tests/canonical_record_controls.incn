@@ -228,6 +228,8 @@ def ownership_record_controls() -> Result[None, str]:
 def input_protocol_controls() -> Result[None, str]:
     """Execute the real Incan codec on checked loans, source conflicts and unsupported-flow refusals."""
     cases = [
+        ("def observe_direct(value: Borrowed[str]) -> int:\n    return len(value)\n", "observe_direct"),
+        ("def observe_exclusive(mut value: BorrowedMut[str]) -> int:\n    return len(value)\n", "observe_exclusive"),
         ("def observe(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n", "observe"),
         ("def compare(value: Borrowed[str]) -> bool:\n    let view: Borrowed[str] = value\n    return view == \"yes\"\n", "compare"),
         ("def read(value: Borrowed[int]) -> int:\n    return value\ndef use() -> int:\n    value = 3\n    return read(value)\n", "use"),
