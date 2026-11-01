@@ -1,0 +1,12 @@
+# behavior: a source enum constructor refuses incompatible arguments or declaration identity (#2518)
+# expect-exit: 1
+# expect-stderr-contains:
+#   expected 'Int', found 'Str'
+
+from pub::shapes import Packet
+import pub::shapes as shapes
+
+
+def main() -> None:
+    """Reject the invalid construction before any executable value is produced."""
+    value: Packet[int] = Packet.Value("wrong")

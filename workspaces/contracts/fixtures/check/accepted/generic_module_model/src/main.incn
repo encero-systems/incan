@@ -1,0 +1,12 @@
+# behavior: explicit module-qualified generic model checking remains accepted while enum constructors retain their checked owner (#2518)
+# expect-accepted:
+
+from pub::shapes import Holder
+import pub::shapes as shapes
+
+
+def main() -> None:
+    """Exercise the already checked explicit module-qualified model constructor."""
+    holder: Holder[int] = shapes.Holder[int](value=6)
+    assert holder.get() == 6
+    println("module-model-ok")
