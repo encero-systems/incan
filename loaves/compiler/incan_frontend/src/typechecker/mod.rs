@@ -6114,9 +6114,25 @@ impl TypeChecker {
 
     /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
+        self.resolve_type_checked_for_input(ty, false)
+    }
+
+    /// A supported source-function parameter may defer its outer ownership diagnostic until its whole body is
+    /// checked. Every other annotation role, nested mode, malformed wrapper and returned dependency stays refused.
+    fn resolve_type_checked_for_input(&mut self, ty: &Spanned<Type>, defer_input: bool) -> ResolvedType {
         self.resolve_qualified_type_annotations(ty);
         if self.validate_source_type_names {
-            self.refuse_unimplemented_ownership_annotation(ty);
+            if defer_input
+                && let Type::Generic(name, arguments) = &ty.node
+                && arguments.len() == 1
+                && self
+                    .explicit_ownership_mode(name)
+                    .is_some_and(|mode| mode != incan_lang::lang::types::ownership::OwnershipMode::Reference)
+            {
+                self.refuse_unimplemented_ownership_annotation(&arguments[0]);
+            } else {
+                self.refuse_unimplemented_ownership_annotation(ty);
+            }
             self.validate_source_type_annotation_names(&ty.node, ty.span);
             self.record_type_reference_identities(ty);
         }

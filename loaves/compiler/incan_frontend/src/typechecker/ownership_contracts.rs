@@ -1,17 +1,19 @@
-//! Recognition of RFC 164 contracts before their executable ownership stages are enabled.
+//! Canonical RFC 164 contracts, source access checks and staged executable-body admission.
 //!
-//! Source parsing and formatting preserve declarations. Every resolved prelude mode and result-source clause is
-//! refused before native lowering until checked loan and transfer facts can implement it without repair copies.
+//! A direct input annotation is admitted only with its complete supported body proof. Returned dependencies,
+//! deferred boundaries and unsupported storage shapes remain refused rather than acquiring repair copies.
 
 use incan_lang::lang::types::ownership::{self, OwnershipMode};
 use incan_semantics_core::SymbolOrigin;
 
+mod admission;
 mod checked;
 mod flow;
 pub(super) mod projection;
 mod report;
 mod source;
 
+pub(super) use admission::direct_function_boundary;
 pub(super) use source::CallableSource;
 
 use super::TypeChecker;
@@ -87,7 +89,18 @@ impl TypeChecker {
             },
             Err(reason) => InputFlow::Unavailable(reason),
         };
-        self.type_info.protocols.explicit_input_flow.insert(identity, output);
+        self.type_info
+            .protocols
+            .explicit_input_flow
+            .insert(identity.clone(), output);
+        if let CallableSource::Function(function) = callable
+            && let Err(reason) = self.type_info.direct_input_admission(&identity, function)
+        {
+            self.errors.push(CompileError::type_error(
+                format!("Explicit ownership body cannot execute yet: {reason}"), span,
+            ).with_stable_code("INCAN-T0123")
+                .with_note("The entire owning body must retain supported access, storage and cleanup facts; a valid annotation alone is insufficient"));
+        }
     }
 
     /// Announce the place-binding migration without changing legacy runtime behavior or inferring a repair clone.
@@ -713,20 +726,32 @@ mod tests {
         Ok(())
     }
 
-    /// Direct input annotations constrain access instead of becoming generic value wrappers. Body typing can use
-    /// arithmetic and stored fields, but this does not enable execution or permit a shared input to be mutated.
+    /// Direct input annotations constrain values and admit only the supported body profile. Alias declarations
+    /// retain their broader stage refusal, and shared access never permits source mutation.
     #[test]
-    fn explicit_inputs_have_value_types_without_granting_execution() -> Result<(), Box<dyn std::error::Error>> {
-        for source in [
-            "def add(value: Borrowed[int]) -> int:\n    return value + 1\n",
-            "type View = Borrowed[int]\ndef add(value: View) -> int:\n    return value + 1\n",
-            "model Page:\n    title: str\ndef read(page: Borrowed[Page]) -> int:\n    return len(page.title)\n",
-            "def increment(mut value: BorrowedMut[int]) -> None:\n    value = value + 1\n",
-            "def owned(value: Owned[int]) -> int:\n    return value + 1\n",
-            "def add(Borrowed: int, value: Borrowed[int]) -> int:\n    return value + Borrowed\n",
+    fn explicit_inputs_have_checked_value_and_body_profiles() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, admitted) in [
+            ("def add(value: Borrowed[int]) -> int:\n    return value + 1\n", true),
+            (
+                "type View = Borrowed[int]\ndef add(value: View) -> int:\n    return value + 1\n",
+                false,
+            ),
+            (
+                "model Page:\n    title: str\ndef read(page: Borrowed[Page]) -> int:\n    return len(page.title)\n",
+                true,
+            ),
+            (
+                "def increment(mut value: BorrowedMut[int]) -> None:\n    value = value + 1\n",
+                true,
+            ),
+            ("def owned(value: Owned[int]) -> int:\n    return value + 1\n", true),
+            (
+                "def add(Borrowed: int, value: Borrowed[int]) -> int:\n    return value + Borrowed\n",
+                true,
+            ),
         ] {
             let checker = checked(source)?;
-            assert!(!checker.errors.is_empty(), "execution gate unexpectedly open: {source}");
+            assert_eq!(checker.errors.is_empty(), admitted, "{source}\n{:?}", checker.errors);
             assert!(
                 checker
                     .errors
@@ -752,14 +777,26 @@ mod tests {
     /// ownership request. Different overload slots cannot borrow another candidate's mode or generic binders.
     #[test]
     fn explicit_call_arguments_use_selected_value_types() -> Result<(), Box<dyn std::error::Error>> {
-        for source in [
-            "def use(value: int) -> int:\n    return read(value)\ndef read(value: Borrowed[int]) -> int:\n    return value\n",
-            "def use(value: int) -> int:\n    return read(value=value)\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef read(prefix: str, value: Borrowed[int]) -> int:\n    return value\n",
-            "def use(value: str) -> str:\n    return take(value)\ndef take[T](value: Owned[T]) -> T:\n    return value\n",
-            "type View = Borrowed[int]\ndef use(value: int) -> int:\n    return read(value)\ndef read(value: View) -> int:\n    return value\n",
+        for (source, admitted) in [
+            (
+                "def use(value: int) -> int:\n    return read(value)\ndef read(value: Borrowed[int]) -> int:\n    return value\n",
+                true,
+            ),
+            (
+                "def use(value: int) -> int:\n    return read(value=value)\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef read(prefix: str, value: Borrowed[int]) -> int:\n    return value\n",
+                true,
+            ),
+            (
+                "def use(value: str) -> str:\n    return take(value)\ndef take[T](value: Owned[T]) -> T:\n    return value\n",
+                false,
+            ),
+            (
+                "type View = Borrowed[int]\ndef use(value: int) -> int:\n    return read(value)\ndef read(value: View) -> int:\n    return value\n",
+                false,
+            ),
         ] {
             let checker = checked(source)?;
-            assert!(!checker.errors.is_empty(), "execution gate unexpectedly open");
+            assert_eq!(checker.errors.is_empty(), admitted, "{source}\n{:?}", checker.errors);
             assert!(
                 checker
                     .errors

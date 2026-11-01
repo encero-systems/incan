@@ -1,5 +1,5 @@
 //! Canonical source input requests, independent of binding mutation and native collection ownership. Transporting
-//! these facts does not admit execution; the source and Body IR execution gates remain closed.
+//! these facts alone does not admit execution; the owning body must retain its independently checked input profile.
 
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, IncanType};
 

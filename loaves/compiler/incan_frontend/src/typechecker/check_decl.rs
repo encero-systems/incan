@@ -6825,7 +6825,10 @@ impl TypeChecker {
         let previous_annotation_owner = self.prepare_function_generic_context(func);
 
         // ---- Signature defaults and frame bindings ----
-        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
+        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
+            &func.params,
+            super::ownership_contracts::direct_function_boundary(func),
+        );
         let return_type = self.resolve_callable_return_annotation(&func.return_type);
         self.record_function_ownership(func, decl_span, &resolved_param_types, &return_type);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
@@ -7125,11 +7128,15 @@ impl TypeChecker {
     /// compiler-owned consumers without requiring them to reconstruct source typing.
     /// Native inputs keep their checked borrow shape; their erased metadata regions receive independent input
     /// binders at the native signature boundary, without granting an output or field an escaping loan.
-    fn resolve_callable_parameter_types_and_check_defaults(&mut self, params: &[Spanned<Param>]) -> Vec<ResolvedType> {
+    fn resolve_callable_parameter_types_and_check_defaults(
+        &mut self,
+        params: &[Spanned<Param>],
+        defer_inputs: bool,
+    ) -> Vec<ResolvedType> {
         params
             .iter()
             .map(|param| {
-                let param_ty = self.resolve_type_checked(&param.node.ty);
+                let param_ty = self.resolve_type_checked_for_input(&param.node.ty, defer_inputs);
                 self.refuse_unbounded_nominal_type_arguments(&param_ty, param.node.ty.span);
                 self.refuse_trait_type_nested_in_annotation(&param_ty, param.node.ty.span);
                 if param.node.kind != ParamKind::Normal {
@@ -7497,7 +7504,7 @@ impl TypeChecker {
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
-        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params);
+        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params, false);
         let return_type = self.resolve_callable_return_annotation(&method.return_type);
         self.record_method_ownership(method, method_span, &resolved_param_types, &return_type, &self_ty);
 

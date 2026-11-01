@@ -396,6 +396,7 @@ pub(super) fn lower_source_partial(
         extern_delegation: None,
         native_attributes: Vec::new(),
         // No checked callable facts are recorded for a synthesized partial; callable signatures refuse by name.
+        checked_input_profile: None,
         callable_representation: None,
     }
 }
