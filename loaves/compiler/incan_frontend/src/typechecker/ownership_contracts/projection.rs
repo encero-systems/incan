@@ -175,6 +175,7 @@ impl TypeCheckInfo {
     /// Bind invocation loans to the selected canonical source signature. A graph's access tag cannot authorize a
     /// different callee, slot, receiver, or a contract unavailable to this checked body.
     fn validate_input_invocations(&self, owner: &CanonicalSymbolId, graph: &flow::Graph) -> Result<(), &'static str> {
+        let mut marker_roles = std::collections::BTreeSet::new();
         for (span, invocation) in &graph.invocations {
             let call = self
                 .protocols
@@ -193,6 +194,31 @@ impl TypeCheckInfo {
                 .ownership_contracts
                 .get(&call.callee)
                 .ok_or("invocation has no canonical ownership contract")?;
+            if !contract.modes.iter().any(|mode| {
+                mode.component
+                    .parameter
+                    .is_some_and(|slot| slot < call.parameters.len())
+            }) {
+                return Err("invocation has no canonical explicit input slot");
+            }
+            for index in std::iter::once(invocation.completion_node)
+                .chain(
+                    invocation
+                        .receiver_evaluation
+                        .iter()
+                        .flat_map(|evaluation| [evaluation.start_node, evaluation.end_node]),
+                )
+                .chain(
+                    invocation
+                        .arguments
+                        .iter()
+                        .flat_map(|argument| [argument.evaluation.start_node, argument.evaluation.end_node]),
+                )
+            {
+                if !marker_roles.insert(index) {
+                    return Err("invocation marker fulfills more than one evaluation role");
+                }
+            }
             call_evaluation::validate_invocation_events(self, graph, *span, invocation, &call.parameters)?;
             for argument in &invocation.arguments {
                 let access = crate::ownership_metadata::direct_input_access(Some(contract), argument.slot)?;

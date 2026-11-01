@@ -118,6 +118,11 @@ fn validate_evaluation(
             return Err("input evaluation contains another expression's event");
         }
     }
+    for (index, node) in graph.nodes.iter().enumerate() {
+        if contains(span, node.span) && (index < evaluation.start_node || index > evaluation.end_node) {
+            return Err("input evaluation omits events belonging to its source expression");
+        }
+    }
     match (source, evaluation.source_node) {
         (None, None) if loan.is_none() => {}
         (Some(source), Some(index)) if index == evaluation.end_node - 1 && index > evaluation.start_node => {
