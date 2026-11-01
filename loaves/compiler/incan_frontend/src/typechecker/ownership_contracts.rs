@@ -252,6 +252,51 @@ impl TypeChecker {
 mod tests {
     use super::*;
 
+    /// Resource-observer fixtures must reach cleanup through represented call boundaries. An ordinary helper has
+    /// no explicit access contract, and an annotated nominal-returning factory still needs returned-dependency facts.
+    #[test]
+    fn resource_probe_wrappers_retain_exact_source_boundary_refusals() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, call, reason) in [
+            (
+                "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
+                "observe(\"join\")",
+                "call has no selected explicit input access facts",
+            ),
+            (
+                "class Holder:\n    pub value: int\ndef make(value: int) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
+                "make(1)",
+                "call has no selected explicit input access facts",
+            ),
+            (
+                "class Holder:\n    pub value: int\ndef make(value: Owned[int]) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
+                "make(1)",
+                "call result needs retained dependency facts",
+            ),
+        ] {
+            let checker = checked(source)?;
+            let state = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .iter()
+                .find(|(owner, _)| owner.declaration_name == "main")
+                .map(|(_, state)| state)
+                .ok_or("missing caller source flow")?;
+            let InputFlow::Unavailable(unavailable) = state else {
+                return Err(format!("expected exact unavailable boundary: {state:?}").into());
+            };
+            assert_eq!(unavailable.reason, reason);
+            assert_eq!(source.get(unavailable.span.start..unavailable.span.end), Some(call));
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0123"))
+            );
+        }
+        Ok(())
+    }
+
     /// Project actual checked source so CFG tests cannot bypass canonical root/type lookup with hand-built facts.
     fn source_graph(
         source: &str,
