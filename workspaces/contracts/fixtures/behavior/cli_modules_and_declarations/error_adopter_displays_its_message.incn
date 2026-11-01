@@ -15,11 +15,13 @@
 
 from std.io import BytesIO
 from std.traits.error import Error
+from std.primitives.errors import Error as PrimitiveError
 from std.uuid import UUID
 
 
 model ParseFailure with Error:
     """Display a structured parse failure through its Error message."""
+
     field: str
     reason: str
 
@@ -30,6 +32,7 @@ model ParseFailure with Error:
 
 trait Reported with Error:
     """Render an adopter from within a trait default method."""
+
     def report(self) -> str:
         """Use the concrete adopter's checked display."""
         return f"reported: {self}"
@@ -37,6 +40,7 @@ trait Reported with Error:
 
 model DiskFull with Reported:
     """Adopt the default report with only an Error message."""
+
     path: str
 
     def message(self) -> str:
@@ -46,6 +50,7 @@ model DiskFull with Reported:
 
 model Loud with Reported:
     """Prefer an authored string method over the Error fallback."""
+
     def message(self) -> str:
         """Return the Error fallback text."""
         return "loud"
@@ -57,6 +62,19 @@ model Loud with Reported:
 
 def describe[E with Error](error: E) -> str:
     """Render an Error-bound type parameter through its checked display."""
+    return f"failed: {error}"
+
+
+model PrimitiveFailure with PrimitiveError:
+    """Adopt the canonical primitive trait and its default source method."""
+
+    def message(self) -> str:
+        return "primitive failure"
+
+
+def describe_primitive[E with PrimitiveError](error: E) -> str:
+    """Use the same checked Error display through the primitive import."""
+    assert error.source() == None
     return f"failed: {error}"
 
 
@@ -82,6 +100,12 @@ def main() -> None:
     println(failure)
     std.builtins.println(failure)
     println(describe(failure))
+    # Both import routes denote one trait, including its default and generic display behavior.
+    assert describe_primitive(failure) == describe(failure)
+    primitive = PrimitiveFailure()
+    assert primitive.source() == None
+    assert describe(primitive) == "failed: primitive failure"
+    assert describe_primitive(primitive) == describe(primitive)
     println(DiskFull(path="/tmp").report())
     println(Loud().report())
     # 3. The provider supplies the newtype's selected string method.

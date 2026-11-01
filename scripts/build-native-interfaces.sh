@@ -18,7 +18,8 @@ interfaces=$home_dir/source-interfaces
 mkdir -p "$interfaces"
 print '[]' > "$interfaces/loaves.json"
 
-for package in core async; do
+# Core reexports foundational contracts, so its checking interface requires primitives first.
+for package in primitives core async; do
     project=$repo/loaves/stdlib/$package
     name=$(sed -nE 's/^name = "([^"]+)"/\1/p' "$project/loaf.toml" | head -1)
     directory=$(mktemp -d "$interfaces/$package.XXXXXX")

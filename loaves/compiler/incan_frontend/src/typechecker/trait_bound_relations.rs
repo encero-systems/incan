@@ -1397,8 +1397,10 @@ impl TypeChecker {
 
     /// Return whether a named user type explicitly satisfies a generic trait bound.
     fn named_type_satisfies_bound(&self, type_name: &str, bound: &str) -> bool {
-        match self.lookup_type_info(type_name) {
-            Some(TypeInfo::Builtin) => matches!(builtin_traits::from_str(bound), Some(TraitId::Clone | TraitId::Debug)),
+        let spelled = match self.lookup_type_info(type_name) {
+            Some(TypeInfo::Builtin) => {
+                return matches!(builtin_traits::from_str(bound), Some(TraitId::Clone | TraitId::Debug));
+            }
             Some(TypeInfo::Model(info)) => {
                 info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
             }
@@ -1415,8 +1417,10 @@ impl TypeChecker {
                         .iter()
                         .any(|derive| self.builtin_derive_satisfies_trait(derive, bound))
             }
-            Some(TypeInfo::TypeAlias) => false,
-            None => false,
-        }
+            Some(TypeInfo::TypeAlias) | None => return false,
+        };
+        // An adoption and a bound that spell one declaration differently meet through its identity: a model adopting
+        // `std.primitives.errors.Error` satisfies `E with Error` imported through the `std.traits.error` facade.
+        spelled || self.type_implements_trait(type_name, bound)
     }
 }

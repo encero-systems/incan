@@ -4,3 +4,4 @@ import primitives
 import primitives.checksum
 import primitives.environ
 import primitives.hmac
+import primitives.errors
