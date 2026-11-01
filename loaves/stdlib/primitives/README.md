@@ -6,4 +6,6 @@ The root `hexlify(data: bytes) -> str` operation returns lowercase hexadecimal t
 
 `std.primitives.environ.read(key)` returns the present Unicode value or its exact `EnvironErrorKind`. Empty strings remain present values; missing variables, invalid keys and non-Unicode values remain distinct. `std.environ` reexports the enum and adds its existing error context, defaults and typed conversions. Observed values are never included in observation errors.
 
+`std.primitives.hmac` owns the existing `HmacSha256Signer` class and `hmac_sha256` namespace. The old `std.hash` imports reexport those same declarations. Finalizing a signer resets its message state while retaining its key; verification uses the existing native verifier. The implementation depends on the `hmac` and `sha2` crates and the explicitly supplied native error runtime, without importing higher standard-package declarations.
+
 Filesystem resources, binary I/O, other hashing algorithms, argument-vector observations and temporary directories remain in their existing standard packages. This package does not implement database storage, a Crumb format or ownership features merely by providing these algorithms.
