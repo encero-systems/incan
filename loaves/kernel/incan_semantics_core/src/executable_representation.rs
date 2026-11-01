@@ -50,11 +50,13 @@ use crate::body_ir::{
 /// Version 34 retains checked private pointer carriers and foreign bridge operations.
 /// Version 35 retains expansion contexts in every checked source span and canonical identity.
 /// Version 36 appends the typed C span bridge operations.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 36;
+/// Version 38 appends checked generic value metadata. Version 37 is reserved for the independently developed explicit
+/// input-access layout and is deliberately not accepted by this reader.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 38;
 
-/// Version 36 only appends enum variants, so a version 35 payload decodes unchanged; older layouts are incompatible
-/// with this reader and require regenerated providers.
-const OLDEST_SUPPORTED_VERSION: u32 = 35;
+/// Providers must be regenerated for this exact layout. A numeric range must not admit the independent version 37
+/// positional layout merely because this change appends a reflection operation.
+const OLDEST_SUPPORTED_VERSION: u32 = 38;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -1381,7 +1383,7 @@ mod tests {
     }
 
     /// Synthetic module context used only for codec and public-closure invariants.
-    fn module(bodies: Vec<Body>) -> BodyIrModule {
+    pub(super) fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
             runtime_callable_bindings: Vec::new(),
             decorated_bindings: Vec::new(),

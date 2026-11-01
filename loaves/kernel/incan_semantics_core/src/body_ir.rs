@@ -4190,6 +4190,33 @@ pub struct MethodTarget {
 }
 
 impl MethodTarget {
+    /// Authenticate generic metadata against its checked binder without treating a method spelling as authority.
+    /// Publication additionally proves that the binder belongs to its enclosing callable before rebasing either
+    /// identity; native lowering checks the concrete receiver's retained reflection capability.
+    pub fn has_valid_generic_metadata(&self) -> bool {
+        let Some(ReflectionOperation::GenericMetadata(owner)) = &self.reflection else {
+            return false;
+        };
+        let Some(member) = &self.canonical else {
+            return false;
+        };
+        owner.kind == crate::SemanticSourceTargetKind::GenericBinder
+            && owner.namespace == crate::SymbolNamespace::OrdinaryLexical
+            && owner.scope_discriminant.is_some()
+            && owner.declaration_span.start < owner.declaration_span.end
+            && member.kind == crate::SemanticSourceTargetKind::Method
+            && member.namespace == crate::SymbolNamespace::Member
+            && member.declaration_name == "__fields__"
+            && member.origin == owner.origin
+            && member.scope_discriminant == owner.scope_discriminant
+            && member.declaration_span == owner.declaration_span
+            && self.type_args.is_empty()
+            && self.intrinsic_carrier.is_none()
+            && self.loaf_trait.is_none()
+            && self.trait_arguments.is_none()
+            && self.native_trait_delegation.is_none()
+    }
+
     /// Validate the selected SDK signature's relation to this call without granting native execution. The driver
     /// still authenticates the item, receiver implementation and fully instantiated signature against SDK metadata.
     pub fn has_valid_native_trait_selection(&self) -> bool {
@@ -4265,6 +4292,8 @@ pub enum ReflectionOperation {
     StringValue,
     /// Items through a type parameter stringify eligible scalar fields in declaration order.
     StringItems,
+    /// Return immutable metadata after substituting this checked generic binder with its reflectable declaration.
+    GenericMetadata(CanonicalSymbolId),
 }
 
 impl PartialEq<str> for MethodTarget {
@@ -5132,8 +5161,10 @@ pub const NOMINAL_CARRIER_KEY_PREFIX: &str = "__incan_carrier_";
 
 /// Encode one checked source nominal's complete owning module and declaration into an identifier-safe carrier key.
 ///
-/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Standard
-/// and foreign storage keep their native names. A key grants no declaration lookup or layout without that identity.
+/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Ordinary
+/// standard and foreign storage keep their native names. A standard source declaration backed by a registry-owned
+/// native carrier uses the same identity key as other source declarations, so its source and native owners cannot
+/// collide with an equal-spelled local type. A key grants no lookup or layout without its retained identity.
 pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
     if identity.namespace != SymbolNamespace::OrdinaryLexical || identity.scope_discriminant.is_some() {
         return None;
@@ -5146,7 +5177,11 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         _ => return None,
     };
     match &identity.origin {
-        SymbolOrigin::Package { library, .. } if library.starts_with("incan_stdlib_") => return None,
+        SymbolOrigin::Package { library, .. }
+            if library.starts_with("incan_stdlib_") && native_nominal_item(identity).is_none() =>
+        {
+            return None;
+        }
         SymbolOrigin::Module(path) if path.first().is_some_and(|root| root == "std" || root == "__incan_std") => {
             return None;
         }
@@ -5278,6 +5313,39 @@ impl EnumDeclaration {
 
 #[cfg(test)]
 mod tests {
+    /// Only an authenticated SDK native bridge gains a source carrier key; equal names remain distinct owners.
+    #[test]
+    fn sdk_native_carrier_key_preserves_source_identity() -> Result<(), String> {
+        let mut sdk = crate::CanonicalSymbolId::module_declaration(
+            vec!["reflection".into()],
+            "FieldInfo",
+            crate::SemanticSourceTargetKind::Class,
+            crate::HirSourceSpan::new(52, 423),
+        );
+        sdk.origin = crate::SymbolOrigin::Package {
+            library: "incan_stdlib_core".into(),
+            module_path: vec!["reflection".into()],
+        };
+        let key = super::nominal_carrier_key(&sdk).ok_or("missing SDK source carrier")?;
+        assert!(!key.contains("::"));
+        assert_eq!(
+            super::native_nominal_item(&sdk).as_deref(),
+            Some("incan_std_core::reflection::FieldInfo")
+        );
+        let mut local = sdk.clone();
+        local.origin = crate::SymbolOrigin::Package {
+            library: "application".into(),
+            module_path: vec!["reflection".into()],
+        };
+        assert_ne!(super::nominal_carrier_key(&local), Some(key));
+        assert!(super::native_nominal_item(&local).is_none());
+        let mut ordinary = sdk;
+        ordinary.declaration_name = "OtherRecord".into();
+        assert!(super::nominal_carrier_key(&ordinary).is_none());
+        assert!(super::native_nominal_item(&ordinary).is_none());
+        Ok(())
+    }
+
     /// Carrier bytes remain identical to the original formatting, including UTF-8 owners and expanded declarations.
     #[test]
     fn nominal_carrier_encoding_preserves_identity_bytes() -> Result<(), String> {

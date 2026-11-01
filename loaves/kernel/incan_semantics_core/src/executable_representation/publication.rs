@@ -12,6 +12,9 @@ use crate::{CanonicalSymbolId, CompilerNodeId, IncanType, SymbolOrigin};
 use super::{CoverageReason, ExecutableDeclaration};
 use crate::canonical_module_identity;
 
+#[cfg(test)]
+mod tests;
+
 /// One projected body together with the canonical identities its execution requires.
 ///
 /// The body is the executable projection; requirements select already-checked dependencies without widening the
@@ -236,6 +239,8 @@ pub(super) fn declaration_id(identity: &CanonicalSymbolId) -> Result<CompilerNod
 /// Local slots and scope ordinals are fragment-local, not compiler-session symbol IDs. Their optional checker
 /// identities are removed because execution uses the slots and a local identity may contain a session discriminant.
 /// Declaration references keep the canonical identity minted by the declaring compilation.
+/// Generated generic metadata retains its authenticated binder ancestry inside this fragment; it is never an
+/// independently addressable package declaration.
 /// A nominal's actual retained default frame borrows that owner's binders; its own callable binder list stays empty.
 pub(super) fn project_body(
     source: &Body,
@@ -477,6 +482,35 @@ fn encloses(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
         && member.declaration_span.end <= owner.declaration_span.end
 }
 
+/// Bind a generated metadata operation to a declared parameter of this callable or its checked nominal owner.
+/// Matching source spans and expansion ancestry authenticate the binder; a same-spelled method or a binder from
+/// another frame cannot gain reflection publication through a scoped identity alone.
+fn generic_metadata_belongs_to(
+    target: &MethodTarget,
+    callable: &CanonicalSymbolId,
+    parameters: &BTreeSet<String>,
+    nominals: &[crate::body_ir::NominalDeclaration],
+) -> bool {
+    if !target.has_valid_generic_metadata() {
+        return false;
+    }
+    let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &target.reflection else {
+        return false;
+    };
+    if !parameters.contains(&binder.declaration_name) {
+        return false;
+    }
+    let contains_binder = |owner: &CanonicalSymbolId| {
+        encloses(owner, binder) && owner.declaration_span.expansion == binder.declaration_span.expansion
+    };
+    contains_binder(callable)
+        || nominals.iter().any(|owner| {
+            encloses(&owner.canonical, callable)
+                && owner.type_parameters.contains(&binder.declaration_name)
+                && contains_binder(&owner.canonical)
+        })
+}
+
 /// Borrow nominal binders only for the actual retained constructor default frame, whose identity is the owner's
 /// rather than an enclosed member's. A matching name or span alone cannot grant this declaration context.
 fn owns_default_frame(owner: &crate::body_ir::NominalDeclaration, frame: &Body) -> bool {
@@ -513,6 +547,36 @@ struct PublicationAudit<'a> {
 }
 
 impl<'a> PublicationAudit<'a> {
+    /// Preserve a checked fragment-local reflection binder without admitting it as a callable package dependency.
+    /// Both identities are projected together only after the owning generic frame has authenticated their relation.
+    fn generic_metadata_target(&mut self, target: &mut MethodTarget) -> Result<bool, CoverageReason> {
+        if !matches!(
+            target.reflection,
+            Some(crate::body_ir::ReflectionOperation::GenericMetadata(_))
+        ) {
+            return Ok(false);
+        }
+        let callable = self
+            .current_callable
+            .as_ref()
+            .ok_or(CoverageReason::UnresolvedReference)?;
+        if !generic_metadata_belongs_to(target, callable, &self.type_parameters, self.nominal_declarations) {
+            return Err(CoverageReason::UnresolvedReference);
+        }
+        let Some(crate::body_ir::ReflectionOperation::GenericMetadata(binder)) = &mut target.reflection else {
+            return Err(CoverageReason::UnresolvedReference);
+        };
+        if let SymbolOrigin::Module(module_path) = &binder.origin {
+            binder.origin = SymbolOrigin::Package {
+                library: self.library.to_owned(),
+                module_path: module_path.clone(),
+            };
+        }
+        let member = target.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
+        member.origin = binder.origin.clone();
+        Ok(true)
+    }
+
     /// Combine source-local declarations, retained checked references and the executable native storage inventory,
     /// keeping conflicting source identities separate and performing no new name resolution.
     fn new(
@@ -1133,8 +1197,9 @@ impl<'a> PublicationAudit<'a> {
 
     /// Audit the checked callee and retain exact native selections without exporting producer-session activation.
     ///
-    /// Package calls keep canonical dispatch even within their own fragment. Provider, metadata, foreign and bridge
-    /// targets remain refused until their portable execution requirements have a represented contract.
+    /// Package calls keep canonical dispatch even within their own fragment. Generated generic field metadata
+    /// retains only its authenticated fragment-local binder; provider, type-metadata, foreign and bridge targets
+    /// remain refused until their portable execution requirements have a represented contract.
     fn callee(&mut self, callee: &mut Callee) -> Result<(), CoverageReason> {
         match callee {
             Callee::Function(CallableTarget::Named(target)) => {
@@ -1155,6 +1220,9 @@ impl<'a> PublicationAudit<'a> {
             }
             Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
             Callee::Method(target) => {
+                if self.generic_metadata_target(target)? {
+                    return Ok(());
+                }
                 self.native_trait_selection(target)?;
                 if let Some(arguments) = &target.trait_arguments {
                     for ty in arguments {

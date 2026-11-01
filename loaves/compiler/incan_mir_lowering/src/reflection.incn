@@ -61,6 +61,8 @@ pub def lower_reflection(
             match operation:
                 ReflectionOperation.Metadata =>
                     return Err("unsupported Body IR field metadata without a retained declaration")
+                ReflectionOperation.GenericMetadata(_owner) =>
+                    return Err("unsupported Body IR generic field metadata without a retained declaration")
                 ReflectionOperation.TypedValue => pass
                 ReflectionOperation.TypedItems => items = true
                 ReflectionOperation.StringValue => string = true
@@ -118,9 +120,15 @@ pub def lower_field_metadata(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Return immutable declaration metadata only for the checker-selected generated hook and exact native FieldInfo layout."""
-    if target.reflection != Some(ReflectionOperation.Metadata):
-        return Ok(false)
+    """Use checked generated ownership before substitution and the concrete declaration's retained public metadata."""
+    mut generic = false
+    match target.reflection:
+        Some(ReflectionOperation.Metadata) => pass
+        Some(ReflectionOperation.GenericMetadata(_owner)) =>
+            if not target.has_valid_generic_metadata():
+                return Err("unsupported Body IR generic field metadata identity")
+            generic = true
+        _ => return Ok(false)
     if len(arguments) != 1 or len(target.type_args) != 0:
         return Err("unsupported Body IR field metadata arguments")
     match arguments[0].as_one():
@@ -135,7 +143,12 @@ pub def lower_field_metadata(
                                 None => return Err("unsupported Body IR field metadata identity")
                                 Some(identity) =>
                                     declaration = builder.nominals[owner].canonical
-                                    if (
+                                    if generic:
+                                        # The generated-operation fact carries the checked binder authority; the
+                                        # substituted receiver must retain its own reflection capability and metadata.
+                                        if "FieldInfo" not in builder.nominals[owner].derives:
+                                            return Err("unsupported Body IR generic field metadata capability")
+                                    elif (
                                         identity.origin != declaration.origin
                                         or identity.declaration_span != declaration.declaration_span
                                         or identity.scope_discriminant != declaration.scope_discriminant
