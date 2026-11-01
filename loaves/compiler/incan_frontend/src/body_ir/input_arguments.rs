@@ -141,7 +141,18 @@ impl BodyBuilder<'_, '_> {
         expression: &ast::Spanned<ast::Expr>,
     ) -> Result<bir::Operand, String> {
         let local = place.local_id().ok_or("explicit source input has no local storage")?;
-        let copy = ty.abi_v0_facts().ownership.is_trivially_copy();
+        let copy = self
+            .input_body
+            .as_ref()
+            .map_err(|reason| reason.to_string())?
+            .as_ref()
+            .ok_or("explicit input has no owning source body proof")?
+            .value_is_copy(expression.span)?;
+        if matches!(access, IncanInputAccess::Owned | IncanInputAccess::Inferred)
+            && copy != ty.abi_v0_facts().ownership.is_trivially_copy()
+        {
+            return Err("checked Copy semantics require a compatible native input carrier".into());
+        }
         let (fact, last_use) = match access {
             IncanInputAccess::Shared => (bir::OwnershipFact::Borrow, false),
             IncanInputAccess::Exclusive => (bir::OwnershipFact::MutBorrow, false),
