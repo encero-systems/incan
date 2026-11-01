@@ -388,6 +388,8 @@ pub def appended_field(source: Place, field: FieldProjection, span: SourceSpan) 
 
 pub def dereferenced_place(source: Place, referent: PlanType, span: SourceSpan) -> Result[Place, str]:
     """Append a typed dereference while preserving the complete path to the stored reference."""
+    if source.projection == Projection.Whole:
+        return Ok(Place(local=source.local, projection=Projection.Deref(referent), span=span))
     return appended_field(source, FieldProjection(slot=-1, ty=referent, dereferences=1), span)
 
 
