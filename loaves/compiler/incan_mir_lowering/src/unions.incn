@@ -568,7 +568,7 @@ pub def union_projection(mut builder: Builder, value: &RustPlace, span: SourceSp
             match value.local_id():
                 Some(local) =>
                     index = int(local.index()) + 1 + builder.local_offset
-                    owner = enum_owner(builder.locals[index].ty)?
+                    owner = enum_owner(borrowed_at(builder.locals, index).ty)?
                     member = native_source_type(
                         builder.constructors,
                         builder.nominals,

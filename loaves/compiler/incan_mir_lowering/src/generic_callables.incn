@@ -11,6 +11,7 @@ from rust::incan_semantics_core::body_ir import (
 from frame import Builder
 from pub::incan_mir_plan import PlanType
 from layout_types import native_source_type
+from table_views import borrowed_at
 
 
 pub def owned_callable_slots(
@@ -87,7 +88,7 @@ pub def argument_storage(mut builder: Builder, argument: &RustArgument) -> Resul
             match read.place.local_id():
                 Some(local) =>
                     index = int(local.index()) + builder.local_offset + 1
-                    return Ok(Some(builder.locals[index].ty))
+                    return Ok(Some(borrowed_at(builder.locals, index).ty))
                 None => pass
         _ => pass
     return Ok(None)

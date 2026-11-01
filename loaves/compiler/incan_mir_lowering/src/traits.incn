@@ -48,7 +48,7 @@ pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrMo
     mut has_default = false
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
-        if len(body.locals) > 0 and body.locals[0].ty == RustType.SelfType:
+        if len(body.locals) > 0 and borrowed_at(body.locals, 0).ty == RustType.SelfType:
             has_default = true
             break
     if not has_default:
@@ -221,7 +221,7 @@ def specialize_for(
     result.bodies.clear()
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
-        if len(body.locals) == 0 or body.locals[0].ty != RustType.SelfType:
+        if len(body.locals) == 0 or borrowed_at(body.locals, 0).ty != RustType.SelfType:
             result.bodies.push(body.clone())
             continue
         # One default can fill several slots of one adopter (its own and the supertrait slots it refines); the
@@ -635,9 +635,9 @@ pub def owner_method_index(
             continue
         match frame_type(builder.constructors, builder.nominals, builder.enums, body.locals[0], builder.intrinsics):
             Ok(receiver) =>
-                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={body.locals[0].ty}, frame={receiver:?}); "
+                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={borrowed_at(body.locals, 0).ty}, frame={receiver:?}); "
             Err(error) =>
-                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={body.locals[0].ty}, frame_error={error}); "
+                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={borrowed_at(body.locals, 0).ty}, frame_error={error}); "
     return Err(
         f"unsupported Body IR nonlocal or trait-object Method; target={target.canonical:?}; owner={owner:?}; owner_identity={identity:?}; implementation={canonical:?}; canonical_candidates={candidate_count}; candidates_limit=6; candidates=[{candidates}]",
     )

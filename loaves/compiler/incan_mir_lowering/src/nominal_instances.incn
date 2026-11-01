@@ -492,7 +492,7 @@ def owner_template(module: &BodyIrModule, body: &Body) -> Option[int]:
     """Locate an open receiver in the native table, borrowing each declaration instead of copying it."""
     if len(body.locals) == 0 or not is_receiver(body.locals[0].origin):
         return None
-    match body.locals[0].ty:
+    match borrowed_at(body.locals, 0).ty:
         RustType.Generic(base=base, args=_arguments) =>
             name = str(base)
             for index in range(len(module.nominal_declarations)):

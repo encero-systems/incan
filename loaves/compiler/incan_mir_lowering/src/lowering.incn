@@ -733,7 +733,7 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
         match value.local_id():
             Some(local) =>
                 index = int(local.index()) + 1 + builder.local_offset
-                if is_exclusive_borrow(builder.locals[index].ty):
+                if is_exclusive_borrow(borrowed_at(builder.locals, index).ty):
                     return Ok(read_place(plan_place(index, span), true, span))
             None => pass
     match element_read(builder, value, span)?:
@@ -792,7 +792,7 @@ def reference_value_read(
                 return Ok(None)
             if not reference_read_fact(fact):
                 return Err("unsupported Body IR reference value without a checked copy or transfer")
-            if is_exclusive_borrow(builder.locals[index].ty) and fact != OwnershipFact.Move:
+            if is_exclusive_borrow(borrowed_at(builder.locals, index).ty) and fact != OwnershipFact.Move:
                 return Err("unsupported Body IR exclusive reference value without a checked transfer")
             return Ok(Some(read_place(plan_place(index, span), fact == OwnershipFact.Move, span)))
 
@@ -878,7 +878,7 @@ def owned_target_read(
     match fact:
         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
         OwnershipFact.Move =>
-            transferred_tuple_field = is_tuple_type(builder.locals[target.local].ty) and is_direct_tuple_field(target)
+            transferred_tuple_field = is_tuple_type(borrowed_at(builder.locals, target.local).ty) and is_direct_tuple_field(target)
             if (
                 target.projection != Projection.Whole
                 and not transferred_tuple_field
@@ -892,7 +892,7 @@ def owned_target_read(
             if (
                 target.projection != Projection.Whole
                 and not transferred_tuple_field
-                and is_tuple_type(builder.locals[target.local].ty)
+                and is_tuple_type(borrowed_at(builder.locals, target.local).ty)
                 and owned_carrier(place_type(builder.locals, target))
             ):
                 return Err("unsupported Body IR partial tuple move")
@@ -913,7 +913,7 @@ def owned_target_read(
                 return Ok(Operand(kind=OperandKind.Copy(target), span=span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
-            if is_list(ty) and is_tuple_type(builder.locals[target.local].ty):
+            if is_list(ty) and is_tuple_type(borrowed_at(builder.locals, target.local).ty):
                 return carrier_payload_value(builder, target, span)
             if place_type(builder.locals, target) == PlanType.String:
                 cloned = clone_text(builder, target, span)?
@@ -925,7 +925,7 @@ def owned_target_read(
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
             # A list held by a tuple element is materialized by cloning it, leaving the owning tuple whole.
-            if is_list(place_type(builder.locals, target)) and is_tuple_type(builder.locals[target.local].ty):
+            if is_list(place_type(builder.locals, target)) and is_tuple_type(borrowed_at(builder.locals, target.local).ty):
                 return carrier_payload_value(builder, target, span)
             # A checked projected read borrows its parent. Materialize only the selected enum or model through its
             # real Clone implementation; copying or moving that field would invalidate the still-owned parent. A model
@@ -1824,7 +1824,7 @@ def lower_native_race(
     mut callbacks: list[Operand] = []
     for arm in arms:
         futures.append(source_future_place(builder, arm.awaitable, span)?)
-        input = builder.locals[int(arm.binding.index()) + 1 + builder.local_offset].ty
+        input = borrowed_at(builder.locals, int(arm.binding.index()) + 1 + builder.local_offset).ty
         inputs.append(input)
         callbacks.append(race_callback(module, builder, arm, input, ty, span)?)
     types = [inputs[0], inputs[1], ty, place_type(builder.locals, futures[0]), place_type(builder.locals, futures[1])]
@@ -1960,7 +1960,7 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
 
 def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
     """Materialize a returned value for the return slot's type, taking ownership of an owned result."""
-    return_type = builder.locals[0].ty
+    return_type = borrowed_at(builder.locals, 0).ty
     if builder.returned_view != IncanInputAccess.Inferred:
         return view_return_operand(builder, operand, return_type, span)
     if return_type == PlanType.String:
@@ -1989,7 +1989,7 @@ def view_return_operand(
 
 def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:
     """Store a materialized result in the return slot, drop every live owner, and return."""
-    return_type = builder.locals[0].ty
+    return_type = borrowed_at(builder.locals, 0).ty
     result = coerce_numeric_operand(builder, value, return_type, span)?
     if callable_copy_type(return_type):
         assign_callable(builder, plan_place(0, span), result, true, span)?
@@ -2034,7 +2034,7 @@ def lower_yield(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> 
         None => pass
     if builder.generator_handle < 0:
         return Err("unsupported Body IR Yield outside generator producer")
-    match builder.locals[builder.generator_handle].ty:
+    match borrowed_at(builder.locals, builder.generator_handle).ty:
         PlanType.GeneratorYield(leaf, depth) =>
             operand = value_operand(builder, value, span)?
             converted = coerce_numeric_operand(builder, operand, generator_element(leaf, depth), span)?
@@ -2057,7 +2057,7 @@ pub def lower_assignment(
         if is_element_place(builder, destination)?:
             return element_assignment(module, builder, destination, value, span)
         base = list_base_place(builder, destination, span)?
-        ty = builder.locals[base.local].ty
+        ty = borrowed_at(builder.locals, base.local).ty
         if is_collection(ty):
             return dictionary_index_assignment(builder, destination, value, span)
         if is_list(ty):
@@ -2164,7 +2164,7 @@ def lower_local_assignment(
     """Handle callable and iteration bindings before assigning an ordinary stored value with checked ownership."""
     # Replace the borrowed value through its checked projection, never the reference slot itself.
     if (
-        builder.locals[target.local].ty == PlanType.StringMutRef
+        borrowed_at(builder.locals, target.local).ty == PlanType.StringMutRef
         and target.projection != Projection.Deref(PlanType.String)
     ):
         return Err("unsupported Body IR assignment to a mutable text reference slot")
@@ -2242,7 +2242,7 @@ def assign_stored_value(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Assign an ordinary stored value after callable construction and iteration-binding admission."""
-    match builder.locals[target.local].ty:
+    match borrowed_at(builder.locals, target.local).ty:
         PlanType.ListIntoIter(_leaf, _depth) =>
             match value:
                 RustRvalue.Use(RustOperand.Place(read)) =>
@@ -2499,7 +2499,7 @@ def hold_closure(
     A checked local starts with a provisional source signature; its first value fixes the supplied-flag and Fn/FnOnce ABI. Parameters, return storage and already materialized locals keep their existing ABI across later moves and drops.
     """
     if local <= builder.parameter_count or local in builder.materialized_closures:
-        match builder.locals[local].ty:
+        match borrowed_at(builder.locals, local).ty:
             PlanType.Closure(held) =>
                 if consumes_environment:
                     return Err("unsupported Body IR binding changing callable consumption")
@@ -3001,7 +3001,7 @@ def lower_later_clause(
             environment.append(local)
             types.append(operand_type(builder, operand)?)
             operands.append(operand)
-    result = builder.locals[0].ty
+    result = borrowed_at(builder.locals, 0).ty
     name = f"__incan_generator_step_{builder.name}_{len(builder.synthesized)}"
     step = lift_generator_step(module, builder, name, item, types, environment, result, item_local, body, span)?
     synthesize(builder, step)
@@ -3015,7 +3015,7 @@ def lower_later_clause(
 def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
     """Snapshot a list, set or zip source per item, or move a generator the step built."""
     place = plan_place(slot, span)
-    ty = builder.locals[slot].ty
+    ty = borrowed_at(builder.locals, slot).ty
     match ty:
         PlanType.Set(_leaf) =>
             snapshot = cloned_collection(builder, place, span)?
@@ -3039,7 +3039,7 @@ def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[O
 def environment_operand(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
     """Copy a scalar or clone an owned snapshot or callable so the outer step retains its reusable environment."""
     place = plan_place(slot, span)
-    ty = builder.locals[slot].ty
+    ty = borrowed_at(builder.locals, slot).ty
     if not step_capture_type(ty):
         return Err("unsupported Body IR generator expression clause environment outside scalars, owned text and lists")
     match ty:
@@ -6429,7 +6429,7 @@ def lower_zip_builtin(
         return Err("unsupported Body IR zip arity")
     output = call_destination(builder, destination, PlanType.Unit, span)?
     # The frame lays out zip over two iterators as a generator of pairs, which draws from both lazily.
-    match generator_shape(builder.locals[output.local].ty):
+    match generator_shape(borrowed_at(builder.locals, output.local).ty):
         Some(_shape) =>
             first = argument_value(builder, arguments, 0, span)?
             second = argument_value(builder, arguments, 1, span)?
@@ -6438,7 +6438,7 @@ def lower_zip_builtin(
             builder.owned.append(output.local)
             return Ok(None)
         None => pass
-    match zip_shape(builder.locals[output.local].ty):
+    match zip_shape(borrowed_at(builder.locals, output.local).ty):
         None => return Err("unsupported Body IR zip checked destination")
         Some((left, right)) =>
             first = argument_value(builder, arguments, 0, span)?
@@ -9661,7 +9661,7 @@ def lower_function(
         Err(reason) =>
             mut frame = str(body.name)
             if len(body.params) != 0:
-                frame += f" on {body.locals[parameter_local_index(body, 0)].ty}"
+                frame += f" on {borrowed_at(body.locals, parameter_local_index(body, 0)).ty}"
             return Err(f"{reason} in {frame} return ABI")
     declared_type = return_representation(body, declared_carrier)?
     return_type = producer_return_type(constructors, module, body, declared_type, intrinsics)?
@@ -10250,7 +10250,7 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
                 Some(item) => return Ok(item)
                 None => pass
             base = list_base_place(builder, read.place, span)?
-            if is_collection(builder.locals[base.local].ty):
+            if is_collection(borrowed_at(builder.locals, base.local).ty):
                 return collection_value(builder, read, span)
             place = scalar_place(builder, read.place, span)?
             ty = place_type(builder.locals, place)
@@ -10320,7 +10320,7 @@ def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
     if not is_element_place(builder, source)?:
         return Ok(None)
     base = list_base_place(builder, source, span)?
-    if is_collection(builder.locals[base.local].ty):
+    if is_collection(borrowed_at(builder.locals, base.local).ty):
         return Ok(Some(dictionary_index_read(builder, source, span)?))
     return Ok(Some(indexed_read(builder, source, span)?))
 
@@ -10658,9 +10658,9 @@ def list_assignment(
         _ = list_assignment(builder, replacement, value, span)?
         replace_owned_destination(builder, destination, RvalueKind.Use(read_place(replacement, true, span)), span)
         return Ok(None)
-    leaf, depth = require_list_shape(builder.locals[destination.local].ty, "unsupported Body IR non-list assignment")?
+    leaf, depth = require_list_shape(borrowed_at(builder.locals, destination.local).ty, "unsupported Body IR non-list assignment")?
     ty = PlanType.List(leaf, depth)
-    if builder.locals[destination.local].ty != ty:
+    if borrowed_at(builder.locals, destination.local).ty != ty:
         return Err("unsupported Body IR whole borrowed list assignment")
     element = list_element(leaf, depth)
     output = temporary(builder, ty, span)
@@ -11341,7 +11341,7 @@ def lower_list_iter(
     builder.owned.append(snapshot.local)
     result = PlanType.Generator(leaf, depth - 1)
     output = call_destination(builder, destination, result, span)?
-    if builder.locals[output.local].ty != result:
+    if borrowed_at(builder.locals, output.local).ty != result:
         return Err("unsupported Body IR list iter destination")
     drop_owned(builder, output.local, span)
     generator_runtime_call(
@@ -11643,7 +11643,7 @@ def indexes_nested_list(mut builder: Builder, arguments: &list[RustArgumentEleme
             match read.place.local_id():
                 Some(local) =>
                     slot = int(local.index()) + 1 + builder.local_offset
-                    match list_shape(builder.locals[slot].ty):
+                    match list_shape(borrowed_at(builder.locals, slot).ty):
                         Some((_leaf, depth)) => return depth > 1
                         None => return false
                 None => return false
@@ -12328,7 +12328,7 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
         match value.local_id():
             None => return Err("unsupported Body IR global list root projection")
             Some(local) =>
-                mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+                mut ty = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
                 # A receiver reference projects its model's fields.
                 match ty:
                     PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
@@ -12441,7 +12441,7 @@ def collection_assignment(
             if kind != RustAggregateKind.Set:
                 return Err("unsupported Body IR non-set collection Aggregate")
             output = begin_collection(builder, destination, span)?
-            types = collection_arguments(builder.locals[output.local].ty)
+            types = collection_arguments(borrowed_at(builder.locals, output.local).ty)
             for element in elements:
                 match element.as_one():
                     Some(value) =>
@@ -12457,7 +12457,7 @@ def collection_assignment(
             return Ok(None)
         RustRvalue.Dict(entries) =>
             output = begin_collection(builder, destination, span)?
-            types = collection_arguments(builder.locals[output.local].ty)
+            types = collection_arguments(borrowed_at(builder.locals, output.local).ty)
             for entry in entries:
                 match entry:
                     DictEntry.Pair(key, value) =>
@@ -12700,7 +12700,7 @@ def optional_dictionary_get(
         None => return Err("unsupported Body IR discarded optional dictionary get")
     ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)
-    result = builder.locals[output.local].ty
+    result = borrowed_at(builder.locals, output.local).ty
     _owner, declaration = carrier_layout(builder, result)?
     if declaration.carrier != "Option" or declaration.variants[1].fields != [types[1]]:
         return Err("unsupported Body IR optional dictionary get carrier")
@@ -13213,7 +13213,7 @@ def lower_arm_guard(
             condition = scalar_operand(builder, guard, span)?
             for local in incoming:
                 if local not in builder.owned:
-                    if local == scrutinee or not releases_only_memory(builder.locals[local].ty):
+                    if local == scrutinee or not releases_only_memory(borrowed_at(builder.locals, local).ty):
                         return Err("unsupported Body IR match guard consuming an owner")
                     consumed.append(local)
             admitted = builder.new_block(span)
@@ -13276,10 +13276,10 @@ def bind_structural_pattern(
         RustPattern.Var(binding) =>
             local = int(binding.local.index()) + 1 + builder.local_offset
             ty = place_type(builder.locals, source)
-            if builder.locals[local].ty != ty:
+            if borrowed_at(builder.locals, local).ty != ty:
                 # A borrowed subject binds its components as shared references to them.
                 reference = borrowed_binding_type(ty)
-                if reference == PlanType.Unit or builder.locals[local].ty != reference:
+                if reference == PlanType.Unit or borrowed_at(builder.locals, local).ty != reference:
                     return Err("invalid Body IR structural pattern binding carrier")
                 builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(source), span))
                 return Ok(None)
@@ -13371,7 +13371,7 @@ def join_branch_owners(
         for local in arm_owners[index]:
             if local in live:
                 continue
-            if not releases_only_memory(builder.locals[local].ty):
+            if not releases_only_memory(borrowed_at(builder.locals, local).ty):
                 return Err("unsupported Body IR owned-value branch merge")
             drop_owned(builder, local, span)
         finish_fallthrough(builder, join, span)
@@ -14455,7 +14455,7 @@ def bind_shared_enum_payload(
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Preserve a checker-retained shared reference binding: copy a reference payload or borrow its owned nominal field. Match declaration slots rather than diagnostic names, and never materialize owned text or move an owner's payload into a reference slot."""
-    target = builder.locals[local].ty
+    target = borrowed_at(builder.locals, local).ty
     if local not in builder.reference_values or is_exclusive_borrow(target):
         return Ok(false)
     if not reference_read_fact(fact):
@@ -14490,7 +14490,7 @@ def bind_enum_fields(
         match fields[slot]:
             RustPattern.Var(binding) =>
                 local = int(binding.local.index()) + 1 + builder.local_offset
-                ty = builder.locals[local].ty
+                ty = borrowed_at(builder.locals, local).ty
                 projected = appended_field(
                     source,
                     FieldProjection(slot=slot, ty=payload_types[slot], variant=variant),

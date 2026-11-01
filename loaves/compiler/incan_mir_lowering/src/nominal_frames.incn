@@ -124,7 +124,7 @@ def selected_operand_type(body: &Body, value: &Operand) -> Option[RustType]:
             if len(read.place.projection) != 0:
                 return None
             match read.place.local_id():
-                Some(local) => return Some(body.locals[int(local.index())].ty.clone())
+                Some(local) => return Some(borrowed_at(body.locals, int(local.index())).ty.clone())
                 None => return None
 
 

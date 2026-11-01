@@ -6,7 +6,7 @@ from frame import Builder
 from models import model_prefix, field_step_type
 from tuples import is_tuple_type
 from lowering import projected_element_read
-from table_views import borrowed_table
+from table_views import borrowed_table, borrowed_at
 
 
 pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
@@ -34,7 +34,7 @@ pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Op
     match source.local_id():
         None => return Ok(None)
         Some(local) =>
-            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            root = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
             match root:
                 PlanType.Model(_owner, _name) => ty = root
                 PlanType.Enum(_owner, _name) => ty = root

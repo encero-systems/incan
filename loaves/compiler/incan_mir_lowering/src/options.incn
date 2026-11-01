@@ -98,7 +98,7 @@ pub def propagate_result(
     differing error type is refused.
     """
     _owner, input = result_layout(builder, frame_place_type(builder.locals, source))?
-    output_type = builder.locals[0].ty
+    output_type = borrowed_at(builder.locals, 0).ty
     output_owner, output = result_layout(builder, output_type)?
     owns_text = input.variants[1].fields == [PlanType.FrozenStr] and output.variants[1].fields == [PlanType.String]
     if input.variants[1].fields != output.variants[1].fields and not owns_text:
@@ -234,7 +234,7 @@ pub def retain_body_carriers(
         Ok(_value) => pass
         Err(reason) => return Err(f"{reason} in {body.name} return carrier")
     for index in range(len(body.locals)):
-        match retain_carrier(constructors, module, declarations, body.locals[index].ty, file):
+        match retain_carrier(constructors, module, declarations, borrowed_at(body.locals, index).ty, file):
             Ok(_value) => pass
             Err(reason) => return Err(f"{reason} in {body.name} local {index} carrier")
     match retain_iteration_poll_carriers(
@@ -299,7 +299,7 @@ def retain_iteration_poll_statement(
                             if index in taking:
                                 match destination.local_id():
                                     Some(item) =>
-                                        ty = body.locals[int(item.index())].ty
+                                        ty = borrowed_at(body.locals, int(item.index())).ty
                                         output = generic("Option", [ty])
                                         retain_carrier(constructors, module, declarations, output, file)?
                                     None => return Err("unsupported Body IR consuming iteration global item")
