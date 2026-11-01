@@ -51,10 +51,21 @@ pub(super) struct LocalMode {
 /// declaration/default evaluation has no callable body owner, but still cannot cross a record profile unaware of it.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct InputCall {
+    pub kind: InputCallKind,
     pub owner: Option<incan_semantics_core::CanonicalSymbolId>,
     pub callee: incan_semantics_core::CanonicalSymbolId,
     pub parameters: Vec<crate::symbols::CallableParam>,
     pub receiver: Option<crate::ast::Receiver>,
+}
+
+/// Declaration classification is separate from argument access. Ordinary facts are provisional until their body
+/// independently requires an input proof, and cannot replace an explicit contract missing from the declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum InputCallKind {
+    /// The selected declaration carries an explicit input contract.
+    Explicit,
+    /// A synchronous plain declaration retains its existing inferred ABI.
+    Ordinary,
 }
 
 impl TypeChecker {
@@ -88,8 +99,12 @@ impl TypeChecker {
                 .protocols
                 .explicit_input_calls
                 .values()
-                .any(|call| call.owner.as_ref() == Some(&identity))
+                .any(|call| call.owner.as_ref() == Some(&identity) && call.kind == InputCallKind::Explicit)
         {
+            self.type_info
+                .protocols
+                .explicit_input_calls
+                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
             return;
         }
         self.retain_input_copy_values(&identity, span);

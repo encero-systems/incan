@@ -143,7 +143,7 @@ pub(crate) fn project(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             if declaration { "declaration" } else { "final" }.into(),
-            "incan.checker-free-functions/7".into(),
+            "incan.checker-free-functions/8".into(),
         ],
     );
     Ok(fields)
@@ -161,7 +161,7 @@ fn restore(
         .first()
         .filter(|header| header.len() == 5)
         .ok_or(NodeBindingError::MissingOwner)?;
-    if header[0] != "header" || header[4] != "incan.checker-free-functions/7" {
+    if header[0] != "header" || header[4] != "incan.checker-free-functions/8" {
         return Err(NodeBindingError::Unsupported("record profile"));
     }
     if header[1] != positions.nodes.owner().render_compact() {
@@ -413,6 +413,25 @@ fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fi
         type_fields(ty, &mut row)?;
         fields.push(row);
     }
+    for (binding, requirement) in &expressions.body_ir_parameter_requirements {
+        if binding.kind != incan_semantics_core::SemanticSourceTargetKind::Parameter {
+            return Err(NodeBindingError::WrongOwner);
+        }
+        let mut row = vec![
+            "binding-type".into(),
+            positions.nodes.anchor(span_of(binding))?.path,
+            "parameter-requirement".into(),
+            positions.identity(binding)?,
+        ];
+        match requirement {
+            Some(ty) => {
+                row.push("some".into());
+                type_fields(ty, &mut row)?;
+            }
+            None => row.push("none".into()),
+        }
+        fields.push(row);
+    }
     for (span, kind) in &expressions.ident_kinds {
         let tag = match kind {
             super::super::type_info::IdentKind::Value => "value",
@@ -561,6 +580,24 @@ fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -
             {
                 return Err(NodeBindingError::MissingNode);
             }
+        }
+        "binding-type" if row[2] == "parameter-requirement" => {
+            let binding = positions.canonical(next(&mut values)?)?;
+            if span_of(&binding) != span || binding.kind != incan_semantics_core::SemanticSourceTargetKind::Parameter {
+                return Err(NodeBindingError::WrongOwner);
+            }
+            let requirement = match next(&mut values)? {
+                "none" => None,
+                "some" => Some(read_type(&mut values)?),
+                _ => return Err(NodeBindingError::MissingNode),
+            };
+            if local.expressions.body_ir_parameter_requirements.contains_key(&binding) {
+                return Err(NodeBindingError::MissingNode);
+            }
+            local
+                .expressions
+                .body_ir_parameter_requirements
+                .insert(binding, requirement);
         }
         "parameter" => {
             local
@@ -844,7 +881,7 @@ pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Field
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             "local".into(),
-            "incan.checker-free-functions/7".into(),
+            "incan.checker-free-functions/8".into(),
         ],
     );
     Ok(fields)

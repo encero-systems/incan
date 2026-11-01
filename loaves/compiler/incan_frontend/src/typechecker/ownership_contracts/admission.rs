@@ -1,7 +1,7 @@
 //! Source-profile eligibility is separate from a successfully constructed ownership graph. A complete graph may
 //! describe a source shape whose native storage or cleanup is still deliberately unavailable.
 
-use crate::ast::{BinaryOp, Expr, FunctionDecl, ParamKind, Statement};
+use crate::ast::{BinaryOp, Condition, Expr, FunctionDecl, ParamKind, Spanned, Statement};
 use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
@@ -19,6 +19,32 @@ pub(in crate::typechecker) fn direct_function_boundary(function: &FunctionDecl) 
             .all(|parameter| parameter.node.kind == ParamKind::Normal && parameter.node.default.is_none())
 }
 
+/// Recursive source shape only: full CFG/event coverage remains the authority for every retained operation.
+fn input_statements_supported(body: &[Spanned<Statement>], conditionals: bool) -> bool {
+    body.iter().all(|statement| match &statement.node {
+        Statement::Pass
+        | Statement::Assignment(_)
+        | Statement::FieldAssignment(_)
+        | Statement::CompoundAssignment(_)
+        | Statement::Expr(_)
+        | Statement::Return(_)
+        | Statement::Assert(_) => true,
+        Statement::If(branch) if conditionals => {
+            matches!(branch.condition, Condition::Expr(_))
+                && input_statements_supported(&branch.then_body, true)
+                && branch
+                    .elif_branches
+                    .iter()
+                    .all(|(_, body)| input_statements_supported(body, true))
+                && branch
+                    .else_body
+                    .as_ref()
+                    .is_none_or(|body| input_statements_supported(body, true))
+        }
+        _ => false,
+    })
+}
+
 impl TypeCheckInfo {
     /// Authenticate complete source flow and the currently implemented storage profile together. An unavailable
     /// body cannot borrow permission from its callee's signature or a previous declaration's successful check.
@@ -27,6 +53,26 @@ impl TypeCheckInfo {
         owner: &CanonicalSymbolId,
         function: &FunctionDecl,
     ) -> Result<Option<CheckedInputBody<'a>>, &'static str> {
+        self.input_projection(owner, function, false)
+    }
+
+    /// Retain a fully authenticated conditional source projection for the staged version2 representation. This
+    /// does not replace direct_input_admission: source execution and native/publication version gates stay closed.
+    pub(crate) fn conditional_input_projection<'a>(
+        &'a self,
+        owner: &CanonicalSymbolId,
+        function: &FunctionDecl,
+    ) -> Result<Option<CheckedInputBody<'a>>, &'static str> {
+        self.input_projection(owner, function, true)
+    }
+
+    /// Both representations require the same source/storage authority; only statement-if structure differs.
+    fn input_projection<'a>(
+        &'a self,
+        owner: &CanonicalSymbolId,
+        function: &FunctionDecl,
+        conditionals: bool,
+    ) -> Result<Option<CheckedInputBody<'a>>, &'static str> {
         let Some(proof) = self.checked_input_body(owner)? else {
             return Ok(None);
         };
@@ -34,27 +80,18 @@ impl TypeCheckInfo {
             return Err("explicit inputs require a synchronous fixed source-function boundary");
         }
         proof.validate_local_storage()?;
-        if function.body.iter().any(|statement| {
-            !matches!(
-                statement.node,
-                Statement::Pass
-                    | Statement::Assignment(_)
-                    | Statement::FieldAssignment(_)
-                    | Statement::CompoundAssignment(_)
-                    | Statement::Expr(_)
-                    | Statement::Return(_)
-                    | Statement::Assert(_)
-            )
-        }) || any_expr_in_body(&function.body, |expression| {
-            matches!(
-                expression,
-                Expr::MethodCall(..) | Expr::Index(..) | Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _)
-            )
-        }) {
+        if !input_statements_supported(&function.body, conditionals)
+            || any_expr_in_body(&function.body, |expression| {
+                matches!(
+                    expression,
+                    Expr::MethodCall(..) | Expr::Index(..) | Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _)
+                )
+            })
+        {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
         }
         proof.validate_direct_call_storage()?;
-        proof.validate_assertion_transfers(function)?;
+        proof.validate_assertion_transfers(&function.body)?;
         proof.validate_operation_coverage(function)?;
         Ok(Some(proof))
     }
@@ -63,8 +100,17 @@ impl TypeCheckInfo {
 impl CheckedInputBody<'_> {
     /// An assertion message executes only on failure. Moving a stored owner there needs conditional cleanup even
     /// though the surrounding source contains no `if`; fresh failure-local values and Copy inputs need no such join.
-    fn validate_assertion_transfers(&self, function: &FunctionDecl) -> Result<(), &'static str> {
-        for statement in &function.body {
+    fn validate_assertion_transfers(&self, body: &[Spanned<Statement>]) -> Result<(), &'static str> {
+        for statement in body {
+            if let Statement::If(branch) = &statement.node {
+                self.validate_assertion_transfers(&branch.then_body)?;
+                for (_, body) in &branch.elif_branches {
+                    self.validate_assertion_transfers(body)?;
+                }
+                if let Some(body) = &branch.else_body {
+                    self.validate_assertion_transfers(body)?;
+                }
+            }
             let Statement::Assert(assertion) = &statement.node else {
                 continue;
             };

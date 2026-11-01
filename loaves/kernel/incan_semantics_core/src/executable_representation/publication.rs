@@ -136,13 +136,20 @@ fn project_generic_decorated_body(
 /// Publish only a compiled export's governed signature, independently of whether its implementation is portable.
 /// Parameter passing and default computations retain their real locals; unused implementation slots are inert unit
 /// placeholders so declaration-local addresses remain stable without publishing private implementation types.
+/// Conditional cleanup profiles remain unavailable because this projection does not retain their canonical local
+/// storage and initializer assignments; a valid source execution profile alone cannot authorize publication.
 pub(super) fn project_compiled_frame(
     source: &Body,
     module: &BodyIrModule,
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
-    if source.input_profile_gap().is_some() {
+    if source.input_profile_gap().is_some()
+        || source
+            .checked_input_profile
+            .as_ref()
+            .is_some_and(|profile| profile.version != 1)
+    {
         return Err(CoverageReason::UnsupportedConstruct);
     }
     let mut frame = source.clone();
@@ -248,13 +255,20 @@ pub(super) fn declaration_id(identity: &CanonicalSymbolId) -> Result<CompilerNod
 /// Generated generic metadata retains its authenticated binder ancestry inside this fragment; it is never an
 /// independently addressable package declaration.
 /// A nominal's actual retained default frame borrows that owner's binders; its own callable binder list stays empty.
+/// Conditional cleanup profiles require a separate canonical-storage publication contract before these local
+/// identities can be erased. Keep that refusal independent of source execution admission.
 pub(super) fn project_body(
     source: &Body,
     module: &BodyIrModule,
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<ProjectedBody, CoverageReason> {
-    if source.input_profile_gap().is_some() {
+    if source.input_profile_gap().is_some()
+        || source
+            .checked_input_profile
+            .as_ref()
+            .is_some_and(|profile| profile.version != 1)
+    {
         return Err(CoverageReason::UnsupportedConstruct);
     }
     let mut body = source.clone();

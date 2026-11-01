@@ -135,12 +135,10 @@ impl Builder<'_> {
         let contract = self
             .checker
             .type_info
-            .declarations
-            .ownership_contracts
-            .get(&call.callee)
-            .ok_or(Unavailable {
+            .selected_input_contract(call)
+            .map_err(|reason| Unavailable {
                 span,
-                reason: "selected callable contract is missing".into(),
+                reason: reason.into(),
             })?;
         if call.owner.as_ref() != Some(&self.owner) {
             return Err(Unavailable {
@@ -154,16 +152,17 @@ impl Builder<'_> {
                 reason: "selected receiver contract does not match call syntax".into(),
             });
         }
-        if contract.result_source.is_some()
-            || contract.modes.iter().any(|mode| {
-                mode.component.parameter.is_none()
-                    || !mode.component.children.is_empty()
-                    || mode.mode == OwnershipMode::Reference
-            })
-            || call
-                .parameters
-                .iter()
-                .any(|parameter| parameter.kind != ParamKind::Normal || parameter.is_partial_preset)
+        if contract.is_some_and(|contract| {
+            contract.result_source.is_some()
+                || contract.modes.iter().any(|mode| {
+                    mode.component.parameter.is_none()
+                        || !mode.component.children.is_empty()
+                        || mode.mode == OwnershipMode::Reference
+                })
+        }) || call
+            .parameters
+            .iter()
+            .any(|parameter| parameter.kind != ParamKind::Normal || parameter.is_partial_preset)
             || arguments.len() != call.parameters.len()
         {
             return Err(Unavailable {
@@ -231,9 +230,12 @@ impl Builder<'_> {
                 reason: "missing selected argument slot".into(),
             })?;
             let mode = contract
-                .modes
-                .iter()
-                .find(|mode| mode.component.parameter == Some(slot))
+                .and_then(|contract| {
+                    contract
+                        .modes
+                        .iter()
+                        .find(|mode| mode.component.parameter == Some(slot))
+                })
                 .map(|mode| mode.mode);
             let source = self.optional_place(expression)?.map(|path| path.place);
             let start_node = self.graph.nodes.len();

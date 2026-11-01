@@ -22,9 +22,9 @@ struct Signature<'a> {
 }
 
 impl TypeChecker {
-    /// Retain an explicit call's selected declaration and closed parameter view with the statement producer.
-    /// Ordinary callers need this fact too; absence of an ownership annotation on their own signature is not an
-    /// exemption from their callee's contract. Candidate speculation is discarded with its normal call artifacts.
+    /// Retain successful selected calls in the isolated body writer. Ordinary candidates are discarded unless the
+    /// completed body independently needs explicit-input analysis. Candidate speculation is discarded with its
+    /// normal call artifacts, and a caller without annotations still owes its callee's explicit contract.
     pub(in crate::typechecker) fn record_explicit_input_call(
         &mut self,
         identity: Option<&CanonicalSymbolId>,
@@ -54,8 +54,8 @@ impl TypeChecker {
         }
     }
 
-    /// Construct one caller-owned fact from a canonical explicit input declaration, without changing declaration
-    /// modes or duplicating parameter inventories for ordinary unannotated calls.
+    /// Capture successful selection once. Plain free calls stay provisional until the isolated body writer has
+    /// independently established an explicit obligation; ordinary methods and noncanonical headers stay staged.
     fn explicit_input_call_fact(
         &self,
         identity: Option<&CanonicalSymbolId>,
@@ -63,17 +63,29 @@ impl TypeChecker {
         receiver: Option<Receiver>,
     ) -> Option<super::InputCall> {
         let callee = identity?;
-        let contract = self.type_info.declarations.ownership_contracts.get(callee)?;
-        contract
-            .modes
-            .iter()
-            .any(|mode| mode.component.parameter.is_some())
-            .then(|| super::InputCall {
-                owner: self.current_body_identity().cloned(),
-                callee: callee.clone(),
-                parameters: parameters.to_vec(),
-                receiver,
-            })
+        let kind = if self
+            .type_info
+            .declarations
+            .ownership_contracts
+            .get(callee)
+            .is_some_and(|contract| contract.modes.iter().any(|mode| mode.component.parameter.is_some()))
+        {
+            super::InputCallKind::Explicit
+        } else {
+            if self.current_body_identity().is_none() || receiver.is_some() {
+                return None;
+            }
+            super::InputCallKind::Ordinary
+        };
+        let call = super::InputCall {
+            kind,
+            owner: self.current_body_identity().cloned(),
+            callee: callee.clone(),
+            parameters: parameters.to_vec(),
+            receiver,
+        };
+        self.type_info.selected_input_contract(&call).ok()?;
+        Some(call)
     }
 
     /// Project only the direct input modes owned by the selected declaration into call-local value types.

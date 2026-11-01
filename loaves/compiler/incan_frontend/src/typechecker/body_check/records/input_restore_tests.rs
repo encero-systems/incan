@@ -321,3 +321,61 @@ fn checked_copy_restore_retains_exact_type_decisions() -> Result<(), Box<dyn std
     assert_eq!(empty_fields, vec![empty]);
     Ok(())
 }
+
+/// A conflict is an explicit None requirement, not an absent parameter; duplicate or nonparameter keys refuse.
+#[test]
+fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        "def add(value: int) -> int:\n    return value\ndef use(value: Borrowed[int]) -> int:\n    return add(value)\n";
+    let (program, checker, owner) = fixture(source, "use")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let fields = project(&checker, &program, owner, false)?;
+    let row = fields
+        .iter()
+        .find(|row| row.get(2).is_some_and(|selector| selector == "parameter-requirement"))
+        .ok_or("missing parameter requirement")?;
+    assert_eq!(row.get(4).map(String::as_str), Some("some"));
+    for conflict in [false, true] {
+        let row = if conflict {
+            let mut row = row[..4].to_vec();
+            row.push("none".into());
+            row
+        } else {
+            row.clone()
+        };
+        let mut local = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        super::super::restore_local(&positions, &mut local, &row)?;
+        let requirement = local
+            .expressions
+            .body_ir_parameter_requirements
+            .values()
+            .next()
+            .ok_or("missing restored requirement")?;
+        assert_eq!(requirement.is_none(), conflict);
+        let mut restored = Vec::new();
+        super::super::project_expressions(&positions, &local, &mut restored)?;
+        assert_eq!(restored, vec![row.clone()]);
+        assert!(super::super::restore_local(&positions, &mut local, &row).is_err());
+    }
+    let mut wrong = row.clone();
+    let body = checker.checked_body(owner).ok_or("missing checked owner")?;
+    let identity = body
+        .local
+        .protocols
+        .explicit_input_flow
+        .keys()
+        .next()
+        .ok_or("missing callable")?;
+    wrong[1] = positions.nodes.anchor(super::super::span_of(identity))?.path;
+    wrong[3] = positions.identity(identity)?;
+    let mut local = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    assert!(super::super::restore_local(&positions, &mut local, &wrong).is_err());
+    assert!(local.expressions.body_ir_parameter_requirements.is_empty());
+    Ok(())
+}
