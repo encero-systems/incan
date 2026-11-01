@@ -290,6 +290,56 @@ mod tests {
         Ok(())
     }
 
+    /// Registry-selected primitive observers retain reads after transfer; user functions and nominal hooks do not
+    /// acquire the builtin's access contract merely by being named print or len.
+    #[test]
+    fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "def inspect(value: Borrowed[str]) -> None:\n    print(value)\n    assert len(value) > 0, \"empty\"\n";
+        let graph = source_graph(source)?.map_err(|error| format!("{error:?}"))?;
+        assert!(
+            flow::analyze(&graph)
+                .map_err(|error| format!("{error:?}"))?
+                .conflicts
+                .is_empty()
+        );
+        let source = "def inspect(value: Owned[str]) -> None:\n    consume(value)\n    assert len(value) > 0\ndef consume(value: Owned[str]) -> None:\n    pass\n";
+        let graph = source_graph(source)?.map_err(|error| format!("{error:?}"))?;
+        assert!(
+            !flow::analyze(&graph)
+                .map_err(|error| format!("{error:?}"))?
+                .conflicts
+                .is_empty()
+        );
+        let checker = checked(source)?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126"))
+        );
+        for source in [
+            "def inspect(value: Borrowed[str]) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n",
+            "def inspect(value: Borrowed[Measure]) -> int:\n    return len(value)\nclass Measure:\n    def __len__(self) -> int:\n        return 1\n",
+        ] {
+            assert!(
+                source_graph(source)?.is_err(),
+                "unprojected observer admitted: {source}"
+            );
+        }
+        let shadowed = checked(
+            "def inspect(value: Borrowed[str]) -> None:\n    print(value)\ndef print(value: str) -> None:\n    pass\n",
+        )?;
+        assert!(
+            shadowed
+                .errors
+                .iter()
+                .any(|error| error.stable_code() != Some("INCAN-T0123")),
+            "protected builtin shadowing must remain rejected"
+        );
+        Ok(())
+    }
+
     /// Source branch and back-edge projections preserve consuming uses and distinguish Copy reads from transfers.
     #[test]
     fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn std::error::Error>> {
@@ -375,7 +425,7 @@ mod tests {
     #[test]
     fn source_flow_refuses_unprojected_dependencies() -> Result<(), Box<dyn std::error::Error>> {
         for source in [
-            "def show(value: Borrowed[int]) -> None:\n    print(value)\n",
+            "def show(value: Borrowed[int]) -> int:\n    return abs(value)\n",
             "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n",
             "def local(value: Borrowed[str]) -> None:\n    let view: Reference[str] = value\n",
             "def temporary() -> None:\n    let view: Borrowed[str] = \"temporary\"\n",

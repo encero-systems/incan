@@ -664,6 +664,36 @@ impl Builder<'_> {
         match &statement.node {
             Statement::Pass => Ok(incoming),
             Statement::Expr(value) => self.expression(value, incoming, false),
+            Statement::Assert(assertion) => {
+                let crate::ast::AssertKind::Condition(condition) = &assertion.kind else {
+                    return Err(Unavailable {
+                        span: statement.span,
+                        reason: "pattern assertion needs checked binding access",
+                    });
+                };
+                if self.checker.type_info.expr_type(condition.span) != Some(&ResolvedType::Bool) {
+                    return Err(Unavailable {
+                        span: condition.span,
+                        reason: "assertion truthiness needs checked callable access",
+                    });
+                }
+                let incoming = self.expression(condition, incoming, false)?;
+                if let Some(message) = &assertion.message {
+                    if !matches!(
+                        self.checker.type_info.expr_type(message.span),
+                        Some(ResolvedType::Str | ResolvedType::FrozenStr)
+                    ) {
+                        return Err(Unavailable {
+                            span: message.span,
+                            reason: "assertion message needs checked display access",
+                        });
+                    }
+                    // The failure message is evaluated only on the terminating failure path. Its reads remain in
+                    // the graph, but its transfers do not flow into statements on the successful path.
+                    self.expression(message, incoming.clone(), false)?;
+                }
+                Ok(incoming)
+            }
             Statement::Return(value) => {
                 if let Some(value) = value {
                     self.expression(value, incoming, true)?;

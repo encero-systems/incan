@@ -10,6 +10,7 @@ use super::{
 use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
+use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::IncanInputAccess;
 
 impl Builder<'_> {
@@ -23,6 +24,14 @@ impl Builder<'_> {
         span: Span,
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(builtin) = self
+            .checker
+            .type_info
+            .resolved_builtin_call(span)
+            .filter(|builtin| matches!(builtin, BuiltinFnId::Print | BuiltinFnId::Len))
+        {
+            return self.observer_call(builtin, arguments, span, incoming);
+        }
         if !matches!(callee.node, Expr::Ident(_)) {
             return Err(Unavailable {
                 span,
@@ -30,6 +39,61 @@ impl Builder<'_> {
             });
         }
         self.apply_call(None, arguments, span, incoming)
+    }
+
+    /// Primitive observers read their arguments through a checker-selected builtin identity. Nominal display and
+    /// length hooks, native adapters and source functions with the same name require their own callable facts.
+    fn observer_call(
+        &mut self,
+        builtin: BuiltinFnId,
+        arguments: &[CallArg],
+        span: Span,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if builtin == BuiltinFnId::Len && arguments.len() != 1 {
+            return Err(Unavailable {
+                span,
+                reason: "length observer needs one checked argument",
+            });
+        }
+        for argument in arguments {
+            let expression = match argument {
+                CallArg::Positional(expression) | CallArg::Named(_, expression) => expression,
+                _ => {
+                    return Err(Unavailable {
+                        span,
+                        reason: "observer argument expansion is not projected",
+                    });
+                }
+            };
+            let ty = self.checker.type_info.expr_type(expression.span);
+            let supported = match builtin {
+                BuiltinFnId::Len => matches!(
+                    ty,
+                    Some(ResolvedType::Str | ResolvedType::FrozenStr | ResolvedType::Bytes | ResolvedType::FrozenBytes)
+                ),
+                BuiltinFnId::Print => matches!(
+                    ty,
+                    Some(
+                        ResolvedType::Str
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Unit
+                    )
+                ),
+                _ => false,
+            };
+            if !supported {
+                return Err(Unavailable {
+                    span: expression.span,
+                    reason: "observer may invoke an unprojected display or length operation",
+                });
+            }
+            incoming = self.expression(expression, incoming, false)?;
+        }
+        Ok(incoming)
     }
 
     /// Apply one canonical call, evaluating its receiver before written arguments. The receiver's declared access
