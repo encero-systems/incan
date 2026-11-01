@@ -1548,12 +1548,17 @@ impl Body {
     }
 }
 
-/// The first unrepresentable default among `params`, including inside a sourced default's own statements.
+/// Refuse unimplemented explicit input access and any gap inside a parameter's deferred default computation.
 fn params_representation_gap(params: &[CallableParam]) -> Option<&str> {
-    params.iter().find_map(|param| match &param.default {
-        CallableParamDefault::Unsupported { description, .. } => Some(description.as_str()),
-        CallableParamDefault::Source(computation) => statements_representation_gap(&computation.stmts),
-        CallableParamDefault::Required | CallableParamDefault::PartialPreset { .. } => None,
+    params.iter().find_map(|param| {
+        if !param.input_access.is_inferred() {
+            return Some("explicit input access awaits executable ownership lowering");
+        }
+        match &param.default {
+            CallableParamDefault::Unsupported { description, .. } => Some(description.as_str()),
+            CallableParamDefault::Source(computation) => statements_representation_gap(&computation.stmts),
+            CallableParamDefault::Required | CallableParamDefault::PartialPreset { .. } => None,
+        }
     })
 }
 
@@ -2691,6 +2696,9 @@ pub struct CallableParam {
     /// The local may still be mutable; that does not turn this by-value ABI into an exclusive caller loan.
     #[serde(default)]
     pub native_owned: bool,
+    /// Checked explicit source input access, separate from binding mutation and native collection ownership.
+    #[serde(default)]
+    pub input_access: crate::IncanInputAccess,
 }
 
 /// Preserve the ordinary passing convention when reading a Body IR parameter published before source roles.
@@ -2705,7 +2713,9 @@ impl CallableParam {
             "{}{}: {} local=_{} span={}..{}{}",
             if self.mutable { "mut " } else { "" },
             self.name,
-            self.ty,
+            self.input_access
+                .source_form()
+                .map_or_else(|| self.ty.to_string(), |form| format!("{form}[{}]", self.ty)),
             self.local.0,
             self.span.start,
             self.span.end,
@@ -5451,6 +5461,7 @@ mod tests {
             params: vec![
                 CallableParam {
                     mutable: false,
+                    input_access: crate::IncanInputAccess::Inferred,
                     native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_x,
@@ -5461,6 +5472,7 @@ mod tests {
                 },
                 CallableParam {
                     mutable: false,
+                    input_access: crate::IncanInputAccess::Inferred,
                     native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_y,
@@ -5716,6 +5728,7 @@ mod tests {
         assert_eq!(
             CallableParam {
                 mutable: false,
+                input_access: crate::IncanInputAccess::Inferred,
                 native_owned: false,
                 kind: IncanCallableParamKind::Normal,
                 local: LocalId(7),
@@ -5737,6 +5750,7 @@ mod tests {
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(1),
@@ -5757,6 +5771,7 @@ mod tests {
         };
         let preset = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(2),
@@ -5767,6 +5782,7 @@ mod tests {
         };
         let unsupported = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(4),
@@ -6008,6 +6024,7 @@ mod tests {
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
                             mutable: false,
+                            input_access: crate::IncanInputAccess::Inferred,
                             native_owned: false,
                             kind: IncanCallableParamKind::Normal,
                             local: param_local,

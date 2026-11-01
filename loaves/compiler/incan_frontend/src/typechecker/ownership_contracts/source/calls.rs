@@ -2,7 +2,10 @@
 //! preserved independently of parameter order. Returned/native dependencies and unresolved adaptations refuse
 //! this profile until their own facts are available.
 
-use super::{Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, ResolvedType, Unavailable};
+use super::{
+    Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Permission, Place, ResolvedType, Root,
+    Unavailable,
+};
 use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
@@ -123,7 +126,7 @@ impl Builder<'_> {
                 .iter()
                 .find(|mode| mode.component.parameter == Some(slot))
                 .map(|mode| mode.mode);
-            let (outgoing, loan) = self.call_argument(expression, &call.parameters[slot], mode, incoming)?;
+            let (outgoing, loan) = self.call_argument(expression, &call.parameters[slot], mode, span, incoming)?;
             incoming = outgoing;
             if let Some(loan) = loan {
                 loans.push(loan);
@@ -153,12 +156,12 @@ impl Builder<'_> {
         expression: &Spanned<Expr>,
         parameter: &CallableParam,
         mode: Option<OwnershipMode>,
+        invocation: Span,
         incoming: Vec<usize>,
     ) -> Result<(Vec<usize>, Option<LoanId>), Unavailable> {
         match mode {
             Some(OwnershipMode::Borrowed | OwnershipMode::BorrowedMut) => {
-                let source = self.place(expression)?;
-                let incoming = self.evaluate_place(expression, incoming)?;
+                let (source, incoming) = self.borrowed_argument_source(expression, invocation, incoming)?;
                 let loan = self.call_loan(
                     source,
                     mode == Some(OwnershipMode::BorrowedMut),
@@ -182,6 +185,53 @@ impl Builder<'_> {
                 reason: "ordinary argument requires inferred access or mutable binding facts",
             }),
         }
+    }
+
+    /// A fresh scalar or owned byte-string expression may be borrowed for this call. Existing places keep their
+    /// original permissions even through parentheses; evaluating a temporary preserves nested moves and loans.
+    fn borrowed_argument_source(
+        &mut self,
+        expression: &Spanned<Expr>,
+        invocation: Span,
+        incoming: Vec<usize>,
+    ) -> Result<(Path, Vec<usize>), Unavailable> {
+        if let Some(source) = self.optional_place(expression)? {
+            return Ok((source, self.evaluate_place(expression, incoming)?));
+        }
+        let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
+            span: expression.span,
+            reason: "temporary argument has no checked type",
+        })?;
+        if !plain_result(ty) {
+            return Err(Unavailable {
+                span: expression.span,
+                reason: "temporary argument needs retained dependency facts",
+            });
+        }
+        let outgoing = self.expression(expression, incoming, true)?;
+        let root = Root::Temporary {
+            owner: self.owner.clone(),
+            expression: expression.span,
+            invocation,
+        };
+        self.graph.permissions.insert(
+            root.clone(),
+            Permission {
+                exclusive: true,
+                writable: true,
+                transferable: true,
+            },
+        );
+        Ok((
+            Path {
+                place: Place {
+                    root,
+                    projection: Vec::new(),
+                },
+                through: None,
+            },
+            outgoing,
+        ))
     }
 
     /// A borrowed argument derives its permissions from the evaluated source. Exclusive access and permission to

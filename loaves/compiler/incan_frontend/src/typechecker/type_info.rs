@@ -3541,6 +3541,7 @@ pub(super) fn semantic_callable_param_from_resolved(param: &CallableParam) -> In
         has_default: param.has_default,
         is_partial_preset: param.is_partial_preset,
         is_mut: param.is_mut,
+        input_access: incan_semantics_core::IncanInputAccess::Inferred,
         native_owned: false,
     }
 }

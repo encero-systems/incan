@@ -185,7 +185,7 @@ fn partial_parameters(
             } else if parameter.is_mut {
                 builder.borrowed_parameters.insert(local);
             }
-            bir::CallableParam {
+            let mut projected = bir::CallableParam {
                 local,
                 kind: incan_semantics_core::IncanCallableParamKind::Normal,
                 name,
@@ -193,8 +193,15 @@ fn partial_parameters(
                 span,
                 default: bir::CallableParamDefault::Required,
                 mutable: parameter.is_mut,
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
                 native_owned,
-            }
+            };
+            let owner = match target {
+                Some(PartialTarget::Function(target)) => Some(&target.canonical),
+                _ => None,
+            };
+            super::input_access::apply(&mut projected, builder.type_info, owner, index);
+            projected
         })
         .collect::<Vec<_>>();
     // Deferred defaults may introduce temporaries; every parameter must already occupy its declaration slot.

@@ -191,7 +191,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             saved_bindings.push((param.node.name.clone(), previous));
         }
 
-        let closure_params = self.lower_closure_callable_params(params, closure_param_locals, closure_scope);
+        let closure_params = self.lower_closure_callable_params(params, closure_param_locals, closure_scope, expr_span);
         self.owned_parameters.extend(
             closure_params
                 .iter()
@@ -247,9 +247,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         params: &[ast::Spanned<ast::Param>],
         parameter_locals: Vec<bir::LocalId>,
         scope: bir::ScopeId,
+        expression: ast::Span,
     ) -> Vec<bir::CallableParam> {
+        let checked = match self.resolve_ty(expression) {
+            IncanType::Function { params, .. } => params,
+            _ => Vec::new(),
+        };
         let mut parameters = Vec::with_capacity(params.len());
-        for (param, local) in params.iter().zip(parameter_locals) {
+        for (index, (param, local)) in params.iter().zip(parameter_locals).enumerate() {
             let ty = self.locals[local.index()].ty.clone();
             parameters.push(bir::CallableParam {
                 local,
@@ -259,6 +264,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span: hir_span(param.span),
                 default: self.lower_callable_default(param.node.default.as_ref(), scope),
                 mutable: param.node.is_mut,
+                input_access: checked
+                    .get(index)
+                    .map_or(incan_semantics_core::IncanInputAccess::Inferred, |parameter| {
+                        parameter.input_access
+                    }),
                 native_owned: self
                     .type_info
                     .expr_type(param.span)

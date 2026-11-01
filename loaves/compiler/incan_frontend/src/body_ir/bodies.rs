@@ -655,6 +655,7 @@ fn lower_method_parameters(
             span: hir_span(decl_span),
             default: bir::CallableParamDefault::Required,
             mutable,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
             native_owned: false,
         });
     }
@@ -697,7 +698,7 @@ fn lower_callable_parameters(
 ) {
     for (index, (param, local)) in source.iter().zip(locals.iter().copied()).enumerate() {
         let ty = builder.locals[local.index()].ty.clone();
-        out.push(bir::CallableParam {
+        let mut parameter = bir::CallableParam {
             local,
             kind: parameter_types::source_parameter_kind(param.node.kind),
             name: param.node.name.clone(),
@@ -705,12 +706,20 @@ fn lower_callable_parameters(
             span: hir_span(param.span),
             default: builder.lower_callable_default(param.node.default.as_ref(), scope),
             mutable: param.node.is_mut,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
             native_owned: binding
                 .and_then(|binding| binding.params.get(index))
                 .is_some_and(|parameter| {
                     parameter_types::native_collection_parameter(&parameter.ty, builder.type_info)
                 }),
-        });
+        };
+        super::input_access::apply(
+            &mut parameter,
+            builder.type_info,
+            binding.and_then(|binding| binding.identity.as_ref()),
+            index,
+        );
+        out.push(parameter);
     }
 }
 

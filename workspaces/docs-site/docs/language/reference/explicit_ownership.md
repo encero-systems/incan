@@ -43,7 +43,9 @@ def update(mut value: Owned[int]) -> int:
     return view                    # dependent use keeps it live
 ```
 
-This analysis does not enable execution. Calls, returned dependencies, temporary owners and other source shapes whose complete dependency facts are unavailable still receive the execution refusal. The absence of `INCAN-T0126` is not proof that such a body has a complete ownership analysis.
+Selected free-function and method calls retain their declared input access through the invocation, independently of whether the callee reads or writes the argument. A fresh scalar or owned string/byte expression can supply temporary storage for that call. Borrowing an existing variable through parentheses preserves that variable’s permissions; it does not create a fresh writable owner. The analysis currently requires direct input contracts, complete fixed arguments, and scalar or owned string/byte results without retained dependencies.
+
+This analysis does not enable execution. Returned dependencies, captures, suspension, unprojected calls and other source shapes whose complete dependency facts are unavailable still receive the execution refusal. The absence of `INCAN-T0126` is not proof that such a body has a complete ownership analysis.
 
 ## Place-binding migration warning
 

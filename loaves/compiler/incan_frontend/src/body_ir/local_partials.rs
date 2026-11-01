@@ -362,7 +362,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     None => bir::CallableParamDefault::Required,
                 },
             };
-            params.push(bir::CallableParam {
+            let mut projected = bir::CallableParam {
                 local,
                 kind: parameter_types::source_parameter_kind(param.kind),
                 name: name.clone(),
@@ -370,8 +370,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: param.is_mut,
+                input_access: checked
+                    .get(index)
+                    .map_or(incan_semantics_core::IncanInputAccess::Inferred, |parameter| {
+                        parameter.input_access
+                    }),
                 native_owned: parameter_types::native_collection_parameter(&param.ty, self.type_info),
-            });
+            };
+            let owner = match &target.callee {
+                bir::Callee::Function(bir::CallableTarget::Named(target)) => target.canonical.as_ref(),
+                bir::Callee::Method(target) => target.canonical.as_ref(),
+                _ => None,
+            };
+            super::input_access::apply(&mut projected, self.type_info, owner, index);
+            params.push(projected);
             if params.last().is_some_and(|parameter| parameter.native_owned) {
                 self.owned_parameters.insert(local);
             } else if param.is_mut {

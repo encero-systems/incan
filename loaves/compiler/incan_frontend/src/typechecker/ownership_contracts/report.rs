@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-use super::flow::{Access, Analysis, ConflictKind, Event, Graph, LoanId};
+use super::flow::{Access, Analysis, ConflictKind, Event, Graph, LoanId, Root};
 use crate::ast::Span;
 use crate::diagnostics::CompileError;
 
@@ -69,7 +69,14 @@ fn permission_origin(error: CompileError, graph: &Graph, event: &Event) -> Compi
     };
     let error = match through {
         Some(loan) => error.with_related_span(graph.loans[loan.0].span, "access is granted by this borrow"),
-        None => error.with_related_declaration(place.root.clone(), "access is granted by this declaration"),
+        None => match &place.root {
+            Root::Binding(identity) => {
+                error.with_related_declaration(identity.clone(), "access is granted by this declaration")
+            }
+            Root::Temporary { expression, .. } => {
+                error.with_related_span(*expression, "temporary storage is created here")
+            }
+        },
     };
     error.with_hint(request)
 }

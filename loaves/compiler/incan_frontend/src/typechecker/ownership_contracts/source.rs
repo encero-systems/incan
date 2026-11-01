@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::TypeChecker;
-use super::flow::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection};
+use super::flow::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection, Root};
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, FunctionDecl,
     MethodDecl, Param, Receiver, Span, Spanned, Statement,
@@ -51,7 +51,7 @@ struct Builder<'a> {
     graph: Graph,
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
-    constrained: BTreeSet<CanonicalSymbolId>,
+    constrained: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
 }
 
@@ -151,7 +151,7 @@ pub(super) fn build(
         let root = builder.binding_root(&binding.node, binding.span, SemanticSourceTargetKind::Receiver)?;
         let writable = receiver == Receiver::Mutable;
         builder.graph.permissions.insert(
-            root,
+            Root::Binding(root),
             Permission {
                 exclusive: writable,
                 writable,
@@ -201,7 +201,7 @@ impl Builder<'_> {
                 mode.mode == OwnershipMode::BorrowedMut || (mode.mode == OwnershipMode::Owned && writable)
             });
             self.graph.permissions.insert(
-                root.clone(),
+                Root::Binding(root.clone()),
                 Permission {
                     exclusive,
                     writable,
@@ -209,7 +209,7 @@ impl Builder<'_> {
                 },
             );
             if mode.is_some() {
-                self.constrained.insert(root);
+                self.constrained.insert(Root::Binding(root));
             }
         }
         Ok(())
@@ -236,7 +236,8 @@ impl Builder<'_> {
 
     /// Register a checked local owner once. Parameters must arrive from the prepared declaration, not this fallback.
     fn root(&mut self, identity: &CanonicalSymbolId, span: Span) -> Result<Place, Unavailable> {
-        if !self.graph.permissions.contains_key(identity) {
+        let root = Root::Binding(identity.clone());
+        if !self.graph.permissions.contains_key(&root) {
             if identity.kind != SemanticSourceTargetKind::Local {
                 return Err(Unavailable {
                     span,
@@ -247,10 +248,10 @@ impl Builder<'_> {
                 span,
                 reason: "missing checked local permissions",
             })?;
-            self.graph.permissions.insert(identity.clone(), permission);
+            self.graph.permissions.insert(root.clone(), permission);
         }
         Ok(Place {
-            root: identity.clone(),
+            root,
             projection: Vec::new(),
         })
     }
@@ -525,12 +526,12 @@ impl Builder<'_> {
                 assignment.name_span,
             ));
         }
-        let previously_known = self.graph.permissions.contains_key(&root);
+        let previously_known = self.graph.permissions.contains_key(&Root::Binding(root.clone()));
         let place = self.root(&root, assignment.name_span)?;
         if mode.is_some()
             || source.is_some_and(|source| source.through.is_some() || self.constrained.contains(&source.place.root))
         {
-            self.constrained.insert(root);
+            self.constrained.insert(Root::Binding(root));
         }
         if !previously_known && !matches!(assignment.binding, BindingKind::Reassign) {
             return Ok(incoming);

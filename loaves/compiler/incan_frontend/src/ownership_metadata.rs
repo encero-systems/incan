@@ -132,3 +132,17 @@ impl<T, I> OwnershipContract<T, I> {
 /// Native checked projection; source positions are not stored in its relationship payload.
 pub type CheckedOwnershipContract =
     OwnershipContract<crate::symbols::ResolvedType, incan_semantics_core::CanonicalSymbolId>;
+
+/// Translate only direct input modes. A retained Reference is a result dependency, never an input passing mode.
+pub(crate) fn source_input_access(
+    mode: incan_lang::lang::types::ownership::OwnershipMode,
+) -> Option<incan_semantics_core::IncanInputAccess> {
+    use incan_lang::lang::types::ownership::OwnershipMode;
+    use incan_semantics_core::IncanInputAccess;
+    match mode {
+        OwnershipMode::Borrowed => Some(IncanInputAccess::Shared),
+        OwnershipMode::BorrowedMut => Some(IncanInputAccess::Exclusive),
+        OwnershipMode::Owned => Some(IncanInputAccess::Owned),
+        OwnershipMode::Reference => None,
+    }
+}

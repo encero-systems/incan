@@ -50,11 +50,12 @@ use crate::body_ir::{
 /// Version 34 retains checked private pointer carriers and foreign bridge operations.
 /// Version 35 retains expansion contexts in every checked source span and canonical identity.
 /// Version 36 appends the typed C span bridge operations.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 36;
+/// Version 37 carries explicit input access independently of binding mutability and native collection ownership.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 37;
 
-/// Version 36 only appends enum variants, so a version 35 payload decodes unchanged; older layouts are incompatible
-/// with this reader and require regenerated providers.
-const OLDEST_SUPPORTED_VERSION: u32 = 35;
+/// Version 37 adds positional callable fields. Older providers must be rebuilt; a missing field cannot be
+/// interpreted as an explicit access contract or silently shifted onto the next parameter field.
+const OLDEST_SUPPORTED_VERSION: u32 = 37;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -1668,6 +1669,7 @@ mod tests {
         let mut exported = body("exported", 1);
         exported.params.push(CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
@@ -2196,6 +2198,7 @@ mod tests {
         ]);
         exported.params.push(CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),

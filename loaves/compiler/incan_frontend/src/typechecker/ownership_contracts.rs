@@ -475,7 +475,7 @@ mod tests {
                 graph
                     .permissions
                     .keys()
-                    .filter(|root| root.kind == incan_semantics_core::SemanticSourceTargetKind::Receiver),
+                    .filter(|root| matches!(root, super::flow::Root::Binding(identity) if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Receiver)),
             );
         }
         assert_eq!(
@@ -844,6 +844,58 @@ mod tests {
             ),
             (
                 "def use(reader: Reader, value: str) -> str:\n    reader.read(1, value)\n    return value\nclass Reader:\n    def read(self, value: Borrowed[int]) -> None:\n        pass\n    def read(self, prefix: int, value: Owned[str]) -> None:\n        pass\n",
+                true,
+            ),
+        ] {
+            let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
+            let analysis = flow::analyze(&graph).map_err(|error| format!("{error:?}"))?;
+            assert_eq!(!analysis.conflicts.is_empty(), conflict, "{source}\n{analysis:?}");
+        }
+        Ok(())
+    }
+
+    /// A method examined only for an argument diagnostic is not a selected ownership target.
+    #[test]
+    fn rejected_method_does_not_retain_input_access() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked(
+            "def use(reader: Reader, value: str) -> None:\n    reader.read(value)\nclass Reader:\n    def read(self, value: Borrowed[int]) -> None:\n        pass\n",
+        )?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() != Some("INCAN-T0123"))
+        );
+        assert!(
+            checker.type_info.protocols.explicit_input_calls.is_empty(),
+            "diagnostic fallback must not retain a rejected method's ownership contract"
+        );
+        Ok(())
+    }
+
+    /// A fresh computed argument owns bounded storage for its invocation, while parentheses around a place retain
+    /// that place's permission. Computing a temporary must retain transfers made by nested argument evaluation.
+    #[test]
+    fn borrowed_arguments_can_use_bounded_temporary_owners() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, conflict) in [
+            (
+                "def use() -> None:\n    read(\"hello\")\ndef read(value: Borrowed[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def use() -> None:\n    read(1 + 2)\ndef read(value: Borrowed[int]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def use() -> None:\n    change(1)\ndef change(mut value: BorrowedMut[int]) -> None:\n    value = 2\n",
+                false,
+            ),
+            (
+                "def use(value: int) -> None:\n    change((value))\ndef change(mut value: BorrowedMut[int]) -> None:\n    value = 2\n",
+                true,
+            ),
+            (
+                "def use(value: str) -> str:\n    read(take(value))\n    return value\ndef read(value: Borrowed[str]) -> None:\n    pass\ndef take(value: Owned[str]) -> str:\n    return value\n",
                 true,
             ),
         ] {

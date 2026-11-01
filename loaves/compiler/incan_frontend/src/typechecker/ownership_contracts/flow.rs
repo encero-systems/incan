@@ -18,10 +18,24 @@ pub(super) enum Projection {
     Element(HirSourceSpan),
 }
 
+/// A declared storage owner or a bounded argument temporary. Temporary identities retain the real expression,
+/// invocation and callable ancestry; they are not invented declarations and cannot escape into local bindings.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Root {
+    /// Canonical parameter, receiver or local declaration with checked binding permissions.
+    Binding(CanonicalSymbolId),
+    /// Fresh argument storage bounded by one invocation; it never supplies a declaration identity.
+    Temporary {
+        owner: CanonicalSymbolId,
+        expression: HirSourceSpan,
+        invocation: HirSourceSpan,
+    },
+}
+
 /// Source place identity; lexical shadowing changes the root even when the spelling is unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Place {
-    pub root: CanonicalSymbolId,
+    pub root: Root,
     pub projection: Vec<Projection>,
 }
 
@@ -103,7 +117,7 @@ pub(super) struct Node {
 /// The resolved input of one callable analysis. Unknown identities or malformed edges must refuse validation.
 #[derive(Debug, Clone)]
 pub(super) struct Graph {
-    pub permissions: BTreeMap<CanonicalSymbolId, Permission>,
+    pub permissions: BTreeMap<Root, Permission>,
     pub loans: Vec<Loan>,
     pub nodes: Vec<Node>,
     pub entry: usize,
@@ -499,7 +513,7 @@ fn check_event(
 
 #[cfg(test)]
 mod tests {
-    use super::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection, analyze};
+    use super::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection, Root, analyze};
     use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
     /// Make different lexical declarations even when a test deliberately reuses a name.
@@ -517,7 +531,7 @@ mod tests {
         Graph {
             permissions: [
                 (
-                    identity("value", 1),
+                    Root::Binding(identity("value", 1)),
                     Permission {
                         exclusive: true,
                         writable: true,
@@ -525,7 +539,7 @@ mod tests {
                     },
                 ),
                 (
-                    identity("value", 2),
+                    Root::Binding(identity("value", 2)),
                     Permission {
                         exclusive: true,
                         writable: true,
@@ -552,7 +566,7 @@ mod tests {
     /// Borrowing the first binding never aliases a shadowed binding with the same spelling.
     fn place(offset: usize) -> Place {
         Place {
-            root: identity("value", offset),
+            root: Root::Binding(identity("value", offset)),
             projection: Vec::new(),
         }
     }
@@ -784,7 +798,7 @@ mod tests {
         let mut forbidden_transfer = restored;
         forbidden_transfer
             .permissions
-            .get_mut(&identity("value", 1))
+            .get_mut(&Root::Binding(identity("value", 1)))
             .ok_or("missing root")?
             .transferable = false;
         assert!(

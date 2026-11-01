@@ -237,7 +237,7 @@ impl BodyBuilder<'_, '_> {
                     None => bir::CallableParamDefault::Required,
                 },
             };
-            frame.parameters.push(bir::CallableParam {
+            let mut projected = bir::CallableParam {
                 local,
                 kind: super::parameter_types::source_parameter_kind(parameter.kind),
                 name: name.clone(),
@@ -245,8 +245,11 @@ impl BodyBuilder<'_, '_> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: parameter.is_mut,
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
                 native_owned: super::parameter_types::native_collection_parameter(&parameter.ty, self.type_info),
-            });
+            };
+            super::input_access::apply(&mut projected, self.type_info, target.binding.identity.as_ref(), index);
+            frame.parameters.push(projected);
             if frame.parameters.last().is_some_and(|parameter| parameter.native_owned) {
                 self.owned_parameters.insert(local);
             } else if parameter.is_mut {
