@@ -103,7 +103,7 @@ pub(super) fn protocol_artifacts(value: &ProtocolArtifacts) -> Result<(), NodeBi
         explicit_input_calls: _,
         explicit_local_modes: _,
         explicit_input_flow: _,
-        explicit_input_copy,
+        explicit_input_copy: _,
         body_ir_truthiness_receivers,
         body_ir_iterations,
         iterations,
@@ -112,7 +112,7 @@ pub(super) fn protocol_artifacts(value: &ProtocolArtifacts) -> Result<(), NodeBi
         in_place_match_scrutinees,
         loan_free_scrutinees,
     } = value;
-    require_empty!("ProtocolArtifacts"; explicit_input_copy, body_ir_truthiness_receivers, body_ir_iterations, iterations, item_taking_iterations, comprehension_source_consumption, in_place_match_scrutinees, loan_free_scrutinees);
+    require_empty!("ProtocolArtifacts"; body_ir_truthiness_receivers, body_ir_iterations, iterations, item_taking_iterations, comprehension_source_consumption, in_place_match_scrutinees, loan_free_scrutinees);
     Ok(())
 }
 

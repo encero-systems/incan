@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/6"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/6"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/7"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/7"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -167,6 +167,7 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
             "input-call",
             "input-local",
             "input-flow",
+            "input-copy",
         ]:
             return Err(CodecFault.Unsupported(field.family))
         if (
@@ -297,7 +298,7 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
             end = len(values)
         else:
             return Err(CodecFault.Malformed)
-    elif field.family in ["input-call", "input-local", "input-flow"]:
+    elif field.family in ["input-call", "input-local", "input-flow", "input-copy"]:
         end = input_field_end(field)?
     elif field.family == "ownership":
         if field.selector != "contract" or field.node == "":
@@ -697,7 +698,16 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
         return Err(CodecFault.Malformed)
     mut reader = InputFields(values=field.values)
     reader.tag(["1"])?
-    if field.family == "input-call" and field.selector == "contract":
+    if field.family == "input-copy" and field.selector == "types":
+        reader.handle()?
+        size = reader.count()?
+        mut previous = ""
+        for _ in range(size):
+            start = reader.position()
+            reader.value_type()?
+            previous = reader.ordered(previous, start)?
+            reader.tag(["true", "false"])?
+    elif field.family == "input-call" and field.selector == "contract":
         if reader.tag(["none", "some"])? == "some":
             reader.handle()?
         reader.handle()?

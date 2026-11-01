@@ -71,12 +71,15 @@ fn input_evaluation(value: &InputEvaluation, fields: &mut Vec<String>) {
 }
 
 /// Frame map keys unambiguously using UTF-8 byte lengths, independently of current native identity ordering.
-fn canonical_key(values: &[String]) -> String {
+pub(super) fn canonical_key(values: &[String]) -> String {
     values.iter().map(|value| format!("{}:{value}", value.len())).collect()
 }
 
 /// Emit map entries in the same portable order that the Incan grammar and native rebinder require.
-fn ordered_fields(mut entries: Vec<(String, Vec<String>)>, fields: &mut Vec<String>) -> Result<(), NodeBindingError> {
+pub(super) fn ordered_fields(
+    mut entries: Vec<(String, Vec<String>)>,
+    fields: &mut Vec<String>,
+) -> Result<(), NodeBindingError> {
     entries.sort_by(|left, right| left.0.cmp(&right.0));
     fields.push(entries.len().to_string());
     let mut previous = String::new();
@@ -91,7 +94,7 @@ fn ordered_fields(mut entries: Vec<(String, Vec<String>)>, fields: &mut Vec<Stri
 }
 
 /// Require exact canonical order before current handles normalize the persisted map into native collections.
-fn ordered_key(previous: &mut String, before: &[String], remaining: usize) -> Result<(), NodeBindingError> {
+pub(super) fn ordered_key(previous: &mut String, before: &[String], remaining: usize) -> Result<(), NodeBindingError> {
     let consumed = before
         .len()
         .checked_sub(remaining)

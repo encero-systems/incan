@@ -253,6 +253,7 @@ def input_protocol_controls() -> Result[None, str]:
         operation_dependency_grammar(record)?
         invocation_evaluation_grammar(record)?
         invocation_receiver_grammar(record)?
+        input_copy_grammar(record)?
         input_graph_refusals(record)?
         current = from_native_fields(fixture_projection(moved, owner, false).map_err((error) => error.to_string())?).map_err(
             (_) => "input moved",
@@ -262,10 +263,10 @@ def input_protocol_controls() -> Result[None, str]:
             (error) => error.to_string(),
         )?
         for field in record.fields:
-            if field.family in ["input-call", "input-local", "input-flow"]:
+            if field.family in ["input-call", "input-local", "input-flow", "input-copy"]:
                 input_field_refusals(record, field)?
         obsolete = CheckedRecord(
-            profile="incan.checker-free-functions/5",
+            profile="incan.checker-free-functions/6",
             owner=record.owner,
             root=record.root,
             family=record.family,
@@ -273,7 +274,7 @@ def input_protocol_controls() -> Result[None, str]:
         )
         match encode_record(obsolete):
             Err(CodecFault.ProfileMismatch) => pass
-            _ => return Err("profile 5 accepted invocation evaluation facts")
+            _ => return Err("profile 6 accepted checked Copy facts")
     return Ok(None)
 
 
@@ -552,4 +553,42 @@ def invocation_receiver_grammar(record: CheckedRecord) -> Result[None, str]:
         (_) => "invocation receiver grammar decode",
     )?
     assert decoded == retained
+    return Ok(None)
+
+
+def input_copy_grammar(record: CheckedRecord) -> Result[None, str]:
+    """Copy decisions are retained by exact checked type, never inferred from graph event tags."""
+    values = ["1", "owner", "4", "int", "true", "str", "false", "list", "int", "false", "callable", "0", "int", "false"]
+    retained = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="input-copy", node="owner-node", selector="types", values=values)],
+    )
+    encoded = encode_record(retained).map_err((_) => "checked Copy grammar encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
+        (_) => "checked Copy grammar decode",
+    )?
+    assert decoded == retained
+    malformed = [
+        ["1", "owner", "2", "str", "false", "int", "true"],
+        ["1", "owner", "2", "int", "true", "int", "false"],
+        ["1", "owner", "1", "int", "maybe"],
+        ["1", "owner", "1", "callable", "00", "int", "false"],
+        ["1", "", "1", "int", "true"],
+        ["1", "owner", "2", "int", "true"],
+        ["1", "owner", "1", "list", "int"],
+    ]
+    for payload in malformed:
+        broken = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[CanonicalField(family="input-copy", node="owner-node", selector="types", values=payload)],
+        )
+        match encode_record(broken):
+            Err(CodecFault.Malformed) => pass
+            _ => return Err("malformed checked Copy decisions accepted")
     return Ok(None)
