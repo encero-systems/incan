@@ -130,6 +130,14 @@ impl CheckedInputBody<'_> {
                     .abi_v0_facts()
                     .ownership
                     .is_trivially_copy();
+                if initializer.source.is_some()
+                    && copy
+                        != self
+                            .facts
+                            .checked_input_copy_value(self.canonical_owner(), retained.value_type)?
+                {
+                    return Err("checked Copy semantics require a compatible native input carrier");
+                }
                 if !copy
                     && initializer
                         .source
@@ -180,6 +188,15 @@ impl CheckedInputBody<'_> {
                     .abi_v0_facts()
                     .ownership
                     .is_trivially_copy();
+                if argument.source.is_some()
+                    && matches!(argument.access, IncanInputAccess::Owned | IncanInputAccess::Inferred)
+                    && copy
+                        != self
+                            .facts
+                            .checked_input_copy_value(self.canonical_owner(), &parameter.ty)?
+                {
+                    return Err("checked Copy semantics require a compatible native input carrier");
+                }
                 if argument.access == IncanInputAccess::Inferred && !copy && argument.source.is_some() {
                     return Err("ordinary non-Copy input requires its inferred access proof");
                 }

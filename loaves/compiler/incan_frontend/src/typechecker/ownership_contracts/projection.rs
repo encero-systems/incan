@@ -26,6 +26,16 @@ impl CheckedInputBody<'_> {
     pub(crate) fn canonical_owner(&self) -> &CanonicalSymbolId {
         &self.owner
     }
+
+    /// Select the source checker's exact Copy decision for a checked expression in this body. Native storage may
+    /// reject a carrier it cannot preserve, but cannot replace this semantic fact with its own ABI heuristic.
+    pub(crate) fn value_is_copy(&self, span: incan_semantics_core::HirSourceSpan) -> Result<bool, &'static str> {
+        let ty = self
+            .facts
+            .expr_type(span)
+            .ok_or("input value has no checked source type")?;
+        self.facts.checked_input_copy_value(self.canonical_owner(), ty)
+    }
     /// Read a local's already authenticated request; bindings from other bodies are not part of this view.
     pub(crate) fn local_mode(&self, local: &CanonicalSymbolId) -> Option<OwnershipMode> {
         self.facts
