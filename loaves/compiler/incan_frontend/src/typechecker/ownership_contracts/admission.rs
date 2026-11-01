@@ -33,14 +33,7 @@ impl TypeCheckInfo {
         if !direct_function_boundary(function) {
             return Err("explicit inputs require a synchronous fixed source-function boundary");
         }
-        if self
-            .protocols
-            .explicit_local_modes
-            .values()
-            .any(|mode| &mode.owner == owner)
-        {
-            return Err("explicit local ownership still requires source-place storage projection");
-        }
+        proof.validate_local_storage()?;
         if function.body.iter().any(|statement| {
             !matches!(
                 statement.node,
@@ -66,6 +59,41 @@ impl TypeCheckInfo {
 }
 
 impl CheckedInputBody<'_> {
+    /// Only checked Copy referents with static owner/field places have local alias storage in this stage. An owned
+    /// local is a different transfer operation; non-Copy alias reads need no-repair consumer facts of their own.
+    fn validate_local_storage(&self) -> Result<(), &'static str> {
+        for (local, mode) in self
+            .facts
+            .protocols
+            .explicit_local_modes
+            .iter()
+            .filter(|(_, mode)| &mode.owner == self.canonical_owner())
+        {
+            if !matches!(
+                mode.mode,
+                incan_lang::lang::types::ownership::OwnershipMode::Borrowed
+                    | incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut
+            ) {
+                return Err("explicit owned or returned local needs its own storage projection");
+            }
+            let loan = self
+                .graph
+                .local_loans
+                .get(local)
+                .and_then(|id| self.graph.loans.get(id.0))
+                .ok_or("explicit local alias has no checked source loan")?;
+            let retained = self.local_loan(local, loan.span)?;
+            if !crate::typechecker::semantic_type_from_resolved(retained.value_type)
+                .abi_v0_facts()
+                .ownership
+                .is_trivially_copy()
+            {
+                return Err("non-Copy local alias requires checked value-consumption projection");
+            }
+        }
+        Ok(())
+    }
+
     /// Require the exact carriers consumed by the first direct-call materializer. A richer source graph is useful
     /// for diagnostics but does not authorize an indexed adaptation, method frame or implicit non-Copy repair.
     fn validate_direct_call_storage(&self) -> Result<(), &'static str> {

@@ -240,7 +240,7 @@ fn nested_borrow_preserves_projection_and_conditional_move_refuses() -> Result<(
     Ok(())
 }
 
-/// A staged scalar loan names its existing field place for reads and both write forms, without a copied alias slot.
+/// A checked scalar loan names its existing field place for reads and both write forms, without a copied alias slot.
 #[test]
 fn local_scalar_alias_projects_existing_field_storage() -> Result<(), Box<dyn std::error::Error>> {
     let module = staged(
@@ -271,10 +271,7 @@ fn local_scalar_alias_projects_existing_field_storage() -> Result<(), Box<dyn st
         }
     }
     assert_eq!(writes, 2, "{:?}", body.block);
-    assert!(
-        body.first_representation_gap().is_some(),
-        "source local profile must stay staged before native proof"
-    );
+    assert!(body.first_representation_gap().is_none());
     Ok(())
 }
 
@@ -331,5 +328,32 @@ fn construction_defaults_and_noncopy_place_fields_stay_refused() -> Result<(), B
             .ok_or("no caller")?;
         assert!(body.first_representation_gap().is_some());
     }
+    Ok(())
+}
+
+/// A final scalar alias use ends its checked loan, permitting a later original-field write without copied storage.
+#[test]
+fn local_alias_last_use_preserves_the_original_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "model Settings:\n    attempts: int\n    label: str\ndef main() -> None:\n    mut settings = Settings(attempts=1, label=\"initial\")\n    mut attempts: BorrowedMut[int] = settings.attempts\n    attempts = 3\n    attempts += 2\n    assert attempts == 5\n    settings.attempts += 1\n    assert settings.attempts == 6\n    assert settings.label == \"initial\"\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no caller")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}; {:?}",
+        body.first_representation_gap(),
+        body.block
+    );
+    assert!(
+        !body
+            .locals
+            .iter()
+            .any(|local| local.name.as_deref() == Some("attempts"))
+    );
     Ok(())
 }

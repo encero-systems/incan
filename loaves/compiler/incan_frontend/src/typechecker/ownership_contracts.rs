@@ -1338,6 +1338,28 @@ mod tests {
         Ok(checker)
     }
 
+    /// Reannotation, method bodies and non-Copy local values cannot borrow the Copy local-declaration admission.
+    #[test]
+    fn local_alias_admission_preserves_other_boundaries() -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "def wrong() -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n",
+            "class Counter:\n    value: int\n    def read(self) -> int:\n        let local: Borrowed[int] = self.value\n        return local\n",
+            "def read(value: Borrowed[str]) -> int:\n    let local: Borrowed[str] = value\n    return len(local)\n",
+            "def read(value: Owned[int]) -> int:\n    let local: Owned[int] = value\n    return local\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0123")),
+                "{source}: {:?}",
+                checker.errors
+            );
+        }
+        Ok(())
+    }
+
     /// A source declaration shadowing a prelude spelling remains an ordinary nominal type.
     #[test]
     fn shadowed_mode_is_not_an_ownership_contract() -> Result<(), Box<dyn std::error::Error>> {

@@ -1454,6 +1454,26 @@ pub struct CheckedInputParameter {
 }
 
 impl Body {
+    /// A resolved source callee's explicit inputs require independent caller authority, even when the caller has
+    /// no explicit parameters. Consumers must check this relationship after canonical call resolution: a missing
+    /// persisted caller profile cannot be detected from its ordinary parameter ABI alone.
+    pub fn input_call_profile_gap(&self, callee: &Body) -> Option<&'static str> {
+        if !callee
+            .params
+            .iter()
+            .any(|parameter| !parameter.input_access.is_inferred())
+        {
+            return None;
+        }
+        callee.input_profile_gap().or_else(|| {
+            if self.checked_input_profile.is_none() {
+                Some("explicit source call lacks a checked caller body profile")
+            } else {
+                self.input_profile_gap()
+            }
+        })
+    }
+
     /// Store the exact owner bindings used by Incan nominal specialization, independently of method binders.
     pub fn set_nominal_instantiation(&mut self, arguments: Vec<TraitTypeArgument>) {
         self.nominal_instantiation = arguments;
@@ -5703,6 +5723,71 @@ mod tests {
         body.checked_input_profile = Some(profile);
         body.params[0].native_owned = true;
         assert!(body.first_representation_gap().is_some());
+        Ok(())
+    }
+
+    /// Removing a caller profile from named persisted data must not grant an explicit source call merely because
+    /// all caller parameters use ordinary types. Positional transport preserves the same independent obligation.
+    #[test]
+    fn explicit_calls_require_persisted_caller_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let mut caller = sample_body();
+        let owner = CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "caller",
+            SemanticSourceTargetKind::Function,
+            caller.span,
+        );
+        caller.canonical = Some(owner.clone());
+        caller.checked_input_profile = Some(super::CheckedInputProfile {
+            version: 1,
+            owner,
+            parameters: caller
+                .params
+                .iter()
+                .enumerate()
+                .map(|(slot, parameter)| super::CheckedInputParameter {
+                    slot,
+                    access: parameter.input_access,
+                })
+                .collect(),
+        });
+        let mut callee = caller.clone();
+        let callee_owner = CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "callee",
+            SemanticSourceTargetKind::Function,
+            callee.span,
+        );
+        callee.canonical = Some(callee_owner.clone());
+        callee.params[0].input_access = crate::IncanInputAccess::Shared;
+        let profile = callee.checked_input_profile.as_mut().ok_or("missing callee profile")?;
+        profile.owner = callee_owner;
+        profile.parameters[0].access = crate::IncanInputAccess::Shared;
+        assert!(caller.input_call_profile_gap(&callee).is_none());
+        let decoded: Body = postcard::from_bytes(&postcard::to_allocvec(&caller)?)?;
+        assert!(decoded.input_call_profile_gap(&callee).is_none());
+
+        let mut named = serde_json::to_value(&caller)?;
+        named
+            .as_object_mut()
+            .ok_or("caller is not an object")?
+            .remove("checked_input_profile");
+        let stripped: Body = serde_json::from_value(named)?;
+        assert!(stripped.input_profile_gap().is_none());
+        assert_eq!(
+            stripped.input_call_profile_gap(&callee),
+            Some("explicit source call lacks a checked caller body profile")
+        );
+        caller
+            .checked_input_profile
+            .as_mut()
+            .ok_or("missing caller profile")?
+            .owner = callee.canonical.clone().ok_or("missing callee identity")?;
+        assert!(caller.input_call_profile_gap(&callee).is_some());
+        callee.checked_input_profile = None;
+        assert!(decoded.input_call_profile_gap(&callee).is_some());
+        callee.params[0].input_access = crate::IncanInputAccess::Inferred;
+        assert!(stripped.input_call_profile_gap(&callee).is_none());
         Ok(())
     }
 

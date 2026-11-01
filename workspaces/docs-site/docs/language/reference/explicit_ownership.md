@@ -31,7 +31,9 @@ def main() -> int:
     return value
 ```
 
-Methods, explicit local loans, returned dependencies, indirect calls, indexed access, conditional transfers and projected non-Copy transfers remain refused. Every calling body also needs its own checked access proof. A valid parameter annotation or a borrowed native signature alone cannot grant that proof.
+The same source profile admits local `Borrowed[T]` and `BorrowedMut[T]` aliases when the referent is Copy and the source is a checked local or stored-field path. Reads and writes use that original place; the alias does not allocate an independent value or acquire a separate drop obligation. The checked loan ends after the alias's last use, allowing later access through the original owner. Non-Copy aliases and explicit owned locals remain refused.
+
+Methods, returned dependencies, indirect calls, indexed access, conditional transfers and projected non-Copy transfers remain refused. Every calling body also needs its own checked access proof. A valid parameter annotation or a borrowed native signature alone cannot grant that proof. Native call resolution checks the caller independently of the selected callee, including when persisted caller data contains only ordinary parameters.
 
 ## Result-source syntax
 
