@@ -1,0 +1,18 @@
+# behavior: a bound on the std.traits.error facade's Error is satisfied by a type adopting std.primitives.errors.Error
+# expect-accepted:
+
+from std.traits.error import Error
+from std.primitives.errors import Error as PrimitiveError
+
+
+model PrimitiveFailure with PrimitiveError:
+    def message(self) -> str:
+        return "primitive failure"
+
+
+def describe[E with Error](error: E) -> str:
+    return error.message()
+
+
+def main() -> None:
+    println(describe(PrimitiveFailure()))

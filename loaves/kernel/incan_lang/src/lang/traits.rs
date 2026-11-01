@@ -254,7 +254,7 @@ pub const fn source_module(id: TraitId) -> Option<&'static str> {
         TraitId::Eq | TraitId::Ord | TraitId::Hash => Some("std.derives.comparison"),
         TraitId::Clone | TraitId::Default => Some("std.derives.copying"),
         TraitId::From | TraitId::Into | TraitId::TryFrom | TraitId::TryInto => Some("std.traits.convert"),
-        TraitId::Error => Some("std.traits.error"),
+        TraitId::Error => Some("std.primitives.errors"),
         TraitId::Iterator | TraitId::Iterable | TraitId::Sum => Some("std.derives.collection"),
         TraitId::PartialEq | TraitId::PartialOrd | TraitId::IntoIterator | TraitId::Awaitable => None,
     }
@@ -381,8 +381,9 @@ const fn info(
 
 #[cfg(test)]
 mod tests {
-    use super::{TraitId, from_qualified_str};
+    use super::{TraitId, from_bound_str, from_qualified_str, generated_module, source_module};
 
+    /// Only the declared standard module identifies a source-owned builtin trait.
     #[test]
     fn qualified_lookup_uses_the_registered_source_owner() {
         assert_eq!(
@@ -401,5 +402,19 @@ mod tests {
         assert_eq!(from_qualified_str("std.derives.other.Iterator"), None);
         assert_eq!(from_qualified_str("RecordIterator"), None);
         assert_eq!(from_qualified_str("custom::Iterator"), None);
+    }
+    /// Standard error identity follows its primitive declaration; compatibility imports resolve to that owner.
+    #[test]
+    fn error_identity_has_one_primitive_owner() {
+        assert_eq!(source_module(TraitId::Error), Some("std.primitives.errors"));
+        assert_eq!(generated_module(TraitId::Error).as_deref(), Some("primitives::errors"));
+        assert_eq!(from_qualified_str("std.primitives.errors.Error"), Some(TraitId::Error));
+        assert_eq!(
+            from_bound_str("pub::incan_stdlib_primitives::primitives::errors::Error"),
+            Some(TraitId::Error)
+        );
+        assert_eq!(from_qualified_str("std.traits.error.Error"), None);
+        assert_eq!(from_bound_str("pub::incan_stdlib_core::traits::error::Error"), None);
+        assert_eq!(from_bound_str("pub::other::primitives::errors::Error"), None);
     }
 }
