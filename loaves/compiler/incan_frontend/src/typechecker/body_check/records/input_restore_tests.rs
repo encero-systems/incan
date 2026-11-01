@@ -176,3 +176,69 @@ fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<()
     }
     Ok(())
 }
+
+/// Invocation-specific out-of-range links restore only as their exact structural refusal, never as successful
+/// input authority or a differently labeled fault.
+#[test]
+fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def read(value: Borrowed[int]) -> int:\n    return value\ndef forward(value: Borrowed[int]) -> int:\n    return read(value)\n";
+    let (program, checker, owner) = fixture(source, "forward")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let view = checker.checked_body(owner).ok_or("missing invocation body")?;
+    let mut fields = Vec::new();
+    super::project(&positions, &view.local, &mut fields)?;
+    let checked = fields
+        .into_iter()
+        .find(|row| row.first().is_some_and(|family| family == "input-flow"))
+        .ok_or("missing invocation graph")?;
+    let mut reader = Reader {
+        positions: &positions,
+        values: checked[5..].iter(),
+    };
+    let graph = reader.graph()?;
+    reader.finish()?;
+    assert_eq!(graph.invocations.len(), 1);
+    for field in 0..5 {
+        let mut altered = graph.clone();
+        let missing_node = altered.nodes.len();
+        let invocation = altered.invocations.values_mut().next().ok_or("missing invocation")?;
+        let argument = invocation.arguments.first_mut().ok_or("missing invocation argument")?;
+        match field {
+            0 => argument.evaluation.start_node = missing_node,
+            1 => argument.evaluation.end_node = missing_node,
+            2 => argument.evaluation.source_node = Some(missing_node),
+            3 => invocation.completion_node = missing_node,
+            _ => *invocation.final_accesses.first_mut().ok_or("missing final loan use")? = missing_node,
+        }
+        let fault = crate::typechecker::ownership_contracts::flow::analyze(&altered)
+            .err()
+            .ok_or("invalid invocation unexpectedly analyzed")?;
+        assert_eq!(fault.0, "invocation event link is outside callable");
+        let mut row = checked[..5].to_vec();
+        super::input_flow::project(&positions, &altered, &mut row)?;
+        let mut refused = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut refused, &row).is_err());
+        assert!(refused.protocols.explicit_input_flow.is_empty());
+        row[4] = "invalid".into();
+        row.push(fault.0.into());
+        let mut retained = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        restore(&positions, &mut retained, &row)?;
+        assert!(matches!(retained.protocols.explicit_input_flow.get(&graph.owner),
+            Some(InputFlow::Invalid { graph: restored, fault: actual })
+                if actual == &fault && restored.invocations.len() == altered.invocations.len()));
+        *row.last_mut().ok_or("missing invocation fault")? = "missing entry node".into();
+        let mut mismatched = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut mismatched, &row).is_err());
+        assert!(mismatched.protocols.explicit_input_flow.is_empty());
+    }
+    Ok(())
+}

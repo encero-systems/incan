@@ -251,6 +251,8 @@ def input_protocol_controls() -> Result[None, str]:
         assert decoded == record
         owned_initializer_grammar(record)?
         operation_dependency_grammar(record)?
+        invocation_evaluation_grammar(record)?
+        invocation_receiver_grammar(record)?
         input_graph_refusals(record)?
         current = from_native_fields(fixture_projection(moved, owner, false).map_err((error) => error.to_string())?).map_err(
             (_) => "input moved",
@@ -263,7 +265,7 @@ def input_protocol_controls() -> Result[None, str]:
             if field.family in ["input-call", "input-local", "input-flow"]:
                 input_field_refusals(record, field)?
         obsolete = CheckedRecord(
-            profile="incan.checker-free-functions/4",
+            profile="incan.checker-free-functions/5",
             owner=record.owner,
             root=record.root,
             family=record.family,
@@ -271,7 +273,7 @@ def input_protocol_controls() -> Result[None, str]:
         )
         match encode_record(obsolete):
             Err(CodecFault.ProfileMismatch) => pass
-            _ => return Err("profile 4 accepted operation dependency facts")
+            _ => return Err("profile 5 accepted invocation evaluation facts")
     return Ok(None)
 
 
@@ -463,3 +465,91 @@ def input_record(rows: list[list[str]], owner: str) -> Result[CheckedRecord, str
                     Ok(_) => pass
                     Err(_) => println(f"input record {owner}: {row}")
             return Err(f"input fields for {owner}")
+
+
+def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
+    """Keep exact argument evaluation, source access, completion and final loan-use indices."""
+    place = ["binding", "source", "0"]
+    prefix = ["1", "checked", "owner", "0", "1", "binding", "source", "true", "true", "true", "0", "0", "0", "0", "1"]
+    argument = ["argument", "0", "0", "owned", "none", "some"] + place
+    call = ["call", "callee", "none", "1"] + argument
+    mut nodes = ["5", "nothing", "1", "1", "owner", "nothing", "1", "2", "argument", "access"]
+    nodes += place + ["move", "none", "1", "3", "argument", "nothing", "1", "4", "argument", "nothing", "0", "call"]
+    valid = prefix + call + ["1", "3", "some", "2", "none", "4", "0"] + nodes
+    retained = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=valid)],
+    )
+    encoded = encode_record(retained).map_err((_) => "invocation evaluation grammar encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
+        (_) => "invocation evaluation grammar decode",
+    )?
+    assert decoded == retained
+    malformed = [
+        prefix + call + ["5", "3", "some", "2", "none", "4", "0"] + nodes,
+        prefix + call + ["1", "5", "some", "2", "none", "4", "0"] + nodes,
+        prefix + call + ["1", "3", "some", "5", "none", "4", "0"] + nodes,
+        prefix + call + ["1", "3", "some", "2", "none", "5", "0"] + nodes,
+        prefix + call + ["1", "3", "some", "2", "none", "4", "1", "5"] + nodes,
+        prefix + call + ["1", "3", "some", "2", "some", "5", "3", "none", "4", "0"] + nodes,
+        prefix + call + ["1", "3", "some", "2", "none", "4", "0"] + nodes[:-1],
+    ]
+    for values in malformed:
+        broken = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
+        )
+        match encode_record(broken):
+            Err(CodecFault.Malformed) => pass
+            _ => return Err("malformed checked invocation evaluation accepted")
+    mut invalid_values = ["1", "invalid"] + prefix[2:] + call + ["5", "3", "some", "2", "none", "4", "0"] + nodes
+    invalid_values += ["invocation event link is outside callable"]
+    invalid = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=invalid_values)],
+    )
+    encoded_invalid = encode_record(invalid).map_err((_) => "invalid invocation grammar encode")?
+    decoded_invalid = decode_record(encoded_invalid, CHECKER_PROFILE, invalid.owner, invalid.root).map_err(
+        (_) => "invalid invocation grammar decode",
+    )?
+    assert decoded_invalid == invalid
+    return Ok(None)
+
+
+def invocation_receiver_grammar(record: CheckedRecord) -> Result[None, str]:
+    """Receiver and argument loans retain independent evaluation intervals and ordered terminal uses."""
+    source = ["binding", "source", "0"]
+    receiver = ["binding", "receiver", "0"]
+    mut values = ["1", "checked", "owner", "0", "2"]
+    # Canonical map framing sorts the six-byte source key before the eight-byte receiver key.
+    values += ["binding", "source", "false", "false", "false", "binding", "receiver", "false", "false", "false"]
+    values += ["2"] + receiver + ["shared", "false", "none", "receiver"]
+    values += source + ["shared", "false", "none", "argument", "0", "0", "0", "1"]
+    values += ["call", "callee", "some", "0", "1", "argument", "0", "0", "shared", "some", "1", "some"] + source
+    values += ["4", "6", "some", "5", "some", "1", "3", "some", "2", "7", "2", "8", "9", "10"]
+    values += ["nothing", "1", "1", "owner", "nothing", "1", "2", "receiver", "borrow", "0", "1", "3", "receiver"]
+    values += ["nothing", "1", "4", "receiver", "nothing", "1", "5", "argument", "borrow", "1", "1", "6", "argument"]
+    values += ["nothing", "1", "7", "argument", "nothing", "1", "8", "call", "access"] + receiver
+    values += ["read", "some", "0", "1", "9", "call", "access"] + source + ["read", "some", "1", "0", "call"]
+    retained = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
+    )
+    encoded = encode_record(retained).map_err((_) => "invocation receiver grammar encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
+        (_) => "invocation receiver grammar decode",
+    )?
+    assert decoded == retained
+    return Ok(None)

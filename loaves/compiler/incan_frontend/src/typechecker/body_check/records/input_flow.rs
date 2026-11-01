@@ -4,8 +4,8 @@
 use super::types::next;
 use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
-    Access, Event, Graph, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node, OperandDependency,
-    OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
+    Access, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node,
+    OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::BTreeMap;
@@ -57,6 +57,15 @@ fn place(positions: &Positions, value: &Place, fields: &mut Vec<String>) -> Resu
 fn loan_option(value: Option<LoanId>, fields: &mut Vec<String>) {
     match value {
         Some(loan) => fields.extend(["some".into(), loan.0.to_string()]),
+        None => fields.push("none".into()),
+    }
+}
+
+/// Retain exact producer-linked evaluation boundaries and source access; restoration never rediscovers them.
+fn input_evaluation(value: &InputEvaluation, fields: &mut Vec<String>) {
+    fields.extend([value.start_node.to_string(), value.end_node.to_string()]);
+    match value.source_node {
+        Some(node) => fields.extend(["some".into(), node.to_string()]),
         None => fields.push("none".into()),
     }
 }
@@ -197,7 +206,18 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
                 }
                 None => row.push("none".into()),
             }
+            input_evaluation(&argument.evaluation, &mut row);
         }
+        match &invocation.receiver_evaluation {
+            Some(evaluation) => {
+                row.push("some".into());
+                input_evaluation(evaluation, &mut row);
+            }
+            None => row.push("none".into()),
+        }
+        row.push(invocation.completion_node.to_string());
+        row.push(invocation.final_accesses.len().to_string());
+        row.extend(invocation.final_accesses.iter().map(usize::to_string));
         invocations.push((key, row));
     }
     ordered_fields(invocations, fields)?;
@@ -319,6 +339,22 @@ impl Reader<'_> {
         }
         Ok(Place { root, projection })
     }
+    /// Restore explicit graph-local links without substituting current analysis or source-span guesses.
+    fn input_evaluation(&mut self) -> Result<InputEvaluation, NodeBindingError> {
+        let start_node = self.number()?;
+        let end_node = self.number()?;
+        let source_node = match self.token()? {
+            "none" => None,
+            "some" => Some(self.number()?),
+            _ => return Err(NodeBindingError::MissingNode),
+        };
+        Ok(InputEvaluation {
+            start_node,
+            end_node,
+            source_node,
+        })
+    }
+
     /// Restore the full graph without consulting checked current-state payloads. The caller must run analysis.
     pub fn graph(&mut self) -> Result<Graph, NodeBindingError> {
         let owner = self.identity()?;
@@ -458,7 +494,18 @@ impl Reader<'_> {
                     access,
                     loan,
                     source,
+                    evaluation: self.input_evaluation()?,
                 });
+            }
+            let receiver_evaluation = match self.token()? {
+                "none" => None,
+                "some" => Some(self.input_evaluation()?),
+                _ => return Err(NodeBindingError::MissingNode),
+            };
+            let completion_node = self.number()?;
+            let mut final_accesses = Vec::new();
+            for _ in 0..self.count()? {
+                final_accesses.push(self.number()?);
             }
             if invocations
                 .insert(
@@ -467,6 +514,9 @@ impl Reader<'_> {
                         callee,
                         receiver,
                         arguments,
+                        receiver_evaluation,
+                        completion_node,
+                        final_accesses,
                     },
                 )
                 .is_some()

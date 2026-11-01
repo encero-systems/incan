@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/5"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/5"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/6"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/6"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -506,6 +506,15 @@ class InputFields:
         self.offset = parameters_end(self.values, self.offset, 0)?
         return Ok(None)
 
+    def input_evaluation(mut self) -> Result[list[int], CodecFault]:
+        """Collect producer-linked evaluation indices for bounds checking after the graph's node count is known."""
+        start = self.number()?
+        end = self.number()?
+        mut indices = [start, end]
+        if self.tag(["none", "some"])? == "some":
+            indices.append(self.number()?)
+        return Ok(indices)
+
     def value_type(mut self) -> Result[None, CodecFault]:
         self.offset = type_end(self.values, self.offset, 0)?
         return Ok(None)
@@ -630,6 +639,7 @@ class InputFields:
                 self.place()?
                 self.index(loans)?
                 operation_nodes.append(self.number()?)
+        mut invocation_nodes: list[int] = []
         invocations = self.count()?
         previous = ""
         for _ in range(invocations):
@@ -647,6 +657,13 @@ class InputFields:
                 self.optional_index(loans)?
                 if self.tag(["none", "some"])? == "some":
                     self.place()?
+                invocation_nodes += self.input_evaluation()?
+            if self.tag(["none", "some"])? == "some":
+                invocation_nodes += self.input_evaluation()?
+            invocation_nodes.append(self.number()?)
+            final_accesses = self.count()?
+            for _ in range(final_accesses):
+                invocation_nodes.append(self.number()?)
         nodes = self.count()?
         if entry >= nodes and self.strict_indices:
             return Err(CodecFault.Malformed)
@@ -654,6 +671,9 @@ class InputFields:
             if index >= nodes and self.strict_indices:
                 return Err(CodecFault.Malformed)
         for index in operation_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for index in invocation_nodes:
             if index >= nodes and self.strict_indices:
                 return Err(CodecFault.Malformed)
         for _ in range(nodes):
