@@ -34,7 +34,9 @@ use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions as surface_functions;
 use incan_lang::lang::surface::types as surface_types;
-use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey, SymbolOrigin};
+use incan_semantics_core::{
+    CanonicalSymbolId, DecoratorFeature, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolOrigin,
+};
 
 /// One import that reaches a compiled Loaf: the Loaf's index key and the public module path inside its manifest.
 pub(in crate::typechecker) struct LoafImport {
@@ -831,20 +833,22 @@ impl TypeChecker {
             .identities_for_public_source_path(&public_path, &source_path);
         let mut kind = match kinds.as_mut_slice() {
             [kind] => kind.clone(),
-            kinds if kinds.iter().all(|kind| matches!(kind, SymbolKind::Function(_))) => SymbolKind::FunctionOverloads(
-                kinds
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, kind)| match kind {
-                        SymbolKind::Function(info) => Some(FunctionOverloadInfo {
-                            info: info.clone(),
-                            span: Span::default(),
-                            identity: overload_identities.get(index).cloned().flatten(),
-                        }),
-                        _ => None,
-                    })
-                    .collect(),
-            ),
+            kinds if !kinds.is_empty() && kinds.iter().all(|kind| matches!(kind, SymbolKind::Function(_))) => {
+                SymbolKind::FunctionOverloads(
+                    kinds
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, kind)| match kind {
+                            SymbolKind::Function(info) => Some(FunctionOverloadInfo {
+                                info: info.clone(),
+                                span: Span::default(),
+                                identity: overload_identities.get(index).cloned().flatten(),
+                            }),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            }
             _ => return Err(source_modules),
         };
         let canonical = overload_identities.first().cloned().flatten().filter(|first| {
@@ -1921,7 +1925,7 @@ impl TypeChecker {
         if let Some(function) = &export.projected_function {
             return Some(SymbolKind::Function(self.function_info_from_manifest(function)));
         }
-        if let Some(kind) = self.symbol_kind_from_nominal_projection(export.projected_type.as_ref()) {
+        if let Some(kind) = self.symbol_kind_from_type_projection(export.projected_type.as_ref()) {
             return Some(kind);
         }
         let identity_target_path = Self::manifest_identity_target_path(manifest, &export.name);
@@ -1954,8 +1958,9 @@ impl TypeChecker {
         self.symbol_kind_from_manifest_alias(manifest, target_alias, visited)
     }
 
-    /// Hydrate a forwarded nominal only from its exact admitted declaring artifact and public membership.
-    pub(super) fn symbol_kind_from_nominal_projection(
+    /// Hydrate a forwarded type or source trait from its admitted declaring artifact and checked public membership.
+    /// Trait aliases retain their generic contract without requiring a nominal layout or a native trait item.
+    pub(super) fn symbol_kind_from_type_projection(
         &self,
         projected: Option<&crate::library_manifest::TypeRef>,
     ) -> Option<SymbolKind> {
@@ -1969,6 +1974,35 @@ impl TypeChecker {
             return None;
         };
         let canonical = origin.canonical.hydrate()?;
+        if canonical.kind == SemanticSourceTargetKind::Trait {
+            let entry = self.loaves.declaring_loaf(&canonical)?;
+            if entry.artifact.identity != origin.provider {
+                return None;
+            }
+            let manifest = &entry.artifact.manifest;
+            let identity = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .find(|identity| {
+                    identity.kind == crate::library_manifest::ExportIdentityKind::Trait
+                        && identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(&canonical)
+                })?;
+            let kind = if identity.public_path.len() == 2 {
+                manifest
+                    .exports
+                    .traits
+                    .iter()
+                    .find(|item| item.name == identity.public_name)
+                    .map(|item| SymbolKind::Trait(self.trait_info_from_manifest(item)))
+            } else {
+                Self::api_declaration_for_target_path(manifest, &identity.source_path).and_then(|declaration| {
+                    self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+                })
+            };
+            return kind.filter(|kind| matches!(kind, SymbolKind::Trait(_)));
+        }
         let (entry, identity) = self.loaves.public_nominal(&canonical)?;
         let artifact = &entry.artifact;
         if identity.public_path.len() == 2 {
@@ -2179,7 +2213,7 @@ impl TypeChecker {
                         self.function_info_from_manifest(&function_export_from_api_projected(function)),
                     ));
                 }
-                self.symbol_kind_from_nominal_projection(alias.projected_type.as_ref())
+                self.symbol_kind_from_type_projection(alias.projected_type.as_ref())
                     .or_else(|| self.symbol_kind_from_api_target_path_inner(manifest, &alias.target_path, visited))
             }
             _ => self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration),
@@ -2234,7 +2268,7 @@ impl TypeChecker {
                         self.function_info_from_manifest(&function_export_from_api_projected(function)),
                     )
                 })
-                .or_else(|| self.symbol_kind_from_nominal_projection(item.projected_type.as_ref())),
+                .or_else(|| self.symbol_kind_from_type_projection(item.projected_type.as_ref())),
             ApiDeclaration::Partial(item) => {
                 Some(SymbolKind::Function(self.partial_info_from_export(&api.map_or_else(
                     || partial_export_from_api(item),
@@ -3499,6 +3533,7 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Preserve an imported method's declared receiver access mode.
     pub(super) fn receiver_from_manifest(&self, receiver: Option<&ReceiverExport>) -> Option<Receiver> {
         match receiver {
             Some(ReceiverExport::Immutable) => Some(Receiver::Immutable),
@@ -3520,7 +3555,8 @@ fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
 /// Collect every nominal type origin a manifest references, keyed by binding key.
 ///
 /// Used both to seed the closure and to extend it when a newly opened artifact contributes more origins, so the
-/// two callers cannot drift on what counts as an origin.
+/// two callers cannot drift on what counts as an origin. Checked trait projections retain declaration dependencies
+/// but never enter nominal layout reconstruction; unresolved or malformed origins still reach normal validation.
 fn collect_nominal_type_origins(
     manifest: &LibraryManifest,
 ) -> BTreeMap<String, crate::library_manifest::NominalTypeOriginExport> {
@@ -3528,7 +3564,12 @@ fn collect_nominal_type_origins(
     let mut origins = BTreeMap::new();
     let mut projection = manifest.clone();
     projection.visit_type_refs(&mut |ty| {
-        if let Some(origin) = TypeChecker::nominal_type_origin(ty) {
+        if let Some(origin) = TypeChecker::nominal_type_origin(ty)
+            && !origin
+                .canonical
+                .hydrate()
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+        {
             origins.insert(origin.binding_key(), origin.clone());
         }
     });

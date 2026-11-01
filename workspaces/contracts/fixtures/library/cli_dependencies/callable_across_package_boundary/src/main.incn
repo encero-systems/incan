@@ -30,6 +30,11 @@ def apply_transitive[F with ForwardedUnary[int, int]](operation: F, value: int) 
     return operation(value)
 
 
+def render_forwarded[F with ForwardedUnary[int, str]](operation: F, value: int) -> str:
+    """Keep input and result type arguments distinct through the forwarded trait."""
+    return operation(value)
+
+
 def apply_direct[F with DirectUnary[int, int]](operation: F, value: int) -> int:
     """A direct alias preserves the same contextual closure contract."""
     return operation(value)
@@ -84,3 +89,4 @@ def main() -> None:
     assert apply_qualified((value) => value + 5, 40) == 45
     assert apply_custom(Adder(amount=7), 40) == 47
     assert apply_transitive((value) => value + 6, 40) == 46
+    assert render_forwarded((value) => f"n={value}", 42) == "n=42"
