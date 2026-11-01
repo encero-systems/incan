@@ -55,16 +55,22 @@ pub model RuntimeRedirect:
 
 
 pub model RuntimeRedirects:
-    """Index settled runtime signatures without repeatedly walking already-built function plans."""
+    """
+    Index settled runtime signatures without repeatedly walking already-built function plans. `native` holds each
+    path whose signature without type arguments settled as native linkage, so a later queue request never examines it
+    again.
+    """
 
     pub entries: BTreeMap[str, list[int]]
     pub bindings: list[RuntimeRedirect]
+    pub native: BTreeMap[str, bool]
 
 
 pub def runtime_redirects() -> RuntimeRedirects:
     """Start one signature inventory for the complete checked instance queue."""
     entries: BTreeMap[str, list[int]] = BTreeMap.new()
-    return RuntimeRedirects(entries=entries, bindings=[])
+    native: BTreeMap[str, bool] = BTreeMap.new()
+    return RuntimeRedirects(entries=entries, bindings=[], native=native)
 
 
 pub def retain_runtime_instances(
@@ -88,14 +94,25 @@ pub def retain_runtime_instances(
     The queue owns its shared union inventory; only newly retained nominal declarations invalidate that inventory.
     The explicit foreign mutable loan keeps frame retention from snapshotting every checked body per request.
     """
-    requirements = missing_runtime_requirements(module, externals, functions)?
+    requirements = missing_runtime_requirements(module, externals, functions, redirects)?
     if len(requirements) != 0:
         return Ok(RuntimeRetention.NeedsRuntime(requirements))
     # 1. Retain coroutine instances before ordinary call frames.
     retain_runtime_future_instances(program.constructors.as_ref(), module, functions, instances, intrinsics, unions)?
-    mut retained: list[ExternalFunction] = []
-    # 2. Close each selected body, adapt its inputs and retain its canonical instance and final redirection.
-    for external in externals:
+    # 2. Close each newly selected body, adapt its inputs and retain its canonical instance and final redirection.
+    # Each exact signature settles once: a redirected one leaves the list, a native one stays and is not reexamined.
+    mut keep: list[bool] = []
+    mut dropped = false
+    mut linked: list[ExternalFunction] = []
+    for position in range(len(externals)):
+        if settled_native(redirects, borrowed_at(externals, position)):
+            keep.append(true)
+            continue
+        external = borrowed_at(externals, position).clone()
+        if runtime_redirect(redirects, runtime_selection(external)) != None:
+            keep.append(false)
+            dropped = true
+            continue
         match runtime_body(module, external.path)?:
             None =>
                 if external.path.startswith("incan_native_runtime::") and len(external.type_arguments) != 0:
@@ -104,14 +121,17 @@ pub def retain_runtime_instances(
                     program.constructors.as_ref(),
                     module,
                     functions,
-                    retained,
+                    linked,
                     external,
                     intrinsics,
                     unions,
                     redirects,
                 )?:
+                    keep.append(false)
+                    dropped = true
                     continue
-                merge_externals(retained, [external])?
+                settle_native(redirects, external)
+                keep.append(true)
             Some(body) =>
                 if len(body.type_parameters) != len(external.type_arguments):
                     return Err(f"invalid governed runtime type argument arity for {external.path}")
@@ -160,22 +180,61 @@ pub def retain_runtime_instances(
                 # Register the checked call selection; the completed queue rewrites each block once.
                 retain_runtime_redirect(redirects, external, CalleeKind.Planned(called), symbol)?
                 request_instance(instances, body, arguments, owned, false)
-    # 3. Replacing the list preserves only the external ABI calls that still need native linkage.
-    while len(externals) != 0:
-        _ = externals.pop()
-    externals.extend(retained)
+                keep.append(false)
+                dropped = true
+    # 3. Keep only the external ABI calls that still need native linkage, then the compiled callees frames link.
+    if dropped:
+        mut retained: list[ExternalFunction] = []
+        for position in range(len(externals)):
+            if keep[position]:
+                retained.append(borrowed_at(externals, position).clone())
+        while len(externals) != 0:
+            _ = externals.pop()
+        externals.extend(retained)
+    merge_externals(externals, linked)?
     return Ok(RuntimeRetention.Complete)
+
+
+def runtime_selection(external: &ExternalFunction) -> CalleeKind:
+    """The callee kind a call with this exact external signature names, as its redirect binding selects it."""
+    if len(external.type_arguments) == 0:
+        return CalleeKind.External(external.path)
+    return CalleeKind.Instantiated(external.path, external.type_arguments)
+
+
+def settled_native(redirects: &RuntimeRedirects, external: &ExternalFunction) -> bool:
+    """
+    Whether this exact signature already settled as native linkage; runtime lookups are fixed for the queue. A
+    signature with type arguments is reexamined, which for a native path costs two prefix checks.
+    """
+    if len(external.type_arguments) != 0:
+        return false
+    match redirects.native.get(external.path):
+        None => return false
+        Some(_settled) => return true
+
+
+def settle_native(mut redirects: RuntimeRedirects, external: ExternalFunction) -> None:
+    """Record a signature that needs native linkage, so later queue requests keep it without examining it."""
+    if len(external.type_arguments) == 0:
+        redirects.native.insert(external.path, true)
 
 
 def missing_runtime_requirements(
     module: &BodyIrModule,
     externals: &list[ExternalFunction],
     functions: &list[Function],
+    redirects: &RuntimeRedirects,
 ) -> Result[list[RuntimeRequirement], str]:
-    """Demand only selected external calls and deferred coroutine callees, before mutating their frame inventories."""
+    """
+    Demand only selected external calls and deferred coroutine callees, before mutating their frame inventories.
+    A signature settled as native linkage already met its demand.
+    """
     mut requests: list[RuntimeRequirement] = []
     for position in range(len(externals)):
         external = borrowed_at(externals, position)
+        if settled_native(redirects, external):
+            continue
         retain_runtime_requirement(module, external.path, external.span, requests)?
     for position in range(len(functions)):
         function = borrowed_at(functions, position)
