@@ -1,0 +1,50 @@
+# behavior: primitive HMAC preserves known vectors, stored incremental state, keyed reset and verification (RFC 168)
+# expect-stdout:
+#   primitive-hmac-ok
+
+"""Check keyed authentication through both canonical standard import surfaces."""
+
+from std.primitives import hexlify
+from std.primitives.hmac import HmacSha256Signer, hmac_sha256
+from std.hash import hmac_sha256 as legacy_hmac
+
+
+model SignedStream:
+    """Retain a signer as ordinary application state between incoming chunks."""
+
+    signer: HmacSha256Signer
+
+    def append(mut self, chunk: bytes) -> None:
+        """Add a chunk without imposing an application encoding."""
+        self.signer.update(chunk)
+
+    def finish(mut self) -> bytes:
+        """Finish one message and retain the key for the next message."""
+        return self.signer.finalize_bytes()
+
+
+def main() -> None:
+    """Verify published vectors and independent empty-message controls."""
+    key = b"Jefe"
+    data = b"what do ya want for nothing?"
+    tag = hmac_sha256.digest(key, data)
+    assert hexlify(tag) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+    assert legacy_hmac.digest(key, data) == tag
+    assert hexlify(hmac_sha256.digest(b"", b"")) == "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"
+    long_key = b"\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa"
+    assert len(long_key) == 131
+    assert hexlify(hmac_sha256.digest(long_key, b"Test Using Larger Than Block-Size Key - Hash Key First")) == "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+    mut stream = SignedStream(signer=hmac_sha256.new(key))
+    stream.append(b"what do ya ")
+    stream.append(b"")
+    stream.append(b"want for nothing?")
+    assert stream.finish() == tag
+    assert hexlify(stream.finish()) == "923598ca6d64af2a5dba79dcd021a8a0fe5c5f557519adaaf0ad532d4506dd30"
+    stream.append(data)
+    assert stream.finish() == tag
+    assert hmac_sha256.verify(key, data, tag)
+    assert not hmac_sha256.verify(b"other", data, tag)
+    assert not hmac_sha256.verify(key, b"changed", tag)
+    assert not hmac_sha256.verify(key, data, b"wrong tag")
+    assert not hmac_sha256.verify(key, data, tag[:31])
+    println("primitive-hmac-ok")

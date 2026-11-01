@@ -15,7 +15,6 @@ root = "rust"
 [dependencies]
 blake2 = { loaf = "crates-io/blake2", version = "0.10", features = [], default-features = true }
 blake3 = { loaf = "crates-io/blake3", version = "1", features = [], default-features = true }
-hmac = { loaf = "crates-io/hmac", version = "0.12", features = ["reset"], default-features = true }
 libm = { loaf = "crates-io/libm", version = "0.2", features = [], default-features = true }
 md5 = { loaf = "crates-io/md-5", version = "0.10", features = [], default-features = true }
 rand = { loaf = "crates-io/rand", version = "0.8", features = [], default-features = true }
