@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan};
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
 /// One source storage projection. Dynamic indices conservatively overlap every element projection.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -114,6 +114,25 @@ pub(super) struct Node {
     pub span: HirSourceSpan,
 }
 
+/// One evaluated source argument retains its declaration slot and the loan created for that invocation.
+#[derive(Debug, Clone)]
+pub(super) struct InvocationArgument {
+    pub span: HirSourceSpan,
+    pub slot: usize,
+    pub written_position: usize,
+    pub access: IncanInputAccess,
+    pub loan: Option<LoanId>,
+    pub source: Option<Place>,
+}
+
+/// Evaluation order, original written positions and receiver borrowing belong to this exact selected invocation.
+#[derive(Debug, Clone)]
+pub(super) struct Invocation {
+    pub callee: CanonicalSymbolId,
+    pub receiver: Option<LoanId>,
+    pub arguments: Vec<InvocationArgument>,
+}
+
 /// The resolved input of one callable analysis. Unknown identities or malformed edges must refuse validation.
 #[derive(Debug, Clone)]
 pub(super) struct Graph {
@@ -123,6 +142,8 @@ pub(super) struct Graph {
     pub loans: Vec<Loan>,
     /// Explicit local declarations retain their selected loan independently of display spelling.
     pub local_loans: BTreeMap<CanonicalSymbolId, LoanId>,
+    /// Argument-to-loan bindings are retained at construction; lowering must not recover them from similar spans.
+    pub invocations: BTreeMap<HirSourceSpan, Invocation>,
     pub nodes: Vec<Node>,
     pub entry: usize,
 }
@@ -189,6 +210,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
     if graph.entry >= graph.nodes.len() {
         return Err(InvalidGraph("missing entry node"));
     }
+    validate_invocations(graph)?;
     let mut origins = vec![None; graph.loans.len()];
     let mut destinations = BTreeSet::new();
     for (local, loan) in &graph.local_loans {
@@ -278,6 +300,83 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
         parents,
         origins,
     })
+}
+
+/// Invocation bindings retain a complete slot map and actual source loans through the call boundary.
+fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
+    for (span, invocation) in &graph.invocations {
+        let mut slots = BTreeSet::new();
+        let mut written_positions = BTreeSet::new();
+        for argument in &invocation.arguments {
+            if argument.slot >= invocation.arguments.len() || !slots.insert(argument.slot) {
+                return Err(InvalidGraph("invocation has an incomplete or duplicate parameter slot"));
+            }
+            if argument.written_position >= invocation.arguments.len()
+                || !written_positions.insert(argument.written_position)
+            {
+                return Err(InvalidGraph(
+                    "invocation has an incomplete or duplicate written argument position",
+                ));
+            }
+            match (argument.access, argument.loan) {
+                (IncanInputAccess::Shared | IncanInputAccess::Exclusive, Some(id)) => {
+                    let loan = graph
+                        .loans
+                        .get(id.0)
+                        .ok_or(InvalidGraph("argument has an unknown loan"))?;
+                    let expected = if argument.access == IncanInputAccess::Shared {
+                        LoanKind::Shared
+                    } else {
+                        LoanKind::Exclusive
+                    };
+                    if loan.kind != expected || loan.span != argument.span {
+                        return Err(InvalidGraph("argument loan differs from its source access"));
+                    }
+                    if argument.source.as_ref() != Some(&loan.source) {
+                        return Err(InvalidGraph("argument source differs from its selected loan"));
+                    }
+                    if let Root::Temporary {
+                        owner,
+                        expression,
+                        invocation,
+                    } = &loan.source.root
+                        && (owner != &graph.owner || expression != &argument.span || invocation != span)
+                    {
+                        return Err(InvalidGraph("argument temporary belongs to another invocation"));
+                    }
+                    validate_invocation_loan(graph, *span, id)?;
+                }
+                (IncanInputAccess::Inferred | IncanInputAccess::Owned, None) => {
+                    if let Some(source) = &argument.source
+                        && !graph.permissions.contains_key(&source.root)
+                    {
+                        return Err(InvalidGraph("argument names an unknown source owner"));
+                    }
+                }
+                _ => return Err(InvalidGraph("argument access and source loan disagree")),
+            }
+        }
+        if let Some(receiver) = invocation.receiver {
+            validate_invocation_loan(graph, *span, receiver)?;
+        }
+    }
+    Ok(())
+}
+
+/// A retained argument or receiver loan must participate in the graph's actual invocation operation.
+fn validate_invocation_loan(graph: &Graph, span: HirSourceSpan, id: LoanId) -> Result<(), InvalidGraph> {
+    let loan = graph
+        .loans
+        .get(id.0)
+        .ok_or(InvalidGraph("invocation has an unknown loan"))?;
+    if !graph.nodes.iter().any(|node| {
+        node.span == span
+            && matches!(&node.event,
+        Event::Access { place, access: Access::Read, through: Some(actual) } if *actual == id && place == &loan.source)
+    }) {
+        return Err(InvalidGraph("invocation does not retain its argument or receiver loan"));
+    }
+    Ok(())
 }
 
 /// A child use keeps each suspended parent dependency alive, even if the parent's own binding is not read again.
@@ -581,6 +680,7 @@ mod tests {
             .into(),
             loans,
             local_loans: BTreeMap::new(),
+            invocations: BTreeMap::new(),
             nodes: events
                 .into_iter()
                 .zip(edges)

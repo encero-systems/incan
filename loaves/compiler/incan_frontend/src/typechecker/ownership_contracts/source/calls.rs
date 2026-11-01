@@ -1,7 +1,8 @@
-//! Selected source-call access projection. Declaration modes remain canonical; argument evaluation order is
-//! preserved independently of parameter order. Returned/native dependencies and unresolved adaptations refuse
-//! this profile until their own facts are available.
+//! Selected source-call access projection. Ordinary unqualified fixed calls evaluate in declaration order;
+//! methods preserve written order. Original written positions remain provenance in both cases. Returned/native
+//! dependencies and unresolved adaptations refuse this profile until their own facts are available.
 
+use super::super::flow::{Invocation, InvocationArgument};
 use super::{
     Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Permission, Place, ResolvedType, Root,
     Unavailable,
@@ -9,6 +10,7 @@ use super::{
 use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
+use incan_semantics_core::IncanInputAccess;
 
 impl Builder<'_> {
     /// Apply a selected free-function contract without inspecting its body. Borrowed arguments remain live until
@@ -99,15 +101,28 @@ impl Builder<'_> {
                 reason: "call result needs retained dependency facts",
             });
         }
-        let paired = TypeChecker::arguments_with_parameter_slots(&call.parameters, arguments);
+        let mut paired = TypeChecker::arguments_with_parameter_slots(&call.parameters, arguments)
+            .into_iter()
+            .enumerate()
+            .collect::<Vec<_>>();
         if paired.len() != arguments.len() {
             return Err(Unavailable {
                 span,
                 reason: "unpacked call requires checked argument expansion",
             });
         }
-        // ---- Receiver and arguments in written evaluation order ----
+        // ---- Existing call evaluation policy, separate from written provenance ----
+        // `call` admits only unqualified fixed calls; the language reference defines declaration-order evaluation
+        // for that surface. A method retains written order. Do not change this when adding ownership requests.
+        if receiver.is_none() {
+            paired.sort_by_key(|(_, (_, slot))| *slot);
+        }
         let mut loans = Vec::new();
+        let mut invocation = Invocation {
+            callee: call.callee.clone(),
+            receiver: None,
+            arguments: Vec::with_capacity(paired.len()),
+        };
         if let Some(receiver) = receiver {
             let source = self.place(receiver)?;
             incoming = self.evaluate_place(receiver, incoming)?;
@@ -115,8 +130,9 @@ impl Builder<'_> {
             let loan = self.call_loan(source, mutable, mutable, receiver.span);
             incoming = self.event(incoming, Event::Borrow(loan), receiver.span);
             loans.push(loan);
+            invocation.receiver = Some(loan);
         }
-        for (expression, slot) in paired {
+        for (written_position, (expression, slot)) in paired {
             let slot = slot.ok_or(Unavailable {
                 span: expression.span,
                 reason: "missing selected argument slot",
@@ -126,11 +142,37 @@ impl Builder<'_> {
                 .iter()
                 .find(|mode| mode.component.parameter == Some(slot))
                 .map(|mode| mode.mode);
+            let source = self.optional_place(expression)?.map(|path| path.place);
             let (outgoing, loan) = self.call_argument(expression, &call.parameters[slot], mode, span, incoming)?;
             incoming = outgoing;
             if let Some(loan) = loan {
                 loans.push(loan);
             }
+            invocation.arguments.push(InvocationArgument {
+                span: expression.span,
+                slot,
+                written_position,
+                access: match mode {
+                    Some(OwnershipMode::Borrowed) => IncanInputAccess::Shared,
+                    Some(OwnershipMode::BorrowedMut) => IncanInputAccess::Exclusive,
+                    Some(OwnershipMode::Owned) => IncanInputAccess::Owned,
+                    None => IncanInputAccess::Inferred,
+                    Some(OwnershipMode::Reference) => {
+                        return Err(Unavailable {
+                            span,
+                            reason: "returned input reference is not an invocation mode",
+                        });
+                    }
+                },
+                loan,
+                source: loan.map(|loan| self.graph.loans[loan.0].source.clone()).or(source),
+            });
+        }
+        if self.graph.invocations.insert(span, invocation).is_some() {
+            return Err(Unavailable {
+                span,
+                reason: "invocation has more than one checked argument binding",
+            });
         }
         // ---- Invocation retains every loan, independently of callee body use ----
         for id in loans {

@@ -137,6 +137,7 @@ pub(super) fn build(
             permissions: BTreeMap::new(),
             loans: Vec::new(),
             local_loans: BTreeMap::new(),
+            invocations: BTreeMap::new(),
             nodes: vec![Node {
                 event: Event::Nothing,
                 successors: Vec::new(),

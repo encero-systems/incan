@@ -839,6 +839,14 @@ mod tests {
                 "def use(value: Borrowed[str]) -> None:\n    take(value)\ndef take(value: Owned[str]) -> None:\n    pass\n",
                 true,
             ),
+            (
+                "def use(value: str) -> int:\n    return choose(second=value == \"x\", first=take(value))\ndef choose(first: Borrowed[int], second: bool) -> int:\n    return first\ndef take(value: Owned[str]) -> int:\n    return 1\n",
+                true,
+            ),
+            (
+                "def use(reader: Reader, value: str) -> int:\n    return reader.choose(second=value == \"x\", first=take(value))\ndef take(value: Owned[str]) -> int:\n    return 1\nmodel Reader:\n    marker: int\n    def choose(self, first: Borrowed[int], second: bool) -> int:\n        return first\n",
+                false,
+            ),
         ] {
             let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
             let analysis = flow::analyze(&graph).map_err(|error| format!("{error:?}"))?;
@@ -1091,6 +1099,112 @@ mod tests {
                 "accepted corrupted evidence {corruption}"
             );
         }
+        Ok(())
+    }
+
+    /// Fixed named calls retain declaration-order evaluation and distinct written positions, slots and source loans.
+    #[test]
+    fn invocation_projection_retains_slots_and_loans() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked(
+            "def choose(first: Borrowed[int], second: Borrowed[int]) -> int:\n    return first + second\ndef use(left: int, right: int) -> int:\n    return choose(second=right, first=left)\n",
+        )?;
+        let (owner, output) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "use")
+            .ok_or("missing caller flow")?;
+        let InputFlow::Checked { graph, analysis } = output else {
+            return Err("caller flow unavailable".into());
+        };
+        assert!(analysis.conflicts.is_empty());
+        let (span, invocation) = graph.invocations.iter().next().ok_or("missing invocation")?;
+        assert_eq!(
+            invocation
+                .arguments
+                .iter()
+                .map(|argument| argument.slot)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
+            invocation
+                .arguments
+                .iter()
+                .map(|argument| argument.written_position)
+                .collect::<Vec<_>>(),
+            [1, 0]
+        );
+        assert_ne!(invocation.arguments[0].loan, invocation.arguments[1].loan);
+        assert!(checker.type_info.checked_input_body(owner)?.is_some());
+        for corruption in 0..6 {
+            let mut facts = checker.type_info.clone();
+            let InputFlow::Checked { graph, .. } = facts
+                .protocols
+                .explicit_input_flow
+                .get_mut(owner)
+                .ok_or("missing flow")?
+            else {
+                return Err("expected checked flow".into());
+            };
+            let invocation = graph.invocations.get_mut(span).ok_or("missing invocation")?;
+            match corruption {
+                0 => invocation.callee.declaration_name = "foreign".into(),
+                1 => invocation.arguments[0].slot = invocation.arguments[1].slot,
+                2 => invocation.arguments[0].loan = Some(flow::LoanId(usize::MAX)),
+                3 => {
+                    invocation.arguments[0].access = incan_semantics_core::IncanInputAccess::Owned;
+                    invocation.arguments[0].loan = None;
+                }
+                4 => invocation.arguments[0].source = None,
+                _ => {
+                    facts
+                        .protocols
+                        .explicit_input_calls
+                        .get_mut(span)
+                        .ok_or("missing call facts")?
+                        .owner = None;
+                }
+            }
+            assert!(
+                facts.checked_input_body(owner).is_err(),
+                "accepted corrupted invocation {corruption}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Owned calls transfer even when the callee only compares the value; a later caller use is a source conflict.
+    #[test]
+    fn readonly_owned_callee_still_consumes_the_argument() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked(
+            "def consume(value: Owned[str]) -> bool:\n    return value == \"x\"\ndef use(value: str) -> str:\n    result = consume(value)\n    return value\n",
+        )?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{:?}",
+            checker.errors
+        );
+        let (_, output) = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "use")
+            .ok_or("missing caller flow")?;
+        let InputFlow::Checked { analysis, .. } = output else {
+            return Err("caller flow unavailable".into());
+        };
+        assert!(
+            analysis
+                .conflicts
+                .iter()
+                .any(|conflict| matches!(conflict.kind, flow::ConflictKind::Moved(_)))
+        );
         Ok(())
     }
 

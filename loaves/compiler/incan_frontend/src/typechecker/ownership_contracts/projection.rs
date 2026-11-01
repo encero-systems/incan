@@ -70,6 +70,7 @@ impl TypeCheckInfo {
         if &recomputed != analysis || !analysis.conflicts.is_empty() {
             return Err("explicit input body has conflicting or stale source flow evidence");
         }
+        self.validate_input_invocations(owner, graph)?;
 
         // ---- Loan destinations and their source annotations ----
         for (local, loan) in &graph.local_loans {
@@ -123,5 +124,59 @@ impl TypeCheckInfo {
             owner: owner.clone(),
             locals: &self.protocols.explicit_local_modes,
         }))
+    }
+
+    /// Bind invocation loans to the selected canonical source signature. A graph's access tag cannot authorize a
+    /// different callee, slot, receiver, or a contract unavailable to this checked body.
+    fn validate_input_invocations(&self, owner: &CanonicalSymbolId, graph: &flow::Graph) -> Result<(), &'static str> {
+        for (span, invocation) in &graph.invocations {
+            let call = self
+                .protocols
+                .explicit_input_calls
+                .get(span)
+                .ok_or("invocation has no selected call facts")?;
+            if call.owner.as_ref() != Some(owner)
+                || call.callee != invocation.callee
+                || call.parameters.len() != invocation.arguments.len()
+                || call.receiver.is_some() != invocation.receiver.is_some()
+            {
+                return Err("invocation differs from its checked caller or signature");
+            }
+            let contract = self
+                .declarations
+                .ownership_contracts
+                .get(&call.callee)
+                .ok_or("invocation has no canonical ownership contract")?;
+            for argument in &invocation.arguments {
+                let access = crate::ownership_metadata::direct_input_access(Some(contract), argument.slot)?;
+                if argument.access != access {
+                    return Err("invocation argument access differs from the selected parameter");
+                }
+                if let Some(id) = argument.loan {
+                    let parameter = call
+                        .parameters
+                        .get(argument.slot)
+                        .ok_or("invocation parameter is absent")?;
+                    let loan = graph.loans.get(id.0).ok_or("invocation argument loan is absent")?;
+                    let writable = access == incan_semantics_core::IncanInputAccess::Exclusive && parameter.is_mut;
+                    if writable != loan.writable {
+                        return Err("invocation argument write permission differs from the selected parameter");
+                    }
+                }
+            }
+            if let Some(id) = invocation.receiver {
+                let loan = graph.loans.get(id.0).ok_or("invocation receiver loan is absent")?;
+                let mutable = call.receiver == Some(crate::ast::Receiver::Mutable);
+                let expected = if mutable {
+                    flow::LoanKind::Exclusive
+                } else {
+                    flow::LoanKind::Shared
+                };
+                if loan.kind != expected || loan.writable != mutable {
+                    return Err("invocation receiver access differs from the selected method");
+                }
+            }
+        }
+        Ok(())
     }
 }
