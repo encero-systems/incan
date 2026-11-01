@@ -1,0 +1,18 @@
+# behavior: a failure-only assertion message cannot transfer an ordinary stored owner without conditional cleanup (#2500).
+# expect-diagnostic: INCAN-T0123
+
+
+def consume(value: Owned[str]) -> str:
+    """Transfer the actual owned string into the independent result."""
+    return value
+
+
+def inspect(value: Borrowed[str]) -> int:
+    """Even an unannotated local remains a stored owner on the successful assertion path."""
+    message = "input is empty"
+    assert len(value) > 0, consume(message)
+    return len(value)
+
+
+def main() -> None:
+    inspect("payload")
