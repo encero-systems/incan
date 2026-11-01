@@ -467,20 +467,20 @@ impl TypeChecker {
                 self.current_classmethod_self_ty.clone(),
             )
         {
-            let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+            let ctor_fields: Option<(std::collections::HashMap<String, FieldInfo>, Vec<String>)> =
                 self.lookup_type_info(&owner_name).and_then(|info| match info {
-                    TypeInfo::Model(m) => Some(m.fields.clone()),
-                    TypeInfo::Class(c) => Some(c.fields.clone()),
+                    TypeInfo::Model(m) => Some((m.fields.clone(), m.field_order.clone())),
+                    TypeInfo::Class(c) => Some((c.fields.clone(), c.field_order.clone())),
                     _ => None,
                 });
-            if let Some(fields) = ctor_fields {
+            if let Some((fields, field_order)) = ctor_fields {
                 self.type_info.record_resolved_identity(callee.span, identity);
                 self.record_expr_type(callee.span, self_ty.clone());
                 self.type_info
                     .expressions
                     .ident_kinds
                     .insert(callee.span, IdentKind::TypeName);
-                self.check_model_or_class_constructor_call(&owner_name, &owner_name, &fields, args, span);
+                self.check_model_or_class_constructor_call(&owner_name, &owner_name, &fields, &field_order, args, span);
                 return Some(self_ty);
             }
         }
@@ -684,11 +684,11 @@ impl TypeChecker {
             return contextual_constructor_ty.unwrap_or(constructor_ty);
         }
         let ctor_fields = match type_info {
-            TypeInfo::Model(info) => Some(info.fields.clone()),
-            TypeInfo::Class(info) => Some(info.fields.clone()),
+            TypeInfo::Model(info) => Some((info.fields.clone(), info.field_order.clone())),
+            TypeInfo::Class(info) => Some((info.fields.clone(), info.field_order.clone())),
             _ => None,
         };
-        let Some(mut fields) = ctor_fields else {
+        let Some((mut fields, field_order)) = ctor_fields else {
             return self.check_constructor(name, args, span);
         };
         self.record_direct_callee_identity(name, callee.span);
@@ -698,7 +698,7 @@ impl TypeChecker {
             }
         }
         let errors_before_constructor = self.errors.len();
-        let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, args, span);
+        let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, &field_order, args, span);
         if self.errors.len() == errors_before_constructor {
             self.retain_body_ir_constructor_type(name, type_info, constructor_context.as_ref(), args, span);
         }
@@ -880,14 +880,15 @@ impl TypeChecker {
         // Model/class constructor calls: validate field arguments at the Incan level.
         // NOTE: `lookup_type_info` returns a reference into `self`, so we clone the needed field map to avoid
         // borrow conflicts (we need `&mut self` for validation).
-        let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+        let ctor_fields: Option<(std::collections::HashMap<String, FieldInfo>, Vec<String>)> =
             self.lookup_type_info(name).and_then(|info| match info {
-                TypeInfo::Model(m) => Some(m.fields.clone()),
-                TypeInfo::Class(c) => Some(c.fields.clone()),
+                TypeInfo::Model(m) => Some((m.fields.clone(), m.field_order.clone())),
+                TypeInfo::Class(c) => Some((c.fields.clone(), c.field_order.clone())),
                 _ => None,
             });
-        if let Some(fields) = ctor_fields {
-            let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, args, span);
+        if let Some((fields, field_order)) = ctor_fields {
+            let constructor_ty =
+                self.check_model_or_class_constructor_call(name, name, &fields, &field_order, args, span);
             self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
             self.type_info
                 .expressions
@@ -2234,7 +2235,14 @@ impl TypeChecker {
                         field.ty = substitute_resolved_type(&field.ty, type_bindings);
                     }
                 }
-                self.check_model_or_class_constructor_call(type_name, display_name, &fields, args, span)
+                self.check_model_or_class_constructor_call(
+                    type_name,
+                    display_name,
+                    &fields,
+                    &model.field_order,
+                    args,
+                    span,
+                )
             }
             TypeInfo::Class(class) => {
                 let mut fields = class.fields.clone();
@@ -2243,7 +2251,14 @@ impl TypeChecker {
                         field.ty = substitute_resolved_type(&field.ty, type_bindings);
                     }
                 }
-                self.check_model_or_class_constructor_call(type_name, display_name, &fields, args, span)
+                self.check_model_or_class_constructor_call(
+                    type_name,
+                    display_name,
+                    &fields,
+                    &class.field_order,
+                    args,
+                    span,
+                )
             }
             _ => ResolvedType::Unknown,
         };

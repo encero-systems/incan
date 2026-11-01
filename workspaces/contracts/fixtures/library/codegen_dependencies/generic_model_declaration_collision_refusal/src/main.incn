@@ -1,0 +1,12 @@
+# behavior: same-spelled generic models from different providers retain distinct declaration identities (#2526)
+# expect-exit: 1
+# expect-stderr-contains:
+#   type mismatch
+
+from pub::other import Holder
+import pub::shapes as shapes
+
+
+def main() -> None:
+    """Reject construction of another provider's same-spelled model."""
+    value: Holder[int] = shapes.Holder[int](label="wrong owner", value=1)
