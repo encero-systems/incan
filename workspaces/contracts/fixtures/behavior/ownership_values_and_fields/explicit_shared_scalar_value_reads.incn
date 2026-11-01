@@ -1,5 +1,7 @@
 # behavior: Scalar borrows read caller values, and exclusive borrows write the same caller storage (#2500).
 # expect-stdout:
+#   1
+#   2
 #   scalar value reads passed
 
 
@@ -61,6 +63,32 @@ def scale(mut value: BorrowedMut[float]) -> float:
     return value
 
 
+def marked(value: Owned[int]) -> int:
+    """Named calls preserve declaration-order evaluation of fresh owned scalar arguments."""
+    println(value)
+    return value
+
+
+def invert_owned(value: Owned[bool]) -> bool:
+    """A scalar literal needs no earlier storage owner to copy or retain."""
+    return not value
+
+
+def half_owned(value: Owned[float]) -> float:
+    """A fresh floating literal uses the callee's checked scalar carrier."""
+    return value / 2.0
+
+
+def width_owned(value: Owned[str]) -> int:
+    """A fresh literal string is constructed once and owned by this callee."""
+    return len(value)
+
+
+def echo_owned(value: Owned[str]) -> str:
+    """Returning an owned literal transfers its owner to the caller."""
+    return value
+
+
 def main() -> None:
     """Observe shared reads and exclusive writes through the original caller storage."""
     mut enabled = true
@@ -88,4 +116,11 @@ def main() -> None:
     assert enabled == false
     assert scale(amount) == 5.0
     assert amount == 5.0
+    assert combine(right=marked(2), left=marked(1)) == 12
+    assert echo(5) == 5
+    assert invert_owned(true) == false
+    assert half_owned(8.0) == 4.0
+    assert width_owned("fresh text") == 10
+    text = echo_owned("moved literal")
+    assert text == "moved literal"
     println("scalar value reads passed")
