@@ -77,6 +77,7 @@ from layout_types import (
 )
 from native_call_keys import native_result_mismatch
 from text_ownership import drop_borrowed_text_temporaries
+from scalar_reads import scalar_storage_place
 from signature_lifetimes import signature_lifetimes, generic_loans
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import (
@@ -618,7 +619,7 @@ pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) 
         Err(error) => return Err(f"{error} in {builder.name} at {span.file}:{span.line}")
 
     target.local += builder.local_offset
-    return Ok(target)
+    return scalar_storage_place(builder.locals, builder.reference_values, target)
 
 
 pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -2144,9 +2145,12 @@ def lower_local_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Handle callable and iteration bindings before assigning an ordinary stored value with checked ownership."""
-    # Replacing the caller's text through a `mut str` parameter would need its old value dropped in place.
-    if builder.locals[target.local].ty == PlanType.StringMutRef:
-        return Err("unsupported Body IR assignment through a mutable text parameter")
+    # Replace the borrowed value through its checked projection, never the reference slot itself.
+    if (
+        builder.locals[target.local].ty == PlanType.StringMutRef
+        and target.projection != Projection.Deref(PlanType.String)
+    ):
+        return Err("unsupported Body IR assignment to a mutable text reference slot")
     if target.local in builder.borrowed_items:
         return Err("unsupported Body IR mutation of borrowed list iteration item")
     if in_place_iteration_binding(builder, target, value, span)?:
@@ -5872,7 +5876,7 @@ def explicit_argument_operand(
     span: SourceSpan,
     access: IncanInputAccess,
 ) -> Result[Operand, str]:
-    """Use only addressable checked storage; indexed copies, globals and literal-owner retention need separate proofs."""
+    """Consume checked storage or a fresh owned literal; borrowed constants must already have retained call storage."""
     match value:
         RustOperand.Place(read) =>
             match read.place.global():
@@ -5882,7 +5886,32 @@ def explicit_argument_operand(
                 return Err("unsupported Body IR explicit argument requires retained indexed storage")
             source = scalar_place(builder, read.place, span)?
             return explicit_place_argument(builder, source, read.fact, ty, access, span)
-        _ => return Err("unsupported Body IR explicit argument without retained local storage")
+        RustOperand.Constant(constant) => return explicit_constant_argument(builder, constant, ty, access, span)
+
+
+def explicit_constant_argument(
+    mut builder: Builder,
+    constant: &RustConstant,
+    expected: PlanType,
+    access: IncanInputAccess,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """A fresh owned literal has no earlier owner to retain or clone; shared/exclusive input storage stays mandatory."""
+    if access != IncanInputAccess.Owned:
+        return Err("unsupported Body IR borrowed constant without retained local storage")
+    match constant:
+        RustConstant.Str(text) =>
+            if expected != PlanType.String:
+                return Err("unsupported Body IR owned text literal carrier mismatch")
+            return Ok(read_place(owned_literal(builder, str(text), span), true, span))
+        _ => pass
+    if not numeric_carrier(expected) and expected not in [PlanType.Bool, PlanType.Unit]:
+        return Err("unsupported Body IR explicit owned constant carrier")
+    literal = scalar_constant(constant, span)?
+    converted = coerce_numeric_operand(builder, literal, expected, span)?
+    if operand_type(builder, converted)? != expected:
+        return Err("unsupported Body IR explicit owned constant carrier mismatch")
+    return Ok(converted)
 
 
 def shared_nominal_argument(
@@ -7006,7 +7035,7 @@ def lower_string_field_assignment(
     value: &RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Evaluate replacement text before dropping the old field, retaining its initialized parent owner."""
+    """Replace a projected string after evaluating its new value, retaining the containing owner or borrowed slot."""
     mut replacement = temporary(builder, PlanType.String, span)
     match value:
         RustRvalue.Use(operand) => replacement = display_operand(builder, operand, span)?

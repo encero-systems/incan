@@ -7,6 +7,7 @@ use super::{BodyLocal, Fields, NodeBindingError, Positions, span_of};
 use crate::ast::Receiver;
 use crate::typechecker::ownership_contracts::{InputCall, InputFlow, LocalMode, Unavailable, flow};
 use incan_lang::lang::types::ownership;
+use std::collections::HashMap;
 
 #[cfg(test)]
 #[path = "input_restore_tests.rs"]
@@ -14,6 +15,25 @@ mod tests;
 
 /// Persist calls, local modes and whole control-flow graphs independently of declaration ownership metadata.
 pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fields) -> Result<(), NodeBindingError> {
+    for (owner, decisions) in &local.protocols.explicit_input_copy {
+        let mut row = vec![
+            "input-copy".into(),
+            positions.nodes.anchor(span_of(owner))?.path,
+            "types".into(),
+            "1".into(),
+            positions.identity(owner)?,
+        ];
+        let mut entries = Vec::with_capacity(decisions.len());
+        for (ty, supported) in decisions {
+            let mut entry = Vec::new();
+            type_fields(ty, &mut entry)?;
+            let key = input_flow::canonical_key(&entry);
+            entry.push(supported.to_string());
+            entries.push((key, entry));
+        }
+        input_flow::ordered_fields(entries, &mut row)?;
+        fields.push(row);
+    }
     for (span, call) in &local.protocols.explicit_input_calls {
         let mut row = vec![
             "input-call".into(),
@@ -102,6 +122,31 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
         return Err(NodeBindingError::Unsupported("input record schema"));
     }
     match (row[0].as_str(), row[2].as_str()) {
+        ("input-copy", "types") => {
+            let owner = reader.identity()?;
+            if span_of(&owner) != anchor || local.protocols.explicit_input_copy.contains_key(&owner) {
+                return Err(NodeBindingError::WrongOwner);
+            }
+            let mut decisions = HashMap::new();
+            let mut previous = String::new();
+            for _ in 0..reader.count()? {
+                let before = reader.values.as_slice();
+                let ty = read_type(&mut reader.values)?;
+                let mut canonical = Vec::new();
+                type_fields(&ty, &mut canonical)?;
+                let consumed = before.len() - reader.values.len();
+                if canonical.as_slice() != &before[..consumed] {
+                    return Err(NodeBindingError::InvalidField("noncanonical checked Copy type".into()));
+                }
+                input_flow::ordered_key(&mut previous, before, reader.values.len())?;
+                let supported = reader.boolean()?;
+                if decisions.insert(ty, supported).is_some() {
+                    return Err(NodeBindingError::InvalidField("duplicate checked Copy type".into()));
+                }
+            }
+            reader.finish()?;
+            local.protocols.explicit_input_copy.insert(owner, decisions);
+        }
         ("input-call", "contract") => {
             let owner = match reader.token()? {
                 "none" => None,

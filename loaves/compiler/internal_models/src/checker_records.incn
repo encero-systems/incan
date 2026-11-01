@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/4"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/4"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/7"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/7"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -167,6 +167,7 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
             "input-call",
             "input-local",
             "input-flow",
+            "input-copy",
         ]:
             return Err(CodecFault.Unsupported(field.family))
         if (
@@ -297,7 +298,7 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
             end = len(values)
         else:
             return Err(CodecFault.Malformed)
-    elif field.family in ["input-call", "input-local", "input-flow"]:
+    elif field.family in ["input-call", "input-local", "input-flow", "input-copy"]:
         end = input_field_end(field)?
     elif field.family == "ownership":
         if field.selector != "contract" or field.node == "":
@@ -506,6 +507,15 @@ class InputFields:
         self.offset = parameters_end(self.values, self.offset, 0)?
         return Ok(None)
 
+    def input_evaluation(mut self) -> Result[list[int], CodecFault]:
+        """Collect producer-linked evaluation indices for bounds checking after the graph's node count is known."""
+        start = self.number()?
+        end = self.number()?
+        mut indices = [start, end]
+        if self.tag(["none", "some"])? == "some":
+            indices.append(self.number()?)
+        return Ok(indices)
+
     def value_type(mut self) -> Result[None, CodecFault]:
         self.offset = type_end(self.values, self.offset, 0)?
         return Ok(None)
@@ -616,6 +626,21 @@ class InputFields:
                 initializer_nodes.append(self.number()?)
             if has_source != has_access and self.strict_indices:
                 return Err(CodecFault.Malformed)
+        operations = self.count()?
+        previous = ""
+        mut operation_nodes: list[int] = []
+        for _ in range(operations):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            operation_nodes.append(self.number()?)
+            operands = self.count()?
+            for _ in range(operands):
+                self.handle()?
+                self.place()?
+                self.index(loans)?
+                operation_nodes.append(self.number()?)
+        mut invocation_nodes: list[int] = []
         invocations = self.count()?
         previous = ""
         for _ in range(invocations):
@@ -633,10 +658,23 @@ class InputFields:
                 self.optional_index(loans)?
                 if self.tag(["none", "some"])? == "some":
                     self.place()?
+                invocation_nodes += self.input_evaluation()?
+            if self.tag(["none", "some"])? == "some":
+                invocation_nodes += self.input_evaluation()?
+            invocation_nodes.append(self.number()?)
+            final_accesses = self.count()?
+            for _ in range(final_accesses):
+                invocation_nodes.append(self.number()?)
         nodes = self.count()?
         if entry >= nodes and self.strict_indices:
             return Err(CodecFault.Malformed)
         for index in initializer_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for index in operation_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for index in invocation_nodes:
             if index >= nodes and self.strict_indices:
                 return Err(CodecFault.Malformed)
         for _ in range(nodes):
@@ -660,7 +698,16 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
         return Err(CodecFault.Malformed)
     mut reader = InputFields(values=field.values)
     reader.tag(["1"])?
-    if field.family == "input-call" and field.selector == "contract":
+    if field.family == "input-copy" and field.selector == "types":
+        reader.handle()?
+        size = reader.count()?
+        mut previous = ""
+        for _ in range(size):
+            start = reader.position()
+            reader.value_type()?
+            previous = reader.ordered(previous, start)?
+            reader.tag(["true", "false"])?
+    elif field.family == "input-call" and field.selector == "contract":
         if reader.tag(["none", "some"])? == "some":
             reader.handle()?
         reader.handle()?

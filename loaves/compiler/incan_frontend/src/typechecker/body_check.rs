@@ -470,6 +470,7 @@ fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
         explicit_input_calls,
         explicit_local_modes,
         explicit_input_flow,
+        explicit_input_copy,
         body_ir_truthiness_receivers,
         body_ir_iterations,
         iterations,
@@ -481,6 +482,7 @@ fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
     target.explicit_input_calls.extend(explicit_input_calls);
     target.explicit_local_modes.extend(explicit_local_modes);
     target.explicit_input_flow.extend(explicit_input_flow);
+    target.explicit_input_copy.extend(explicit_input_copy);
     target.body_ir_truthiness_receivers.extend(body_ir_truthiness_receivers);
     target.body_ir_iterations.extend(body_ir_iterations);
     target.iterations.extend(iterations);
@@ -717,11 +719,13 @@ impl TypeChecker {
         self.check_work.body_local_checks += 1;
         #[cfg(test)]
         if self.legacy_body_checking {
+            self.retain_callable_input_bindings(ownership_source);
             self.check_callable_body_in_frame(body, is_async, context);
             self.record_explicit_input_flow(ownership_source, span);
             return;
         }
         let scope = BodyCheckScope::enter(self);
+        self.retain_callable_input_bindings(ownership_source);
         self.check_callable_body_in_frame(body, is_async, context);
         self.record_explicit_input_flow(ownership_source, span);
         let mut local = scope.finish(self);

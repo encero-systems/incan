@@ -2,7 +2,7 @@
 //! methods preserve written order. Original written positions remain provenance in both cases. Returned/native
 //! dependencies and unresolved adaptations refuse this profile until their own facts are available.
 
-use super::super::flow::{Invocation, InvocationArgument};
+use super::super::flow::{InputEvaluation, Invocation, InvocationArgument};
 use super::{
     Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Permission, Place, ResolvedType, Root,
     Unavailable,
@@ -60,6 +60,7 @@ impl Builder<'_> {
                 reason: "length observer needs one checked argument".into(),
             });
         }
+        let mut operands = Vec::new();
         for argument in arguments {
             let expression = match argument {
                 CallArg::Positional(expression) | CallArg::Named(_, expression) => expression,
@@ -104,8 +105,11 @@ impl Builder<'_> {
                 });
             }
             incoming = self.expression(expression, incoming, false)?;
+            let (evaluated, dependency) = self.retain_operation_operand(expression, incoming)?;
+            incoming = evaluated;
+            operands.extend(dependency);
         }
-        Ok(incoming)
+        self.finish_operation(span, operands, incoming)
     }
 
     /// Apply one canonical call, evaluating its receiver before written arguments. The receiver's declared access
@@ -198,15 +202,28 @@ impl Builder<'_> {
             callee: call.callee.clone(),
             receiver: None,
             arguments: Vec::with_capacity(paired.len()),
+            receiver_evaluation: None,
+            completion_node: 0,
+            final_accesses: Vec::new(),
         };
         if let Some(receiver) = receiver {
+            let start_node = self.graph.nodes.len();
+            incoming = self.event(incoming, Event::Nothing, receiver.span);
             let source = self.place(receiver)?;
             incoming = self.evaluate_place(receiver, incoming)?;
             let mutable = call.receiver == Some(Receiver::Mutable);
             let loan = self.call_loan(source, mutable, mutable, receiver.span);
+            let source_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Borrow(loan), receiver.span);
+            let end_node = self.graph.nodes.len();
+            incoming = self.event(incoming, Event::Nothing, receiver.span);
             loans.push(loan);
             invocation.receiver = Some(loan);
+            invocation.receiver_evaluation = Some(InputEvaluation {
+                start_node,
+                end_node,
+                source_node: Some(source_node),
+            });
         }
         for (written_position, (expression, slot)) in paired {
             let slot = slot.ok_or(Unavailable {
@@ -219,8 +236,20 @@ impl Builder<'_> {
                 .find(|mode| mode.component.parameter == Some(slot))
                 .map(|mode| mode.mode);
             let source = self.optional_place(expression)?.map(|path| path.place);
+            let start_node = self.graph.nodes.len();
+            incoming = self.event(incoming, Event::Nothing, expression.span);
             let (outgoing, loan) = self.call_argument(expression, &call.parameters[slot], mode, span, incoming)?;
             incoming = outgoing;
+            let source_node = if source.is_some() || loan.is_some() {
+                Some(*incoming.first().filter(|_| incoming.len() == 1).ok_or(Unavailable {
+                    span: expression.span,
+                    reason: "argument source requires one final evaluated event".into(),
+                })?)
+            } else {
+                None
+            };
+            let end_node = self.graph.nodes.len();
+            incoming = self.event(incoming, Event::Nothing, expression.span);
             if let Some(loan) = loan {
                 loans.push(loan);
             }
@@ -242,17 +271,19 @@ impl Builder<'_> {
                 },
                 loan,
                 source: loan.map(|loan| self.graph.loans[loan.0].source.clone()).or(source),
+                evaluation: InputEvaluation {
+                    start_node,
+                    end_node,
+                    source_node,
+                },
             });
         }
-        if self.graph.invocations.insert(span, invocation).is_some() {
-            return Err(Unavailable {
-                span,
-                reason: "invocation has more than one checked argument binding".into(),
-            });
-        }
+        invocation.completion_node = self.graph.nodes.len();
+        incoming = self.event(incoming, Event::Nothing, span);
         // ---- Invocation retains every loan, independently of callee body use ----
         for id in loans {
             let loan = &self.graph.loans[id.0];
+            invocation.final_accesses.push(self.graph.nodes.len());
             incoming = self.event(
                 incoming,
                 Event::Access {
@@ -262,6 +293,12 @@ impl Builder<'_> {
                 },
                 span,
             );
+        }
+        if self.graph.invocations.insert(span, invocation).is_some() {
+            return Err(Unavailable {
+                span,
+                reason: "invocation has more than one checked argument binding".into(),
+            });
         }
         Ok(incoming)
     }

@@ -9,12 +9,12 @@ from explicit_arguments import explicit_input_operation, argument_access
 
 
 pub def test_explicit_inputs_borrow_existing_storage_and_reborrow_exclusively() -> Result[None, str]:
-    """Both scalar and collection loans name the caller's storage, including a writable existing loan."""
+    """Scalar, collection and text loans name the caller's storage, including a writable existing loan."""
     span = source_span(file="explicit_arguments.incn", line=1, column=1)
     owner = place(0, span)
-    types = [PlanType.Int, PlanType.List(ListLeaf.Int, 1)]
-    shared = [PlanType.ScalarRef([PlanType.Int]), PlanType.ListRef(ListLeaf.Int, 1)]
-    exclusive = [PlanType.ScalarMutRef([PlanType.Int]), PlanType.ListMutRef(ListLeaf.Int, 1)]
+    types = [PlanType.Int, PlanType.List(ListLeaf.Int, 1), PlanType.String]
+    shared = [PlanType.ScalarRef([PlanType.Int]), PlanType.ListRef(ListLeaf.Int, 1), PlanType.StringRef]
+    exclusive = [PlanType.ScalarMutRef([PlanType.Int]), PlanType.ListMutRef(ListLeaf.Int, 1), PlanType.StringMutRef]
     for index in range(len(types)):
         locals = [Local(ty=types[index], span=span)]
         assert explicit_input_operation(
@@ -33,6 +33,14 @@ pub def test_explicit_inputs_borrow_existing_storage_and_reborrow_exclusively() 
             IncanInputAccess.Exclusive,
             span,
         )? == RvalueKind.MutBorrow(owner)
+        assert explicit_input_operation(
+            [Local(ty=shared[index], span=span)],
+            owner,
+            OwnershipFact.Borrow,
+            shared[index],
+            IncanInputAccess.Shared,
+            span,
+        )? == RvalueKind.Borrow(Place(local=0, projection=Projection.Deref(types[index]), span=span))
         borrowed = [Local(ty=exclusive[index], span=span)]
         reborrow = explicit_input_operation(
             borrowed,
@@ -45,9 +53,7 @@ pub def test_explicit_inputs_borrow_existing_storage_and_reborrow_exclusively() 
         match reborrow:
             RvalueKind.MutBorrow(storage) =>
                 assert storage.local == owner.local
-                assert storage.projection == Projection.Fields(
-                    [FieldProjection(slot=-1, ty=types[index], dereferences=1)],
-                )
+                assert storage.projection == Projection.Deref(types[index])
             _ =>
                 assert false
     return Ok(None)
@@ -93,6 +99,39 @@ pub def test_explicit_nested_loans_keep_paths_and_refuse_shared_ancestors() -> R
         Err(_reason) => pass
         Ok(_value) =>
             assert false
+    stored_reference = Place(
+        local=0,
+        projection=Projection.Fields([FieldProjection(slot=2, ty=PlanType.StringRef)]),
+        span=span,
+    )
+    expected_reference = Place(
+        local=0,
+        projection=Projection.Fields(
+            [
+                FieldProjection(slot=2, ty=PlanType.StringRef),
+                FieldProjection(slot=-1, ty=PlanType.String, dereferences=1),
+            ],
+        ),
+        span=span,
+    )
+    assert explicit_input_operation(
+        locals,
+        stored_reference,
+        OwnershipFact.Borrow,
+        PlanType.StringRef,
+        IncanInputAccess.Shared,
+        span,
+    )? == RvalueKind.Borrow(expected_reference)
+    match explicit_input_operation(
+        locals,
+        stored_reference,
+        OwnershipFact.Borrow,
+        PlanType.ScalarRef([PlanType.Int]),
+        IncanInputAccess.Shared,
+        span,
+    ):
+        Err(_reason) => pass
+        Ok(_value) => return Err("a stored text reference cannot supply an integer referent")
     through_shared = Place(
         local=0,
         projection=Projection.Fields(

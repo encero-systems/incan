@@ -6,8 +6,11 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 use super::{InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
 
+mod accesses;
+mod call_evaluation;
 mod calls;
 mod locals;
+mod operations;
 pub(crate) use calls::{CheckedInputInvocation, CheckedInputSource};
 
 /// A completed source proof belongs to one exact callable. The view never grants authority to a nested closure,
@@ -22,6 +25,16 @@ impl CheckedInputBody<'_> {
     /// Retain the source proof's exact owner when the next stage publishes its supported frame profile.
     pub(crate) fn canonical_owner(&self) -> &CanonicalSymbolId {
         &self.owner
+    }
+
+    /// Select the source checker's exact Copy decision for a checked expression in this body. Native storage may
+    /// reject a carrier it cannot preserve, but cannot replace this semantic fact with its own ABI heuristic.
+    pub(crate) fn value_is_copy(&self, span: incan_semantics_core::HirSourceSpan) -> Result<bool, &'static str> {
+        let ty = self
+            .facts
+            .expr_type(span)
+            .ok_or("input value has no checked source type")?;
+        self.facts.checked_input_copy_value(self.canonical_owner(), ty)
     }
     /// Read a local's already authenticated request; bindings from other bodies are not part of this view.
     pub(crate) fn local_mode(&self, local: &CanonicalSymbolId) -> Option<OwnershipMode> {
@@ -129,10 +142,7 @@ impl TypeCheckInfo {
                 let flow::Event::Access { access, .. } = node.event else {
                     return Err("owned initializer has no read or transfer event");
                 };
-                let copy = super::super::semantic_type_from_resolved(&mode.value_type)
-                    .abi_v0_facts()
-                    .ownership
-                    .is_trivially_copy();
+                let copy = self.checked_input_copy_value(owner, &mode.value_type)?;
                 if (copy && access != flow::Access::Read) || (!copy && access != flow::Access::Move) {
                     return Err("owned initializer access differs from its checked Copy or transfer contract");
                 }
@@ -173,6 +183,7 @@ impl TypeCheckInfo {
     /// Bind invocation loans to the selected canonical source signature. A graph's access tag cannot authorize a
     /// different callee, slot, receiver, or a contract unavailable to this checked body.
     fn validate_input_invocations(&self, owner: &CanonicalSymbolId, graph: &flow::Graph) -> Result<(), &'static str> {
+        let mut marker_roles = std::collections::BTreeSet::new();
         for (span, invocation) in &graph.invocations {
             let call = self
                 .protocols
@@ -191,6 +202,32 @@ impl TypeCheckInfo {
                 .ownership_contracts
                 .get(&call.callee)
                 .ok_or("invocation has no canonical ownership contract")?;
+            if !contract.modes.iter().any(|mode| {
+                mode.component
+                    .parameter
+                    .is_some_and(|slot| slot < call.parameters.len())
+            }) {
+                return Err("invocation has no canonical explicit input slot");
+            }
+            for index in std::iter::once(invocation.completion_node)
+                .chain(
+                    invocation
+                        .receiver_evaluation
+                        .iter()
+                        .flat_map(|evaluation| [evaluation.start_node, evaluation.end_node]),
+                )
+                .chain(
+                    invocation
+                        .arguments
+                        .iter()
+                        .flat_map(|argument| [argument.evaluation.start_node, argument.evaluation.end_node]),
+                )
+            {
+                if !marker_roles.insert(index) {
+                    return Err("invocation marker fulfills more than one evaluation role");
+                }
+            }
+            call_evaluation::validate_invocation_events(self, graph, *span, invocation, &call.parameters)?;
             for argument in &invocation.arguments {
                 let access = crate::ownership_metadata::direct_input_access(Some(contract), argument.slot)?;
                 if argument.access != access {

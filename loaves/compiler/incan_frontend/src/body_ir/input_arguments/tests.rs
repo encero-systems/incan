@@ -48,6 +48,16 @@ fn staged(source: &str, remove_call_proof: bool) -> Result<bir::BodyIrModule, Bo
     Ok(module)
 }
 
+/// Positive execution profiles must pass source checking as well as materialize complete Body IR.
+fn admitted(source: &str) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    crate::typechecker::TypeChecker::new()
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    staged(source, false)
+}
+
 /// Shared and exclusive scalar requests retain their source storage despite the carrier being Copy.
 #[test]
 fn scalar_inputs_borrow_existing_places() -> Result<(), Box<dyn std::error::Error>> {
@@ -126,6 +136,68 @@ fn owned_input_moves_and_missing_proof_refuses() -> Result<(), Box<dyn std::erro
             .iter()
             .any(|statement| matches!(&statement.kind, bir::StatementKind::Call { .. }))
     );
+    Ok(())
+}
+
+/// A checked nominal Copy decision cannot become a native Move merely because the current carrier ABI lacks
+/// that proof. Calls and explicit Owned initializers must refuse until their carrier can preserve the decision.
+#[test]
+fn checked_copy_cannot_be_reinterpreted_as_native_move() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "def consume(value: Owned[Point]) -> int:\n    return value.x\ndef main(value: Owned[Point]) -> int:\n    return consume(value)\n@derive(Copy)\nmodel Point:\n    x: int\n",
+        "def main(value: Owned[Point]) -> int:\n    let local: Owned[Point] = value\n    return local.x\n@derive(Copy)\nmodel Point:\n    x: int\n",
+    ] {
+        let module = staged(source, false)?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == "main")
+            .ok_or("missing body")?;
+        assert!(
+            body.first_representation_gap().is_some(),
+            "native carrier silently reinterpreted checked Copy: {body:?}"
+        );
+        assert!(body.checked_input_profile.is_none());
+        for statement in &body.block.stmts {
+            assert!(
+                !matches!(statement.kind, bir::StatementKind::Call { .. }),
+                "refused input emitted a fallback call"
+            );
+            if let bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                ..
+            } = &statement.kind
+            {
+                let local = read.place.local_id().and_then(|id| body.locals.get(id.index()));
+                assert!(
+                    !local.is_some_and(|local| local.name.as_deref() == Some("value"))
+                        || !matches!(read.fact, bir::OwnershipFact::Copy | bir::OwnershipFact::Move),
+                    "refused input emitted a fallback value transfer"
+                );
+            }
+        }
+    }
+    let module = admitted(
+        "def consume(value: Owned[&mut int]) -> None:\n    pass\ndef main(value: Owned[&mut int]) -> None:\n    consume(value)\n",
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing reference body")?;
+    let transferred = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call { args, .. } => match args.as_slice() {
+                [bir::ArgumentElement::One(bir::Operand::Place(read))] => Some(read),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing reference transfer")?;
+    assert_eq!(transferred.fact, bir::OwnershipFact::Move);
     Ok(())
 }
 
@@ -373,5 +445,325 @@ fn owned_fresh_list_retains_length_observation() -> Result<(), Box<dyn std::erro
             body.first_representation_gap()
         );
     }
+    Ok(())
+}
+
+/// An explicit owned local receives the original non-Copy owner instead of an inferred snapshot clone.
+#[test]
+fn owned_local_initialization_retains_transfer_authority() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "def main() -> int:\n    original = \"payload\"\n    let held: Owned[str] = original\n    return len(held)\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no main body")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}",
+        body.first_representation_gap()
+    );
+    let held = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("held"))
+        .ok_or("no owned local")?;
+    let initializer = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            } if place.local_id() == Some(held.id) => Some(read),
+            _ => None,
+        })
+        .ok_or("no owned transfer initializer")?;
+    assert_eq!(initializer.fact, bir::OwnershipFact::Move);
+    assert!(initializer.place.projection.is_empty());
+    let source = initializer
+        .place
+        .local_id()
+        .and_then(|local| body.locals.get(local.index()))
+        .ok_or("no source owner")?;
+    assert_eq!(source.name.as_deref(), Some("original"));
+    Ok(())
+}
+
+/// Copy initialization keeps the source available, and a fresh owned initializer does not invent a source loan.
+#[test]
+fn owned_local_copy_and_fresh_initializers_remain_distinct() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "def main() -> int:\n    original = 3\n    mut held: Owned[int] = original\n    held = 9\n    assert original == 3\n    return held\n",
+        "def main() -> int:\n    let held: Owned[list[int]] = [1, 2]\n    return len(held)\n",
+        "def read(value: Borrowed[int]) -> int:\n    mut held: Owned[int] = (value)\n    held = 9\n    assert value == 3\n    return held\n",
+    ] {
+        let module = staged(source, false)?;
+        for body in &module.bodies {
+            assert!(
+                body.first_representation_gap().is_none(),
+                "{}: {:?}",
+                body.name,
+                body.first_representation_gap()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A local ownership annotation cannot authorize a missing body proof or partial non-Copy transfer.
+#[test]
+fn owned_locals_keep_missing_proof_and_projected_transfer_refusals() -> Result<(), Box<dyn std::error::Error>> {
+    for (source, missing_proof) in [
+        (
+            "def main() -> int:\n    original = \"payload\"\n    let held: Owned[str] = original\n    return len(held)\n",
+            true,
+        ),
+        (
+            "model Page:\n    title: str\ndef main(page: Owned[Page]) -> int:\n    let held: Owned[str] = page.title\n    return len(held)\n",
+            false,
+        ),
+    ] {
+        let module = staged(source, missing_proof)?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == "main")
+            .ok_or("no main body")?;
+        assert!(body.first_representation_gap().is_some());
+    }
+    Ok(())
+}
+
+/// An owned local transfer makes later source use invalid; shared inputs and local loans cannot be consumed.
+#[test]
+fn owned_local_source_conflicts_remain_typed() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "def main() -> int:\n    original = \"payload\"\n    let held: Owned[str] = original\n    return len(original)\n",
+        "def read(original: Borrowed[str]) -> int:\n    let held: Owned[str] = original\n    return len(held)\n",
+        "def read(original: Owned[str]) -> str:\n    let view: Borrowed[str] = original\n    return view\n",
+    ] {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("owned source conflict was accepted")?;
+        assert!(
+            errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{errors:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A non-Copy alias borrows its original owner for a direct call, then permits transfer after its final use.
+#[test]
+fn noncopy_local_alias_retains_owner_until_last_use() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "def length(value: Borrowed[str]) -> int:\n    return len(value)\ndef main() -> int:\n    original = \"payload\"\n    let view: Borrowed[str] = original\n    assert length(view) == 7\n    let held: Owned[str] = original\n    return len(held)\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no main body")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}",
+        body.first_representation_gap()
+    );
+    assert!(!body.locals.iter().any(|local| local.name.as_deref() == Some("view")));
+    Ok(())
+}
+
+/// An exclusive model alias projects nested fields into the original aggregate without a second owner.
+#[test]
+fn noncopy_model_alias_keeps_nested_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "model Page:\n    title: str\n    count: int\ndef main() -> None:\n    mut page = Page(title=\"old\", count=1)\n    mut view: BorrowedMut[Page] = page\n    view.title = \"new\"\n    view.count += 1\n    assert view.title == \"new\"\n    assert page.count == 2\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no main body")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}",
+        body.first_representation_gap()
+    );
+    assert!(!body.locals.iter().any(|local| local.name.as_deref() == Some("view")));
+    Ok(())
+}
+
+/// Observers consume alias operands after evaluating the other operands, without a hidden owned snapshot.
+#[test]
+fn noncopy_alias_operation_retains_loan_through_later_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "print(view, replace(original))",
+        "assert view == replace(original)",
+        "print(f\"{view}{replace(original)}\")",
+    ] {
+        let source = format!(
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main() -> None:\n    mut original = \"payload\"\n    let view: Borrowed[str] = original\n    {expression}\n"
+        );
+        let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("later mutation released alias too early")?;
+        assert!(
+            errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{expression}: {errors:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Disjoint mutation is permitted, and a fresh formatted value ends its source dependency before the next argument.
+#[test]
+fn noncopy_alias_observers_preserve_disjoint_and_completed_reads() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "print(view)",
+        "print(view, replace(other))",
+        "print(replace(other), view)",
+        "assert view != replace(other)",
+        "print(f\"{view}{replace(other)}\")",
+        "print(f\"{view}\", replace(original))",
+    ] {
+        let source = format!(
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main() -> None:\n    mut original = \"payload\"\n    mut other = \"other\"\n    let view: Borrowed[str] = original\n    {expression}\n"
+        );
+        let module = staged(&source, false)?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == "main")
+            .ok_or("missing main")?;
+        assert!(
+            body.first_representation_gap().is_none(),
+            "{expression}: {:?}",
+            body.first_representation_gap()
+        );
+    }
+    Ok(())
+}
+
+/// Explicit borrowed parameters retain their original storage at a primitive observer, without a repair snapshot.
+#[test]
+fn borrowed_text_parameter_observers_keep_source_storage() -> Result<(), Box<dyn std::error::Error>> {
+    for mode in ["Borrowed", "BorrowedMut"] {
+        let module = admitted(&format!(
+            "def read(value: {mode}[str]) -> int:\n    return len(value)\n"
+        ))?;
+        let body = module.bodies.first().ok_or("missing body")?;
+        let arguments = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call { args, .. } => Some(args),
+                _ => None,
+            })
+            .ok_or("missing observer")?;
+        let [bir::ArgumentElement::One(bir::Operand::Place(read))] = arguments.as_slice() else {
+            return Err("missing observer operand".into());
+        };
+        assert_eq!(read.fact, bir::OwnershipFact::Borrow, "{mode}");
+        assert_eq!(
+            read.place.local_id(),
+            body.params.first().map(|parameter| parameter.local),
+            "{mode}"
+        );
+        assert!(!read.last_use);
+    }
+    Ok(())
+}
+
+/// A direct exclusive parameter's observed text remains shared until later operands finish evaluating.
+#[test]
+fn borrowed_parameter_operation_refuses_later_mutation() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "print(value, replace(value))",
+        "assert value == replace(value)",
+        "print(f\"{value}{replace(value)}\")",
+    ] {
+        let source = format!(
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    {expression}\n"
+        );
+        let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("borrowed operand was silently snapshotted")?;
+        assert!(
+            errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{expression}: {errors:?}"
+        );
+    }
+    Ok(())
+}
+
+/// An exclusive alias cannot use its parent capability to mutate a text operand still shared by an operation.
+#[test]
+fn exclusive_alias_operation_requires_a_shared_child() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    mut view: BorrowedMut[str] = value\n    print(view, replace(view))\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = crate::typechecker::TypeChecker::new();
+    let errors = checker
+        .check_program(&program)
+        .err()
+        .ok_or("exclusive parent bypassed operation read")?;
+    assert!(
+        errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{errors:?}"
+    );
+    Ok(())
+}
+
+/// Disjoint parameter mutations and completed inner values remain usable; Copy snapshots retain ordinary behavior.
+#[test]
+fn borrowed_parameter_operations_keep_disjoint_and_copy_behavior() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "print(value, value)",
+        "print(value, replace(other))",
+        "print(replace(other), value)",
+        "assert value != replace(other)",
+        "print(f\"{value}{replace(other)}\")",
+        "print(f\"{value}\", replace(value))",
+    ] {
+        let source = format!(
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str], mut other: BorrowedMut[str]) -> None:\n    {expression}\n"
+        );
+        let module = admitted(&source)?;
+        assert!(
+            module
+                .bodies
+                .iter()
+                .all(|body| body.first_representation_gap().is_none()),
+            "{expression}"
+        );
+    }
+    let module = admitted(
+        "def bump(mut value: BorrowedMut[int]) -> int:\n    value += 1\n    return value\ndef inspect(mut value: BorrowedMut[int]) -> None:\n    print(value, bump(value))\n",
+    )?;
+    assert!(
+        module
+            .bodies
+            .iter()
+            .all(|body| body.first_representation_gap().is_none())
+    );
     Ok(())
 }
