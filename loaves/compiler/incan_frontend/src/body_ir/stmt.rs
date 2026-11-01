@@ -256,7 +256,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
-        if let Some(result) = self.lower_local_input_binding(assignment, scope, out) {
+        if let Some(result) = self.lower_local_input_binding(assignment, remaining, scope, span, out) {
             if let Err(reason) = result {
                 self.push_unsupported_stmt(reason, span, out);
             }
@@ -369,7 +369,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Publish the replacement and reestablish its drop obligation and checked binding metadata.
-    fn finish_assignment(
+    pub(super) fn finish_assignment(
         &mut self,
         assignment: &ast::AssignmentStmt,
         place: bir::Place,
@@ -460,7 +460,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Resolve a write through its retained identity before using the existing unqualified-local fallback. A new
     /// local is declared only at its checked binding span; an unrepresentable canonical target emits a refusal.
-    fn assignment_target_place(
+    pub(super) fn assignment_target_place(
         &mut self,
         assignment: &ast::AssignmentStmt,
         ty: IncanType,

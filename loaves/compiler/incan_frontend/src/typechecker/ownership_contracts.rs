@@ -1420,14 +1420,14 @@ mod tests {
         Ok(checker)
     }
 
-    /// Reannotation, method bodies and non-Copy local values cannot borrow the Copy local-declaration admission.
+    /// Reannotation, method bodies, non-Copy aliases and conditional owned locals remain outside direct admission.
     #[test]
     fn local_alias_admission_preserves_other_boundaries() -> Result<(), Box<dyn std::error::Error>> {
         for source in [
             "def wrong() -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n",
             "class Counter:\n    value: int\n    def read(self) -> int:\n        let local: Borrowed[int] = self.value\n        return local\n",
             "def read(value: Borrowed[str]) -> int:\n    let local: Borrowed[str] = value\n    return len(local)\n",
-            "def read(value: Owned[int]) -> int:\n    let local: Owned[int] = value\n    return local\n",
+            "def read(value: Owned[int], choose: bool) -> int:\n    if choose:\n        let local: Owned[int] = value\n        return local\n    return value\n",
         ] {
             let checker = checked(source)?;
             assert!(

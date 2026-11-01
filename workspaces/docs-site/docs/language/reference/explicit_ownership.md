@@ -31,7 +31,18 @@ def main() -> int:
     return value
 ```
 
-The same source profile admits local `Borrowed[T]` and `BorrowedMut[T]` aliases when the referent is Copy and the source is a local or stored-field path. Reads and writes use that original place; the alias does not allocate an independent value or acquire a separate drop obligation. The borrow ends after the alias's last use, allowing later access through the original owner. Non-Copy aliases and explicit owned locals remain refused.
+The same source profile admits local `Borrowed[T]` and `BorrowedMut[T]` aliases when the referent is Copy and the source is a local or stored-field path. Reads and writes use that original place; the alias does not allocate an independent value or acquire a separate drop obligation. The borrow ends after the alias's last use, allowing later access through the original owner. Non-Copy aliases remain refused.
+
+A local `Owned[T]` initializer creates independent destination storage. A whole non-Copy source transfers and cannot be used afterward; a Copy source remains usable. A fresh initializer supplies its new value directly. Initializing from a non-Copy field, a shared non-Copy source or a source with a conflicting live borrow is refused. The straight-line restriction also applies to these local initializers.
+
+```incan
+# accepted by source checking
+def size() -> int:
+    original = "payload"
+    let held: Owned[str] = original
+    return len(held)
+```
+
 
 Methods, returned dependencies, indirect calls, indexed access, conditional transfers and projected non-Copy transfers remain refused. These restrictions apply to callers as well as callees, including callers whose own parameters have no explicit ownership annotations.
 

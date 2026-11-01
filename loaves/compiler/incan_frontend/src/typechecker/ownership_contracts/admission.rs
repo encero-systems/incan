@@ -59,8 +59,8 @@ impl TypeCheckInfo {
 }
 
 impl CheckedInputBody<'_> {
-    /// Only checked Copy referents with static owner/field places have local alias storage in this stage. An owned
-    /// local is a different transfer operation; non-Copy alias reads need no-repair consumer facts of their own.
+    /// Copy aliases preserve existing storage. Owned locals use their exact initializer relationship; a whole
+    /// non-Copy owner may transfer, while projected transfers still require partial-drop obligations.
     fn validate_local_storage(&self) -> Result<(), &'static str> {
         for (local, mode) in self
             .facts
@@ -69,12 +69,33 @@ impl CheckedInputBody<'_> {
             .iter()
             .filter(|(_, mode)| &mode.owner == self.canonical_owner())
         {
+            if mode.mode == incan_lang::lang::types::ownership::OwnershipMode::Owned {
+                let initializer = self
+                    .graph
+                    .owned_locals
+                    .get(local)
+                    .ok_or("owned local has no checked initializer")?;
+                let retained = self.owned_local(local, initializer.initializer)?;
+                let copy = crate::typechecker::semantic_type_from_resolved(retained.value_type)
+                    .abi_v0_facts()
+                    .ownership
+                    .is_trivially_copy();
+                if !copy
+                    && initializer
+                        .source
+                        .as_ref()
+                        .is_some_and(|source| !source.projection.is_empty())
+                {
+                    return Err("explicit projected transfer requires checked drop obligations");
+                }
+                continue;
+            }
             if !matches!(
                 mode.mode,
                 incan_lang::lang::types::ownership::OwnershipMode::Borrowed
                     | incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut
             ) {
-                return Err("explicit owned or returned local needs its own storage projection");
+                return Err("explicit returned local needs its own storage projection");
             }
             let loan = self
                 .graph
