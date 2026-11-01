@@ -2323,6 +2323,7 @@ mod validation_errors;
 
 mod closures;
 mod input_access;
+mod input_arguments;
 mod local_partials;
 mod trait_partials;
 

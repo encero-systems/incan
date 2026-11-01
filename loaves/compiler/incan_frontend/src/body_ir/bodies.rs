@@ -757,13 +757,25 @@ fn retain_parameter_ownership(
     builder.borrowed_parameters.extend(
         params
             .iter()
-            .filter(|param| param.mutable && !param.native_owned && (!exclude_receiver || param.name != "self"))
+            .filter(|param| {
+                (!exclude_receiver || param.name != "self")
+                    && match param.input_access {
+                        incan_semantics_core::IncanInputAccess::Shared
+                        | incan_semantics_core::IncanInputAccess::Exclusive => true,
+                        incan_semantics_core::IncanInputAccess::Owned => false,
+                        incan_semantics_core::IncanInputAccess::Inferred => param.mutable && !param.native_owned,
+                    }
+            })
             .map(|param| param.local),
     );
     builder.owned_parameters.extend(
         params
             .iter()
-            .filter(|param| param.native_owned || param.kind != IncanCallableParamKind::Normal)
+            .filter(|param| {
+                param.input_access == incan_semantics_core::IncanInputAccess::Owned
+                    || (param.input_access.is_inferred()
+                        && (param.native_owned || param.kind != IncanCallableParamKind::Normal))
+            })
             .map(|param| param.local),
     );
 }
