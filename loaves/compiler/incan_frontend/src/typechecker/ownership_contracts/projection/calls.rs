@@ -90,7 +90,7 @@ impl TypeCheckInfo {
 
 /// Static stored fields can be authenticated against Body IR places. Indexed adaptation needs its own evaluated
 /// index identity and native no-copy proof; this first consumer deliberately keeps that shape refused.
-fn project_source(source: &flow::Place) -> Result<CheckedInputSource, &'static str> {
+pub(super) fn project_source(source: &flow::Place) -> Result<CheckedInputSource, &'static str> {
     match &source.root {
         flow::Root::Binding(root) => {
             let mut fields = Vec::with_capacity(source.projection.len());

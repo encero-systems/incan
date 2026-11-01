@@ -1236,6 +1236,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// write; [`Self::bindings`] remains only as a lexical bookkeeping projection for lowering constructs that
     /// introduce and restore source names.
     identity_bindings: HashMap<CanonicalSymbolId, bir::LocalId>,
+    /// Explicit local loans select existing places; they do not allocate reference-valued owners or drops.
+    input_aliases: HashMap<CanonicalSymbolId, input_locals::LocalInputAlias>,
     /// Canonical storage currently selected by a direct local static binding; reads retain a global place rather than
     /// a snapshot.
     static_aliases: HashMap<bir::LocalId, bir::GlobalPlace>,
@@ -1354,6 +1356,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             scopes: Vec::new(),
             bindings: HashMap::new(),
             identity_bindings: HashMap::new(),
+            input_aliases: HashMap::new(),
             static_aliases: HashMap::new(),
             static_binding_locals: HashSet::new(),
             external_locals: HashMap::new(),
@@ -1831,6 +1834,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .or_else(|| self.type_info.calls.body_ir_native_argument_identities.get(&span))
             .cloned()
         {
+            if let Some(alias) = self.input_alias(&identity) {
+                return Some(alias.place.clone());
+            }
             if let Some(&id) = self.identity_bindings.get(&identity) {
                 if let Some(global) = self.static_aliases.get(&id) {
                     return Some(bir::Place::from_global(global.clone()));
@@ -2324,6 +2330,7 @@ mod validation_errors;
 mod closures;
 mod input_access;
 mod input_arguments;
+mod input_locals;
 mod local_partials;
 mod trait_partials;
 

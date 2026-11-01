@@ -239,3 +239,61 @@ fn nested_borrow_preserves_projection_and_conditional_move_refuses() -> Result<(
     assert!(branch.stmts.iter().any(|statement| matches!(&statement.kind, bir::StatementKind::Unsupported { description } if description.contains("drop obligations"))), "{branch:?}");
     Ok(())
 }
+
+/// A staged scalar loan names its existing field place for reads and both write forms, without a copied alias slot.
+#[test]
+fn local_scalar_alias_projects_existing_field_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "model Settings:\n    attempts: int\ndef update(mut settings: BorrowedMut[Settings]) -> int:\n    mut alias: BorrowedMut[int] = settings.attempts\n    alias = 3\n    alias += 2\n    return alias\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "update")
+        .ok_or("no caller")?;
+    assert!(!body.locals.iter().any(|local| local.name.as_deref() == Some("alias")));
+    let mut writes = 0;
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Assign { place, .. } = &statement.kind
+            && !place.projection.is_empty()
+        {
+            let local = place
+                .local_id()
+                .and_then(|id| body.locals.get(id.index()))
+                .ok_or("missing owner")?;
+            assert_eq!(local.name.as_deref(), Some("settings"));
+            assert!(matches!(
+                place.projection.as_slice(),
+                [bir::PlaceElem::Field { canonical: Some(_), .. }]
+            ));
+            writes += 1;
+        }
+    }
+    assert_eq!(writes, 2, "{:?}", body.block);
+    assert!(
+        body.first_representation_gap().is_some(),
+        "source local profile must stay staged before native proof"
+    );
+    Ok(())
+}
+
+/// Missing body authority cannot turn a written local loan into the old copied-binding operation.
+#[test]
+fn missing_local_alias_proof_never_creates_owned_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "def main() -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return view\n",
+        true,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no caller")?;
+    assert!(!body.locals.iter().any(|local| local.name.as_deref() == Some("view")));
+    assert!(body.block.stmts.iter().any(|statement| matches!(
+        &statement.kind,
+        bir::StatementKind::Unsupported { description } if description.contains("no owning source body proof")
+    )));
+    Ok(())
+}
