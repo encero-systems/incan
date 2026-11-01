@@ -233,6 +233,10 @@ def input_protocol_controls() -> Result[None, str]:
         ("def consume(value: Owned[str]) -> bool:\n    return value == \"yes\"\ndef use() -> int:\n    value = \"yes\"\n    consume(value)\n    return len(value)\n", "use"),
         ("def branch(value: Borrowed[int], flag: bool) -> int:\n    if flag:\n        return value\n    return 0\n", "branch"),
         ("def looping(value: Borrowed[int], mut remaining: int) -> int:\n    while remaining > 0:\n        remaining -= 1\n    return value\n", "looping"),
+        ("def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n", "fresh"),
+        ("def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n", "copy"),
+        ("def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n", "transfer"),
+
     ]
     for source, owner in cases:
         moved = "# ownership anchors moved\n" + source
@@ -241,6 +245,7 @@ def input_protocol_controls() -> Result[None, str]:
         encoded = encode_record(record).map_err((_) => "input encode")?
         decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err((_) => "input decode")?
         assert decoded == record
+        owned_initializer_grammar(record)?
         input_graph_refusals(record)?
         current = from_native_fields(fixture_projection(moved, owner, false).map_err((error) => error.to_string())?).map_err(
             (_) => "input moved",
@@ -253,7 +258,7 @@ def input_protocol_controls() -> Result[None, str]:
             if field.family in ["input-call", "input-local", "input-flow"]:
                 input_field_refusals(record, field)?
         obsolete = CheckedRecord(
-            profile="incan.checker-free-functions/2",
+            profile="incan.checker-free-functions/3",
             owner=record.owner,
             root=record.root,
             family=record.family,
@@ -261,7 +266,7 @@ def input_protocol_controls() -> Result[None, str]:
         )
         match encode_record(obsolete):
             Err(CodecFault.ProfileMismatch) => pass
-            _ => return Err("profile 2 accepted ownership body facts")
+            _ => return Err("profile 3 accepted owned initializer facts")
     return Ok(None)
 
 
@@ -293,14 +298,55 @@ def input_field_refusals(record: CheckedRecord, field: CanonicalField) -> Result
     return Ok(None)
 
 
+def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
+    """Owned destinations keep exact initializer links; malformed checked links cannot cross the codec."""
+    prefix = ["1", "checked", "owner", "0", "0", "0", "0"]
+    suffix = ["0", "1", "nothing", "0", "node"]
+    first = ["a", "initializer-a", "none", "none"]
+    second = ["b", "initializer-b", "none", "none"]
+    valid = prefix + ["2"] + first + second + suffix
+    field = CanonicalField(family="input-flow", node="owner-node", selector="graph", values=valid)
+    retained = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[field],
+    )
+    encoded = encode_record(retained).map_err((_) => "owned initializer grammar encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
+        (_) => "owned initializer grammar decode",
+    )?
+    assert decoded == retained
+    malformed = [
+        prefix + ["2"] + second + first + suffix,
+        prefix + ["2"] + first + first + suffix,
+        prefix + ["1", "a", "initializer", "none", "some", "0"] + suffix,
+        prefix + ["1", "a", "initializer", "some", "binding", "source", "0", "none"] + suffix,
+        prefix + ["1", "a", "initializer", "some", "binding", "source", "0", "some", "1"] + suffix,
+    ]
+    for values in malformed:
+        broken = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
+        )
+        match encode_record(broken):
+            Err(CodecFault.Malformed) => pass
+            _ => return Err("malformed checked owned initializer accepted")
+    return Ok(None)
+
+
 def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
     """Checked indices are bounded; an explicitly invalid graph retains its fault instead of acquiring authority."""
     # One no-op node, no storage permissions, loans, local destinations or invocations.
-    graph = ["owner", "0", "0", "0", "0", "0", "1", "nothing", "0", "node"]
+    graph = ["owner", "0", "0", "0", "0", "0", "0", "1", "nothing", "0", "node"]
     malformed = [
         ["1", "checked", "owner", "1"] + graph[2:],
-        ["1", "checked"] + graph[:7] + ["borrow", "0", "0", "node"],
-        ["1", "checked"] + graph[:8] + ["1", "1", "node"],
+        ["1", "checked"] + graph[:8] + ["borrow", "0", "0", "node"],
+        ["1", "checked"] + graph[:9] + ["1", "1", "node"],
         ["1", "checked", "owner", "00"] + graph[2:],
     ]
     for values in malformed:

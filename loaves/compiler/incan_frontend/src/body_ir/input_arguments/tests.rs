@@ -357,3 +357,21 @@ fn local_alias_last_use_preserves_the_original_owner() -> Result<(), Box<dyn std
     );
     Ok(())
 }
+
+/// A fresh scalar list is transferred as one owner, while a builtin length observation only borrows its storage.
+#[test]
+fn owned_fresh_list_retains_length_observation() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "def consume(values: Owned[list[int]]) -> int:\n    return len(values)\ndef main() -> None:\n    values = [1, 2, 3]\n    assert consume(values) == 3\n",
+        false,
+    )?;
+    for body in &module.bodies {
+        assert!(
+            body.first_representation_gap().is_none(),
+            "{}: {:?}",
+            body.name,
+            body.first_representation_gap()
+        );
+    }
+    Ok(())
+}

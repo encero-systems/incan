@@ -150,6 +150,18 @@ mod tests {
                 "def consume(value: Owned[str]) -> bool:\n    return value == \"yes\"\ndef use() -> int:\n    value = \"yes\"\n    consume(value)\n    return len(value)\n",
                 "use",
             ),
+            (
+                "def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n",
+                "fresh",
+            ),
+            (
+                "def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n",
+                "copy",
+            ),
+            (
+                "def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n",
+                "transfer",
+            ),
         ];
         for (source, owner) in cases {
             let fields =
@@ -204,7 +216,7 @@ mod tests {
         let missing: Vec<_> = fields.iter().filter(|row| row[0] != "ownership").cloned().collect();
         assert!(verify_fixture(source, "view", missing).is_err());
         let mut obsolete = fields;
-        obsolete[0][4] = "incan.checker-free-functions/1".into();
+        obsolete[0][4] = "incan.checker-free-functions/3".into();
         assert!(verify_fixture(source, "view", obsolete).is_err());
         let body = fixture_projection(source, "view", false)?;
         assert_eq!(body, fixture_projection(&moved, "view", false)?);

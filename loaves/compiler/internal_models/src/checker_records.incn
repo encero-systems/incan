@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/3"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/3"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/4"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/4"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -600,6 +600,22 @@ class InputFields:
             self.handle()?
             previous = self.ordered(previous, start)?
             self.index(loans)?
+        owned = self.count()?
+        previous = ""
+        mut initializer_nodes: list[int] = []
+        for _ in range(owned):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.handle()?
+            has_source = self.tag(["none", "some"])? == "some"
+            if has_source:
+                self.place()?
+            has_access = self.tag(["none", "some"])? == "some"
+            if has_access:
+                initializer_nodes.append(self.number()?)
+            if has_source != has_access and self.strict_indices:
+                return Err(CodecFault.Malformed)
         invocations = self.count()?
         previous = ""
         for _ in range(invocations):
@@ -620,6 +636,9 @@ class InputFields:
         nodes = self.count()?
         if entry >= nodes and self.strict_indices:
             return Err(CodecFault.Malformed)
+        for index in initializer_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
         for _ in range(nodes):
             event = self.tag(["nothing", "borrow", "access"])?
             if event == "borrow":

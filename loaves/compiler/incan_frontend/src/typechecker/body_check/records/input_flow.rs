@@ -4,8 +4,8 @@
 use super::types::next;
 use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
-    Access, Event, Graph, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node, Permission, Place, Projection,
-    Root,
+    Access, Event, Graph, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node, OwnedInitialization,
+    Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::BTreeMap;
@@ -135,6 +135,25 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         locals.push((key, row));
     }
     ordered_fields(locals, fields)?;
+    let mut owned = Vec::new();
+    for (destination, initializer) in &graph.owned_locals {
+        let mut row = vec![positions.identity(destination)?];
+        let key = canonical_key(&row);
+        row.push(anchor(positions, initializer.initializer)?);
+        match &initializer.source {
+            Some(source) => {
+                row.push("some".into());
+                place(positions, source, &mut row)?;
+            }
+            None => row.push("none".into()),
+        }
+        match initializer.access_node {
+            Some(node) => row.extend(["some".into(), node.to_string()]),
+            None => row.push("none".into()),
+        }
+        owned.push((key, row));
+    }
+    ordered_fields(owned, fields)?;
     let mut invocations = Vec::new();
     for (span, invocation) in &graph.invocations {
         let mut row = vec![anchor(positions, *span)?];
@@ -331,6 +350,37 @@ impl Reader<'_> {
                 return Err(NodeBindingError::MissingNode);
             }
         }
+        let mut owned_locals = BTreeMap::new();
+        let mut previous = String::new();
+        for _ in 0..self.count()? {
+            let before = self.values.as_slice();
+            let destination = self.identity()?;
+            ordered_key(&mut previous, before, self.values.len())?;
+            let initializer = self.semantic_span()?;
+            let source = match self.token()? {
+                "none" => None,
+                "some" => Some(self.place()?),
+                _ => return Err(NodeBindingError::MissingNode),
+            };
+            let access_node = match self.token()? {
+                "none" => None,
+                "some" => Some(self.number()?),
+                _ => return Err(NodeBindingError::MissingNode),
+            };
+            if owned_locals
+                .insert(
+                    destination,
+                    OwnedInitialization {
+                        initializer,
+                        source,
+                        access_node,
+                    },
+                )
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
         let mut invocations = BTreeMap::new();
         let mut previous = String::new();
         for _ in 0..self.count()? {
@@ -418,6 +468,7 @@ impl Reader<'_> {
             permissions,
             loans,
             local_loans,
+            owned_locals,
             invocations,
             nodes,
         })

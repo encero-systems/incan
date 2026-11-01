@@ -5,9 +5,46 @@ use std::collections::BTreeSet;
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{Builder, ResolvedType, Unavailable};
-use crate::ast::{CallArg, Expr, FStringFormat, FStringPart, Span, Spanned};
+use crate::ast::{CallArg, Expr, FStringFormat, FStringPart, ListEntry, Span, Spanned};
 
 impl Builder<'_> {
+    /// A fresh primitive list evaluates each Copy scalar in written order and retains no borrowed dependency.
+    /// Spreads, non-Copy elements and reference-carrying aggregates need separate retained-owner projection.
+    pub(super) fn scalar_list(
+        &mut self,
+        entries: &[ListEntry],
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        for entry in entries {
+            let value = match entry {
+                ListEntry::Element(value) => value,
+                ListEntry::Spread(value) => {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: "list expansion needs checked element access".into(),
+                    });
+                }
+            };
+            if !matches!(
+                self.checker.type_info.expr_type(value.span),
+                Some(
+                    ResolvedType::Int
+                        | ResolvedType::Float
+                        | ResolvedType::Numeric(_)
+                        | ResolvedType::Bool
+                        | ResolvedType::Unit
+                )
+            ) {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "list element needs checked retained-owner projection".into(),
+                });
+            }
+            incoming = self.expression(value, incoming, false)?;
+        }
+        Ok(incoming)
+    }
+
     /// A complete local model field binding constructs fresh storage after evaluating supplied values in written
     /// order. Deferred defaults, native/class constructors and non-Copy place transfer require separate proofs.
     pub(super) fn model_construction(

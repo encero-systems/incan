@@ -133,6 +133,62 @@ pub(in crate::typechecker) struct Invocation {
     pub arguments: Vec<InvocationArgument>,
 }
 
+/// An explicit owned declaration retains its initializer and the exact event reading or transferring a stored
+/// source. Fresh computed values have neither a source place nor an access node; their evaluation remains in CFG.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct OwnedInitialization {
+    pub initializer: HirSourceSpan,
+    pub source: Option<Place>,
+    pub access_node: Option<usize>,
+}
+
+/// Stored initializer events belong to one explicit destination and must read/move its exact source within the
+/// initializer's expansion-bearing range. This validates retained links; it never discovers them by searching spans.
+fn validate_owned_initializations(graph: &Graph) -> Result<(), InvalidGraph> {
+    let mut sources = BTreeSet::new();
+    for (destination, initializer) in &graph.owned_locals {
+        if destination.kind != incan_semantics_core::SemanticSourceTargetKind::Local
+            || graph.local_loans.contains_key(destination)
+            || graph
+                .permissions
+                .get(&Root::Binding(destination.clone()))
+                .is_none_or(|permission| !permission.transferable)
+        {
+            return Err(InvalidGraph("owned initializer has no independent local owner"));
+        }
+        match (&initializer.source, initializer.access_node) {
+            (None, None) => {}
+            (Some(source), Some(index)) => {
+                if matches!(&source.root, Root::Binding(root) if root == destination)
+                    || !graph.permissions.contains_key(&source.root)
+                    || !sources.insert(index)
+                {
+                    return Err(InvalidGraph("owned initializer has an invalid or reused source access"));
+                }
+                let node = graph
+                    .nodes
+                    .get(index)
+                    .ok_or(InvalidGraph("owned initializer access is outside callable"))?;
+                if node.span.expansion != initializer.initializer.expansion
+                    || node.span.start < initializer.initializer.start
+                    || node.span.end > initializer.initializer.end
+                    || !matches!(&node.event, Event::Access { place, access: Access::Read | Access::Move, .. } if place == source)
+                {
+                    return Err(InvalidGraph(
+                        "owned initializer access differs from its retained source",
+                    ));
+                }
+            }
+            _ => {
+                return Err(InvalidGraph(
+                    "owned initializer source and access must be retained together",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The resolved input of one callable analysis. Unknown identities or malformed edges must refuse validation.
 #[derive(Debug, Clone)]
 pub(in crate::typechecker) struct Graph {
@@ -142,6 +198,8 @@ pub(in crate::typechecker) struct Graph {
     pub loans: Vec<Loan>,
     /// Explicit local declarations retain their selected loan independently of display spelling.
     pub local_loans: BTreeMap<CanonicalSymbolId, LoanId>,
+    /// Canonical owned destinations are distinct from local aliases and invocation-bounded argument owners.
+    pub owned_locals: BTreeMap<CanonicalSymbolId, OwnedInitialization>,
     /// Argument-to-loan bindings are retained at construction; lowering must not recover them from similar spans.
     pub invocations: BTreeMap<HirSourceSpan, Invocation>,
     pub nodes: Vec<Node>,
@@ -211,6 +269,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
         return Err(InvalidGraph("missing entry node"));
     }
     validate_invocations(graph)?;
+    validate_owned_initializations(graph)?;
     let mut origins = vec![None; graph.loans.len()];
     let mut destinations = BTreeSet::new();
     for (local, loan) in &graph.local_loans {
@@ -680,6 +739,7 @@ mod tests {
             .into(),
             loans,
             local_loans: BTreeMap::new(),
+            owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             nodes: events
                 .into_iter()
