@@ -4465,7 +4465,7 @@ impl TypeChecker {
     /// For method **bodies**, `TypeChecker::concretize_self_type_in_annotation` in `check_decl.rs` maps `Self` to the
     /// owner's `self_ty` while checking the implementation. At a **call site**, `Self` means the instantiated
     /// receiver (for example `DataFrame[Order]` when calling on `x: DataFrame[Order]`).
-    pub(in crate::typechecker::check_expr) fn substitute_self_in_resolved_type(
+    pub(in crate::typechecker) fn substitute_self_in_resolved_type(
         &self,
         ty: ResolvedType,
         receiver: &ResolvedType,
@@ -5099,7 +5099,7 @@ impl TypeChecker {
         let (mut params, return_type) = self.method_types_substituting_call_site_self(candidate, receiver_ty);
         if let Some(identity) = &candidate.identity
             && let Some(values) = self
-                .ownership_call_value_parameters(Some(identity), &params, identity.declaration_span)
+                .ownership_call_value_parameters(Some(identity), &params, Some(receiver_ty), identity.declaration_span)
                 .ok()?
         {
             params = values;

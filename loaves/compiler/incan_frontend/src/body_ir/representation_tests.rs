@@ -144,6 +144,23 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
             identity.origin = incan_semantics_core::SymbolOrigin::RustCrate(vec!["native".to_owned()]);
         }
     }
+    for access in [
+        incan_semantics_core::IncanInputAccess::Shared,
+        incan_semantics_core::IncanInputAccess::Exclusive,
+        incan_semantics_core::IncanInputAccess::Owned,
+    ] {
+        let mut explicit = candidate
+            .bodies
+            .iter()
+            .find(|body| body.name == "leaf")
+            .ok_or("missing explicit loan control")?
+            .clone();
+        explicit.params[0].input_access = access;
+        let original_type = explicit.params[0].ty.clone();
+        assert!(!super::shared_reads::retain_parameters(&mut explicit, &[], true));
+        assert_eq!(explicit.params[0].ty, original_type);
+        assert_eq!(explicit.locals[explicit.params[0].local.index()].ty, original_type);
+    }
     let mut expected = candidate.clone();
     super::legacy_shared_reads::retain(&mut expected, &program);
     super::shared_reads::retain(&mut candidate, &program);

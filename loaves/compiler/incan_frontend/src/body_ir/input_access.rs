@@ -23,29 +23,30 @@ pub(super) fn apply(
 }
 
 /// Resolve the canonical declaration and structural slot, never the spelling of its type or parameter.
-fn selected(
+pub(super) fn selected(
     facts: &TypeCheckInfo,
     owner: Option<&CanonicalSymbolId>,
     slot: usize,
 ) -> Result<IncanInputAccess, &'static str> {
-    let Some(contract) = owner.and_then(|owner| facts.declarations.ownership_contracts.get(owner)) else {
-        return Ok(IncanInputAccess::Inferred);
-    };
-    if contract.schema_version != 1 {
-        return Err("unsupported checked input ownership contract schema");
+    crate::ownership_metadata::direct_input_access(
+        owner.and_then(|owner| facts.declarations.ownership_contracts.get(owner)),
+        slot,
+    )
+}
+
+/// Select the checked value before allocating its local, so callable and local types agree. Invalid canonical
+/// metadata becomes an explicit unsupported type and cannot fall back to a wrapper's incidental layout.
+pub(super) fn value_type(
+    builder: &super::BodyBuilder<'_, '_>,
+    owner: Option<&CanonicalSymbolId>,
+    slot: usize,
+    parameter: &crate::symbols::ResolvedType,
+) -> IncanType {
+    let contract = owner.and_then(|owner| builder.type_info.declarations.ownership_contracts.get(owner));
+    match crate::ownership_metadata::input_value_type(contract, slot, parameter) {
+        Ok(value) => builder.checked_type(value),
+        Err(reason) => IncanType::Unsupported(reason.into()),
     }
-    let mut modes = contract
-        .modes
-        .iter()
-        .filter(|mode| mode.component.parameter == Some(slot));
-    let Some(mode) = modes.next() else {
-        return Ok(IncanInputAccess::Inferred);
-    };
-    if modes.next().is_some() || !mode.component.children.is_empty() {
-        return Err("nested input ownership requires a dependency representation");
-    }
-    crate::ownership_metadata::source_input_access(mode.mode)
-        .ok_or("returned reference ownership is not an executable input contract")
 }
 
 #[cfg(test)]
@@ -232,6 +233,48 @@ mod tests {
         }
         assert_eq!(source_keys.len(), 4);
         assert_eq!(body_keys.len(), 4);
+        Ok(())
+    }
+    /// Source refusal stays active while the staged lowering inspection proves frame locals use the payload type.
+    #[test]
+    fn source_parameters_and_locals_share_projected_value_types() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def read(value: Borrowed[int]) -> int:\n    return value\ndef take(value: Owned[int]) -> int:\n    return value\nclass Reader:\n    def read(self, value: Borrowed[int]) -> int:\n        return value\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("explicit execution gate unexpectedly opened")?;
+        assert!(
+            errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{errors:?}"
+        );
+        let facts = checker.into_type_info();
+        let providers = super::super::ProviderOperationCatalog::new();
+        let context = super::super::BodyIrContext {
+            modules: &[],
+            provider_operations: &providers,
+            registry_package: None,
+            library_package: None,
+        };
+        let module = super::super::build_module_seed(&program, &[], &facts, &context);
+        let mut inputs = 0;
+        for body in &module.bodies {
+            for parameter in &body.params {
+                if parameter.input_access.is_inferred() {
+                    continue;
+                }
+                inputs += 1;
+                assert_eq!(parameter.ty, IncanType::Primitive(IncanPrimitiveType::Int));
+                let local = body
+                    .locals
+                    .get(parameter.local.index())
+                    .ok_or("missing parameter local")?;
+                assert_eq!(local.ty, parameter.ty);
+            }
+        }
+        assert_eq!(inputs, 3);
         Ok(())
     }
 }

@@ -83,6 +83,7 @@ impl TypeChecker {
         &self,
         identity: Option<&CanonicalSymbolId>,
         parameters: &[CallableParam],
+        receiver: Option<&ResolvedType>,
         span: Span,
     ) -> Result<Option<Vec<CallableParam>>, CompileError> {
         let Some(contract) =
@@ -90,30 +91,31 @@ impl TypeChecker {
         else {
             return Ok(None);
         };
+        // Method parameter checking has already closed Self against this selected receiver. Apply exactly the
+        // same substitution to its ownership payload; Self is never an unconstrained wildcard in validation.
+        let receiver_contract = receiver.map(|receiver| {
+            let mut projected = contract.clone();
+            for mode in &mut projected.modes {
+                mode.underlying = self.substitute_self_in_resolved_type(mode.underlying.clone(), receiver);
+            }
+            projected
+        });
+        let contract = receiver_contract.as_ref().unwrap_or(contract);
         let mut output = None;
         for mode in &contract.modes {
             let Some(slot) = mode.component.parameter else { continue };
             if !mode.component.children.is_empty() || mode.mode == ownership::OwnershipMode::Reference {
                 continue;
             }
-            let Some(CallableParam {
-                ty: ResolvedType::Generic(_, arguments),
-                ..
-            }) = parameters.get(slot)
-            else {
-                return Err(CompileError::type_error(
-                    "Selected ownership contract does not match its parameter metadata".into(),
+            let parameter = parameters.get(slot).ok_or_else(|| {
+                CompileError::type_error(
+                    "Selected ownership parameter slot is outside the signature".into(),
                     span,
                 )
-                .with_stable_code("INCAN-T0123"));
-            };
-            let [underlying] = arguments.as_slice() else {
-                return Err(CompileError::type_error(
-                    "Selected ownership input requires exactly one value type".into(),
-                    span,
-                )
-                .with_stable_code("INCAN-T0123"));
-            };
+                .with_stable_code("INCAN-T0123")
+            })?;
+            let underlying = crate::ownership_metadata::input_value_type(Some(contract), slot, &parameter.ty)
+                .map_err(|reason| CompileError::type_error(reason.into(), span).with_stable_code("INCAN-T0123"))?;
             let projected = output.get_or_insert_with(|| parameters.to_vec());
             projected[slot].ty = underlying.clone();
         }

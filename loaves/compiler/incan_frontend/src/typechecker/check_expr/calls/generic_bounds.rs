@@ -171,14 +171,15 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
         callee_identity: Option<CanonicalSymbolId>,
     ) -> ResolvedType {
-        let projected = match self.ownership_call_value_parameters(callee_identity.as_ref(), &info.params, call_span) {
-            Ok(Some(params)) => Some(FunctionInfo { params, ..info.clone() }),
-            Ok(None) => None,
-            Err(error) => {
-                self.errors.push(error);
-                return ResolvedType::Unknown;
-            }
-        };
+        let projected =
+            match self.ownership_call_value_parameters(callee_identity.as_ref(), &info.params, None, call_span) {
+                Ok(Some(params)) => Some(FunctionInfo { params, ..info.clone() }),
+                Ok(None) => None,
+                Err(error) => {
+                    self.errors.push(error);
+                    return ResolvedType::Unknown;
+                }
+            };
         let info = projected.as_ref().unwrap_or(info);
         let errors_before_call = self.errors.len();
         let seeded_type_bindings =
@@ -1092,7 +1093,12 @@ impl TypeChecker {
 
         // ---- Call-site `Self`, value-arg compatibility ----
         let (mut params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
-        match self.ownership_call_value_parameters(method_info.identity.as_ref(), &params, call_site_span) {
+        match self.ownership_call_value_parameters(
+            method_info.identity.as_ref(),
+            &params,
+            Some(receiver_ty),
+            call_site_span,
+        ) {
             Ok(Some(values)) => params = values,
             Ok(None) => {}
             Err(error) => {

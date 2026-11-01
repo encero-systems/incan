@@ -416,6 +416,78 @@ mod tests {
         Ok(())
     }
 
+    /// Canonical destinations retain the exact reborrow chain; lowering must not rediscover aliases by name.
+    #[test]
+    fn local_loan_destinations_keep_checked_sources() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def read(mut value: Owned[int]) -> int:\n    mut parent: BorrowedMut[int] = value\n    let child: Borrowed[int] = parent\n    return child\n";
+        let mut graph = source_graph(source)?.map_err(|error| format!("{error:?}"))?;
+        let parent = graph
+            .local_loans
+            .iter()
+            .find(|(local, _)| local.declaration_name == "parent")
+            .map(|(_, loan)| *loan)
+            .ok_or("missing parent destination")?;
+        let (child, child_loan) = graph
+            .local_loans
+            .iter()
+            .find(|(local, _)| local.declaration_name == "child")
+            .map(|(local, loan)| (local.clone(), *loan))
+            .ok_or("missing child destination")?;
+        assert_eq!(graph.local_loans.len(), 2);
+        assert_eq!(graph.loans[child_loan.0].parent, Some(parent));
+        assert!(
+            flow::analyze(&graph)
+                .map_err(|error| format!("{error:?}"))?
+                .conflicts
+                .is_empty()
+        );
+        let mut dual = graph.clone();
+        dual.permissions.insert(
+            flow::Root::Binding(child.clone()),
+            flow::Permission {
+                exclusive: false,
+                writable: false,
+                transferable: true,
+            },
+        );
+        assert!(flow::analyze(&dual).is_err());
+        let mut duplicate = graph.clone();
+        let mut other = child.clone();
+        other.declaration_name = "other".into();
+        duplicate.local_loans.insert(other, child_loan);
+        assert!(flow::analyze(&duplicate).is_err());
+        graph.local_loans.insert(child.clone(), flow::LoanId(graph.loans.len()));
+        assert!(flow::analyze(&graph).is_err());
+        graph.local_loans.insert(child.clone(), child_loan);
+        let mut invalid = child;
+        invalid.kind = incan_semantics_core::SemanticSourceTargetKind::Parameter;
+        graph.local_loans.insert(invalid, child_loan);
+        assert!(flow::analyze(&graph).is_err());
+        Ok(())
+    }
+
+    /// A selected method closes Self in its ownership contract using the same receiver as its parameter types.
+    #[test]
+    fn method_input_payload_retains_checked_self_substitution() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked(
+            "class Reader:\n    def view(self, other: Borrowed[Self]) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
+        )?;
+        assert!(
+            !checker.errors.is_empty(),
+            "explicit execution gate unexpectedly opened"
+        );
+        assert!(
+            checker
+                .errors
+                .iter()
+                .all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{:?}",
+            checker.errors
+        );
+        assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
+        Ok(())
+    }
+
     /// Methods retain their own receiver and parameter identities; local loans must not disappear merely because
     /// their callable lives inside a model rather than at module scope.
     #[test]

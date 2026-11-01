@@ -339,10 +339,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let Some(name) = &param.name else {
                 continue;
             };
-            let ty = checked
-                .get(index)
-                .map(|param| param.ty.clone())
-                .unwrap_or_else(|| self.checked_type(&param.ty));
+            let owner = match &target.callee {
+                bir::Callee::Function(bir::CallableTarget::Named(target)) => target.canonical.as_ref(),
+                bir::Callee::Method(target) => target.canonical.as_ref(),
+                _ => None,
+            };
+            let ty = match super::input_access::selected(self.type_info, owner, index) {
+                Ok(incan_semantics_core::IncanInputAccess::Inferred) => checked
+                    .get(index)
+                    .map(|param| param.ty.clone())
+                    .unwrap_or_else(|| self.checked_type(&param.ty)),
+                Ok(_) => super::input_access::value_type(self, owner, index, &param.ty),
+                Err(reason) => IncanType::Unsupported(reason.into()),
+            };
             let ty = super::variadics::parameter_storage_type(ty, param.kind);
             let previous = self.bindings.get(name).copied();
             let local = self.declare_new_local_with_reads(name.clone(), ty.clone(), frame.scope, span, 1);
@@ -376,11 +385,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         parameter.input_access
                     }),
                 native_owned: parameter_types::native_collection_parameter(&param.ty, self.type_info),
-            };
-            let owner = match &target.callee {
-                bir::Callee::Function(bir::CallableTarget::Named(target)) => target.canonical.as_ref(),
-                bir::Callee::Method(target) => target.canonical.as_ref(),
-                _ => None,
             };
             super::input_access::apply(&mut projected, self.type_info, owner, index);
             params.push(projected);

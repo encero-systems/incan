@@ -218,7 +218,8 @@ impl BodyBuilder<'_, '_> {
             let Some(name) = &parameter.name else {
                 continue;
             };
-            let ty = super::variadics::parameter_storage_type(self.checked_type(&parameter.ty), parameter.kind);
+            let ty = super::input_access::value_type(self, target.binding.identity.as_ref(), index, &parameter.ty);
+            let ty = super::variadics::parameter_storage_type(ty, parameter.kind);
             let previous = self.bindings.get(name).copied();
             let local = self.declare_new_local_with_reads(name.clone(), ty.clone(), frame.scope, span, 1);
             self.locals[local.index()].origin = bir::LocalOrigin::Parameter;

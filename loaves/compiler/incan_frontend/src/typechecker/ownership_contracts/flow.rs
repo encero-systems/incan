@@ -119,6 +119,8 @@ pub(super) struct Node {
 pub(super) struct Graph {
     pub permissions: BTreeMap<Root, Permission>,
     pub loans: Vec<Loan>,
+    /// Explicit local declarations retain their selected loan independently of display spelling.
+    pub local_loans: BTreeMap<CanonicalSymbolId, LoanId>,
     pub nodes: Vec<Node>,
     pub entry: usize,
 }
@@ -186,6 +188,25 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
         return Err(InvalidGraph("missing entry node"));
     }
     let mut origins = vec![None; graph.loans.len()];
+    let mut destinations = BTreeSet::new();
+    for (local, loan) in &graph.local_loans {
+        if local.kind != incan_semantics_core::SemanticSourceTargetKind::Local {
+            return Err(InvalidGraph("loan destination is not a local declaration"));
+        }
+        if !destinations.insert(*loan) {
+            return Err(InvalidGraph("loan has multiple local destinations"));
+        }
+        if graph.permissions.contains_key(&Root::Binding(local.clone())) {
+            return Err(InvalidGraph("local alias also declares an owned storage root"));
+        }
+        let source = graph
+            .loans
+            .get(loan.0)
+            .ok_or(InvalidGraph("local destination refers to an unknown loan"))?;
+        if matches!(&source.source.root, Root::Binding(root) if root == local) {
+            return Err(InvalidGraph("local loan refers to its own destination"));
+        }
+    }
 
     // ---- Referenced edges and storage identities ----
     for (index, node) in graph.nodes.iter().enumerate() {
@@ -513,6 +534,8 @@ fn check_event(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::{Access, Event, Graph, Loan, LoanId, LoanKind, Node, Permission, Place, Projection, Root, analyze};
     use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
@@ -549,6 +572,7 @@ mod tests {
             ]
             .into(),
             loans,
+            local_loans: BTreeMap::new(),
             nodes: events
                 .into_iter()
                 .zip(edges)

@@ -135,6 +135,7 @@ pub(super) fn build(
         graph: Graph {
             permissions: BTreeMap::new(),
             loans: Vec::new(),
+            local_loans: BTreeMap::new(),
             nodes: vec![Node {
                 event: Event::Nothing,
                 successors: Vec::new(),
@@ -471,6 +472,12 @@ impl Builder<'_> {
             .flatten();
         let source = self.optional_place(&assignment.value)?;
         if let Some(mode) = mode {
+            if root.kind != SemanticSourceTargetKind::Local || mode.owner != self.owner {
+                return Err(Unavailable {
+                    span: mode.annotation,
+                    reason: "local ownership annotation does not belong to its checked declaration",
+                });
+            }
             if mode.mode == OwnershipMode::Reference {
                 return Err(Unavailable {
                     span: mode.annotation,
@@ -501,6 +508,12 @@ impl Builder<'_> {
                     parent: source.through,
                     span: assignment.value.span,
                 });
+                if self.graph.local_loans.insert(root.clone(), loan).is_some() {
+                    return Err(Unavailable {
+                        span: mode.annotation,
+                        reason: "local declaration has more than one ownership destination",
+                    });
+                }
                 self.aliases.insert(
                     root,
                     Path {

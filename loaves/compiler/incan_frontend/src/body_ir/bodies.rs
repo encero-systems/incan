@@ -603,7 +603,14 @@ fn declare_function_parameters(
     for (index, param) in function.params.iter().enumerate() {
         let mut ty = binding
             .and_then(|b| b.params.get(index))
-            .map(|p| builder.checked_type(&p.ty))
+            .map(|p| {
+                super::input_access::value_type(
+                    builder,
+                    binding.and_then(|binding| binding.identity.as_ref()),
+                    index,
+                    &p.ty,
+                )
+            })
             .unwrap_or(IncanType::Unknown);
         let shared_replacement = builder
             .type_info
@@ -663,7 +670,14 @@ fn lower_method_parameters(
     for (index, param) in method.params.iter().enumerate() {
         let ty = binding
             .and_then(|b| b.params.get(index))
-            .map(|p| builder.checked_type(&p.ty))
+            .map(|p| {
+                super::input_access::value_type(
+                    builder,
+                    binding.and_then(|binding| binding.identity.as_ref()),
+                    index,
+                    &p.ty,
+                )
+            })
             .unwrap_or(IncanType::Unknown);
         let ty = if param.node.kind != ast::ParamKind::Normal {
             builder.checked_rest_parameter_type(param)
