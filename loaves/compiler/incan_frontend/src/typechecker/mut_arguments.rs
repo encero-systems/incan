@@ -27,7 +27,7 @@
 //! A caller-visible parameter cannot be rebound to a new value in its body: the caller would not see the rebinding.
 //! Temporaries (literals, call results) are always accepted; nothing but the callee holds them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
     CallArg, ComprehensionClause, DictEntry, Expr, ListEntry, MatchBody, Param, ParamKind, Pattern, PatternArg, Span,
@@ -49,6 +49,8 @@ use super::TypeChecker;
 mod effects;
 #[cfg(test)]
 mod legacy;
+#[cfg(test)]
+mod record_projection;
 
 use super::helpers::collection_type_id;
 use super::receiver_change::ReceiverChange;
@@ -269,6 +271,19 @@ pub(super) struct MutBodyLocal {
     pending: Vec<PendingMutArgument>,
     /// The body being checked, when it declares caller-visible parameters.
     current: Option<MutParamBody>,
+}
+
+/// Deterministically ordered, completed mutation facts accepted by the checker record adapter.
+/// Empty changed-parameter sets remain explicit owner entries. Canonical owners and source spans still belong to
+/// this check; the record adapter must bind them to stable identities and anchors before persistence.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct RecordMutation {
+    /// Source bodies whose mutation effects are known, including bodies that change no parameter.
+    pub(super) bodies: BTreeSet<CanonicalSymbolId>,
+    /// Exact direct changed-parameter sets; an owner with an empty set is not omitted.
+    pub(super) changed: BTreeMap<CanonicalSymbolId, BTreeSet<String>>,
+    /// Exact reassigned binding spans, retaining any generated-source expansion identity.
+    pub(super) reassigned: BTreeSet<Span>,
 }
 
 impl TypeChecker {
@@ -1979,6 +1994,55 @@ impl MutBodyLocal {
     pub(super) fn from_plain_bodies(bodies: Vec<CanonicalSymbolId>) -> Self {
         Self {
             bodies_checked: bodies.into_iter().collect(),
+            ..Self::default()
+        }
+    }
+}
+
+impl MutBodyLocal {
+    /// Project completed facts only when every capability absent from the record shape is empty. Forwarding edges,
+    /// callable bindings, loop views, pending decisions and an active frame are refused rather than silently lost.
+    /// Ordered collections remove hash iteration order without flattening empty changed-owner entries.
+    pub(super) fn record_projection(&self) -> Option<RecordMutation> {
+        let Self {
+            bodies_checked,
+            changed,
+            forwards,
+            function_values,
+            loop_variables,
+            reassigned_locals,
+            pending,
+            current,
+        } = self;
+        if !forwards.is_empty()
+            || !function_values.is_empty()
+            || !loop_variables.is_empty()
+            || !pending.is_empty()
+            || current.is_some()
+        {
+            return None;
+        }
+        Some(RecordMutation {
+            bodies: bodies_checked.iter().cloned().collect(),
+            changed: changed
+                .iter()
+                .map(|(owner, parameters)| (owner.clone(), parameters.iter().cloned().collect()))
+                .collect(),
+            reassigned: reassigned_locals.iter().copied().collect(),
+        })
+    }
+
+    /// Restore all completed facts after the record adapter has rebound their identities and source anchors.
+    /// Unsupported capabilities are empty because the projection admits none, not because restoration drops them.
+    pub(super) fn from_record_projection(record: RecordMutation) -> Self {
+        Self {
+            bodies_checked: record.bodies.into_iter().collect(),
+            changed: record
+                .changed
+                .into_iter()
+                .map(|(owner, parameters)| (owner, parameters.into_iter().collect()))
+                .collect(),
+            reassigned_locals: record.reassigned.into_iter().collect(),
             ..Self::default()
         }
     }
