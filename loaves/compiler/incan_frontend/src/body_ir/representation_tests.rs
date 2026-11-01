@@ -432,11 +432,15 @@ fn assert_free_function_input_oracle() -> Result<(), Box<dyn std::error::Error>>
 /// The actual checked generic metadata body must survive publication, not merely a fabricated method target.
 #[test]
 fn generic_field_metadata_source_publishes_a_covered_body() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "pub def count_fields[T](value: T) -> int:\n    return len(value.__fields__())\n";
-    let (facts, module) = checked_metadata_seed(source)?;
+    let metadata_members = "pub def field_names[T](value: T) -> list[str]:\n    return [str(field.name) for field in value.__fields__()]\n";
+    let source =
+        format!("pub def count_fields[T](value: T) -> int:\n    return len(value.__fields__())\n{metadata_members}");
+    let (facts, module) = checked_metadata_seed(&source)?;
     assert_metadata_publication(&facts, &module)?;
-    let source = "model FieldInfo:\n    pub own_value: int\npub def count_fields[T](value: T) -> int:\n    return len(value.__fields__())\npub def local_value(value: FieldInfo) -> int:\n    return value.own_value\n";
-    let (facts, module) = checked_metadata_seed(source)?;
+    let source = format!(
+        "model FieldInfo:\n    pub own_value: int\npub def count_fields[T](value: T) -> int:\n    return len(value.__fields__())\npub def local_value(value: FieldInfo) -> int:\n    return value.own_value\n{metadata_members}"
+    );
+    let (facts, module) = checked_metadata_seed(&source)?;
     assert_metadata_publication(&facts, &module)?;
     let local = module
         .bodies
@@ -468,32 +472,36 @@ fn assert_metadata_publication(
             .values()
             .any(|identity| identity.declaration_name == "FieldInfo")
     );
-    let body = module
+    let mut helpers = 0;
+    for body in module
         .bodies
         .iter()
-        .find(|body| body.name == "count_fields")
-        .ok_or("missing checked helper")?;
-    let identity = body.canonical.clone().ok_or("missing canonical helper identity")?;
-    let public = BTreeSet::from([identity]);
-    let bytes = build_surface(
-        std::slice::from_ref(module),
-        "metadata",
-        "0.1.0",
-        &public,
-        &BTreeSet::new(),
-    )?;
-    let reader = SurfaceReader::open(&bytes)?;
-    let (_, coverage) = reader
-        .index()
-        .declarations
-        .iter()
-        .find(|(identity, _)| identity.declaration_name == "count_fields")
-        .ok_or("missing public helper coverage")?;
-    assert!(
-        matches!(coverage, DeclarationCoverage::Covered { .. }),
-        "actual coverage: {coverage:?}; native identities: {:#?}; checked body: {body:#?}",
-        facts.declarations.body_ir_native_type_identities
-    );
+        .filter(|body| matches!(body.name.as_str(), "count_fields" | "field_names"))
+    {
+        helpers += 1;
+        let identity = body.canonical.clone().ok_or("missing canonical helper identity")?;
+        let public = BTreeSet::from([identity]);
+        let bytes = build_surface(
+            std::slice::from_ref(module),
+            "metadata",
+            "0.1.0",
+            &public,
+            &BTreeSet::new(),
+        )?;
+        let reader = SurfaceReader::open(&bytes)?;
+        let (_, coverage) = reader
+            .index()
+            .declarations
+            .iter()
+            .find(|(identity, _)| identity.declaration_name == body.name)
+            .ok_or("missing public helper coverage")?;
+        assert!(
+            matches!(coverage, DeclarationCoverage::Covered { .. }),
+            "actual coverage: {coverage:?}; native identities: {:#?}; checked body: {body:#?}",
+            facts.declarations.body_ir_native_type_identities
+        );
+    }
+    assert_eq!(helpers, 2, "missing checked metadata helpers");
     Ok(())
 }
 
