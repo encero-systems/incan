@@ -2394,6 +2394,132 @@ mod tests {
         Ok(())
     }
 
+    /// Cleanup subjects follow actual authenticated non-Copy transfers, including ordinary locals and explicit
+    /// Owned initializers. Copy calls and shared observations cannot opt an unrelated owner into this policy.
+    #[test]
+    fn conditional_transfer_inventory_uses_actual_source_events() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, expected) in [
+            (
+                "def choose(flag: bool) -> None:\n    value = \"x\"\n    if flag:\n        consume(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                vec!["value"],
+            ),
+            (
+                "def choose(value: Owned[str], flag: bool) -> None:\n    if flag:\n        consume(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                vec!["value"],
+            ),
+            (
+                "def choose(flag: bool) -> None:\n    let value: Owned[str] = \"x\"\n    if flag:\n        consume(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                vec!["value"],
+            ),
+            (
+                "def choose(flag: bool) -> None:\n    source = \"x\"\n    if flag:\n        let destination: Owned[str] = source\n",
+                vec!["source"],
+            ),
+            (
+                "def choose(flag: bool) -> None:\n    value = 1\n    if flag:\n        consume(value)\ndef consume(value: Owned[int]) -> None:\n    pass\n",
+                vec![],
+            ),
+            (
+                "def choose(flag: bool) -> None:\n    value = \"x\"\n    if flag:\n        read(value)\ndef read(value: Borrowed[str]) -> None:\n    pass\n",
+                vec![],
+            ),
+        ] {
+            let checker = checked(source)?;
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .all(|error| error.stable_code() == Some("INCAN-T0123")),
+                "{source}\n{:?}",
+                checker.errors
+            );
+            let program = crate::parser::parse(&crate::lexer::lex(source).map_err(|error| format!("{error:?}"))?)
+                .map_err(|error| format!("{error:?}"))?;
+            let declaration = program.declarations.first().ok_or("missing function")?;
+            let crate::ast::Declaration::Function(function) = &declaration.node else {
+                return Err("expected function".into());
+            };
+            let owner = checker
+                .type_info
+                .declarations
+                .function_bindings_by_span
+                .get(&declaration.span)
+                .and_then(|binding| binding.identity.as_ref())
+                .ok_or("missing owner")?;
+            let proof = checker.type_info.checked_input_body(owner)?.ok_or("missing proof")?;
+            let subjects = proof.whole_transfer_subjects(function)?;
+            assert_eq!(
+                subjects
+                    .iter()
+                    .map(|subject| subject.declaration_name.as_str())
+                    .collect::<Vec<_>>(),
+                expected,
+                "{source}"
+            );
+            assert!(
+                checker.type_info.direct_input_admission(owner, function).is_err(),
+                "inventory unexpectedly enabled conditional execution"
+            );
+        }
+        Ok(())
+    }
+
+    /// Transfer subjects cannot come from a graph that omits a later source use or invents a Move for another
+    /// owner. Both mutations can produce conflict-free graph analysis and still lack complete source authority.
+    #[test]
+    fn conditional_transfer_inventory_requires_complete_accesses() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, erased) in [
+            (
+                "def choose(flag: bool) -> None:\n    value = \"x\"\n    if flag:\n        consume(value)\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                true,
+            ),
+            (
+                "def choose(flag: bool) -> None:\n    value = \"x\"\n    other = \"y\"\n    if flag:\n        consume(value)\n    print(other)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+        ] {
+            let checker = checked(source)?;
+            let program = crate::parser::parse(&crate::lexer::lex(source).map_err(|error| format!("{error:?}"))?)
+                .map_err(|error| format!("{error:?}"))?;
+            let declaration = program.declarations.first().ok_or("missing function")?;
+            let crate::ast::Declaration::Function(function) = &declaration.node else {
+                return Err("expected function".into());
+            };
+            let mut facts = checker.type_info;
+            let owner = facts
+                .declarations
+                .function_bindings_by_span
+                .get(&declaration.span)
+                .and_then(|binding| binding.identity.clone())
+                .ok_or("missing owner")?;
+            let InputFlow::Checked { graph, analysis } = facts
+                .protocols
+                .explicit_input_flow
+                .get_mut(&owner)
+                .ok_or("missing flow")?
+            else {
+                return Err("expected checked graph".into());
+            };
+            let read = graph.nodes.iter_mut().rev().find(|node| matches!(&node.event,
+                flow::Event::Access { place, access: flow::Access::Read, .. }
+                    if matches!(&place.root, flow::Root::Binding(identity) if identity.declaration_name == if erased { "value" } else { "other" })))
+                .ok_or("missing ordinary read")?;
+            if erased {
+                read.event = flow::Event::Nothing;
+            } else if let flow::Event::Access { access, .. } = &mut read.event {
+                *access = flow::Access::Move;
+            }
+            *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+            assert!(analysis.conflicts.is_empty());
+            let proof = facts.checked_input_body(&owner)?.ok_or("missing body view")?;
+            assert!(
+                proof.whole_transfer_subjects(function).is_err(),
+                "accepted corrupted conditional inventory (erased: {erased})"
+            );
+        }
+        Ok(())
+    }
+
     /// Ordinary bodies need no ownership proof; source conflicts and unsupported flows cannot produce one.
     #[test]
     fn body_projection_distinguishes_absent_and_refused_flows() -> Result<(), Box<dyn std::error::Error>> {
