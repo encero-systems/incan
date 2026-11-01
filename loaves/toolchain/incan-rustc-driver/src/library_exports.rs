@@ -179,3 +179,90 @@ fn export_path(path: &str, span: Span) -> ast::Path {
         tokens: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::public_names;
+    use incan_frontend::library_manifest::{
+        AliasExport, CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection,
+        LibraryManifest, TypeRef,
+    };
+    use incan_semantics_core::{
+        CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+    };
+    use std::collections::BTreeSet;
+
+    /// Retain checked aliases with deliberately identical nominal projections but different canonical owners/kinds.
+    fn add_alias(
+        manifest: &mut LibraryManifest,
+        name: &str,
+        origin: SymbolOrigin,
+        kind: SemanticSourceTargetKind,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin,
+            declaration_name: "Target".into(),
+            kind,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(1, 2),
+        };
+        let target_path = vec!["owner".into(), "Target".into()];
+        manifest.exports.aliases.push(AliasExport {
+            name: name.into(),
+            target_path: target_path.clone(),
+            projected_function: None,
+            projected_type: Some(TypeRef::Named {
+                name: name.into(),
+                origin: None,
+            }),
+        });
+        manifest.contract_metadata.identity_graph.exports.push(ExportIdentity {
+            public_name: name.into(),
+            public_path: vec!["facade".into(), name.into()],
+            source_path: target_path.clone(),
+            kind: ExportIdentityKind::Alias,
+            projection: ExportIdentityProjection::Reexport { target_path },
+            canonical: Some(CanonicalIdentityExport::from_canonical("facade", &identity).ok_or("missing identity")?),
+        });
+        Ok(())
+    }
+
+    /// Source trait aliases remain metadata; native nominal and real Rust trait facades still name native items.
+    #[test]
+    fn native_aliases_follow_checked_kind_and_origin() -> Result<(), Box<dyn std::error::Error>> {
+        let mut manifest = LibraryManifest::new("facade", "0.1.0");
+        let package = |name: &str| SymbolOrigin::Package {
+            library: name.into(),
+            module_path: vec!["contracts".into()],
+        };
+        add_alias(
+            &mut manifest,
+            "Unary",
+            package("incan_stdlib_core"),
+            SemanticSourceTargetKind::Trait,
+        )?;
+        add_alias(
+            &mut manifest,
+            "OtherUnary",
+            package("other"),
+            SemanticSourceTargetKind::Trait,
+        )?;
+        add_alias(
+            &mut manifest,
+            "Record",
+            package("records"),
+            SemanticSourceTargetKind::Model,
+        )?;
+        add_alias(
+            &mut manifest,
+            "NativeDebug",
+            SymbolOrigin::RustCrate(vec!["std".into(), "fmt".into(), "Debug".into()]),
+            SemanticSourceTargetKind::Trait,
+        )?;
+        assert_eq!(public_names(&manifest), BTreeSet::from(["NativeDebug", "Record"]));
+        assert_eq!(manifest.exports.aliases.len(), 4);
+        assert_eq!(manifest.contract_metadata.identity_graph.exports.len(), 4);
+        Ok(())
+    }
+}

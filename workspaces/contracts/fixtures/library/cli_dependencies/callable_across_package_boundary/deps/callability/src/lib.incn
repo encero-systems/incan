@@ -5,6 +5,8 @@ pub from transforms import Payload, plus_one, map_owned, inspect_payload
 pub from counting import Counter, grow, new_counter
 pub from custom_callable import Adder, apply_custom
 pub from std.traits.callable import Callable1 as Unary
+pub from trait_contracts import ForwardedUnary
+pub from rust::std::fmt import Debug as NativeDebug
 
 
 pub def apply_unary[F with Unary[int, int]](operation: F, value: int) -> int:
