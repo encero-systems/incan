@@ -1,0 +1,21 @@
+"""Publish keyed signers across the legacy and primitive type identities."""
+
+from std.hash import HmacSha256Signer as LegacySigner, hmac_sha256
+from std.primitives.hmac import HmacSha256Signer
+
+
+pub def start() -> LegacySigner:
+    """Return a partially updated signer through the legacy annotation."""
+    mut signer = hmac_sha256.new(b"key")
+    signer.update(b"ab")
+    return signer
+
+
+pub def finish(mut signer: HmacSha256Signer) -> bytes:
+    """Accept the primitive type and finalize its supplied message."""
+    return signer.finalize_bytes()
+
+
+pub def forward(signer: LegacySigner) -> HmacSha256Signer:
+    """Preserve canonical nominal identity through the alternate annotation."""
+    return signer
