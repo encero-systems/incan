@@ -6,7 +6,7 @@ use super::{BodyBuilder, ast, bir};
 
 /// Only structural fallthrough is needed here. Ownership and exact branch topology have already been checked by
 /// the source graph; this result excludes returning arms from the lexical cleanup join without evaluating a condition.
-fn reaches_join(body: &[ast::Spanned<ast::Statement>]) -> bool {
+pub(super) fn reaches_join(body: &[ast::Spanned<ast::Statement>]) -> bool {
     for statement in body {
         match &statement.node {
             ast::Statement::Return(_) => return false,
@@ -28,13 +28,14 @@ impl BodyBuilder<'_, '_> {
     /// Capture subjects before lowering any branch, so a transfer in a later arm also protects an earlier arm's
     /// cleanup. Invalid or incomplete source proof supplies no authority; final body admission retains its refusal.
     pub(super) fn retain_input_transfer_subjects(&mut self, function: &ast::FunctionDecl) {
-        self.input_transfer_subjects = self
+        let subjects = self
             .input_body
             .as_ref()
             .ok()
             .and_then(|proof| proof.as_ref())
-            .and_then(|proof| proof.whole_transfer_subjects(function).ok())
-            .unwrap_or_default();
+            .and_then(|proof| proof.whole_transfer_subjects(function).ok());
+        self.input_paths_checked = subjects.is_some();
+        self.input_transfer_subjects = subjects.unwrap_or_default();
     }
 
     /// Include all existing canonical subject storage, including an owner already moved before this branch.
@@ -89,5 +90,53 @@ impl BodyBuilder<'_, '_> {
                     .conditional_scopes
                     .iter()
                     .all(|scope| self.input_if_scopes.contains(scope)))
+    }
+}
+
+impl BodyBuilder<'_, '_> {
+    /// Preserve profile1 execution authority or a separately authenticated, still gated profile2 projection.
+    /// Version2 carries initializer identities for native inspection; source T0123 and kernel/publication refusal
+    /// remain independent prerequisites, including for conditional bodies without any initializer transfers.
+    pub(super) fn checked_function_input_profile(
+        &mut self,
+        owner: &incan_semantics_core::CanonicalSymbolId,
+        function: &ast::FunctionDecl,
+        params: &[bir::CallableParam],
+        span: incan_semantics_core::HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::CheckedInputProfile> {
+        let projected = match self.type_info.direct_input_admission(owner, function) {
+            Ok(proof) => proof.map(|proof| (1, proof)),
+            Err(reason) => {
+                let conditional = function
+                    .body
+                    .iter()
+                    .any(|statement| matches!(statement.node, ast::Statement::If(_)));
+                match conditional.then(|| self.type_info.conditional_input_projection(owner, function)) {
+                    Some(Ok(Some(proof))) => Some((2, proof)),
+                    _ => {
+                        self.push_unsupported_stmt(reason.to_owned(), span, out);
+                        None
+                    }
+                }
+            }
+        };
+        projected.map(|(version, proof)| bir::CheckedInputProfile {
+            version,
+            owner: proof.canonical_owner().clone(),
+            owned_initializers: if version == 2 {
+                std::mem::take(&mut self.input_owned_initializers)
+            } else {
+                Vec::new()
+            },
+            parameters: params
+                .iter()
+                .enumerate()
+                .map(|(slot, parameter)| bir::CheckedInputParameter {
+                    slot,
+                    access: parameter.input_access,
+                })
+                .collect(),
+        })
     }
 }

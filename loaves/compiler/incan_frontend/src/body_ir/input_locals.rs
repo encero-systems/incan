@@ -1,11 +1,12 @@
 //! Explicit local declarations project checked loans to existing storage and owned initializers to new owners.
 
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan};
 
 use super::{BodyBuilder, ast, bir};
 use crate::typechecker::CheckedInputSource;
 
+mod owned;
 mod reads;
 
 /// Physical place selected by a checked canonical alias. The source graph, not this map, owns lifetime analysis.
@@ -54,41 +55,7 @@ impl BodyBuilder<'_, '_> {
                 .local_mode(&identity)
                 .ok_or("explicit local alias has no checked annotation")?;
             if mode == OwnershipMode::Owned {
-                let initializer = proof.owned_local(&identity, assignment.value.span)?;
-                let ty = self.checked_type(initializer.value_type);
-                let source = initializer.source;
-                if self.resolve_ty(assignment.value.span) != ty {
-                    return Err("owned initializer cannot coerce or copy its source".into());
-                }
-                if self.identity_bindings.contains_key(&identity) || self.input_aliases.contains_key(&identity) {
-                    return Err("owned destination already has storage or a loan".into());
-                }
-                let value = match source {
-                    Some(CheckedInputSource::Place { root, fields }) => {
-                        let place = self.lower_expr_to_place(&assignment.value, scope, out);
-                        self.authenticate_input_place(&place, &root, &fields)?;
-                        self.explicit_place_operand(place, &ty, IncanInputAccess::Owned, &assignment.value)?
-                    }
-                    None => {
-                        let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
-                        self.explicit_temporary_operand(
-                            value,
-                            ty.clone(),
-                            IncanInputAccess::Owned,
-                            assignment.value.span,
-                            scope,
-                            out,
-                        )?
-                    }
-                    Some(CheckedInputSource::Temporary) => {
-                        return Err("owned local source must not retain an invocation temporary".into());
-                    }
-                };
-                let place = self
-                    .assignment_target_place(assignment, ty, remaining, scope, span, out)
-                    .ok_or("owned destination has no checked storage")?;
-                self.finish_assignment(assignment, place, value, false, span, out);
-                return Ok(());
+                return self.lower_owned_input_binding(assignment, remaining, scope, span, out, &identity);
             }
             if !matches!(mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut) {
                 return Err("explicit returned local requires checked dependency materialization".into());

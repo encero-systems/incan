@@ -349,29 +349,9 @@ pub(super) fn lower_function_body(
     );
     builder.retain_empty_collection_context(&stmts);
 
-    let checked_input_profile = match binding.and_then(|binding| binding.identity.as_ref()) {
-        Some(owner) => match lowering_facts.type_info.direct_input_admission(owner, function) {
-            Ok(Some(proof)) => Some(bir::CheckedInputProfile {
-                version: 1,
-                owner: proof.canonical_owner().clone(),
-                owned_initializers: Vec::new(),
-                parameters: params
-                    .iter()
-                    .enumerate()
-                    .map(|(slot, parameter)| bir::CheckedInputParameter {
-                        slot,
-                        access: parameter.input_access,
-                    })
-                    .collect(),
-            }),
-            Ok(None) => None,
-            Err(reason) => {
-                builder.push_unsupported_stmt(reason.to_owned(), hir_span(decl_span), &mut stmts);
-                None
-            }
-        },
-        None => None,
-    };
+    let checked_input_profile = binding.and_then(|binding| binding.identity.as_ref()).and_then(|owner| {
+        builder.checked_function_input_profile(owner, function, &params, hir_span(decl_span), &mut stmts)
+    });
 
     if builder
         .locals

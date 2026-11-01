@@ -317,7 +317,11 @@ fn nested_borrow_preserves_projection_and_conditional_move_refuses() -> Result<(
             .any(|statement| matches!(&statement.kind, bir::StatementKind::Call { .. })),
         "{branch:?}"
     );
-    assert!(body.checked_input_profile.is_none());
+    assert!(
+        body.checked_input_profile
+            .as_ref()
+            .is_some_and(|profile| profile.version == 2)
+    );
     assert!(body.first_representation_gap().is_some());
     Ok(())
 }
