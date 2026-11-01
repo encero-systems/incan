@@ -7,11 +7,14 @@
     - RFC 005 (Rust interop and its unsafe-call boundary)
     - RFC 018 and RFC 019 (assertions and testing)
     - RFC 093 and RFC 095 (application telemetry and span vocabulary)
+    - RFC 103 (secret values and redaction)
     - RFC 106 and RFC 111 (semantic inspection and contract feedback)
     - RFC 116 (checked C bindings)
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 120 and RFC 124 (source-symbol and compiled-unit identity)
     - RFC 126 (Oven debugging and evidence-backed investigations)
+    - RFC 131 (error origins, cause chains and opt-in stack capture)
+    - RFC 169 (typed datasets)
 - **Issue:** —
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -19,7 +22,7 @@
 
 ## Summary
 
-An Incan developer should be able to understand a compiler refusal, stop at an authored statement, inspect a value, identify an allocation, profile an operation, and diagnose a failing test through one supported suite. This RFC defines the observable contracts: readable symbols, source-matched native debugging, consistent diagnostic records, correlated program and toolchain observations, memory and leak inspection, profiling, and checked C-boundary evidence. It applies to ordinary safe programs as well as foreign calls and the toolchain itself. It supplies observations to RFC 126's durable investigations without requiring an investigation to inspect one failure.
+An Incan developer should be able to understand a compiler refusal, read a failed assertion, stop at an authored statement, explore and evaluate values in a stopped program, identify an allocation, profile an operation, and diagnose a failing test through one supported suite. This RFC defines the observable contracts: readable failures, readable symbols, source-matched native debugging, interactive exploration of a stopped program, consistent diagnostic records, correlated program and toolchain observations, memory and leak inspection, profiling, and checked C-boundary evidence. Oven builds Rust as well as Incan, so the suite gives Incan, Rust and mixed programs one debugging experience. It applies to ordinary safe programs as well as foreign calls and the toolchain itself. It supplies observations to RFC 126's durable investigations without requiring an investigation to inspect one failure.
 
 ## Core model
 
@@ -28,10 +31,16 @@ An Incan developer should be able to understand a compiler refusal, stop at an a
 3. **Identity and presentation are distinct.** A readable function name is a presentation of a symbol, not its identity. Source coordinates belong to a particular source revision and executable.
 4. **One fact has one authority.** Terminal, JSON, editor, debugger, memory and profile views consume the same underlying diagnostic, identity or observation. Combining them does not merge their meanings.
 5. **Capabilities are explicit.** Support depends on target, toolchain, artifact, optimization, observer and permissions. A partial report describes its limits before making a conclusion.
+6. **Failure evidence comes in three levels.** An ordinary failure says which condition failed, where, and which values it compared. A stack capture says how execution got there. A debugger or an explicit value capture says what the program's values were. Each level is a separate choice, and a lower level never claims to supply a higher one.
+7. **Incan and Rust share one experience.** Oven builds both languages. A mixed execution is reported, debugged and captured as one execution: frames of either language appear in one stack, stepping crosses the boundary, and each frame keeps its own language's names and value presentation.
 
 ## Motivation
 
-A program that reports only an assertion message leaves its caller, source line and surrounding state unknown. A native allocation stack can name a module through an encoded identifier while concealing the authored operation. A debugger may recognize an executable without having the matching line tables or names of its locals. These are obstacles in ordinary programming, independently of whether any source contains `unsafe:`.
+A program that reports only an assertion message leaves the compared values, the caller, the source line and the surrounding state unknown. A native allocation stack can name a module through an encoded identifier while concealing the authored operation. A debugger may recognize an executable without having the matching line tables or names of its locals. These are obstacles in ordinary programming, independently of whether any source contains `unsafe:`.
+
+Seeing one variable at a stop is only the start. Developers who work in interactive environments expect to explore a stopped program: browse its namespaces, view models and collections as tables, evaluate an expression against the current frame, and find where a value came from. That experience should not depend on a particular editor.
+
+Oven builds Rust as well as Incan, and a program often mixes them. Rust already has native debuggers, panic backtraces and profilers. A mixed program should not need two debugging experiences that disagree about the same execution.
 
 The toolchain has the same needs. A slow command may spend time preparing a build, waiting for shared work, compiling a dependency, launching an executable or running the program. A large resident set may contain shared mappings, live allocations, allocator reserves or unreachable allocations. Treating these as one duration or one memory number does not explain them.
 
@@ -39,8 +48,11 @@ Existing compiler diagnostics, native debugging, engine observations and applica
 
 ## Goals
 
+- Report a failed comparison's condition, location and compared values by default, without capturing a stack or evaluating an operand again.
 - Display authored names in supported stack, debugger, allocation, trace and profile views while preserving exact native identity.
 - Support breakpoints, stepping, call stacks and bounded value inspection against matching Incan source.
+- Let a developer explore a stopped program independently of the editor: namespaces, tabular views of models and collections, explicit evaluation in the selected frame, and where a value came from.
+- Give Incan, Rust and mixed programs built by Oven one debugging experience.
 - Preserve stable compiler codes and extend consistent diagnostics to runtime, toolchain, foreign-boundary and test outcomes.
 - Offer supported commands for program and toolchain tracing, memory and leak inspection, and CPU profiling.
 - Correlate observations across participating processes and language boundaries without contaminating program streams.
@@ -63,33 +75,65 @@ Existing compiler diagnostics, native debugging, engine observations and applica
 
 The following commands and transcripts describe the proposed surface. They are not claims of shipped commands. Counts and identifiers are illustrative; real reports obtain them from the selected execution. Existing `incan check --format json` keeps its established contract.
 
-### Find the authored operation
+### Read a failure
 
-Given this program:
+The examples in this section use one invoice with a bad order line:
 
 ```incan
-def subtotal(value: int) -> int:
-    adjusted = value + 1
-    assert adjusted == 100
-    return adjusted
+model OrderLine:
+    product: str
+    quantity: int
+    unit_price: int
+
+
+def line_total(line: OrderLine) -> int:
+    assert line.quantity > 0
+    return line.quantity * line.unit_price
+
+
+def invoice_total(lines: list[OrderLine]) -> int:
+    mut total = 0
+    for line in lines:
+        total += line_total(line)
+    return total
 
 
 def main() -> None:
-    println(subtotal(12))
+    lines = [
+        OrderLine(product="Keyboard", quantity=2, unit_price=80),
+        OrderLine(product="Monitor", quantity=-1, unit_price=300),
+    ]
+    println(invoice_total(lines))
 ```
 
-A failure view connects the assertion to its source and caller:
+The second line fails its assertion. An ordinary run reports which condition failed, where, and the values it compared:
 
 ```text
-Assertion failed: adjusted == 100
-  main.incn:3  subtotal
-  observed left: 13
-  expected right: 100
-  called from main.incn:8  main
-Execution: run-A; source match: verified
+Assertion failed: line.quantity > 0
+  left:  -1
+  right: 0
+  main.incn:8 in line_total
 ```
 
-These values are captured from the original evaluation. Reporting the failure does not call either operand again. If values were unavailable, the report would say so instead of reconstructing them from current source.
+The program evaluated both operands to compare them, so the report shows those values; it does not evaluate either operand again. No call stack or frame values are captured. A secret value is redacted, and a value whose type cannot be displayed is reported as not displayable.
+
+This report does not say how execution reached `line_total`. With stack capture enabled through the runtime configuration that RFC 131 defines for errors, the same failure adds its stack:
+
+```text
+Assertion failed: line.quantity > 0
+  left:  -1
+  right: 0
+  main.incn:8 in line_total
+
+Stack trace:
+  line_total      main.incn:8
+  invoice_total   main.incn:15
+  main            main.incn:24
+```
+
+Neither report says which product had the bad quantity. Frame values come from a debugger, or from an explicit capture made before the process exits; a saved stack trace cannot reconstruct them afterwards.
+
+### Make a native stack readable
 
 For a native stack obtained elsewhere, an offline filter makes supported Incan symbols readable:
 
@@ -106,17 +150,97 @@ The readable view names modules, declarations and concrete instances when the sy
 incan debug main.incn
 ```
 
-An interactive client can then present:
+The session stops at a failed assertion as well as at breakpoints on source lines and functions. Here it stops at the assertion and presents the live values:
 
 ```text
 Source match: verified; source debugging: supported
-Breakpoint: main.incn:3 → resolved
-Stopped: subtotal at main.incn:3
-Locals: value = 12; adjusted = 13
-Next: main.incn:4
+Stopped: assertion failed in line_total at main.incn:8
+
+line:
+    product       "Monitor"
+    quantity      -1
+    unit_price    300
+```
+
+Selecting the caller's frame shows its values:
+
+```text
+Frame: invoice_total at main.incn:15
+    total         160
+    lines         list[OrderLine], 2 items
 ```
 
 A breakpoint is not reported as resolved until it has an executable location. After the source changes, the client offers the matching retained source or a new build. It does not label a location in a newer file as the old executable's location. An optimized value may be shown as `optimized out`; a missing debug artifact is a different failure.
+
+### Explore a stopped program
+
+A stop is a place to explore, not only to read locals. The same session serves the terminal client and editors, so the experience does not depend on the editor.
+
+The namespace view lists the selected frame's parameters and locals, the values captured by an enclosing closure, and the module's values. A collection of models can be viewed as a table:
+
+```text
+lines (list[OrderLine], 2 items)
+
+  #   product    quantity   unit_price
+  0   Keyboard          2           80
+  1   Monitor          -1          300
+```
+
+An explicit evaluation runs an expression in the selected frame. It is checked against that frame's names and types, like source written at that line:
+
+```text
+evaluate> [line.product for line in lines if line.quantity <= 0]
+["Monitor"]   (list[str]; read-only: no program code ran)
+
+evaluate> line_total(lines[0])
+160   (int; called line_total)
+```
+
+The first evaluation only reads values. The second calls program code, and the session says so, because a call can have effects.
+
+The session can also say where a value came from:
+
+```text
+where> line.quantity
+  line         bound by `for line in lines`        main.incn:14
+  lines[1]     constructed by OrderLine(...)        main.incn:22
+  quantity     value -1, from the argument          main.incn:22
+```
+
+A developer can change a value and continue, for example setting `line.quantity` to `1`. The session records the change, and the execution's outcome is reported as the outcome of a modified run.
+
+### Debug Rust and Incan together
+
+Suppose the invoice drops its assertion and takes a bulk discount from a Rust crate, `pricing`, that the same Oven project builds:
+
+```incan
+from rust::pricing import bulk_discount
+
+
+model OrderLine:
+    product: str
+    quantity: int
+    unit_price: int
+
+
+def line_total(line: OrderLine) -> int:
+    return line.quantity * line.unit_price - bulk_discount(line.quantity)
+```
+
+The rest of the program is unchanged. `bulk_discount` converts the quantity to an unsigned integer and panics on the negative one. The failure, the stack and the debugger cover both languages:
+
+```text
+Panic: called `Result::unwrap()` on an `Err` value: TryFromIntError(())
+  src/lib.rs:14 in pricing::bulk_discount
+
+Stack trace:
+  rust    pricing::bulk_discount   src/lib.rs:14
+  incan   line_total               main.incn:11
+  incan   invoice_total            main.incn:17
+  incan   main                     main.incn:26
+```
+
+Stepping out of the Rust frame returns to the Incan line that called it. Selecting a Rust frame shows its values with Rust names and types; selecting an Incan frame shows Incan's. A Rust-only project gets the same commands and reports.
 
 ### Inspect memory through a supported command
 
@@ -263,6 +387,30 @@ Each requested value must distinguish available, optimized out, not captured, ou
 
 Runtime diagnostics must distinguish an assertion, panic, error returned from an entry point, process signal, requested cancellation and toolchain failure when evidence permits. They must preserve the original message and termination semantics. An opt-in backtrace must use the same symbol and source policy. Unwinding and fatal-signal constraints may prevent complete capture; a missing stack must not be presented as an empty, complete stack. This RFC does not authorize catching a foreign panic and converting it into an ordinary Incan result.
 
+An ordinary failed assertion must report its condition and source location. When the condition is a comparison, the report must include both operands' values as the comparison evaluated them; it must not evaluate an operand again to obtain a value. A value of a secret type (RFC 103) must be redacted. A value whose type has no display must be reported as not displayable; reporting must not add a display requirement to a previously valid assertion. An ordinary failure must not capture a call stack or frame values.
+
+Stack capture for assertions and panics must follow RFC 131's policy for errors: off by default, and enabled through the same process runtime configuration. Frame values require a live debugging session or an explicit value capture.
+
+### Exploring a stopped program
+
+A debugging session must offer, for a stopped execution, a namespace view of the selected frame's parameters, locals and captured closure values, and of the values of the modules it uses. Each entry must carry its declared type and an availability state from the set above.
+
+Collections and models must support bounded tabular views: rows for list and map entries, columns for model fields, with paging rather than complete materialization. Typed datasets (RFC 169) should use the same view when that RFC lands. A table must show its total size when known and must say when it shows only part of a collection.
+
+An evaluation must be an explicit request. It must be checked against the selected frame's scope and types, as source written at that location would be, and must be refused with an ordinary diagnostic when it does not check. An evaluation that only reads values must run no program code. An evaluation that calls program code must be requested as such, and its result must say that code ran. A result must identify the frame and execution it was evaluated in. Evaluation must never rerun the program or reconstruct a value from current source.
+
+Where the debug information records it, the session must be able to report a value's provenance: its declaration, the binding or assignment that produced it, and the construction site of a model or collection element. When that information is unavailable, provenance must be reported as unavailable, not inferred from current source.
+
+A session may change a value at an explicit request. It must record the change, and the execution's outcome must be reported as the outcome of a modified execution.
+
+The terminal client and editor clients must use the same session contract. Editor integration should use the Debug Adapter Protocol, so that an editor needs no Incan-specific debugger.
+
+### Rust and mixed executions
+
+Rust built by Oven must use the same session, failure, capture and report contracts as Incan. A mixed execution is one execution: its stack must list Rust and Incan frames in call order, each labeled with its language. Stepping must cross the boundary in both directions. Each frame must keep its own language's names and value presentation; a Rust frame shows Rust paths and types, and an Incan frame shows Incan declarations and types. Rust frames built by Oven are not foreign frames for the purposes of this RFC; C and other foreign frames keep the narrower support declared above.
+
+A Rust panic must report its message and location by default, as an Incan assertion does. One runtime configuration must enable stack capture for the whole execution, whichever language a frame belongs to. A Rust-only project must be able to use the suite's commands and reports.
+
 ### Trace correlation and observation integrity
 
 Program and toolchain observations must share a correlation contract while retaining their producer-specific payloads. A capture must identify its schema, subject, toolchain and target, execution/build request, participating processes, observation configuration, timestamps with clock origin, and completeness. Artifact, source and dependency identities must be included when known; unknown external-command provenance must remain unknown.
@@ -311,6 +459,11 @@ A claimed support profile must provide conformance evidence for the following ca
 | --- | --- |
 | Equal names in different modules; generated and generic symbols | Readable distinctions and retained raw identity; malformed and unknown formats remain explicit. |
 | Assertion in a helper; failing error-returning entry point | Correct authored failure and caller where supported; unchanged subject outcome. |
+| Failed comparison with plain, secret and undisplayable operands | Both values shown once as evaluated; secret redacted; undisplayable reported as such without a new display requirement; no stack captured by default. |
+| Evaluation at a stop: read-only, calling program code, not checking | Read-only result with no program code run; calling result marked as having run code; an unchecked expression refused with a diagnostic. |
+| Changed value, then continue | Change recorded; outcome reported as that of a modified execution. |
+| Collection larger than one page | Bounded table with total size and a partial-view marker. |
+| Mixed Rust and Incan stack; Rust panic | One stack in call order with each frame's language and names; stepping across the boundary; panic message and location by default. |
 | Source moves, Unicode columns, stale source, relocated binary | Correct matching source or explicit mismatch/unavailability; no convincing stale location. |
 | Debug locals, shadowed names, optimized values | Correct values and scopes, or precise availability states. |
 | Safe program with allocating dependencies | Coverage-qualified allocation/leak evidence with readable and unresolved stacks separated. |
@@ -326,7 +479,9 @@ Performance qualification must compare disabled and enabled observation under th
 
 ### Relationship to existing proposals
 
-RFC 126 owns durable investigations, hypotheses, experiments and verification. This RFC owns the diagnostic and observation capabilities that an investigation can reference. A standalone capture is sufficient for a failure report; it need not create a second investigation model. Live debugger control and editor adapters must preserve RFC 126's session and control ownership. Its support requirements for Rust and mixed executions are not narrowed by this RFC's Incan source-debugging contract.
+RFC 126 owns durable investigations, hypotheses, experiments and verification. This RFC owns the diagnostic and observation capabilities that an investigation can reference. A standalone capture is sufficient for a failure report; it need not create a second investigation model. Live debugger control and editor adapters must preserve RFC 126's session and control ownership. RFC 126 investigates Rust, Incan and mixed executions; this RFC gives them one debugging experience, so neither narrows the other.
+
+RFC 131 owns error origins, cause chains, propagation trails and stack capture for errors, with full stack capture off by default. This RFC applies the same policy to assertions and panics: their ordinary report gives the condition, the location and the compared values; stack capture uses the same runtime configuration; frame values need a debugger or an explicit capture. An Incan developer therefore meets one rule for every kind of failure: location by default, stack on request, values in the debugger.
 
 RFC 093 and RFC 095 own application telemetry and span authoring. Engine tracing owns build operations. This suite joins their identities and presents their evidence without defining another telemetry language or provider. Compiler semantic inspection remains the authority for declaration meaning, while native debug information describes a particular executable.
 
@@ -334,13 +489,22 @@ RFC 093 and RFC 095 own application telemetry and span authoring. Engine tracing
 
 Debug information is an artifact requirement, not a consequence of naming a build profile `debug`. Selecting instrumentation or debug metadata that changes compilation must select an appropriately identified artifact. Merely inspecting an existing capture must not rebuild its subject. Separate debug artifacts must be matched by content or native artifact identity, not only by a filename.
 
-The initial proposal preserves ordinary program streams by making enriched captures opt-in. Whether ordinary runtime failures should additionally acquire richer default text is a maintainer policy question below. Existing check JSON and foreign ABI spellings remain compatible independently of that choice. The suite must work with honestly reduced information for older artifacts instead of claiming they satisfy a newer support profile.
+Enriched captures are opt-in, so ordinary program streams are unchanged by this suite. The one change to default output is that a failed comparison now reports its compared values and its location. Existing check JSON and foreign ABI spellings remain compatible. The suite must work with honestly reduced information for older artifacts instead of claiming they satisfy a newer support profile.
 
 ### Capability and retention boundaries
 
 Capability reporting distinguishes provider absence, permission denial, unsupported target, missing instrumentation, missing debug information and source mismatch. The suite may explain how to obtain a capability but must not silently install tools, elevate privileges or alter system tracing policy.
 
 Explicit capture retains selected observations and references to the artifacts needed to interpret them. Retention and collection use the established artifact lifecycle; this RFC creates no second store or automatic global collection policy. Captures may be bounded by duration, event count, inspected bytes or selected processes. The store's total size is not such a bound. Export must declare omitted dependencies and whether later source or symbol resolution is still possible.
+
+### Delivery order (non-normative)
+
+The suite is large, and its parts are useful on their own. A recommended order:
+
+1. Readable failures: conditions, locations, compared values and opt-in stacks, for Incan and Rust.
+2. Source debugging and exploring a stopped program: breakpoints, stepping, namespaces, tables, evaluation and provenance, with the terminal client and the editor adapter.
+3. Symbols and captures: `incan demangle`, failure captures for tests, trace correlation.
+4. Memory and leak inspection, profiling, and foreign-call capture.
 
 ## Alternatives considered
 
@@ -350,6 +514,9 @@ Explicit capture retains selected observations and references to the artifacts n
 - **Use one universal event type for everything.** Erases distinctions between compiler facts, samples, leak classifications and user logs. A shared envelope with typed payloads preserves them.
 - **Enable all instrumentation by default.** Changes costs, timing and data exposure without a user decision, and makes incomplete providers harder to distinguish.
 - **Guarantee every unsafe violation is caught.** Cannot follow from checked declarations or partial runtime observation; the suite must report the evidence it actually has.
+- **Show no values in ordinary failures.** Keeps default output smallest, but hides the single most useful fact about a failed comparison, which the program has already computed. Showing them needs no stack capture and no second evaluation.
+- **Show the stack and frame values by default.** Contradicts RFC 131's off-by-default stack policy, costs every failing run, and exposes values that only a debugger session or an explicit capture should reveal.
+- **Keep Rust and Incan debugging separate.** Simpler to build, but a mixed program would get two stacks, two failure formats and two sessions for one execution, with no stepping across the boundary.
 
 ## Drawbacks
 
@@ -358,17 +525,17 @@ Source debugging and observer integration require a maintained platform and tool
 ## Layers affected
 
 - **Compiler diagnostics and semantic identity:** stable codes, source-anchor projection, declaration provenance and shared rendering contracts.
-- **Checked bodies and native lowering:** source scopes, local names, assertion evidence and generated-frame relationships.
+- **Checked bodies and native lowering:** source scopes, local names, assertion operands, value provenance and generated-frame relationships.
 - **Native backend and artifact distribution:** target debug information, symbol identity, matching source/debug artifacts and relocation.
 - **Runtime and standard library:** panic/assertion observations, safe value representations, telemetry correlation and checked foreign boundaries.
 - **Platform and Oven tooling:** observer capability discovery, process scope, capture lifecycle, memory/profiling operations and report projections.
-- **Debugger and editor integration:** source-level control, bounded value inspection, exact-source validation and diagnostic parity.
+- **Debugger and editor integration:** source-level control across Rust and Incan frames, bounded value inspection, namespace and tabular views, frame evaluation, exact-source validation, the Debug Adapter Protocol adapter and diagnostic parity.
 - **Tests and contract tooling:** structured failure observations and support-profile conformance.
 
 ## Unresolved questions
 
 - Which operating systems, architectures and native debugger/provider combinations must qualify for the first supported release, and which may initially be explicitly unsupported? The proposed minimum source-debugging and value contracts apply to every target claimed as supported.
-- Should ordinary runtime failures adopt a source location and concise stack by default, accepting the text-compatibility change, or should enriched runtime output remain opt-in while existing stderr stays unchanged?
+- How does an evaluation in a stopped frame run? Incan compiles to native code, so an expression must either be compiled against the frame's types and called inside the stopped process, or interpreted over checked bodies against values read from it. The choice decides which expressions are supported, their cost, and how far evaluation reaches into Rust frames.
 - What debug-artifact distribution policy should official releases and published dependencies guarantee: bundled source and symbols, separately obtainable matching artifacts, or source-free symbols by default? This determines download/storage cost and source-disclosure expectations, not the requirement to report missing artifacts honestly.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
