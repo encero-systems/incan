@@ -7,12 +7,12 @@ use incan_lang::lang::types::ownership::{self, OwnershipMode};
 use incan_semantics_core::SymbolOrigin;
 
 mod checked;
-mod flow;
+pub(super) mod flow;
 pub(super) mod projection;
 mod report;
 mod source;
 
-pub(super) use source::CallableSource;
+pub(super) use source::{CallableSource, Unavailable};
 
 use super::TypeChecker;
 use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Type};

@@ -22,7 +22,7 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
         body_ir_empty_list_requirements,
         body_ir_callable_name_reads,
         body_ir_expr_types: _,
-        body_ir_binding_types,
+        body_ir_binding_types: _,
         body_ir_nominal_pattern_owners,
         body_ir_parameter_requirements,
         expr_types: _,
@@ -39,7 +39,7 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
         source_targets: _,
         local_partial_method_targets,
     } = value;
-    require_empty!("ExpressionArtifacts"; body_ir_open_calls, body_ir_open_values, body_ir_open_bindings, body_ir_empty_list_requirements, body_ir_callable_name_reads, body_ir_binding_types, body_ir_nominal_pattern_owners, body_ir_parameter_requirements, expression_type_identities, computed_property_accesses, ambient_logger_bindings, numeric_conversion_destinations, read_only_dict_lookups, chained_values_written_per_target, validated_newtype_coercions, local_partial_method_targets);
+    require_empty!("ExpressionArtifacts"; body_ir_open_calls, body_ir_open_values, body_ir_open_bindings, body_ir_empty_list_requirements, body_ir_callable_name_reads, body_ir_nominal_pattern_owners, body_ir_parameter_requirements, expression_type_identities, computed_property_accesses, ambient_logger_bindings, numeric_conversion_destinations, read_only_dict_lookups, chained_values_written_per_target, validated_newtype_coercions, local_partial_method_targets);
     Ok(())
 }
 
@@ -100,9 +100,9 @@ pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingErr
 /// Refuse every unrepresented nonempty ProtocolArtifacts field; additions must choose a canonical capability.
 pub(super) fn protocol_artifacts(value: &ProtocolArtifacts) -> Result<(), NodeBindingError> {
     let ProtocolArtifacts {
-        explicit_input_calls,
-        explicit_local_modes,
-        explicit_input_flow,
+        explicit_input_calls: _,
+        explicit_local_modes: _,
+        explicit_input_flow: _,
         body_ir_truthiness_receivers,
         body_ir_iterations,
         iterations,
@@ -111,7 +111,7 @@ pub(super) fn protocol_artifacts(value: &ProtocolArtifacts) -> Result<(), NodeBi
         in_place_match_scrutinees,
         loan_free_scrutinees,
     } = value;
-    require_empty!("ProtocolArtifacts"; explicit_input_flow, explicit_input_calls, explicit_local_modes, body_ir_truthiness_receivers, body_ir_iterations, iterations, item_taking_iterations, comprehension_source_consumption, in_place_match_scrutinees, loan_free_scrutinees);
+    require_empty!("ProtocolArtifacts"; body_ir_truthiness_receivers, body_ir_iterations, iterations, item_taking_iterations, comprehension_source_consumption, in_place_match_scrutinees, loan_free_scrutinees);
     Ok(())
 }
 
