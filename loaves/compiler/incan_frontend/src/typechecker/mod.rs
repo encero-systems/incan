@@ -8039,6 +8039,9 @@ impl TypeChecker {
     /// owning Loaf's checked declaration, whose identity is what lets lowering recover the compiled signature,
     /// defaults included.
     ///
+    /// Nominal types, constants and other admitted public members use this same route; limiting it to callables and
+    /// traits leaves a nominal re-export as an identity-less placeholder at the next facade hop.
+    ///
     /// A facade that writes `from std.serde.json import Serialize` re-exports that trait exactly as it re-exports a
     /// function, so a consumer importing the spelling from the facade must bind the stdlib trait rather than a module
     /// placeholder: the placeholder let adoption and method calls through unproven, and lowering then had only the
@@ -8058,11 +8061,7 @@ impl TypeChecker {
         let module_path = canonicalize_source_module_segments(&module.segments);
         let (library, rest) = self.loaf_module(&module_path)?;
         let (kind, _) = self.lookup_pub_library_module_symbol_member(&library, &rest, item_name)?;
-        matches!(
-            kind,
-            SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) | SymbolKind::Trait(_)
-        )
-        .then_some(kind)
+        Some(kind)
     }
 
     /// The Loaf owning a bound module path and the public module path inside its manifest: `pub.<key>.<path>` for a
