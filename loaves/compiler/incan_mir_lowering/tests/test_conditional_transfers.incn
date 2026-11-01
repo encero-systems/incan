@@ -28,13 +28,17 @@ from rust::incan_semantics_core::body_ir import (
     Block,
     Constant,
 )
-from pub::incan_mir_plan import PlanType, ListLeaf
+from rust::std::boxed import Box
+from layout_types import context_free_type
+from pub::incan_mir_plan import PlanType, ListLeaf, TupleElement
 from conditional_transfers import (
     owned_call_reads,
     source_storage,
     moved_source,
     validate_initializer_assignment,
     validate_owning_storage,
+    transfer_requires_cleanup,
+    plain_carrier_copy,
 )
 
 
@@ -233,4 +237,63 @@ pub def test_owner_carrier_refuses_references_copy_and_mismatches() -> Result[No
         Err(_reason) => pass
         Ok(_value) =>
             assert false
+    return Ok(None)
+
+
+pub def test_unreachable_assignment_cannot_authorize_an_initializer() -> None:
+    """Return terminates the region, including when both conditional arms return before a trailing assignment."""
+    site = HirSourceSpan.new(30usize, 40usize)
+    returned: Option[Operand] = None
+    end = Statement(kind=StatementKind.Return(value=returned), span=HirSourceSpan.new(5usize, 10usize))
+    arm = Block(scope=ScopeId(1u32), stmts=[end])
+    otherwise: Option[Block] = Some(arm)
+    branch = Statement(
+        kind=StatementKind.If(cond=Operand.Constant(Constant.Bool(true)), then_block=arm, else_block=otherwise),
+        span=HirSourceSpan.new(0usize, 20usize),
+    )
+    for terminal in [end, branch]:
+        block = Block(scope=ScopeId(0u32), stmts=[terminal, initializer(site, OwnershipFact.Move)])
+        match validate_initializer_assignment(block, site, 1, 2):
+            Err(_reason) => pass
+            Ok(_value) =>
+                assert false
+
+
+pub def test_logical_exclusive_reference_move_has_no_owned_destructor() -> Result[None, str]:
+    """An exclusive reference moves without owning T's destructor; a borrowed alias of T is not that value."""
+    text = RustType.Primitive(Primitive.Str)
+    exclusive = RustType.RefMut(Box.new(text))
+    shared = RustType.Ref(Box.new(text))
+    exclusive_carrier = context_free_type(exclusive)?
+    shared_carrier = context_free_type(shared)?
+    assert not transfer_requires_cleanup(exclusive, exclusive_carrier, exclusive_carrier, exclusive_carrier, false)?
+    assert transfer_requires_cleanup(text, PlanType.String, PlanType.String, PlanType.String, false)?
+    for declared, source, actual, expected in [
+        (text, PlanType.String, exclusive_carrier, PlanType.String),
+        (exclusive, exclusive_carrier, PlanType.String, exclusive_carrier),
+        (exclusive, exclusive_carrier, exclusive_carrier, PlanType.String),
+        (shared, shared_carrier, shared_carrier, shared_carrier),
+    ]:
+        match transfer_requires_cleanup(declared, source, actual, expected, false):
+            Err(_reason) => pass
+            Ok(_owning) =>
+                assert false
+    return Ok(None)
+
+
+pub def test_reference_tuple_is_noncopy_without_owning_a_destructor() -> Result[None, str]:
+    """Exclusive reference components move, while tuple cleanup follows the existing native ownership boundary."""
+    exclusive = PlanType.ScalarMutRef([PlanType.Int])
+    assert not plain_carrier_copy(exclusive)?
+    assert plain_carrier_copy(PlanType.ScalarRef([PlanType.Int]))?
+    ty = PlanType.Tuple([TupleElement.Reference(true, [PlanType.Int]), TupleElement.Int])
+    declared = RustType.Tuple(
+        [RustType.RefMut(Box.new(RustType.Primitive(Primitive.Int))), RustType.Primitive(Primitive.Int)],
+    )
+    assert not transfer_requires_cleanup(declared, ty, ty, ty, false)?
+    for unknown in [PlanType.Generator(ListLeaf.Int, 1), PlanType.ScalarMutRef([])]:
+        match plain_carrier_copy(unknown):
+            Err(_reason) => pass
+            Ok(_copyable) =>
+                assert false
     return Ok(None)

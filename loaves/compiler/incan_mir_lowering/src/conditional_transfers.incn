@@ -1,6 +1,6 @@
 """Inventory checked whole-owner transfers before conditional native lowering visits either arm."""
 
-from pub::incan_mir_plan import PlanType
+from pub::incan_mir_plan import PlanType, tuple_element_type
 from rust::incan_semantics_core import IncanInputAccess, CanonicalSymbolId, SemanticSourceTargetKind, HirSourceSpan
 from rust::incan_semantics_core::body_ir import (
     ArgumentBinding,
@@ -16,7 +16,19 @@ from rust::incan_semantics_core::body_ir import (
     StatementKind,
     Rvalue,
     Place,
+    Body as RustBody,
+    NamedCallableTarget,
+    Callee,
+    CallableTarget,
 )
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_lang::lang::derives import DeriveId, as_str as derive_name
+from frame import Builder
+from program_context import body_at
+from layout_types import native_source_type
+from tuples import tuple_has_owners
+from numerics import numeric_carrier
+from closures import callable_copy_type
 
 
 pub def owned_call_reads(
@@ -127,21 +139,33 @@ pub def validate_initializer_assignment(
     destination: int,
 ) -> Result[None, str]:
     """Require exactly one full-site whole assignment; coincident byte offsets in another expansion are distinct."""
-    if source == destination or initializer_matches(block, span, source, destination)? != 1:
+    count, _fallthrough = initializer_matches(block, span, source, destination)?
+    if source == destination or count != 1:
         return Err("conditional initializer lacks one exact moved assignment")
     return Ok(None)
 
 
-def initializer_matches(block: &Block, span: HirSourceSpan, source: int, destination: int) -> Result[int, str]:
+def initializer_matches(
+    block: &Block,
+    span: HirSourceSpan,
+    source: int,
+    destination: int,
+) -> Result[tuple[int, bool], str]:
     """Walk only immediate conditional regions; deferred computations cannot satisfy a caller's initializer fact."""
     mut count = 0
     for statement in block.stmts:
         match statement.kind:
             StatementKind.If(cond=_condition, then_block=then_block, else_block=otherwise) =>
-                count += initializer_matches(then_block, span, source, destination)?
+                left_count, left_reaches = initializer_matches(then_block, span, source, destination)?
+                count += left_count
+                mut right_reaches = true
                 match otherwise:
-                    Some(else_block) => count += initializer_matches(else_block, span, source, destination)?
+                    Some(else_block) =>
+                        right_count, right_reaches = initializer_matches(else_block, span, source, destination)?
+                        count += right_count
                     None => pass
+                if not left_reaches and not right_reaches:
+                    return Ok((count, false))
             StatementKind.Assign(place=target, rvalue=value) =>
                 if statement.span == span:
                     if whole_slot(target)? != destination:
@@ -152,8 +176,9 @@ def initializer_matches(block: &Block, span: HirSourceSpan, source: int, destina
                                 return Err("conditional initializer source differs from its checked move")
                         _ => return Err("conditional initializer site is not a whole moved assignment")
                     count += 1
+            StatementKind.Return(value=_) => return Ok((count, false))
             _ => pass
-    return Ok(count)
+    return Ok((count, true))
 
 
 def whole_slot(place: &Place) -> Result[int, str]:
@@ -173,3 +198,286 @@ pub def validate_owning_storage(actual: PlanType, expected: PlanType, copyable: 
         PlanType.String | PlanType.List(_, _) | PlanType.Set(_) | PlanType.Dict(_, _) => return Ok(None)
         PlanType.Model(_, _) | PlanType.Enum(_, _) | PlanType.Tuple(_) => return Ok(None)
         _ => return Err("unsupported conditional owner storage")
+
+
+pub def transfer_owners(builder: &Builder, body: &RustBody) -> Result[list[int], str]:
+    """Derive body-local cleanup eligibility only after its exact conditional input profile is admitted."""
+    match body.checked_input_profile:
+        None => return Ok([])
+        Some(profile) =>
+            if profile.version == 1u32:
+                return Ok([])
+            if profile.version != 2u32:
+                return Err("unsupported conditional transfer profile")
+            match body.input_profile_gap():
+                Some(reason) => return Err(f"unsupported Body IR {reason}")
+                None => pass
+            if builder.callable_identity != body.canonical or builder.local_offset != 0:
+                return Err("conditional transfers require their original checked native frame")
+            mut owners: list[int] = []
+            block_transfer_owners(builder, body, body.block, owners)?
+            mut sites: list[HirSourceSpan] = []
+            for initializer in profile.owned_initializers:
+                if initializer.assignment in sites:
+                    return Err("conditional initializer repeats an assignment site")
+                sites.append(initializer.assignment)
+                source = source_storage(body.locals, initializer.source)?
+                destination = source_storage(body.locals, initializer.destination)?
+                if initializer.destination.kind != SemanticSourceTargetKind.Local:
+                    return Err("conditional initializer destination is not a local binding")
+                validate_initializer_assignment(body.block, initializer.assignment, source, destination)?
+                expected = declared_carrier(builder, body.locals[source - 1].ty)?
+                source_owns = validate_native_storage(builder, source, body.locals[source - 1].ty, expected)?
+                destination_owns = validate_native_storage(
+                    builder,
+                    destination,
+                    body.locals[destination - 1].ty,
+                    expected,
+                )?
+                if source_owns != destination_owns:
+                    return Err("conditional initializer changes its destructor obligation")
+                if source_owns and source not in owners:
+                    owners.append(source)
+            return Ok(owners)
+
+
+def block_transfer_owners(
+    builder: &Builder,
+    caller: &RustBody,
+    block: &Block,
+    mut owners: list[int],
+) -> Result[bool, str]:
+    """Visit both immediate If arms before lowering either; other executable regions receive no permission."""
+    for statement in block.stmts:
+        match statement.kind:
+            StatementKind.If(cond=_condition, then_block=then_block, else_block=otherwise) =>
+                left_reaches = block_transfer_owners(builder, caller, then_block, owners)?
+                mut right_reaches = true
+                match otherwise:
+                    Some(else_block) => right_reaches = block_transfer_owners(builder, caller, else_block, owners)?
+                    None => pass
+                if not left_reaches and not right_reaches:
+                    return Ok(false)
+            StatementKind.Call(destination=_destination, callee=callee, args=arguments, may_panic=_may_panic) =>
+                match callee:
+                    Callee.Function(CallableTarget.Named(target)) => named_call_owners(
+                        builder,
+                        caller,
+                        target,
+                        arguments,
+                        owners,
+                    )?
+                    _ => refuse_unselected_moves(caller, arguments)?
+            StatementKind.Assign(place=_destination, rvalue=value) =>
+                match value:
+                    (
+                        Rvalue.Use(_)
+                        | Rvalue.UnaryOp(_, _)
+                        | Rvalue.BinaryOp(_, _, _)
+                        | Rvalue.Aggregate(_, _)
+                        | Rvalue.Dict(_)
+                        | Rvalue.Format(_)
+                        | Rvalue.ResultVariant(_)
+                        | Rvalue.ValueEnumVariant(_)
+                        | Rvalue.FieldlessEnumVariant(_)
+                    ) => pass
+                    _ => return Err("unsupported conditional transfer region in an assignment")
+            (
+                StatementKind.Drop(local=_)
+                | StatementKind.Assert(kind=_, message=_, may_panic=_)
+                | StatementKind.Expr(value=_)
+            ) => pass
+            StatementKind.Return(value=_value) => return Ok(false)
+            _ => return Err("unsupported conditional transfer control-flow region")
+    return Ok(true)
+
+
+def named_call_owners(
+    builder: &Builder,
+    caller: &RustBody,
+    target: &NamedCallableTarget,
+    arguments: &list[ArgumentElement],
+    mut owners: list[int],
+) -> Result[None, str]:
+    """Select the canonical body first, then inspect its checked parameter slots; names never select a contract."""
+    if target.builtin != None:
+        return refuse_unselected_moves(caller, arguments)
+    match target.canonical:
+        None => return refuse_unselected_moves(caller, arguments)
+        Some(identity) =>
+            match builder.program.body_indices.unique(identity):
+                None => return refuse_unselected_moves(caller, arguments)
+                Some(index) =>
+                    if index < 0 or index >= len(builder.program.bodies.as_ref()):
+                        return Err("conditional transfer selected an invalid body index")
+                    callee = body_at(builder.program.bodies.as_ref(), index)
+                    if callee.canonical != Some(identity.clone()):
+                        return Err("conditional transfer selected a different canonical body")
+                    match target.direct_call_id:
+                        Some(call_id) =>
+                            if call_id != callee.direct_call_id:
+                                return Err("conditional transfer direct identity differs from its selected body")
+                        None => pass
+                    mut accesses: list[IncanInputAccess] = []
+                    for parameter in callee.params:
+                        accesses.append(parameter.input_access)
+                    if IncanInputAccess.Owned not in accesses:
+                        return Ok(None)
+                    match caller.input_call_profile_gap(callee):
+                        Some(reason) => return Err(f"unsupported Body IR {reason}")
+                        None => pass
+                    if len(target.type_args) != 0 or target.receiver_type != None:
+                        return Err("unsupported conditional transfer through a specialized callable")
+                    for slot, read in owned_call_reads(accesses, target.binding, arguments)?:
+                        match moved_source(caller.locals, read)?:
+                            None => pass
+                            Some(local) =>
+                                expected = declared_carrier(builder, callee.params[slot].ty)?
+                                owning = validate_native_storage(builder, local, caller.locals[local - 1].ty, expected)?
+                                if owning and local not in owners:
+                                    owners.append(local)
+    return Ok(None)
+
+
+def refuse_unselected_moves(caller: &RustBody, arguments: &list[ArgumentElement]) -> Result[None, str]:
+    """A route lacking a checked source frame may execute ordinarily, but cannot consume an inventoried source owner."""
+    for argument in arguments:
+        match argument.as_one():
+            None => return Err("unsupported conditional transfer through unresolved arguments")
+            Some(Operand.Place(read)) =>
+                if read.fact == OwnershipFact.Move:
+                    match moved_source(caller.locals, read)?:
+                        Some(_local) => return Err("conditional transfer lacks a unique checked source callee")
+                        None => pass
+            _ => pass
+    return Ok(None)
+
+
+def declared_carrier(builder: &Builder, ty: &RustType) -> Result[PlanType, str]:
+    """Resolve checked value types through the same native layout context used by ordinary frame and call lowering."""
+    return native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        ty,
+        builder.intrinsics,
+    )
+
+
+def validate_native_storage(
+    builder: &Builder,
+    local: int,
+    declared: &RustType,
+    expected: PlanType,
+) -> Result[bool, str]:
+    """Authenticate source and native storage; moving a logical exclusive reference transfers no owned destructor."""
+    if local <= 0 or local >= len(builder.locals):
+        return Err("conditional transfer has no native source storage")
+    actual = builder.locals[local].ty
+    source = declared_carrier(builder, declared)?
+    owning = transfer_requires_cleanup(declared, source, actual, expected, native_copy_carrier(builder, actual)?)?
+    if not owning:
+        match declared:
+            RustType.RefMut(_inner) =>
+                if local not in builder.reference_values:
+                    return Err("conditional reference transfer lacks logical reference storage")
+            _ => pass
+        return Ok(false)
+    if local in builder.reference_values or local in builder.borrowed_items or local in builder.in_place_items:
+        return Err("conditional transfer cannot consume a borrowed source alias")
+    return Ok(true)
+
+
+pub def transfer_requires_cleanup(
+    declared: &RustType,
+    source: PlanType,
+    actual: PlanType,
+    expected: PlanType,
+    copyable: bool,
+) -> Result[bool, str]:
+    """
+    Classify an authenticated transfer: source must be native_source_type(declared) in the owning layout context.
+
+    An exclusive reference still moves and remains subject to the source use-after-move rules, but has no owned
+    destructor obligation. An alias borrowing an owned T cannot use this exclusion: its checked value type is T.
+    """
+    if source != actual or actual != expected:
+        return Err("conditional transfer source, native storage and selected input disagree")
+    match declared:
+        RustType.RefMut(_inner) => return Ok(false)
+        RustType.Ref(_inner) => return Err("conditional transfer cannot move a shared Copy reference")
+        _ => pass
+    validate_owning_storage(actual, expected, copyable)?
+    match actual:
+        PlanType.Tuple(_elements) => return Ok(tuple_has_owners(actual))
+        _ => return Ok(true)
+
+
+def native_copy_carrier(builder: &Builder, ty: PlanType) -> Result[bool, str]:
+    """Read nominal Copy markers from retained declarations and compose tuple components without granting new derives."""
+    match ty:
+        PlanType.Model(owner, _name) =>
+            if owner < 0 or owner >= len(builder.nominals):
+                return Err("conditional transfer lacks its nominal declaration")
+            return Ok(str(derive_name(DeriveId.Copy)) in builder.nominals[owner].derives)
+        PlanType.Enum(owner, _name) =>
+            if owner < 0 or owner >= len(builder.enums):
+                return Err("conditional transfer lacks its enum declaration")
+            return Ok(str(derive_name(DeriveId.Copy)) in builder.enums[owner].derives)
+        PlanType.Tuple(elements) =>
+            for element in elements:
+                if not native_copy_carrier(builder, tuple_element_type(element))?:
+                    return Ok(false)
+            return Ok(true)
+        PlanType.String | PlanType.List(_, _) | PlanType.Set(_) | PlanType.Dict(_, _) => return Ok(false)
+        _ => return plain_carrier_copy(ty)
+
+
+pub def plain_carrier_copy(ty: PlanType) -> Result[bool, str]:
+    """Classify supported non-nominal native values; unknown storage never becomes Copy by default."""
+    if numeric_carrier(ty) or callable_copy_type(ty):
+        return Ok(true)
+    match ty:
+        (
+            PlanType.Bool
+            | PlanType.Unit
+            | PlanType.Decimal
+            | PlanType.FrozenStr
+            | PlanType.FrozenBytes
+            | PlanType.StaticText
+            | PlanType.StaticBytes
+            | PlanType.FrozenCollection(_, _)
+            | PlanType.StringRef
+            | PlanType.StrRef
+            | PlanType.ModelRef(_, _)
+            | PlanType.EnumRef(_, _)
+            | PlanType.TupleRef(_)
+            | PlanType.ListRef(_, _)
+            | PlanType.DictRef(_, _)
+            | PlanType.SetRef(_)
+        ) => return Ok(true)
+        (
+            PlanType.StringMutRef
+            | PlanType.ModelMutRef(_, _)
+            | PlanType.EnumMutRef(_, _)
+            | PlanType.TupleMutRef(_)
+            | PlanType.ListMutRef(_, _)
+            | PlanType.DictMutRef(_, _)
+            | PlanType.SetMutRef(_)
+        ) => return Ok(false)
+        PlanType.ScalarRef(elements) | PlanType.SliceRef(elements) =>
+            if len(elements) == 1:
+                return Ok(true)
+        PlanType.ScalarMutRef(elements) | PlanType.SliceMutRef(elements) =>
+            if len(elements) == 1:
+                return Ok(false)
+        PlanType.NativeArrayRef(elements, _length) =>
+            if len(elements) == 1:
+                return Ok(true)
+        PlanType.NativeArrayMutRef(elements, _length) =>
+            if len(elements) == 1:
+                return Ok(false)
+        PlanType.String | PlanType.List(_, _) | PlanType.Set(_) | PlanType.Dict(_, _) => return Ok(false)
+        _ => pass
+    return Err("unsupported conditional transfer Copy classification")
