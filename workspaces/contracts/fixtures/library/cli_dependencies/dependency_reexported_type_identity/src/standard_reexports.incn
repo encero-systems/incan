@@ -1,6 +1,8 @@
 """Standard and facade imports keep their declaring callable and nominal identities."""
 
 from std.io import IoError
+from std.primitives.environ import EnvironErrorKind
+from pub::facades import EnvironmentKind, observe_environment
 from pub::facades import EnvironError, read_value
 from pub::facades import BinaryError, RelayedError, square_root, relayed_root
 from pub::facades.standard import RelayedError as NestedError, relayed_root as nested_root
@@ -20,6 +22,13 @@ pub def run_standard_reexports() -> None:
         Err(error) =>
             println(error.message())
             assert false
+    invalid: EnvironmentKind = EnvironErrorKind.InvalidKey
+    match observe_environment(""):
+        Err(kind) =>
+            assert kind == invalid
+        Ok(_) =>
+            assert false
+    assert invalid.as_str() == "invalid_key"
     original = IoError(kind="other", detail="retained")
     projected: BinaryError = original
     transitive: RelayedError = projected
@@ -34,6 +43,7 @@ def read_overloads() -> Result[None, EnvironError]:
     optional: Option[int] = read_value[int](key)?
     match optional:
         None => pass
-        Some(_) => assert false
+        Some(_) =>
+            assert false
     assert read_value[int](key, 7)? == 7
     return Ok(None)
