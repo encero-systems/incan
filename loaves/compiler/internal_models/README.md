@@ -19,3 +19,22 @@
 - **Compatibility.** `incan_mir_lowering` re-exports the `records` and `record_service` names from its facade.
 
 The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls](./tests/canonical_record_controls.incn) cover these contracts. The canonical controls compare against the frontend's native adapter, which stays out of this Loaf's manifest, so `scripts/test-checker-records.sh OVEN EVIDENCE_DIRECTORY` runs them in an isolated project that adds it.
+
+## Ownership record profile
+
+`incan.checker-free-functions/4` and `incan.checker-fields/4` distinguish declaration ownership annotations from body-owned access facts. These versions describe checker records; they are independent of the executable Body IR representation version.
+
+| Field family | Retained information |
+| --- | --- |
+| `ownership` | Declaration modes, parameter/result components and an explicitly named result source. |
+| `input-call` | The exact callable owner and callee, instantiated parameter contracts and receiver mode. |
+| `input-local` | A canonical local declaration, its callable owner, selected access mode, checked type, write permission and annotation anchor. |
+| `input-flow` | Complete storage permissions, place projections, loans and parent relationships, local loan destinations, owned destinations with exact initializer/source-event relationships, invocation argument bindings, graph nodes and control-flow edges. |
+| `binding-type` | The checked type of a canonical body binding. |
+| `mutation` | Completed changed-parameter inventories and reassigned local declarations. Empty changed-owner inventories remain distinct from absent ones. |
+
+The Incan codec validates primitive shapes, counts, indices and canonical ordering. Ownership map keys use length-framed UTF-8 tokens; declaration identities and source anchors remain opaque handles. The native bootstrap adapter resolves those handles against the current owner and source revision, then recomputes graph analysis. It does not recover discarded semantic payloads from the current checker. A checked graph can retain source-program conflicts; an explicitly invalid graph must reproduce its recorded infrastructure refusal and cannot become a checked graph. Unsupported source projections retain their anchored refusal.
+
+This is still a bounded free-function profile. Pending mutation decisions, forwarding edges, callable-value bindings, loop-view state, active mutation frames and other unrepresented checker capabilities refuse projection. They never become empty successful facts. Profile 3 is not accepted as profile 4. Owned initializer relationships are retained explicitly; neither source-span searches nor current checker payloads reconstruct a missing relationship. The existing 64 KiB record and 4,096-field limits are unchanged.
+
+The canonical codec tests execute Incan encode/decode round trips and compare the complete restored selected owner with an independent fresh check after source positions move. They also remove ownership facts and corrupt versions, map order, counts and graph references. Passing the primitive Rust adapters alone is insufficient evidence for this boundary.

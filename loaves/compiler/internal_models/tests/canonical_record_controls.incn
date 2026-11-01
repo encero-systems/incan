@@ -1,10 +1,23 @@
 """The canonical codec survives comment/move edits and reconstructs the complete selected native owner."""
 
 from checker_records import (
-    CHECKER_PROFILE, CanonicalField, CheckedFamily, CheckedRecord, CodecFault,
-    encode_record, decode_record, semantic_digest, from_native_fields, native_fields,
+    CHECKER_PROFILE,
+    CanonicalField,
+    CheckedFamily,
+    CheckedRecord,
+    CodecFault,
+    encode_record,
+    decode_record,
+    semantic_digest,
+    from_native_fields,
+    native_fields,
 )
-from rust::incan_frontend::checker_records import fixture_projection, verify_fixture, fixture_local_projection, verify_local_fixture
+from rust::incan_frontend::checker_records import (
+    fixture_projection,
+    verify_fixture,
+    fixture_local_projection,
+    verify_local_fixture,
+)
 
 
 pub def canonical_record_controls() -> Result[None, str]:
@@ -12,8 +25,12 @@ pub def canonical_record_controls() -> Result[None, str]:
     source = "def main() -> None:\n    println(\"hello\")\n"
     moved = "# changed-length comment\n\ndef main() -> None:\n    # inside comment\n    println(\"hello\")\n"
     for declaration in [true, false]:
-        base = from_native_fields(fixture_projection(source, "main", declaration).map_err((error) => error.to_string())?).map_err((_) => "projection")?
-        changed = from_native_fields(fixture_projection(moved, "main", declaration).map_err((error) => error.to_string())?).map_err((_) => "moved projection")?
+        base = from_native_fields(fixture_projection(source, "main", declaration).map_err((error) => error.to_string())?).map_err(
+            (_) => "projection",
+        )?
+        changed = from_native_fields(
+            fixture_projection(moved, "main", declaration).map_err((error) => error.to_string())?,
+        ).map_err((_) => "moved projection")?
         before = encode_record(base).map_err((_) => "encode")?
         after = encode_record(changed).map_err((_) => "moved encode")?
         assert before == after
@@ -32,6 +49,7 @@ pub def canonical_record_controls() -> Result[None, str]:
     default_record_controls()?
     final_value_controls()?
     ownership_record_controls()?
+    input_protocol_controls()?
     return Ok(None)
 
 
@@ -41,29 +59,45 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
     assert fault_is(decode_record(encoded, CHECKER_PROFILE, "wrong", record.root), "owner")
     assert fault_is(decode_record(encoded, CHECKER_PROFILE, record.owner, "wrong"), "body")
     match encoded.decode():
-        Ok(text) => assert fault_is(decode_record((text + "x").encode(), CHECKER_PROFILE, record.owner, record.root), "malformed")
-        Err(_) => assert false
+        Ok(text) =>
+            assert fault_is(
+                decode_record((text + "x").encode(), CHECKER_PROFILE, record.owner, record.root),
+                "malformed",
+            )
+        Err(_) =>
+            assert false
     assert fault_is(decode_record(encoded[:len(encoded) - 1], CHECKER_PROFILE, record.owner, record.root), "malformed")
     assert fault_is(decode_record(b"01:x", CHECKER_PROFILE, record.owner, record.root), "malformed")
     assert fault_is(decode_record(b"1:\xff", CHECKER_PROFILE, record.owner, record.root), "malformed")
     unsupported = CheckedRecord(
-        profile=record.profile, owner=record.owner, root=record.root, family=record.family,
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
         fields=[CanonicalField(family="future", node="", selector="", values=[])],
     )
     match encode_record(unsupported):
-        Err(CodecFault.Unsupported(name)) => assert name == "future"
-        _ => assert false
+        Err(CodecFault.Unsupported(name)) =>
+            assert name == "future"
+        _ =>
+            assert false
 
 
 def local_record_controls(source: str, moved: str) -> Result[None, str]:
     """Pending local fields have their own stage and never masquerade as settled checked-body evidence."""
-    before = from_native_fields(fixture_local_projection(source, "main").map_err((error) => error.to_string())?).map_err((_) => "local projection")?
-    after = from_native_fields(fixture_local_projection(moved, "main").map_err((error) => error.to_string())?).map_err((_) => "moved local projection")?
+    before = from_native_fields(fixture_local_projection(source, "main").map_err((error) => error.to_string())?).map_err(
+        (_) => "local projection",
+    )?
+    after = from_native_fields(fixture_local_projection(moved, "main").map_err((error) => error.to_string())?).map_err(
+        (_) => "moved local projection",
+    )?
     encoded = encode_record(before).map_err((_) => "local encode")?
     assert encoded == encode_record(after).map_err((_) => "moved local encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "local decode")?
     assert decoded.family == CheckedFamily.Local
-    verify_local_fixture(moved, "main", native_fields(decoded).map_err((_) => "local fields")?).map_err((error) => "local: " + error.to_string())?
+    verify_local_fixture(moved, "main", native_fields(decoded).map_err((_) => "local fields")?).map_err(
+        (error) => "local: " + error.to_string(),
+    )?
     println(f"canonical-record local fields={len(before.fields)} bytes={len(encoded)} stable=true")
     return Ok(None)
 
@@ -76,12 +110,18 @@ def edited_owner_controls() -> Result[None, str]:
         for declaration in [true, false]:
             if name == "changed" and not declaration:
                 continue
-            before = from_native_fields(fixture_projection(source, name, declaration).map_err((error) => error.to_string())?).map_err((_) => "sibling projection")?
-            after = from_native_fields(fixture_projection(moved, name, declaration).map_err((error) => error.to_string())?).map_err((_) => "sibling moved")?
+            before = from_native_fields(
+                fixture_projection(source, name, declaration).map_err((error) => error.to_string())?,
+            ).map_err((_) => "sibling projection")?
+            after = from_native_fields(
+                fixture_projection(moved, name, declaration).map_err((error) => error.to_string())?,
+            ).map_err((_) => "sibling moved")?
             encoded = encode_record(before).map_err((_) => "sibling encode")?
             assert encoded == encode_record(after).map_err((_) => "sibling moved encode")?
             decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "sibling decode")?
-            verify_fixture(moved, name, native_fields(decoded).map_err((_) => "sibling fields")?).map_err((error) => f"sibling {name} declaration={declaration}: " + error.to_string())?
+            verify_fixture(moved, name, native_fields(decoded).map_err((_) => "sibling fields")?).map_err(
+                (error) => f"sibling {name} declaration={declaration}: " + error.to_string(),
+            )?
     return Ok(None)
 
 
@@ -91,11 +131,17 @@ def diagnostic_record_controls() -> Result[None, str]:
     advisory = "def main() -> None:\n    println(\"hello\")\n    return\n    println(\"unreachable\")\n"
     for source in [refused, advisory]:
         moved = "# a moved diagnostic\n" + source
-        before = from_native_fields(fixture_projection(source, "main", false).map_err((error) => error.to_string())?).map_err((_) => "diagnostic projection")?
-        after = from_native_fields(fixture_projection(moved, "main", false).map_err((error) => error.to_string())?).map_err((_) => "diagnostic moved")?
+        before = from_native_fields(fixture_projection(source, "main", false).map_err((error) => error.to_string())?).map_err(
+            (_) => "diagnostic projection",
+        )?
+        after = from_native_fields(fixture_projection(moved, "main", false).map_err((error) => error.to_string())?).map_err(
+            (_) => "diagnostic moved",
+        )?
         encoded = encode_record(before).map_err((_) => "diagnostic encode")?
         assert encoded == encode_record(after).map_err((_) => "diagnostic moved encode")?
-        assert semantic_digest(before).map_err((_) => "diagnostic digest")? == semantic_digest(after).map_err((_) => "diagnostic moved digest")?
+        assert semantic_digest(before).map_err((_) => "diagnostic digest")? == semantic_digest(after).map_err(
+            (_) => "diagnostic moved digest",
+        )?
         decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "diagnostic decode")?
         rows = native_fields(decoded).map_err((_) => "diagnostic fields")?
         first = verify_fixture(source, "main", rows).map_err((error) => "diagnostic before: " + error.to_string())?
@@ -110,12 +156,18 @@ def default_record_controls() -> Result[None, str]:
     source = "def value(item: int = 3) -> int:\n    return item\ndef main() -> None:\n    println(value())\n"
     moved = "# a moved declaration\n" + source
     for declaration in [true, false]:
-        before = from_native_fields(fixture_projection(source, "value", declaration).map_err((error) => error.to_string())?).map_err((_) => "default projection")?
-        after = from_native_fields(fixture_projection(moved, "value", declaration).map_err((error) => error.to_string())?).map_err((_) => "default moved")?
+        before = from_native_fields(
+            fixture_projection(source, "value", declaration).map_err((error) => error.to_string())?,
+        ).map_err((_) => "default projection")?
+        after = from_native_fields(
+            fixture_projection(moved, "value", declaration).map_err((error) => error.to_string())?,
+        ).map_err((_) => "default moved")?
         encoded = encode_record(before).map_err((_) => "default encode")?
         assert encoded == encode_record(after).map_err((_) => "default moved encode")?
         decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "default decode")?
-        verify_fixture(moved, "value", native_fields(decoded).map_err((_) => "default fields")?).map_err((error) => "default: " + error.to_string())?
+        verify_fixture(moved, "value", native_fields(decoded).map_err((_) => "default fields")?).map_err(
+            (error) => "default: " + error.to_string(),
+        )?
     return Ok(None)
 
 
@@ -133,12 +185,18 @@ def final_value_controls() -> Result[None, str]:
     """A selected empty-list result carries finalized expression types separately from pending local facts."""
     source = "def values() -> list[int]:\n    return []\ndef main() -> None:\n    println(\"hello\")\n"
     moved = "# moved empty-list owner\n" + source
-    before = from_native_fields(fixture_projection(source, "values", false).map_err((error) => error.to_string())?).map_err((_) => "empty-list projection")?
-    after = from_native_fields(fixture_projection(moved, "values", false).map_err((error) => error.to_string())?).map_err((_) => "empty-list moved")?
+    before = from_native_fields(fixture_projection(source, "values", false).map_err((error) => error.to_string())?).map_err(
+        (_) => "empty-list projection",
+    )?
+    after = from_native_fields(fixture_projection(moved, "values", false).map_err((error) => error.to_string())?).map_err(
+        (_) => "empty-list moved",
+    )?
     encoded = encode_record(before).map_err((_) => "empty-list encode")?
     assert encoded == encode_record(after).map_err((_) => "empty-list moved encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "empty-list decode")?
-    verify_fixture(moved, "values", native_fields(decoded).map_err((_) => "empty-list fields")?).map_err((error) => "empty-list: " + error.to_string())?
+    verify_fixture(moved, "values", native_fields(decoded).map_err((_) => "empty-list fields")?).map_err(
+        (error) => "empty-list: " + error.to_string(),
+    )?
     return Ok(None)
 
 
@@ -151,9 +209,202 @@ def ownership_record_controls() -> Result[None, str]:
         record = from_native_fields(rows).map_err((_) => "ownership fields")?
         encoded = encode_record(record).map_err((_) => "ownership encode")?
         decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err((_) => "ownership decode")?
-        verify_fixture(moved, "view", native_fields(decoded).map_err((_) => "ownership native fields")?).map_err((error) => error.to_string())?
-        obsolete = CheckedRecord(profile="incan.checker-free-functions/1", owner=record.owner, root=record.root, family=record.family, fields=record.fields)
+        verify_fixture(moved, "view", native_fields(decoded).map_err((_) => "ownership native fields")?).map_err(
+            (error) => error.to_string(),
+        )?
+        obsolete = CheckedRecord(
+            profile="incan.checker-free-functions/1",
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=record.fields,
+        )
         match encode_record(obsolete):
             Err(CodecFault.ProfileMismatch) => pass
             _ => return Err("old ownership profile accepted")
     return Ok(None)
+
+
+def input_protocol_controls() -> Result[None, str]:
+    """Execute the real Incan codec on checked loans, source conflicts and unsupported-flow refusals."""
+    cases = [
+        ("def read(value: Borrowed[int]) -> int:\n    return value\ndef use() -> int:\n    value = 3\n    return read(value)\n", "use"),
+        ("def replace(mut value: BorrowedMut[int]) -> int:\n    mut alias: BorrowedMut[int] = value\n    alias = 7\n    return value\n", "replace"),
+        ("def consume(value: Owned[str]) -> bool:\n    return value == \"yes\"\ndef use() -> int:\n    value = \"yes\"\n    consume(value)\n    return len(value)\n", "use"),
+        ("def branch(value: Borrowed[int], flag: bool) -> int:\n    if flag:\n        return value\n    return 0\n", "branch"),
+        ("def looping(value: Borrowed[int], mut remaining: int) -> int:\n    while remaining > 0:\n        remaining -= 1\n    return value\n", "looping"),
+        ("def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n", "fresh"),
+        ("def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n", "copy"),
+        ("def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n", "transfer"),
+
+    ]
+    for source, owner in cases:
+        moved = "# ownership anchors moved\n" + source
+        rows = fixture_projection(source, owner, false).map_err((error) => error.to_string())?
+        record = input_record(rows, owner)?
+        encoded = encode_record(record).map_err((_) => "input encode")?
+        decoded = decode_record(encoded, CHECKER_PROFILE, record.owner, record.root).map_err((_) => "input decode")?
+        assert decoded == record
+        owned_initializer_grammar(record)?
+        input_graph_refusals(record)?
+        current = from_native_fields(fixture_projection(moved, owner, false).map_err((error) => error.to_string())?).map_err(
+            (_) => "input moved",
+        )?
+        assert encoded == encode_record(current).map_err((_) => "input moved encode")?
+        verify_fixture(moved, owner, native_fields(decoded).map_err((_) => "input native fields")?).map_err(
+            (error) => error.to_string(),
+        )?
+        for field in record.fields:
+            if field.family in ["input-call", "input-local", "input-flow"]:
+                input_field_refusals(record, field)?
+        obsolete = CheckedRecord(
+            profile="incan.checker-free-functions/3",
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=record.fields,
+        )
+        match encode_record(obsolete):
+            Err(CodecFault.ProfileMismatch) => pass
+            _ => return Err("profile 3 accepted owned initializer facts")
+    return Ok(None)
+
+
+def input_field_refusals(record: CheckedRecord, field: CanonicalField) -> Result[None, str]:
+    """Truncated, unversioned and trailing ownership payloads cannot pass the persistent boundary."""
+    bad_payloads = [[], ["99"] + field.values[1:], field.values[:len(field.values) - 1], field.values + ["trailing"]]
+    for payload in bad_payloads:
+        broken = CanonicalField(family=field.family, node=field.node, selector=field.selector, values=payload)
+        changed = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[broken],
+        )
+        match encode_record(changed):
+            Err(_) => pass
+            Ok(_) => return Err("malformed ownership field accepted")
+    duplicate = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[field, field],
+    )
+    match encode_record(duplicate):
+        Err(CodecFault.Malformed) => pass
+        _ => return Err("duplicate ownership field accepted")
+    return Ok(None)
+
+
+def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
+    """Owned destinations keep exact initializer links; malformed checked links cannot cross the codec."""
+    prefix = ["1", "checked", "owner", "0", "0", "0", "0"]
+    suffix = ["0", "1", "nothing", "0", "node"]
+    first = ["a", "initializer-a", "none", "none"]
+    second = ["b", "initializer-b", "none", "none"]
+    valid = prefix + ["2"] + first + second + suffix
+    field = CanonicalField(family="input-flow", node="owner-node", selector="graph", values=valid)
+    retained = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[field],
+    )
+    encoded = encode_record(retained).map_err((_) => "owned initializer grammar encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
+        (_) => "owned initializer grammar decode",
+    )?
+    assert decoded == retained
+    malformed = [
+        prefix + ["2"] + second + first + suffix,
+        prefix + ["2"] + first + first + suffix,
+        prefix + ["1", "a", "initializer", "none", "some", "0"] + suffix,
+        prefix + ["1", "a", "initializer", "some", "binding", "source", "0", "none"] + suffix,
+        prefix + ["1", "a", "initializer", "some", "binding", "source", "0", "some", "1"] + suffix,
+    ]
+    for values in malformed:
+        broken = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)],
+        )
+        match encode_record(broken):
+            Err(CodecFault.Malformed) => pass
+            _ => return Err("malformed checked owned initializer accepted")
+    return Ok(None)
+
+
+def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
+    """Checked indices are bounded; an explicitly invalid graph retains its fault instead of acquiring authority."""
+    # One no-op node, no storage permissions, loans, local destinations or invocations.
+    graph = ["owner", "0", "0", "0", "0", "0", "0", "1", "nothing", "0", "node"]
+    malformed = [
+        ["1", "checked", "owner", "1"] + graph[2:],
+        ["1", "checked"] + graph[:8] + ["borrow", "0", "0", "node"],
+        ["1", "checked"] + graph[:9] + ["1", "1", "node"],
+        ["1", "checked", "owner", "00"] + graph[2:],
+    ]
+    for values in malformed:
+        field = CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)
+        broken = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[field],
+        )
+        match encode_record(broken):
+            Err(CodecFault.Malformed) => pass
+            _ => return Err("invalid checked graph reference accepted")
+    first = ["binding", "a", "false", "false", "false"]
+    second = ["binding", "b", "false", "false", "false"]
+    for permissions in [second + first, first + first]:
+        values = ["1", "checked", "owner", "0", "2"] + permissions + graph[3:]
+        field = CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)
+        broken = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[field],
+        )
+        match encode_record(broken):
+            Err(CodecFault.Malformed) => pass
+            _ => return Err("noncanonical ownership map accepted")
+    # The native adapter must recompute and verify this exact refusal before restoring InputFlow.Invalid.
+    invalid = CanonicalField(
+        family="input-flow",
+        node="owner-node",
+        selector="graph",
+        values=["1", "invalid", "owner", "1"] + graph[2:] + ["missing entry node"],
+    )
+    refusal = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[invalid],
+    )
+    encoded = encode_record(refusal).map_err((_) => "invalid graph refusal encode")?
+    decoded = decode_record(encoded, CHECKER_PROFILE, refusal.owner, refusal.root).map_err(
+        (_) => "invalid graph refusal decode",
+    )?
+    assert decoded == refusal
+    return Ok(None)
+
+
+def input_record(rows: list[list[str]], owner: str) -> Result[CheckedRecord, str]:
+    """Name the exact refused primitive row when the native and Incan grammars disagree."""
+    match from_native_fields(rows):
+        Ok(record) => return Ok(record)
+        Err(_) =>
+            for row in rows[1:]:
+                match from_native_fields([rows[0], row]):
+                    Ok(_) => pass
+                    Err(_) => println(f"input record {owner}: {row}")
+            return Err(f"input fields for {owner}")

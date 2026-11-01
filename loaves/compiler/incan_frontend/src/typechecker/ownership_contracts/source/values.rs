@@ -21,7 +21,7 @@ impl Builder<'_> {
                 ListEntry::Spread(value) => {
                     return Err(Unavailable {
                         span: value.span,
-                        reason: "list expansion needs checked element access",
+                        reason: "list expansion needs checked element access".into(),
                     });
                 }
             };
@@ -37,7 +37,7 @@ impl Builder<'_> {
             ) {
                 return Err(Unavailable {
                     span: value.span,
-                    reason: "list element needs checked retained-owner projection",
+                    reason: "list element needs checked retained-owner projection".into(),
                 });
             }
             incoming = self.expression(value, incoming, false)?;
@@ -62,7 +62,7 @@ impl Builder<'_> {
         {
             return Err(Unavailable {
                 span,
-                reason: "construction needs a checked local model declaration",
+                reason: "construction needs a checked local model declaration".into(),
             });
         }
         let binding = self
@@ -71,7 +71,7 @@ impl Builder<'_> {
             .constructor_field_binding(span)
             .ok_or(Unavailable {
                 span,
-                reason: "construction has no checked field binding",
+                reason: "construction has no checked field binding".into(),
             })?;
         let mut selected = BTreeSet::new();
         if !binding.defaulted_slots.is_empty()
@@ -84,7 +84,7 @@ impl Builder<'_> {
         {
             return Err(Unavailable {
                 span,
-                reason: "construction needs complete distinct fields without deferred defaults",
+                reason: "construction needs complete distinct fields without deferred defaults".into(),
             });
         }
         for argument in arguments {
@@ -93,14 +93,14 @@ impl Builder<'_> {
                 _ => {
                     return Err(Unavailable {
                         span,
-                        reason: "construction expansion lacks checked field access",
+                        reason: "construction expansion lacks checked field access".into(),
                     });
                 }
             };
             if !self.fresh_or_copy_field(value) {
                 return Err(Unavailable {
                     span: value.span,
-                    reason: "non-Copy constructor field needs checked ownership transfer materialization",
+                    reason: "non-Copy constructor field needs checked ownership transfer materialization".into(),
                 });
             }
             incoming = self.expression(value, incoming, false)?;
@@ -153,7 +153,7 @@ impl Builder<'_> {
             {
                 return Err(Unavailable {
                     span: expr.span,
-                    reason: "formatting needs selected display-hook access facts",
+                    reason: "formatting needs selected display-hook access facts".into(),
                 });
             }
             incoming = self.expression(expr, incoming, false)?;

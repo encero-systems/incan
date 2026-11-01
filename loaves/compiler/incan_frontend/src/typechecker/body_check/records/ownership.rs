@@ -133,14 +133,78 @@ fn number(value: &str) -> Result<usize, NodeBindingError> {
 mod tests {
     use super::super::{NodeBindingError, fixture_projection, verify_fixture};
 
-    /// Declaration contracts survive source movement and name-independent slot encoding. Body records refuse the
-    /// newer flow payload until their versioned Incan schema can preserve the entire ownership proof.
+    /// Body ownership facts survive record storage and source movement instead of disappearing at the protocol
+    /// boundary.
+    #[test]
+    fn explicit_input_body_records_rebind_all_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let cases = [
+            (
+                "def read(value: Borrowed[int]) -> int:\n    return value\ndef use() -> int:\n    value = 3\n    return read(value)\n",
+                "use",
+            ),
+            (
+                "def replace(mut value: BorrowedMut[int]) -> int:\n    mut alias: BorrowedMut[int] = value\n    alias = 7\n    return value\n",
+                "replace",
+            ),
+            (
+                "def consume(value: Owned[str]) -> bool:\n    return value == \"yes\"\ndef use() -> int:\n    value = \"yes\"\n    consume(value)\n    return len(value)\n",
+                "use",
+            ),
+            (
+                "def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n",
+                "fresh",
+            ),
+            (
+                "def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n",
+                "copy",
+            ),
+            (
+                "def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n",
+                "transfer",
+            ),
+        ];
+        for (source, owner) in cases {
+            let fields =
+                fixture_projection(source, owner, false).map_err(|error| format!("owner {owner}: {error:?}"))?;
+            assert!(
+                fields
+                    .iter()
+                    .any(|row| row.first().is_some_and(|family| family == "input-flow"))
+            );
+            let moved = format!("# source positions moved\n{source}");
+            assert_eq!(fields, fixture_projection(&moved, owner, false)?);
+            verify_fixture(&moved, owner, fields.clone())?;
+            let missing = fields.into_iter().filter(|row| row[0] != "input-flow").collect();
+            assert!(verify_fixture(&moved, owner, missing).is_err());
+        }
+        Ok(())
+    }
+
+    /// Reordered permission maps cannot acquire a second canonical byte representation of the same decoded graph.
+    #[test]
+    fn input_graph_map_order_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def together(left: Borrowed[int], right: Borrowed[int]) -> bool:\n    return left == right\n";
+        let mut fields = fixture_projection(source, "together", false)?;
+        verify_fixture(source, "together", fields.clone())?;
+        let row = fields
+            .iter_mut()
+            .find(|row| row[0] == "input-flow")
+            .ok_or("missing input flow")?;
+        assert_eq!(row[7], "2");
+        assert_eq!(row[8], "binding");
+        assert_eq!(row[13], "binding");
+        row[8..18].rotate_left(5);
+        assert!(
+            matches!(verify_fixture(source, "together", fields), Err(NodeBindingError::InvalidField(message)) if message == "noncanonical ownership map order")
+        );
+        Ok(())
+    }
+
+    /// Declaration contracts and refused body projections retain their distinct complete record payloads.
     #[test]
     fn checked_ownership_records_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let source = "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
         let moved = format!("# moved source\n{source}");
-        // Declaration contracts keep their portable profile. Bodies now own source-flow facts; version 2 cannot
-        // erase those facts and must refuse until its Incan-owned schema gains the complete flow representation.
         let fields = fixture_projection(source, "view", true)?;
         assert!(
             fields
@@ -152,12 +216,11 @@ mod tests {
         let missing: Vec<_> = fields.iter().filter(|row| row[0] != "ownership").cloned().collect();
         assert!(verify_fixture(source, "view", missing).is_err());
         let mut obsolete = fields;
-        obsolete[0][4] = "incan.checker-free-functions/1".into();
+        obsolete[0][4] = "incan.checker-free-functions/3".into();
         assert!(verify_fixture(source, "view", obsolete).is_err());
-        assert!(matches!(
-            fixture_projection(source, "view", false),
-            Err(NodeBindingError::Unsupported("ProtocolArtifacts.explicit_input_flow"))
-        ));
+        let body = fixture_projection(source, "view", false)?;
+        assert_eq!(body, fixture_projection(&moved, "view", false)?);
+        verify_fixture(&moved, "view", body)?;
         Ok(())
     }
 }

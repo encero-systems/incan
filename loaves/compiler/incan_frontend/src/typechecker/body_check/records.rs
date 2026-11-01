@@ -1,6 +1,9 @@
 //! Selected owner projections for the Incan checker-record codec. This is a bootstrap conversion, not a store.
 
 mod diagnostics;
+mod input_flow;
+mod inputs;
+mod mutation;
 mod ownership;
 mod types;
 use diagnostics::{project_diagnostics, read_diagnostic};
@@ -140,7 +143,7 @@ pub(crate) fn project(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             if declaration { "declaration" } else { "final" }.into(),
-            "incan.checker-free-functions/2".into(),
+            "incan.checker-free-functions/4".into(),
         ],
     );
     Ok(fields)
@@ -158,7 +161,7 @@ fn restore(
         .first()
         .filter(|header| header.len() == 5)
         .ok_or(NodeBindingError::MissingOwner)?;
-    if header[0] != "header" || header[4] != "incan.checker-free-functions/2" {
+    if header[0] != "header" || header[4] != "incan.checker-free-functions/4" {
         return Err(NodeBindingError::Unsupported("record profile"));
     }
     if header[1] != positions.nodes.owner().render_compact() {
@@ -205,7 +208,7 @@ struct Rebinding {
     local: BodyLocal,
     diagnostics: BTreeMap<String, super::super::diagnostic_values::AnchoredDiagnostic>,
     warnings: BTreeMap<String, super::super::diagnostic_values::AnchoredDiagnostic>,
-    bodies: Vec<CanonicalSymbolId>,
+    mutation: super::super::mut_arguments::RecordMutation,
     status: Option<bool>,
     binding: Option<super::super::type_info::FunctionBindingInfo>,
     defaults: BTreeMap<Span, (Span, String)>,
@@ -236,8 +239,9 @@ impl Rebinding {
                 self.status = Some(row[3].parse::<bool>().map_err(|_| NodeBindingError::MissingNode)?)
             }
             "effect" if row[1].is_empty() && row[3] == "checked" && row.len() == 4 => {
-                self.bodies.push(positions.canonical(&row[2])?)
+                self.mutation.bodies.insert(positions.canonical(&row[2])?);
             }
+            "mutation" => mutation::restore(positions, &mut self.mutation, row)?,
             "ownership" if row[2] == "contract" && header[3] != "local" => {
                 if self.ownership.is_some() || row[1] != positions.nodes.anchor(self.local.owner)?.path {
                     return Err(NodeBindingError::MissingNode);
@@ -330,7 +334,7 @@ impl Rebinding {
 
     /// Finish as either a pending local value or an independently settled owner; no local fact is promoted by decoding.
     fn finish(mut self, stage: &str) -> Result<NativeOwner, NodeBindingError> {
-        self.local.mutation = super::super::mut_arguments::MutBodyLocal::from_plain_bodies(self.bodies);
+        self.local.mutation = super::super::mut_arguments::MutBodyLocal::from_record_projection(self.mutation);
         if stage == "local" {
             if self.status != Some(true)
                 || !self.diagnostics.is_empty()
@@ -398,6 +402,16 @@ fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fi
             type_fields(ty, &mut row)?;
             fields.push(row);
         }
+    }
+    for (binding, ty) in &expressions.body_ir_binding_types {
+        let mut row = vec![
+            "binding-type".into(),
+            positions.nodes.anchor(span_of(binding))?.path,
+            "body".into(),
+            positions.identity(binding)?,
+        ];
+        type_fields(ty, &mut row)?;
+        fields.push(row);
     }
     for (span, kind) in &expressions.ident_kinds {
         let tag = match kind {
@@ -514,6 +528,9 @@ fn validate(view: &CheckedBodyView) -> Result<(), NodeBindingError> {
 
 /// Recreate every supported local map directly from the selected field's typed primitives.
 fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -> Result<(), NodeBindingError> {
+    if matches!(row[0].as_str(), "input-call" | "input-local" | "input-flow") {
+        return inputs::restore(positions, local, row);
+    }
     let span = positions.span(&row[1])?;
     let mut values = row[3..].iter();
     match row[0].as_str() {
@@ -527,6 +544,20 @@ fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -
                 _ => return Err(NodeBindingError::MissingNode),
             };
             map.insert(span, ty);
+        }
+        "binding-type" if row[2] == "body" => {
+            let binding = positions.canonical(next(&mut values)?)?;
+            if span_of(&binding) != span {
+                return Err(NodeBindingError::WrongOwner);
+            }
+            if local
+                .expressions
+                .body_ir_binding_types
+                .insert(binding, read_type(&mut values)?)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
         }
         "parameter" => {
             local
@@ -810,7 +841,7 @@ pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Field
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             "local".into(),
-            "incan.checker-free-functions/2".into(),
+            "incan.checker-free-functions/4".into(),
         ],
     );
     Ok(fields)
@@ -899,6 +930,7 @@ fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<Fields, Node
     project_expressions(positions, local, &mut fields)?;
     project_references(positions, local, &mut fields)?;
     project_calls(positions, local, &mut fields)?;
+    inputs::project(positions, local, &mut fields)?;
     for canonical in local.nested.values() {
         fields.push(vec![
             "binding".into(),
@@ -907,18 +939,7 @@ fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<Fields, Node
             positions.identity(canonical)?,
         ]);
     }
-    for canonical in local
-        .mutation
-        .plain_bodies()
-        .ok_or(NodeBindingError::Unsupported("mutation facts"))?
-    {
-        fields.push(vec![
-            "effect".into(),
-            String::new(),
-            positions.identity(canonical)?,
-            "checked".into(),
-        ]);
-    }
+    mutation::project(positions, &local.mutation, &mut fields)?;
     Ok(fields)
 }
 
