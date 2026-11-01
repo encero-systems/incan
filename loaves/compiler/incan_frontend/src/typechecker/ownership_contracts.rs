@@ -1567,6 +1567,96 @@ mod tests {
         Ok(())
     }
 
+    /// Conditional path evidence can be checked independently while executable conditional cleanup stays gated.
+    #[test]
+    fn conditional_paths_require_their_source_edges() -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "def inspect(value: Borrowed[str], flag: bool) -> None:\n    if flag:\n        pass\n    print(value)\n",
+            "def inspect(value: Borrowed[str]) -> None:\n    if true:\n        pass\n    else:\n        pass\n    print(value)\n",
+            "def inspect(value: Borrowed[str], flag: bool, other: bool) -> None:\n    if flag:\n        print(value)\n    elif other:\n        assert other, f\"failed: {value}\"\n        return\n    else:\n        pass\n    print(value)\n",
+            "def inspect(value: Borrowed[str], flag: bool) -> None:\n    if flag:\n        print(value)\n        return\n    else:\n        print(value)\n        return\n    print(value)\n",
+            "def inspect(value: Borrowed[str], flag: bool, other: bool) -> None:\n    if flag:\n        if other:\n            print(value)\n        else:\n            pass\n    else:\n        assert true, \"literal\"\n    print(value)\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0123"))
+            );
+            assert!(
+                !checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0126"))
+            );
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let declaration = program.declarations.first().ok_or("missing declaration")?;
+            let crate::ast::Declaration::Function(function) = &declaration.node else {
+                return Err("missing function".into());
+            };
+            let owner = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .keys()
+                .next()
+                .ok_or("missing owner")?;
+            checker
+                .type_info
+                .checked_input_body(owner)?
+                .ok_or("missing proof")?
+                .validate_operation_coverage(function)?;
+            let InputFlow::Checked { graph, .. } = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .get(owner)
+                .ok_or("missing graph")?
+            else {
+                return Err("missing checked graph".into());
+            };
+            for branch in graph
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, node)| (node.successors.len() >= 2).then_some(index))
+            {
+                for reorder in [false, true] {
+                    if reorder && graph.nodes[branch].successors[0] == graph.nodes[branch].successors[1] {
+                        continue;
+                    }
+                    let mut facts = checker.type_info.clone();
+                    let InputFlow::Checked { graph, analysis } = facts
+                        .protocols
+                        .explicit_input_flow
+                        .get_mut(owner)
+                        .ok_or("missing flow")?
+                    else {
+                        return Err("missing checked flow".into());
+                    };
+                    if reorder {
+                        graph.nodes[branch].successors.swap(0, 1);
+                    } else {
+                        graph.nodes[branch].successors.remove(0);
+                    }
+                    *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+                    assert!(analysis.conflicts.is_empty());
+                    assert!(
+                        facts
+                            .checked_input_body(owner)?
+                            .ok_or("missing proof")?
+                            .validate_operation_coverage(function)
+                            .is_err(),
+                        "accepted altered branch {branch}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Failure-only message evaluation cannot become unconditional, skip its dependency, or join the success path.
     #[test]
     fn assertion_execution_retains_failure_edges() -> Result<(), Box<dyn std::error::Error>> {

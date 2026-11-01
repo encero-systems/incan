@@ -6,7 +6,7 @@ use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
-use crate::ast::{AssertKind, CallArg, Expr, FStringPart, FunctionDecl, ListEntry, Spanned, Statement};
+use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, FunctionDecl, ListEntry, Spanned, Statement};
 
 mod paths;
 
@@ -41,42 +41,75 @@ impl CheckedInputBody<'_> {
         let mut seen = BTreeSet::new();
         let parameters = self.borrowed_operation_parameters(function)?;
         let execution = paths::execution_order(self.graph, function)?;
-        for statement in &function.body {
+        self.visit_operation_statements(&function.body, &parameters, &execution, &mut seen)?;
+        if seen.len() != self.graph.operations.len() {
+            return Err("operation dependency has no matching source operation");
+        }
+        Ok(())
+    }
+
+    /// Validate each reachable source region, including conditional evidence that remains non-executable until its
+    /// cleanup profile is supported. The result says whether the block can reach its following statement; this
+    /// traversal never grants the outer admission boundary permission to widen.
+    fn visit_operation_statements(
+        &self,
+        statements: &[Spanned<Statement>],
+        parameters: &BTreeSet<CanonicalSymbolId>,
+        execution: &[usize],
+        seen: &mut BTreeSet<HirSourceSpan>,
+    ) -> Result<bool, &'static str> {
+        for statement in statements {
             match &statement.node {
                 Statement::Pass => {}
                 Statement::Assignment(value) => {
-                    self.visit_operation_expression(&value.value, &parameters, &execution, &mut seen)?
+                    self.visit_operation_expression(&value.value, parameters, execution, seen)?
                 }
                 Statement::CompoundAssignment(value) => {
-                    self.visit_operation_expression(&value.value, &parameters, &execution, &mut seen)?
+                    self.visit_operation_expression(&value.value, parameters, execution, seen)?
                 }
                 Statement::FieldAssignment(value) => {
-                    self.visit_operation_expression(&value.object, &parameters, &execution, &mut seen)?;
-                    self.visit_operation_expression(&value.value, &parameters, &execution, &mut seen)?;
+                    self.visit_operation_expression(&value.object, parameters, execution, seen)?;
+                    self.visit_operation_expression(&value.value, parameters, execution, seen)?;
                 }
-                Statement::Expr(value) => self.visit_operation_expression(value, &parameters, &execution, &mut seen)?,
+                Statement::Expr(value) => self.visit_operation_expression(value, parameters, execution, seen)?,
                 Statement::Return(value) => {
                     if let Some(value) = value {
-                        self.visit_operation_expression(value, &parameters, &execution, &mut seen)?;
+                        self.visit_operation_expression(value, parameters, execution, seen)?;
                     }
-                    break;
+                    return Ok(false);
                 }
                 Statement::Assert(value) => {
                     let AssertKind::Condition(condition) = &value.kind else {
                         return Err("operation coverage requires a checked ordinary assertion");
                     };
-                    self.visit_operation_expression(condition, &parameters, &execution, &mut seen)?;
+                    self.visit_operation_expression(condition, parameters, execution, seen)?;
                     if let Some(message) = &value.message {
-                        self.visit_operation_expression(message, &parameters, &execution, &mut seen)?;
+                        self.visit_operation_expression(message, parameters, execution, seen)?;
                     }
                 }
-                _ => return Err("operation coverage requires the admitted straight-line statement profile"),
+                Statement::If(branch) => {
+                    let Condition::Expr(condition) = &branch.condition else {
+                        return Err("operation coverage requires a checked expression condition");
+                    };
+                    self.visit_operation_expression(condition, parameters, execution, seen)?;
+                    let mut reaches =
+                        self.visit_operation_statements(&branch.then_body, parameters, execution, seen)?;
+                    for (condition, body) in &branch.elif_branches {
+                        self.visit_operation_expression(condition, parameters, execution, seen)?;
+                        reaches |= self.visit_operation_statements(body, parameters, execution, seen)?;
+                    }
+                    reaches |= match &branch.else_body {
+                        Some(body) => self.visit_operation_statements(body, parameters, execution, seen)?,
+                        None => true,
+                    };
+                    if !reaches {
+                        return Ok(false);
+                    }
+                }
+                _ => return Err("operation coverage requires the supported statement profile"),
             }
         }
-        if seen.len() != self.graph.operations.len() {
-            return Err("operation dependency has no matching source operation");
-        }
-        Ok(())
+        Ok(true)
     }
 
     /// Source parameter slots and canonical binding tokens select borrowed inputs; a graph permission bit or a
