@@ -316,6 +316,7 @@ pub(super) fn lower_function_body(
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
     if let Some(owner) = binding.and_then(|binding| binding.identity.as_ref()) {
         builder.input_body = lowering_facts.type_info.checked_input_body(owner);
+        builder.retain_input_transfer_subjects(function);
     }
     builder.shared_method_chain = shared_method_chain;
     builder.type_parameters = type_parameters;

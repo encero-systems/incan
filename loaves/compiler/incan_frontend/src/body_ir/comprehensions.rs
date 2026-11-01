@@ -1,7 +1,7 @@
 //! Lowering for list and dict comprehensions and generator expressions, and the clause/terminal machinery they share.
 
 use super::args::*;
-use super::control_flow::intersect_range_layouts;
+use super::control_flow::intersect_local_states;
 use super::free_vars::*;
 use super::primitives::collection_member_types;
 use super::reads::*;
@@ -440,7 +440,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // A comprehension clause may execute zero times, so a source-local range layout constructed only inside
         // its body cannot become a fact about the following enclosing statement.
         self.materialized_range_locals =
-            intersect_range_layouts(vec![range_layouts_before, self.materialized_range_locals.clone()]);
+            intersect_local_states(vec![range_layouts_before, self.materialized_range_locals.clone()]);
     }
 
     /// Recursively desugar a comprehension/generator clause chain into nested `Loop`/`If` statements, terminating

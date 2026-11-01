@@ -2,6 +2,8 @@
 
 use super::bir;
 
+mod conditional;
+
 /// Inspect the checked projection directly: admitted source must have no representation gap, while a deferred
 /// profile retains its source diagnostic. Removing identity after checking deliberately tests the next boundary.
 fn staged(source: &str, remove_call_proof: bool) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
@@ -308,7 +310,15 @@ fn nested_borrow_preserves_projection_and_conditional_move_refuses() -> Result<(
             _ => None,
         })
         .ok_or_else(|| format!("no branch: {:?}", body.block))?;
-    assert!(branch.stmts.iter().any(|statement| matches!(&statement.kind, bir::StatementKind::Unsupported { description } if description.contains("drop obligations"))), "{branch:?}");
+    assert!(
+        branch
+            .stmts
+            .iter()
+            .any(|statement| matches!(&statement.kind, bir::StatementKind::Call { .. })),
+        "{branch:?}"
+    );
+    assert!(body.checked_input_profile.is_none());
+    assert!(body.first_representation_gap().is_some());
     Ok(())
 }
 
