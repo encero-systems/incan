@@ -63,9 +63,15 @@ pub def test_explicit_owned_inputs_never_clone_borrowed_storage() -> Result[None
         read_place(owner, true, span),
     )
     for fact in [OwnershipFact.Clone, OwnershipFact.Borrow, OwnershipFact.Copy, OwnershipFact.MutBorrow]:
-        assert explicit_input_operation(locals, owner, fact, ty, IncanInputAccess.Owned, span).is_err()
+        match explicit_input_operation(locals, owner, fact, ty, IncanInputAccess.Owned, span):
+            Err(_reason) => pass
+            Ok(_value) =>
+                assert false
     borrowed = [Local(ty=PlanType.ListRef(ListLeaf.Int, 1), span=span)]
-    assert explicit_input_operation(borrowed, owner, OwnershipFact.Move, ty, IncanInputAccess.Owned, span).is_err()
+    match explicit_input_operation(borrowed, owner, OwnershipFact.Move, ty, IncanInputAccess.Owned, span):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
     return Ok(None)
 
 
@@ -83,7 +89,10 @@ pub def test_explicit_nested_loans_keep_paths_and_refuse_shared_ancestors() -> R
         IncanInputAccess.Exclusive,
         span,
     )? == RvalueKind.MutBorrow(nested)
-    assert explicit_input_operation(locals, nested, OwnershipFact.Move, PlanType.String, IncanInputAccess.Owned, span).is_err()
+    match explicit_input_operation(locals, nested, OwnershipFact.Move, PlanType.String, IncanInputAccess.Owned, span):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
     through_shared = Place(
         local=0,
         projection=Projection.Fields(
@@ -94,14 +103,17 @@ pub def test_explicit_nested_loans_keep_paths_and_refuse_shared_ancestors() -> R
         ),
         span=span,
     )
-    assert explicit_input_operation(
+    match explicit_input_operation(
         locals,
         through_shared,
         OwnershipFact.MutBorrow,
         PlanType.StringMutRef,
         IncanInputAccess.Exclusive,
         span,
-    ).is_err()
+    ):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
     assert explicit_input_operation(
         locals,
         through_shared,
@@ -118,27 +130,39 @@ pub def test_explicit_input_slots_and_facts_cannot_fall_back() -> Result[None, s
     accesses = [IncanInputAccess.Shared, IncanInputAccess.Owned, IncanInputAccess.Exclusive]
     assert argument_access(accesses, 3, 2)? == IncanInputAccess.Exclusive
     assert argument_access(accesses, 3, 0)? == IncanInputAccess.Shared
-    assert argument_access(accesses, 2, 0).is_err()
-    assert argument_access(accesses, 3, 3).is_err()
+    match argument_access(accesses, 2, 0):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    match argument_access(accesses, 3, 3):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
     assert argument_access([], 1, 0)? == IncanInputAccess.Inferred
     span = source_span(file="explicit_arguments.incn", line=1, column=1)
     owner = place(0, span)
     locals = [Local(ty=PlanType.Int, span=span)]
     for fact in [OwnershipFact.Move, OwnershipFact.Clone, OwnershipFact.Copy, OwnershipFact.Unknown]:
-        assert explicit_input_operation(
+        match explicit_input_operation(
             locals,
             owner,
             fact,
             PlanType.ScalarMutRef([PlanType.Int]),
             IncanInputAccess.Exclusive,
             span,
-        ).is_err()
-    assert explicit_input_operation(
+        ):
+            Err(_reason) => pass
+            Ok(_value) =>
+                assert false
+    match explicit_input_operation(
         locals,
         owner,
         OwnershipFact.Borrow,
         PlanType.ScalarMutRef([PlanType.Int]),
         IncanInputAccess.Shared,
         span,
-    ).is_err()
+    ):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
     return Ok(None)

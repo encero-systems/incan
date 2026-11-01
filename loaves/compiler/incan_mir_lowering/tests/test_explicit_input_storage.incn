@@ -47,6 +47,15 @@ pub def test_callable_and_frame_inputs_share_access_selection() -> Result[None, 
 pub def test_explicit_inputs_refuse_conflicting_or_unrepresented_packs() -> None:
     """Native ownership and rest-pack contracts cannot silently override a checked explicit mode."""
     ty = PlanType.List(ListLeaf.Int, 1)
-    assert signature_input(ty, false, true, IncanInputAccess.Shared).is_err()
-    assert packed_input(ty, IncanCallableParamKind.RestPositional, false, false, IncanInputAccess.Owned).is_err()
-    assert semantic_input(PlanType.Int, IncanCallableParamKind.RestKeyword, false, false, IncanInputAccess.Shared).is_err()
+    match signature_input(ty, false, true, IncanInputAccess.Shared):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    match packed_input(ty, IncanCallableParamKind.RestPositional, false, false, IncanInputAccess.Owned):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    match semantic_input(PlanType.Int, IncanCallableParamKind.RestKeyword, false, false, IncanInputAccess.Shared):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
