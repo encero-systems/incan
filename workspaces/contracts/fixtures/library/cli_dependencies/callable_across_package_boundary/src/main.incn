@@ -14,7 +14,7 @@
 
 from pub::callability import Counter, default_build, grow, hyperquant, keep_refs, map_owned, new_counter, plus_one
 from rust::std::vec import Vec
-from pub::callability import Adder, Unary, apply_custom, apply_unary
+from pub::callability import Adder, ForwardedUnary, NativeDebug, Unary, apply_custom, apply_unary
 from std.io import BinaryReader
 from std.traits.callable import Callable1 as DirectUnary
 import std.traits.callable as callable_traits
@@ -22,6 +22,16 @@ import std.traits.callable as callable_traits
 
 def apply_forwarded[F with Unary[int, int]](operation: F, value: int) -> int:
     """A forwarded alias still selects the standard callable declaration."""
+    return operation(value)
+
+
+def apply_transitive[F with ForwardedUnary[int, int]](operation: F, value: int) -> int:
+    """A local facade and compiled provider retain the original callable trait."""
+    return operation(value)
+
+
+def render_forwarded[F with ForwardedUnary[int, str]](operation: F, value: int) -> str:
+    """Keep input and result type arguments distinct through the forwarded trait."""
     return operation(value)
 
 
@@ -78,3 +88,5 @@ def main() -> None:
     assert apply_direct((value) => value + 4, 40) == 44
     assert apply_qualified((value) => value + 5, 40) == 45
     assert apply_custom(Adder(amount=7), 40) == 47
+    assert apply_transitive((value) => value + 6, 40) == 46
+    assert render_forwarded((value) => f"n={value}", 42) == "n=42"
