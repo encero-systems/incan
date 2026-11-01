@@ -110,12 +110,15 @@ impl TypeChecker {
         self.type_info.calls.body_ir_constructor_types.insert(span, carrier);
     }
 
-    /// Validate model/class constructor arguments, including RFC 017 coercions for typed field initializers.
+    /// Validate model/class constructor arguments against the selected declaration, including RFC 017 coercions for
+    /// typed field initializers. The ordered fields belong to that same declaration; module-qualified owners need not
+    /// have a lexical type binding.
     pub(in crate::typechecker::check_expr::calls) fn check_model_or_class_constructor_call(
         &mut self,
         type_name: &str,
         display_name: &str,
         fields: &std::collections::HashMap<String, FieldInfo>,
+        field_order: &[String],
         args: &[CallArg],
         call_span: Span,
     ) -> ResolvedType {
@@ -222,7 +225,7 @@ impl TypeChecker {
         }
 
         if every_required_field_supplied {
-            self.record_constructor_field_binding_for_lowering(type_name, &bound_fields, &provided, call_span);
+            self.record_constructor_field_binding_for_lowering(field_order, &bound_fields, &provided, call_span);
         }
 
         // ---- Fields that bind one type parameter bind it to one type (#1561) ----
@@ -354,17 +357,11 @@ impl TypeChecker {
     /// because lowering only consumes these facts after a clean check.
     fn record_constructor_field_binding_for_lowering(
         &mut self,
-        type_name: &str,
+        field_order: &[String],
         bound_fields: &[Option<String>],
         provided: &std::collections::HashMap<String, Span>,
         call_span: Span,
     ) {
-        let field_order: Vec<String> = match self.lookup_type_info(type_name) {
-            Some(TypeInfo::Model(info)) => info.field_order.clone(),
-            Some(TypeInfo::Class(info)) => info.field_order.clone(),
-            _ => return,
-        };
-
         let mut argument_slots = Vec::with_capacity(bound_fields.len());
         for bound in bound_fields {
             let Some(field_name) = bound.as_deref() else {
@@ -818,14 +815,14 @@ impl TypeChecker {
                     );
                     return self.constructor_result_type(name);
                 }
-                let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+                let ctor_fields: Option<(std::collections::HashMap<String, FieldInfo>, Vec<String>)> =
                     self.lookup_type_info(name).and_then(|info| match info {
-                        TypeInfo::Model(m) => Some(m.fields.clone()),
-                        TypeInfo::Class(c) => Some(c.fields.clone()),
+                        TypeInfo::Model(m) => Some((m.fields.clone(), m.field_order.clone())),
+                        TypeInfo::Class(c) => Some((c.fields.clone(), c.field_order.clone())),
                         _ => None,
                     });
-                if let Some(fields) = ctor_fields {
-                    self.check_model_or_class_constructor_call(name, name, &fields, args, span)
+                if let Some((fields, field_order)) = ctor_fields {
+                    self.check_model_or_class_constructor_call(name, name, &fields, &field_order, args, span)
                 } else {
                     self.errors.push(errors::type_constructor_unavailable(name, span));
                     ResolvedType::Unknown
