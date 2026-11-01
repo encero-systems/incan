@@ -1,0 +1,236 @@
+"""Conditional cleanup permission comes from checked slots and exact source storage, never argument spelling."""
+
+from rust::incan_semantics_core import IncanInputAccess
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding,
+    ArgumentElement,
+    BoundArgument,
+    LocalId,
+    Operand,
+    OwnershipFact,
+    Place,
+)
+from rust::incan_semantics_core import (
+    CanonicalSymbolId,
+    SemanticSourceTargetKind,
+    HirSourceSpan,
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+)
+from rust::incan_semantics_core::body_ir import (
+    LocalDecl,
+    LocalOrigin,
+    ScopeId,
+    PlaceOperand,
+    Statement,
+    StatementKind,
+    Rvalue,
+    Block,
+    Constant,
+)
+from pub::incan_mir_plan import PlanType, ListLeaf
+from conditional_transfers import (
+    owned_call_reads,
+    source_storage,
+    moved_source,
+    validate_initializer_assignment,
+    validate_owning_storage,
+)
+
+
+def moved(local: u32) -> ArgumentElement:
+    """Construct one checked whole-storage read without supplying source-level annotation names."""
+    return ArgumentElement.One(Operand.place(Place.from_local(LocalId(local)), OwnershipFact.Move, true))
+
+
+pub def test_owned_call_inventory_uses_declared_slots() -> Result[None, str]:
+    """Reversed written order cannot attach an Owned contract to its neighboring shared parameter."""
+    defaults: list[usize] = []
+    binding = ArgumentBinding.Resolved(
+        arguments=[
+            BoundArgument(slot=1usize, written_position=0usize),
+            BoundArgument(slot=0usize, written_position=1usize),
+        ],
+        defaulted_slots=defaults,
+    )
+    reads = owned_call_reads([IncanInputAccess.Shared, IncanInputAccess.Owned], binding, [moved(4u32), moved(7u32)])?
+    assert len(reads) == 1
+    assert reads[0][0] == 1
+    assert reads[0][1].place.local_id() == Some(LocalId(4u32))
+    return Ok(None)
+
+
+pub def test_owned_call_inventory_refuses_ambiguous_slots() -> None:
+    """An unresolved call, a repeated slot and an out-of-range slot cannot authorize a transfer."""
+    defaults: list[usize] = []
+    modes = [IncanInputAccess.Owned, IncanInputAccess.Owned]
+    bindings = [
+        ArgumentBinding.UnresolvedPositional,
+        ArgumentBinding.Resolved(
+            arguments=[
+                BoundArgument(slot=0usize, written_position=0usize),
+                BoundArgument(slot=0usize, written_position=1usize),
+            ],
+            defaulted_slots=defaults,
+        ),
+        ArgumentBinding.Resolved(
+            arguments=[
+                BoundArgument(slot=0usize, written_position=0usize),
+                BoundArgument(slot=2usize, written_position=1usize),
+            ],
+            defaulted_slots=defaults,
+        ),
+    ]
+    for binding in bindings:
+        match owned_call_reads(modes, binding, [moved(0u32), moved(1u32)]):
+            Err(_reason) => pass
+            Ok(_reads) =>
+                assert false
+
+
+pub def test_owned_call_inventory_excludes_copy_and_refuses_borrow_as_move() -> Result[None, str]:
+    """Copy values add no drop obligation; a loan cannot satisfy a consuming input."""
+    binding = ArgumentBinding.resolved_positional(1usize)
+    source = Place.from_local(LocalId(0u32))
+    copied = ArgumentElement.One(Operand.place(source, OwnershipFact.Copy, false))
+    assert len(owned_call_reads([IncanInputAccess.Owned], binding, [copied])?) == 0
+    for fact in [OwnershipFact.Borrow, OwnershipFact.MutBorrow, OwnershipFact.Clone, OwnershipFact.Unknown]:
+        borrowed = ArgumentElement.One(Operand.place(source, fact, true))
+        match owned_call_reads([IncanInputAccess.Owned], binding, [borrowed]):
+            Err(_reason) => pass
+            Ok(_reads) =>
+                assert false
+    return Ok(None)
+
+
+def source_binding(index: u32, name: str, span: HirSourceSpan) -> LocalDecl:
+    """Keep equal source spellings distinguishable by their complete checked declaration identity."""
+    identity = CanonicalSymbolId.module_declaration(["example"], name, SemanticSourceTargetKind.Local, span)
+    return LocalDecl(
+        id=LocalId(index),
+        name=Some(name),
+        identity=Some(identity),
+        ty=RustType.Primitive(Primitive.Str),
+        origin=LocalOrigin.UserBinding,
+        scope=ScopeId(0u32),
+        span=span,
+    )
+
+
+pub def test_whole_source_storage_uses_exact_identity() -> Result[None, str]:
+    """Same-spelled bindings retain distinct native slots; duplicate canonical bindings are refused."""
+    first = source_binding(0u32, "value", HirSourceSpan.new(0usize, 5usize))
+    second = source_binding(1u32, "value", HirSourceSpan.new(10usize, 15usize))
+    match second.identity:
+        Some(identity) =>
+            assert source_storage([first, second], identity)? == 2
+            match source_storage([second, second], identity):
+                Err(_reason) => pass
+                Ok(_local) =>
+                    assert false
+        None =>
+            assert false
+    return Ok(None)
+
+
+pub def test_generated_temporary_cannot_gain_source_storage_permission() -> Result[None, str]:
+    """Fresh intermediate values are excluded, whereas an unresolved user binding refuses."""
+    span = HirSourceSpan.new(0usize, 1usize)
+    temporary = LocalDecl(
+        id=LocalId(0u32),
+        name=None,
+        identity=None,
+        ty=RustType.Primitive(Primitive.Str),
+        origin=LocalOrigin.Temporary,
+        scope=ScopeId(0u32),
+        span=span,
+    )
+    read = PlaceOperand(place=Place.from_local(LocalId(0u32)), fact=OwnershipFact.Move, last_use=true)
+    assert moved_source([temporary], read)? == None
+    unresolved = LocalDecl(
+        id=LocalId(0u32),
+        name=Some("value"),
+        identity=None,
+        ty=RustType.Primitive(Primitive.Str),
+        origin=LocalOrigin.UserBinding,
+        scope=ScopeId(0u32),
+        span=span,
+    )
+    match moved_source([unresolved], read):
+        Err(_reason) => pass
+        Ok(_local) =>
+            assert false
+    return Ok(None)
+
+
+def initializer(span: HirSourceSpan, fact: OwnershipFact) -> Statement:
+    """Build the one whole assignment shape emitted for a checked source-owned transfer."""
+    destination = Place.from_local(LocalId(1u32))
+    source = Operand.place(Place.from_local(LocalId(0u32)), fact, true)
+    return Statement(kind=StatementKind.Assign(place=destination, rvalue=Rvalue.Use(source)), span=span)
+
+
+pub def test_initializer_inventory_requires_one_exact_assignment() -> Result[None, str]:
+    """Wrong sites, duplicate statements and Copy cannot substitute for the retained Move assignment."""
+    span = HirSourceSpan.new(10usize, 20usize)
+    assignment = initializer(span, OwnershipFact.Move)
+    block = Block(scope=ScopeId(0u32), stmts=[assignment])
+    validate_initializer_assignment(block, span, 1, 2)?
+    for candidate in [
+        Block(scope=ScopeId(0u32), stmts=[assignment, assignment]),
+        Block(scope=ScopeId(0u32), stmts=[initializer(span, OwnershipFact.Copy)]),
+        Block(scope=ScopeId(0u32), stmts=[initializer(HirSourceSpan.new(11usize, 20usize), OwnershipFact.Move)]),
+    ]:
+        match validate_initializer_assignment(candidate, span, 1, 2):
+            Err(_reason) => pass
+            Ok(_value) =>
+                assert false
+    match validate_initializer_assignment(block, span, 2, 1):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    return Ok(None)
+
+
+pub def test_initializer_inventory_visits_both_arms_but_not_loops() -> Result[None, str]:
+    """Discovery order does not affect conditional owners, and a loop cannot lend authority to an outer initializer."""
+    left_site = HirSourceSpan.new(10usize, 20usize)
+    right_site = HirSourceSpan.new(30usize, 40usize)
+    left = Block(scope=ScopeId(1u32), stmts=[initializer(left_site, OwnershipFact.Move)])
+    right = Block(scope=ScopeId(2u32), stmts=[initializer(right_site, OwnershipFact.Move)])
+    condition = Operand.Constant(Constant.Bool(true))
+    otherwise: Option[Block] = Some(right)
+    branch = Statement(
+        kind=StatementKind.If(cond=condition, then_block=left, else_block=otherwise),
+        span=HirSourceSpan.new(0usize, 50usize),
+    )
+    block = Block(scope=ScopeId(0u32), stmts=[branch])
+    validate_initializer_assignment(block, left_site, 1, 2)?
+    validate_initializer_assignment(block, right_site, 1, 2)?
+    repeated = Statement(kind=StatementKind.Loop(body=left), span=left_site)
+    match validate_initializer_assignment(Block(scope=ScopeId(0u32), stmts=[repeated]), left_site, 1, 2):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    return Ok(None)
+
+
+pub def test_owner_carrier_refuses_references_copy_and_mismatches() -> Result[None, str]:
+    """An exact moved source remains its owning carrier; a native reference never becomes one by annotation."""
+    validate_owning_storage(PlanType.String, PlanType.String, false)?
+    ty = PlanType.List(ListLeaf.Int, 1)
+    validate_owning_storage(ty, ty, false)?
+    for actual in [PlanType.StringRef, PlanType.StringMutRef, PlanType.Int, PlanType.FrozenStr]:
+        match validate_owning_storage(actual, actual, false):
+            Err(_reason) => pass
+            Ok(_value) =>
+                assert false
+    match validate_owning_storage(PlanType.Model(0, "Point"), PlanType.Model(0, "Point"), true):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    match validate_owning_storage(PlanType.String, ty, false):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    return Ok(None)

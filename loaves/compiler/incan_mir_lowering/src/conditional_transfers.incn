@@ -1,0 +1,175 @@
+"""Inventory checked whole-owner transfers before conditional native lowering visits either arm."""
+
+from pub::incan_mir_plan import PlanType
+from rust::incan_semantics_core import IncanInputAccess, CanonicalSymbolId, SemanticSourceTargetKind, HirSourceSpan
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding,
+    ArgumentElement,
+    Operand,
+    OwnershipFact,
+    PlaceOperand,
+    LocalDecl,
+    LocalOrigin,
+    BoundArgument,
+    PlaceElem,
+    Block,
+    StatementKind,
+    Rvalue,
+    Place,
+)
+
+
+pub def owned_call_reads(
+    accesses: &list[IncanInputAccess],
+    binding: &ArgumentBinding,
+    arguments: &list[ArgumentElement],
+) -> Result[list[tuple[int, PlaceOperand]], str]:
+    """Select consuming source reads by resolved parameter slot; this alone grants no storage permission."""
+    if len(arguments) != len(accesses):
+        return Err("unsupported conditional transfer with omitted or packed inputs")
+    match binding:
+        ArgumentBinding.Resolved(arguments=_slots, defaulted_slots=defaults) =>
+            if len(defaults) != 0:
+                return Err("unsupported conditional transfer with deferred inputs")
+        ArgumentBinding.ResolvedDeclarationOrder(arguments=_slots, defaulted_slots=defaults) =>
+            if len(defaults) != 0:
+                return Err("unsupported conditional transfer with deferred inputs")
+        _ => return Err("conditional transfer lacks checked argument slots")
+    match binding:
+        ArgumentBinding.Resolved(arguments=bound, defaulted_slots=_defaults) =>
+            return resolved_call_reads(accesses, bound, arguments)
+        ArgumentBinding.ResolvedDeclarationOrder(arguments=bound, defaulted_slots=_defaults) =>
+            return resolved_call_reads(accesses, bound, arguments)
+        _ => return Err("conditional transfer lacks checked argument slots")
+
+
+def resolved_call_reads(
+    accesses: &list[IncanInputAccess],
+    bound: &list[BoundArgument],
+    arguments: &list[ArgumentElement],
+) -> Result[list[tuple[int, PlaceOperand]], str]:
+    """Validate the complete fixed binding before selecting only its consuming source operands."""
+    mut reads: list[tuple[int, PlaceOperand]] = []
+    mut slots: list[int] = []
+    mut positions: list[int] = []
+    if len(bound) != len(arguments):
+        return Err("conditional transfer slot count disagrees with its operands")
+    for index in range(len(arguments)):
+        slot = int(bound[index].slot)
+        written = int(bound[index].written_position)
+        if slot < 0 or slot >= len(accesses) or slot in slots:
+            return Err("conditional transfer has an invalid or repeated parameter slot")
+        if written < 0 or written >= len(arguments) or written in positions:
+            return Err("conditional transfer has an invalid or repeated written position")
+        slots.append(slot)
+        positions.append(written)
+        match arguments[index].as_one():
+            None => return Err("conditional transfer lacks a fixed argument")
+            Some(operand) =>
+                if accesses[slot] == IncanInputAccess.Owned:
+                    match operand:
+                        Operand.Place(read) =>
+                            if read.fact == OwnershipFact.Copy:
+                                continue
+                            if read.fact != OwnershipFact.Move or not read.place.projection.is_empty():
+                                return Err("conditional transfer requires a whole moved owner")
+                            reads.append((slot, read.clone()))
+                        Operand.Constant(_value) => pass
+    return Ok(reads)
+
+
+pub def source_storage(declarations: &list[LocalDecl], identity: &CanonicalSymbolId) -> Result[int, str]:
+    """Map one complete checked binding to its unique native slot, excluding return storage and temporaries."""
+    if identity.kind not in [SemanticSourceTargetKind.Local, SemanticSourceTargetKind.Parameter]:
+        return Err("conditional transfer source is not a local or parameter")
+    mut found = -1
+    for index in range(len(declarations)):
+        declaration = declarations[index]
+        if declaration.identity == Some(identity.clone()):
+            if found != -1 or int(declaration.id.index()) != index:
+                return Err("conditional transfer source has ambiguous storage")
+            if (
+                (identity.kind == SemanticSourceTargetKind.Local and declaration.origin != LocalOrigin.UserBinding)
+                or (identity.kind == SemanticSourceTargetKind.Parameter and declaration.origin != LocalOrigin.Parameter)
+            ):
+                return Err("conditional transfer source is not its declared storage")
+            found = index
+    if found == -1:
+        return Err("conditional transfer source has no canonical storage")
+    for index in range(len(declarations)):
+        if index != found and declarations[index].id == declarations[found].id:
+            return Err("conditional transfer source has a repeated local id")
+    return Ok(found + 1)
+
+
+pub def moved_source(declarations: &list[LocalDecl], read: &PlaceOperand) -> Result[Option[int], str]:
+    """A fresh temporary adds no outer drop policy; a claimed source transfer must map without ambiguity."""
+    if read.fact != OwnershipFact.Move or not read.place.projection.is_empty():
+        return Err("conditional transfer requires a whole moved source")
+    match read.place.local_id():
+        None => return Err("conditional transfer does not own global storage")
+        Some(local) =>
+            index = int(local.index())
+            if index < 0 or index >= len(declarations) or declarations[index].id != local:
+                return Err("conditional transfer has an invalid source local")
+            declaration = declarations[index]
+            if declaration.origin == LocalOrigin.Temporary and declaration.identity == None:
+                return Ok(None)
+            match declaration.identity:
+                None => return Err("conditional transfer source lacks canonical identity")
+                Some(identity) => return Ok(Some(source_storage(declarations, identity)?))
+
+
+pub def validate_initializer_assignment(
+    block: &Block,
+    span: HirSourceSpan,
+    source: int,
+    destination: int,
+) -> Result[None, str]:
+    """Require exactly one full-site whole assignment; coincident byte offsets in another expansion are distinct."""
+    if source == destination or initializer_matches(block, span, source, destination)? != 1:
+        return Err("conditional initializer lacks one exact moved assignment")
+    return Ok(None)
+
+
+def initializer_matches(block: &Block, span: HirSourceSpan, source: int, destination: int) -> Result[int, str]:
+    """Walk only immediate conditional regions; deferred computations cannot satisfy a caller's initializer fact."""
+    mut count = 0
+    for statement in block.stmts:
+        match statement.kind:
+            StatementKind.If(cond=_condition, then_block=then_block, else_block=otherwise) =>
+                count += initializer_matches(then_block, span, source, destination)?
+                match otherwise:
+                    Some(else_block) => count += initializer_matches(else_block, span, source, destination)?
+                    None => pass
+            StatementKind.Assign(place=target, rvalue=value) =>
+                if statement.span == span:
+                    if whole_slot(target)? != destination:
+                        return Err("conditional initializer destination differs from its checked binding")
+                    match value:
+                        Rvalue.Use(Operand.Place(read)) =>
+                            if read.fact != OwnershipFact.Move or whole_slot(read.place)? != source:
+                                return Err("conditional initializer source differs from its checked move")
+                        _ => return Err("conditional initializer site is not a whole moved assignment")
+                    count += 1
+            _ => pass
+    return Ok(count)
+
+
+def whole_slot(place: &Place) -> Result[int, str]:
+    """Use the established Body IR to native return-slot offset only for an unprojected local root."""
+    if not place.projection.is_empty():
+        return Err("conditional transfer cannot own a projected place")
+    match place.local_id():
+        Some(local) => return Ok(int(local.index()) + 1)
+        None => return Err("conditional transfer cannot own global storage")
+
+
+pub def validate_owning_storage(actual: PlanType, expected: PlanType, copyable: bool) -> Result[None, str]:
+    """Require the same admitted non-Copy owner carrier; references and primitive Copy values cannot gain drop policy."""
+    if actual != expected or copyable:
+        return Err("conditional transfer requires an unchanged non-Copy owner carrier")
+    match actual:
+        PlanType.String | PlanType.List(_, _) | PlanType.Set(_) | PlanType.Dict(_, _) => return Ok(None)
+        PlanType.Model(_, _) | PlanType.Enum(_, _) | PlanType.Tuple(_) => return Ok(None)
+        _ => return Err("unsupported conditional owner storage")
