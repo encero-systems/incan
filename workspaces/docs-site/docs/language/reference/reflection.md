@@ -34,11 +34,21 @@ def main() -> None:
 
 ## Generic Value Reflection
 
-Generic helpers may call `value.__class_name__()` and `value.__fields__()` on a type parameter. The compiler treats those calls as reflection capabilities and emits the required runtime bounds for the generated Rust function, so the generic helper has the same field metadata result as a direct concrete call when it is instantiated with a reflectable model or class.
+Generic helpers may call `value.__class_name__()` and `value.__fields__()` on a type parameter. The compiler retains the selected reflection operation until the receiver's concrete declaration is known. A reflectable model or class therefore has the same immutable field metadata, declaration order and visibility rules through a generic value as through a direct concrete call. The metadata result is `FrozenList[FieldInfo]`; it does not become the string-valued result used by generic field-value reflection. An authored method named `__fields__` remains an ordinary method with its declared result.
 
 ```incan
+model User:
+    name: str
+    email: str
+
+
 def reflected_field_count[T](value: T) -> int:
     return len(value.__fields__())
+
+
+def main() -> None:
+    user = User(name="Alice", email="alice@example.com")
+    println(reflected_field_count(user))  # 2
 ```
 
 ## Generic Type Reflection
