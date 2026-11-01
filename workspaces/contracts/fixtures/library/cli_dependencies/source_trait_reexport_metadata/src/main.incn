@@ -1,0 +1,7 @@
+# Expected output:
+#   42
+from pub::provider import ping
+
+def main() -> None:
+    """Use a provider whose checked API retains a source-only trait alias."""
+    println(ping())
