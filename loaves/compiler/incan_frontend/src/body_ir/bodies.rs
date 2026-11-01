@@ -353,6 +353,7 @@ pub(super) fn lower_function_body(
             Ok(Some(proof)) => Some(bir::CheckedInputProfile {
                 version: 1,
                 owner: proof.canonical_owner().clone(),
+                owned_initializers: Vec::new(),
                 parameters: params
                     .iter()
                     .enumerate()
