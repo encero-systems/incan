@@ -1,5 +1,7 @@
 //! Direct-only selection for the frozen source-owned string conversion bridge.
 
+use std::collections::BTreeSet;
+
 use super::{IncanPrimitiveType, IncanType, TypeCheckInfo, ast, bir, parameter_types};
 use crate::{
     api_metadata::{ApiDeclaration, ApiTrait},
@@ -172,16 +174,20 @@ fn selected_string_conversion_contract(
     )))
 }
 
-/// Retain the consumer's complete source import union once, selecting the conversion trait the standard package
-/// owning its module publishes. A missing publication returns None; an inactive union stays distinct.
+/// Retain the consumer's source import union and reached canonical standard functions, selecting the conversion
+/// trait published by the module's owning package. A missing publication returns None; an inactive union stays
+/// distinct.
 ///
 /// A checked unit whose imports reach the trait's module while no Loaf owns it is the package that declares the trait:
 /// an import of a module no Loaf provides is refused at check time. It links no conversion contract, so it is inactive.
 pub fn compilation_string_conversion_contract<'program>(
     programs: impl IntoIterator<Item = &'program ast::Program>,
     loaves: &LoafIndex,
+    requested: &BTreeSet<CanonicalSymbolId>,
 ) -> Option<bir::StringConversionContract> {
-    if !programs.into_iter().any(imports_string_conversion_contract) {
+    if !programs.into_iter().any(imports_string_conversion_contract)
+        && !reaches_environment_conversion(loaves, requested)
+    {
         return Some(bir::StringConversionContract::Inactive);
     }
     let capability = trait_capabilities::string_try_from();
@@ -203,6 +209,22 @@ pub fn compilation_string_conversion_contract<'program>(
         .identity_graph
         .canonical_for_public_path(&public_path)?;
     selected_string_conversion_contract(&identity, manifest)
+}
+
+/// Recognize the standard environment parser by its admitted provider identities, including every overload.
+/// Facade spellings and equal-named user functions grant no conversion bridge; the owning std namespace supplies it.
+fn reaches_environment_conversion(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>) -> bool {
+    let Some(owner) = loaves.owner_of(&["std".to_owned(), "environ".to_owned()]) else {
+        return false;
+    };
+    let manifest = &owner.artifact.manifest;
+    let path = [manifest.name.clone(), "environ".to_owned(), "get_as".to_owned()];
+    manifest
+        .contract_metadata
+        .identity_graph
+        .canonicals_at_public_path(&path)
+        .iter()
+        .any(|identity| identity.kind == SemanticSourceTargetKind::Function && requested.contains(identity))
 }
 
 /// Join the selected canonical trait's direct source path to its unique checked API and require its owned ABI.

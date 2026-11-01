@@ -236,14 +236,15 @@ fn checked_modules(
         }
         None => None,
     };
+    let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
     let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
         modules.iter().map(|module| &module.ast),
         session.loaves(),
+        &requested,
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
 
     // ---- Declarations the program reaches in its Loaves ----
-    let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
     let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
     requested.extend(runtime_callable_bindings.iter().map(|binding| binding.canonical.clone()).filter(

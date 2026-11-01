@@ -178,6 +178,7 @@ import a::hidden         # refused: hidden is not pub (INCAN-I0001)
 
 - Accepted in a source file under a directory named `src`, for any module-level declaration kind: functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, aliases and partial presets.
 - A re-export of an alias, or of a dependency's re-export, publishes the declaration it names: a call through each re-exported name calls that declaration.
+- Standard-library declarations can be re-exported with `pub from std.M import X [as Y]`. A published alias retains the standard declaration's callable or nominal identity; it does not create a replacement type or grant ownership of a standard namespace.
 
 Refused (`INCAN-P0001`): `pub from` in a file outside a `src` directory, and `pub import`.
 
