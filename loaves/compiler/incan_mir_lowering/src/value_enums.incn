@@ -89,9 +89,9 @@ pub def value_method_owner(
         return Ok(None)
     for owner in range(len(module.value_enum_declarations)):
         declaration = module.value_enum_declarations[owner]
-        if module.enum_declarations[index].canonical != declaration.canonical:
+        if borrowed_at(module.enum_declarations, index).canonical != declaration.canonical:
             continue
-        validate_layout(module.enum_declarations[index], declaration)?
+        validate_layout(borrowed_at(module.enum_declarations, index), declaration)?
         match target.canonical:
             Some(identity) =>
                 if identity.declaration_span != declaration.canonical.declaration_span:
@@ -153,7 +153,7 @@ pub def enum_message_layout(
             index = receiver_layout(constructors, module, locals, argument, span, unions, intrinsics)?
             if index < 0 or index >= len(module.enum_declarations):
                 return Ok(None)
-            owner = module.enum_declarations[index].canonical
+            owner = borrowed_at(module.enum_declarations, index).canonical
             if (
                 identity.origin != owner.origin
                 or identity.scope_discriminant != owner.scope_discriminant

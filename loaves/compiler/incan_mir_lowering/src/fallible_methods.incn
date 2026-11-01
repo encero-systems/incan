@@ -16,7 +16,7 @@ from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from trait_links import contains
 from decls import library_item
-from table_views import borrowed_at
+from table_views import borrowed_at, borrowed_table
 
 
 pub def fallible_methods(
@@ -99,16 +99,16 @@ pub def fallible_methods(
                                 FallibleIteratorMethods(
                                     item=native_source_type(
                                         constructors,
-                                        list(module.nominal_declarations),
-                                        list(module.enum_declarations),
+                                        borrowed_table(module.nominal_declarations),
+                                        borrowed_table(module.enum_declarations),
                                         collect_unions(module),
                                         arguments[0],
                                         intrinsics,
                                     )?,
                                     error=native_source_type(
                                         constructors,
-                                        list(module.nominal_declarations),
-                                        list(module.enum_declarations),
+                                        borrowed_table(module.nominal_declarations),
+                                        borrowed_table(module.enum_declarations),
                                         collect_unions(module),
                                         arguments[1],
                                         intrinsics,

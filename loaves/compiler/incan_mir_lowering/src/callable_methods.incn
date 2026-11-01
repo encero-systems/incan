@@ -14,7 +14,7 @@ from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from decls import library_item
-from table_views import borrowed_at
+from table_views import borrowed_at, borrowed_table
 from trait_links import contains
 
 
@@ -68,8 +68,8 @@ pub def callable_methods(
                 signature.append(
                     native_source_type(
                         constructors,
-                        list(module.nominal_declarations),
-                        list(module.enum_declarations),
+                        borrowed_table(module.nominal_declarations),
+                        borrowed_table(module.enum_declarations),
                         collect_unions(module),
                         argument,
                         intrinsics,
@@ -91,8 +91,8 @@ pub def callable_methods(
                         continue
                     receiver = body.locals[parameter_local_index(body, 0)]
                     value = body.locals[parameter_local_index(body, 1)]
-                    mut nominals = module.nominal_declarations
-                    mut enums = module.enum_declarations
+                    nominals = borrowed_table(module.nominal_declarations)
+                    enums = borrowed_table(module.enum_declarations)
                     if frame_type(constructors, nominals, enums, receiver, intrinsics)? != PlanType.ModelRef(
                         owner,
                         str(declaration.name),
@@ -100,8 +100,8 @@ pub def callable_methods(
                         continue
                     result = native_source_type(
                         constructors,
-                        list(module.nominal_declarations),
-                        list(module.enum_declarations),
+                        borrowed_table(module.nominal_declarations),
+                        borrowed_table(module.enum_declarations),
                         collect_unions(module),
                         body.return_type,
                         intrinsics,

@@ -603,17 +603,17 @@ pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) 
     match union_projection(builder, value, span)?:
         Some(projected) => return Ok(projected)
         None => pass
-    # Materialize the suffix before borrowing it; direct mutable slice arguments still refuse (#2256).
-    mut frame_locals = builder.locals[builder.local_offset:]
+    # The frame's slots start at its offset in the shared locals table; borrow the table rather than copy a suffix.
     mut target = match model_place(
         builder.constructors,
         builder.nominals,
-        frame_locals,
+        borrowed_table(builder.locals),
         value,
         span,
         builder.enums,
         builder.unions,
         builder.intrinsics,
+        builder.local_offset,
     ):
         Ok(place) => place
         Err(error) => return Err(f"{error} in {builder.name} at {span.file}:{span.line}")
@@ -3836,7 +3836,7 @@ def concrete_iterator_collect(
     match argument_type(builder, arguments, 0, span)?:
         PlanType.Model(index, _name) => owner = index
         _ => return Err("unsupported Body IR opaque Iterator.collect without concrete receiver")
-    declaration = module.nominal_declarations[owner]
+    declaration = borrowed_at(module.nominal_declarations, owner)
     if library_item(declaration) == "":
         return Err("opaque Iterator.collect requires a standard library owner")
     mut selected = target.clone()
@@ -3955,7 +3955,7 @@ def lower_selected_library_method(
                 return Ok(false)
             match element_method_owner(builder, arguments[0])?:
                 Some(PlanType.Model(owner, _name)) =>
-                    if library_item(module.nominal_declarations[owner]) == "":
+                    if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
                         return Ok(false)
                 _ => pass
             lower_library_method(module, builder, selection, target, arguments, destination, span)?
@@ -3973,7 +3973,7 @@ def lower_sdk_element_method(
     """Borrow a retained SDK collection element for its authenticated ordinary SDK method, preserving source dispatch."""
     match element_method_owner(builder, arguments[0])?:
         Some(PlanType.Model(owner, name)) =>
-            if library_item(module.nominal_declarations[owner]) == "":
+            if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
                 return Ok(false)
             selected = implementation_target(module, target, PlanType.Model(owner, name))?
             for callable_position in range(len(module.loaf_callables)):
@@ -4046,7 +4046,7 @@ def retain_sdk_factory_result(
                     )?
                     match result:
                         PlanType.Model(owner, _name) =>
-                            if library_item(module.nominal_declarations[owner]) == "":
+                            if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
                                 return Ok(None)
                         _ => return Ok(None)
                     declared = checked_type_arguments(builder, [delegation.return_type.clone()])?
@@ -4816,18 +4816,18 @@ def library_receiver(
                                         return Ok(reference)
                                     _ => return Err("the standard library element receiver requires a nominal layout")
                             _ => return Err("the standard library method cannot consume this element receiver")
-                    mut declarations = module.nominal_declarations
-                    mut enums = module.enum_declarations
-                    mut frame_locals = builder.locals[builder.local_offset:]
+                    declarations = borrowed_table(module.nominal_declarations)
+                    enums = borrowed_table(module.enum_declarations)
                     mut receiver = model_place(
                         builder.constructors,
                         declarations,
-                        frame_locals,
+                        borrowed_table(builder.locals),
                         read.place,
                         span,
                         enums,
                         builder.unions,
                         builder.intrinsics,
+                        builder.local_offset,
                     )?
                     receiver.local += builder.local_offset
                     source = place_type(builder.locals, receiver)
@@ -7953,9 +7953,9 @@ def program_context(
             statics=Arc.new(list(module.static_declarations)),
             comparison_functions=Arc.new(comparison_functions(constructor_view, module, intrinsics)?),
             union_types=union_index(unions),
-            nominals=Arc.new(list(module.nominal_declarations)),
+            nominals=Arc.new(borrowed_table(module.nominal_declarations)),
             constructors=constructors,
-            enums=Arc.new(list(module.enum_declarations)),
+            enums=Arc.new(borrowed_table(module.enum_declarations)),
             value_enums=Arc.new(list(module.value_enum_declarations)),
             decorated_bindings=Arc.new(list(module.decorated_bindings)),
             overflow_checks=overflow_checks,
@@ -9603,9 +9603,9 @@ def entry_error(module: &BodyIrModule, ty: PlanType) -> bool:
     match ty:
         PlanType.String => return true
         PlanType.Model(index, _name) =>
-            return index < len(module.nominal_declarations) and library_item(module.nominal_declarations[index]) != ""
+            return index < len(module.nominal_declarations) and library_item(borrowed_at(module.nominal_declarations, index)) != ""
         PlanType.Enum(index, _name) =>
-            return index < len(module.enum_declarations) and library_enum_item(module.enum_declarations[index]) != ""
+            return index < len(module.enum_declarations) and library_enum_item(borrowed_at(module.enum_declarations, index)) != ""
         _ => return false
 
 

@@ -31,6 +31,7 @@ from decls import library_item
 from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
+from table_views import borrowed_at, borrowed_table
 
 
 pub model NativeFactory:
@@ -58,7 +59,7 @@ pub def fallible_factory(
                 return Ok(None)
             match result:
                 PlanType.Model(owner, _name) =>
-                    declaration = module.nominal_declarations[owner]
+                    declaration = borrowed_at(module.nominal_declarations, owner)
                     if (
                         library_item(declaration) == ""
                         or declaration.canonical.origin != slot.origin
@@ -71,8 +72,8 @@ pub def fallible_factory(
                     for argument in instance_arguments(declaration)?:
                         match native_source_type(
                             constructors,
-                            list(module.nominal_declarations),
-                            list(module.enum_declarations),
+                            borrowed_table(module.nominal_declarations),
+                            borrowed_table(module.enum_declarations),
                             collect_unions(module),
                             argument,
                             intrinsics,
@@ -238,7 +239,7 @@ def retain_shared_factory_poll(
     mut externals: list[ExternalFunction],
 ) -> Result[None, str]:
     """Forward the exact published error-map poll to its linked SDK implementation with the proven callback storage."""
-    declaration = module.nominal_declarations[owner]
+    declaration = borrowed_at(module.nominal_declarations, owner)
     if library_item(declaration) != "incan_stdlib_core::derives::collection::MapErrFallibleIterator":
         return Err("unsupported Body IR shared factory poll owner")
     mut found = false
