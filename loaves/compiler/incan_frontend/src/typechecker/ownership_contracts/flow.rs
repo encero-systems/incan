@@ -117,6 +117,15 @@ pub(in crate::typechecker) struct Node {
     pub span: HirSourceSpan,
 }
 
+/// Producer-owned boundaries cover the entire evaluation, including fresh values and nested calls. A stored
+/// value or borrow additionally names its final source event; the consumer must never recover it by span search.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct InputEvaluation {
+    pub start_node: usize,
+    pub end_node: usize,
+    pub source_node: Option<usize>,
+}
+
 /// One evaluated source argument retains its declaration slot and the loan created for that invocation.
 #[derive(Debug, Clone)]
 pub(in crate::typechecker) struct InvocationArgument {
@@ -126,6 +135,7 @@ pub(in crate::typechecker) struct InvocationArgument {
     pub access: IncanInputAccess,
     pub loan: Option<LoanId>,
     pub source: Option<Place>,
+    pub evaluation: InputEvaluation,
 }
 
 /// Evaluation order, original written positions and receiver borrowing belong to this exact selected invocation.
@@ -134,6 +144,9 @@ pub(in crate::typechecker) struct Invocation {
     pub callee: CanonicalSymbolId,
     pub receiver: Option<LoanId>,
     pub arguments: Vec<InvocationArgument>,
+    pub receiver_evaluation: Option<InputEvaluation>,
+    pub completion_node: usize,
+    pub final_accesses: Vec<usize>,
 }
 
 /// An explicit owned declaration retains its initializer and the exact event reading or transferring a stored

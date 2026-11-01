@@ -6,6 +6,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 use super::{InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
 
+mod call_evaluation;
 mod calls;
 mod locals;
 mod operations;
@@ -192,6 +193,7 @@ impl TypeCheckInfo {
                 .ownership_contracts
                 .get(&call.callee)
                 .ok_or("invocation has no canonical ownership contract")?;
+            call_evaluation::validate_invocation_events(self, graph, *span, invocation, &call.parameters)?;
             for argument in &invocation.arguments {
                 let access = crate::ownership_metadata::direct_input_access(Some(contract), argument.slot)?;
                 if argument.access != access {
