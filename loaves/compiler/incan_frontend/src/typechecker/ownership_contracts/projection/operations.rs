@@ -10,6 +10,13 @@ use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, FunctionDecl
 
 mod paths;
 
+/// Separate source operations from selected calls while sharing one reachable AST traversal.
+#[derive(Default)]
+struct SourceCoverage {
+    operations: BTreeSet<HirSourceSpan>,
+    invocations: BTreeSet<HirSourceSpan>,
+}
+
 impl CheckedInputBody<'_> {
     /// Select the retained operand relationship after graph validation. The enclosing source admission separately
     /// proves complete AST coverage, so this lookup cannot grant execution to an orphan or missing body proof.
@@ -38,12 +45,15 @@ impl CheckedInputBody<'_> {
         &self,
         function: &FunctionDecl,
     ) -> Result<(), &'static str> {
-        let mut seen = BTreeSet::new();
+        let mut seen = SourceCoverage::default();
         let parameters = self.borrowed_operation_parameters(function)?;
         let execution = paths::execution_order(self.graph, function)?;
         self.visit_operation_statements(&function.body, &parameters, &execution, &mut seen)?;
-        if seen.len() != self.graph.operations.len() {
+        if seen.operations.len() != self.graph.operations.len() {
             return Err("operation dependency has no matching source operation");
+        }
+        if seen.invocations.len() != self.graph.invocations.len() {
+            return Err("invocation dependency has no matching source call");
         }
         Ok(())
     }
@@ -56,7 +66,7 @@ impl CheckedInputBody<'_> {
         statements: &[Spanned<Statement>],
         parameters: &BTreeSet<CanonicalSymbolId>,
         execution: &[usize],
-        seen: &mut BTreeSet<HirSourceSpan>,
+        seen: &mut SourceCoverage,
     ) -> Result<bool, &'static str> {
         for statement in statements {
             match &statement.node {
@@ -143,7 +153,7 @@ impl CheckedInputBody<'_> {
         expression: &Spanned<Expr>,
         parameters: &BTreeSet<CanonicalSymbolId>,
         execution: &[usize],
-        seen: &mut BTreeSet<HirSourceSpan>,
+        seen: &mut SourceCoverage,
     ) -> Result<(), &'static str> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Literal(_) => {}
@@ -189,6 +199,11 @@ impl CheckedInputBody<'_> {
                     Some(BuiltinFnId::Print | BuiltinFnId::Len)
                 ) {
                     self.require_operation(expression.span, &operands, parameters, execution, seen)?;
+                } else if self.facts.protocols.explicit_input_calls.contains_key(&expression.span) {
+                    self.validate_call_expression(expression.span, arguments)?;
+                    if !seen.invocations.insert(expression.span) {
+                        return Err("source call has duplicate retained evaluation");
+                    }
                 }
             }
             Expr::List(entries) => {
@@ -212,7 +227,7 @@ impl CheckedInputBody<'_> {
         operands: &[&Spanned<Expr>],
         parameters: &BTreeSet<CanonicalSymbolId>,
         execution: &[usize],
-        seen: &mut BTreeSet<HirSourceSpan>,
+        seen: &mut SourceCoverage,
     ) -> Result<(), &'static str> {
         let mut required = Vec::new();
         for operand in operands {
@@ -237,7 +252,7 @@ impl CheckedInputBody<'_> {
             return Ok(());
         }
         let retained = retained.ok_or("borrowed operation has no retained consumption dependency")?;
-        if !seen.insert(operation) || retained.operands.len() != required.len() {
+        if !seen.operations.insert(operation) || retained.operands.len() != required.len() {
             return Err("operation dependencies do not match source operand coverage");
         }
         for (index, node) in self.graph.nodes.iter().enumerate() {

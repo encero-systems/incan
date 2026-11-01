@@ -1530,16 +1530,22 @@ mod tests {
                     .position(|node| matches!(node.event, flow::Event::Borrow(id) if id == dependency.loan))
                     .ok_or("missing creation")?;
                 let read = origin.checked_sub(1).ok_or("missing evaluated read")?;
-                // This fixture has one read/loan pair followed by one invocation borrow/read pair.
-                assert!(origin + 2 < graph.nodes.len());
+                let invocation = graph.invocations.values().next().ok_or("missing nested call")?;
+                let call_start = invocation
+                    .arguments
+                    .first()
+                    .ok_or("missing input")?
+                    .evaluation
+                    .start_node;
+                let call_end = *invocation.final_accesses.last().ok_or("missing final input use")?;
+                // Move the complete nested invocation, including its evaluation markers, around the first operand.
                 if corruption == 0 {
                     let before = read.checked_sub(1).ok_or("missing preceding node")?;
-                    graph.nodes[before].successors = vec![origin + 1];
-                    graph.nodes[origin + 2].successors = vec![read];
-                    graph.nodes[origin].successors = vec![origin + 3];
+                    graph.nodes[before].successors = vec![call_start];
+                    graph.nodes[call_end].successors = vec![read];
+                    graph.nodes[origin].successors = vec![call_end + 1];
                 } else if corruption == 1 {
-                    graph.nodes.swap(read, origin + 1);
-                    graph.nodes.swap(origin, origin + 2);
+                    graph.nodes[read..=call_end].rotate_left(call_start - read);
                     let count = graph.nodes.len();
                     for (index, node) in graph.nodes.iter_mut().enumerate() {
                         node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
@@ -1551,8 +1557,8 @@ mod tests {
                     let last = operation.operands.last().ok_or("missing final operand")?.final_access;
                     let continuation = graph.nodes[last].successors.clone();
                     graph.nodes[origin].successors = vec![operation.completion_node];
-                    graph.nodes[last].successors = vec![origin + 1];
-                    graph.nodes[origin + 2].successors = continuation;
+                    graph.nodes[last].successors = vec![call_start];
+                    graph.nodes[call_end].successors = continuation;
                 } else {
                     graph.nodes[graph.entry].successors = vec![graph.entry];
                 }
@@ -1788,6 +1794,99 @@ mod tests {
                 "accepted corrupted invocation {corruption}"
             );
         }
+        let mut facts = checker.type_info.clone();
+        let InputFlow::Checked { graph, analysis } = facts
+            .protocols
+            .explicit_input_flow
+            .get_mut(owner)
+            .ok_or("missing caller flow")?
+        else {
+            return Err("caller flow unavailable".into());
+        };
+        graph
+            .invocations
+            .get_mut(span)
+            .ok_or("missing invocation")?
+            .arguments
+            .swap(0, 1);
+        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+        assert!(analysis.conflicts.is_empty());
+        assert!(
+            facts.checked_input_body(owner).is_err(),
+            "accepted reordered complete invocation arguments"
+        );
+        Ok(())
+    }
+
+    /// A retained outer borrow cannot end before a later argument mutates its source, even after restored flow
+    /// analysis is recomputed to hide that conflict.
+    #[test]
+    fn invocation_final_use_follows_all_argument_evaluations() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def choose(first: Borrowed[int], second: bool) -> int:\n    return first\ndef mutate(mut value: BorrowedMut[int]) -> bool:\n    value = 2\n    return true\ndef use(mut value: int) -> int:\n    return choose(value, mutate(value))\n";
+        let mut checker = checked(source)?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{:?}",
+            checker.errors
+        );
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) if function.name == "use" => Some(function),
+                _ => None,
+            })
+            .ok_or("missing use function")?;
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .find(|owner| owner.declaration_name == "use")
+            .cloned()
+            .ok_or("missing owner")?;
+        let InputFlow::Checked { graph, analysis } = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .get_mut(&owner)
+            .ok_or("missing flow")?
+        else {
+            return Err("missing checked flow".into());
+        };
+        let outer = graph
+            .invocations
+            .values()
+            .find(|call| call.callee.declaration_name == "choose")
+            .ok_or("missing choose")?;
+        let outer_loan = outer
+            .arguments
+            .first()
+            .and_then(|argument| argument.loan)
+            .ok_or("missing outer loan")?;
+        let final_read = graph.nodes.iter().position(|node| matches!(node.event, flow::Event::Access { through: Some(id), access: flow::Access::Read, .. } if id == outer_loan)).ok_or("missing outer final use")?;
+        let origin = graph
+            .nodes
+            .iter()
+            .position(|node| matches!(node.event, flow::Event::Borrow(id) if id == outer_loan))
+            .ok_or("missing origin")?;
+        let terminal = graph.nodes.remove(final_read);
+        graph.nodes.insert(origin + 1, terminal);
+        let count = graph.nodes.len();
+        for (index, node) in graph.nodes.iter_mut().enumerate() {
+            node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
+        }
+        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+        assert!(analysis.conflicts.is_empty(), "{analysis:?}");
+        assert!(
+            checker.type_info.direct_input_admission(&owner, function).is_err(),
+            "accepted outer loan ending before later argument mutation"
+        );
         Ok(())
     }
 
@@ -1820,6 +1919,61 @@ mod tests {
                 .conflicts
                 .iter()
                 .any(|conflict| matches!(conflict.kind, flow::ConflictKind::Moved(_)))
+        );
+        let source = "def consume(value: Owned[str]) -> bool:\n    return value == \"x\"\ndef use() -> None:\n    value = \"x\"\n    result = consume(value)\n    print(value)\n";
+        let mut checker = checked(source)?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126"))
+        );
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) if function.name == "use" => Some(function),
+                _ => None,
+            })
+            .ok_or("missing use function")?;
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .find(|owner| owner.declaration_name == "use")
+            .cloned()
+            .ok_or("missing use owner")?;
+        let InputFlow::Checked { graph, analysis } = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .get_mut(&owner)
+            .ok_or("missing use flow")?
+        else {
+            return Err("missing checked flow".into());
+        };
+        let transfer = graph
+            .nodes
+            .iter_mut()
+            .find(|node| {
+                matches!(
+                    node.event,
+                    flow::Event::Access {
+                        access: flow::Access::Move,
+                        ..
+                    }
+                )
+            })
+            .ok_or("missing transfer event")?;
+        transfer.event = flow::Event::Nothing;
+        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+        assert!(analysis.conflicts.is_empty(), "{analysis:?}");
+        assert!(
+            checker.type_info.direct_input_admission(&owner, function).is_err(),
+            "accepted stored Owned argument without its Move event"
         );
         Ok(())
     }
