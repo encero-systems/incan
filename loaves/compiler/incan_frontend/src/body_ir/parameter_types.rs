@@ -279,6 +279,9 @@ pub(super) fn retained_type_identities(
             continue;
         }
         identities.entry(name.clone()).or_insert_with(|| identity.clone());
+        if let Some(key) = bir::nominal_carrier_key(identity) {
+            identities.entry(key).or_insert_with(|| identity.clone());
+        }
     }
     // Standard carrier projection uses the declaration's short native name. Preserve the checked binding of that
     // projected name too, including signature-only imports; two different owners never authorize a short alias.
