@@ -76,6 +76,7 @@ from layout_types import (
 )
 from native_call_keys import native_result_mismatch
 from text_ownership import drop_borrowed_text_temporaries
+from scalar_reads import scalar_storage_place
 from signature_lifetimes import signature_lifetimes, generic_loans
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import (
@@ -615,7 +616,7 @@ pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) 
         Err(error) => return Err(f"{error} in {builder.name} at {span.file}:{span.line}")
 
     target.local += builder.local_offset
-    return Ok(target)
+    return scalar_storage_place(builder.locals, builder.reference_values, target)
 
 
 pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
