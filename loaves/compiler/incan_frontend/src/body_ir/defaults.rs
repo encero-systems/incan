@@ -129,6 +129,7 @@ pub(super) fn attach_nominal_field_defaults(
             return_type: IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit),
             // Field slots carry no checker callable-representation proof, so consumers refuse function-typed fields.
             checked_input_profile: None,
+            explicit_input_bindings: Vec::new(),
             callable_representation: None,
             named_type_identities: std::sync::Arc::new(named_type_identities),
             param_locals: params.iter().map(|param| param.local).collect(),

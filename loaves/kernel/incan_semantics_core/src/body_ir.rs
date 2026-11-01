@@ -1315,6 +1315,10 @@ pub struct Body {
     /// metadata does not authorize an explicit mode; consumers validate the owner and complete frame-slot inventory.
     #[serde(default)]
     pub checked_input_profile: Option<CheckedInputProfile>,
+    /// Explicit local bindings this body declares, in source order. Each requires the checked profile independently
+    /// of the parameter inventory, so a body whose profile is lost still exposes its explicit-input obligation.
+    #[serde(default)]
+    pub explicit_input_bindings: Vec<ExplicitInputBinding>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
     /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
     ///
@@ -1460,6 +1464,20 @@ pub struct CheckedOwnedInitializer {
     pub assignment: HirSourceSpan,
 }
 
+/// An explicit local binding's checked input access, retained on its body independently of the checked profile.
+///
+/// A loan names existing storage rather than a frame slot, so the obligation is keyed by the binding's declaration
+/// span. The checker identity is session-local; publication erases it as it erases other local identities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplicitInputBinding {
+    /// Span of the binding's name at its declaration.
+    pub declaration: HirSourceSpan,
+    /// Checker identity of the binding within its source compilation; absent once published.
+    pub identity: Option<CanonicalSymbolId>,
+    /// Checked access: `Shared` or `Exclusive` for a loan, `Owned` for an owned initializer.
+    pub access: crate::IncanInputAccess,
+}
+
 /// One frame slot's checked input request. The slot is explicit so reordered or duplicated metadata refuses.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CheckedInputParameter {
@@ -1471,23 +1489,26 @@ pub struct CheckedInputParameter {
 
 impl Body {
     /// A resolved source callee's explicit inputs require independent caller authority, even when the caller has
-    /// no explicit parameters. Consumers must check this relationship after canonical call resolution: a missing
-    /// persisted caller profile cannot be detected from its ordinary parameter ABI alone.
+    /// no explicit parameters, and a caller's own explicit local bindings require it even when the callee is
+    /// ordinary. Consumers must check this relationship after canonical call resolution: a missing persisted caller
+    /// profile cannot be detected from its ordinary parameter ABI alone.
     pub fn input_call_profile_gap(&self, callee: &Body) -> Option<&'static str> {
-        if !callee
+        if callee
             .params
             .iter()
             .any(|parameter| !parameter.input_access.is_inferred())
         {
+            if let Some(gap) = callee.input_profile_gap() {
+                return Some(gap);
+            }
+        } else if self.explicit_input_bindings.is_empty() {
             return None;
         }
-        callee.input_profile_gap().or_else(|| {
-            if self.checked_input_profile.is_none() {
-                Some("explicit source call lacks a checked caller body profile")
-            } else {
-                self.input_profile_gap()
-            }
-        })
+        if self.checked_input_profile.is_none() {
+            Some("explicit source call lacks a checked caller body profile")
+        } else {
+            self.input_profile_gap()
+        }
     }
 
     /// Store the exact owner bindings used by Incan nominal specialization, independently of method binders.
@@ -1618,7 +1639,11 @@ impl Body {
             .iter()
             .any(|parameter| !parameter.input_access.is_inferred());
         let Some(profile) = &self.checked_input_profile else {
-            return explicit.then_some("explicit input access lacks a checked body profile");
+            if explicit {
+                return Some("explicit input access lacks a checked body profile");
+            }
+            return (!self.explicit_input_bindings.is_empty())
+                .then_some("explicit local binding lacks a checked body profile");
         };
         if profile.version != 1 || self.canonical.as_ref() != Some(&profile.owner) {
             return Some("explicit input profile has an unsupported version or different canonical owner");
@@ -5604,6 +5629,7 @@ mod tests {
             span: HirSourceSpan::new(0, 30),
             return_type: IncanType::Primitive(IncanPrimitiveType::Int),
             checked_input_profile: None,
+            explicit_input_bindings: Vec::new(),
             callable_representation: None,
             named_type_identities: Default::default(),
             locals: vec![

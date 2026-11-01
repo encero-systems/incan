@@ -56,11 +56,13 @@ use crate::body_ir::{
 /// incompatible with this combined representation and require regenerated providers.
 /// Version 41 retains canonical whole-owner initializer transfers independently of ordinary native assignments.
 /// Every provider must be rebuilt; an older profile cannot silently discard the added positional field.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 41;
+/// Version 42 retains each explicit local binding on its body, so a body that loses its checked profile still
+/// exposes the explicit-input obligation.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 42;
 
-/// Only the initializer-aware combined layout is admitted. Missing input authority cannot be reconstructed from
-/// a native ABI, and a prior layout cannot silently omit canonical initializer transfers.
-const OLDEST_SUPPORTED_VERSION: u32 = 41;
+/// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
+/// native ABI, and a prior layout cannot silently omit initializer transfers or explicit local obligations.
+const OLDEST_SUPPORTED_VERSION: u32 = 42;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -1370,6 +1372,7 @@ mod tests {
             span: identity.declaration_span,
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
             checked_input_profile: None,
+            explicit_input_bindings: Vec::new(),
             callable_representation: None,
             named_type_identities: Default::default(),
             locals: Vec::new(),
@@ -1438,10 +1441,22 @@ mod tests {
             parameters: Vec::new(),
             owned_initializers: Vec::new(),
         });
+        source
+            .explicit_input_bindings
+            .push(crate::body_ir::ExplicitInputBinding {
+                declaration: source.span,
+                identity: Some(identity("view", 3)),
+                access: crate::IncanInputAccess::Shared,
+            });
         let context = module(vec![source.clone()]);
         let eligible = BTreeSet::from([identity("input", 1)]);
         let projected =
             publication::project_body(&source, &context, "probe", &eligible).map_err(|error| format!("{error:?}"))?;
+        // The obligation is published; the session-local binding identity is not.
+        assert!(matches!(
+            projected.body.explicit_input_bindings.as_slice(),
+            [crate::body_ir::ExplicitInputBinding { identity: None, .. }]
+        ));
         assert_eq!(
             projected
                 .body
@@ -1459,10 +1474,14 @@ mod tests {
             frame.checked_input_profile.as_ref().map(|profile| &profile.owner),
             frame.canonical.as_ref()
         );
+        assert!(matches!(
+            frame.explicit_input_bindings.as_slice(),
+            [crate::body_ir::ExplicitInputBinding { identity: None, .. }]
+        ));
         source.checked_input_profile.as_mut().ok_or("missing profile")?.owner = identity("other", 2);
         assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
         assert!(publication::project_compiled_frame(&source, &context, "probe", &eligible).is_err());
-        for obsolete in [36_u32, 37, 38, 39, 40] {
+        for obsolete in [36_u32, 37, 38, 39, 40, 41] {
             assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
         }
         Ok(())
