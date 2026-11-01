@@ -198,6 +198,15 @@ fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(
     let graph = reader.graph()?;
     reader.finish()?;
     assert_eq!(graph.invocations.len(), 1);
+    let mut positive = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    restore(&positions, &mut positive, &checked)?;
+    let mut positive_fields = Vec::new();
+    super::project(&positions, &positive, &mut positive_fields)?;
+    assert_eq!(positive_fields, vec![checked.clone()]);
+
     for field in 0..5 {
         let mut altered = graph.clone();
         let missing_node = altered.nodes.len();
@@ -229,6 +238,9 @@ fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(
             ..BodyLocal::default()
         };
         restore(&positions, &mut retained, &row)?;
+        let mut restored_fields = Vec::new();
+        super::project(&positions, &retained, &mut restored_fields)?;
+        assert_eq!(restored_fields, vec![row.clone()]);
         assert!(matches!(retained.protocols.explicit_input_flow.get(&graph.owner),
             Some(InputFlow::Invalid { graph: restored, fault: actual })
                 if actual == &fault && restored.invocations.len() == altered.invocations.len()));

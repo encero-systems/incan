@@ -22,7 +22,7 @@ The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls
 
 ## Ownership record profile
 
-`incan.checker-free-functions/5` and `incan.checker-fields/5` distinguish declaration ownership annotations from body-owned access facts. These versions describe checker records; they are independent of the executable Body IR representation version.
+`incan.checker-free-functions/6` and `incan.checker-fields/6` distinguish declaration ownership annotations from body-owned access facts. These versions describe checker records; they are independent of the executable Body IR representation version.
 
 | Field family | Retained information |
 | --- | --- |
@@ -38,3 +38,5 @@ The Incan codec validates primitive shapes, counts, indices and canonical orderi
 This is still a bounded free-function profile. Pending mutation decisions, forwarding edges, callable-value bindings, loop-view state, active mutation frames and other unrepresented checker capabilities refuse projection. They never become empty successful facts. Profile 5 is not accepted as profile 6. Each invocation retains explicit evaluation boundaries for its receiver and arguments, the exact source Read/Move or loan-creation node, a completion node, and ordered final loan uses. Restored argument order and complete nested evaluation intervals must agree with the selected source call; neither a surviving signature nor recomputed liveness can replace a missing transfer event. A non-Copy operand can retain its source until the enclosing operation consumes it, after later operands have been evaluated. The record therefore retains the operation, its completion node and every exact operand/place/loan/final-read relationship. Structural graph checks authenticate these relationships; execution admission also requires complete coverage against the checked source operation. Reanalyzing a graph with an omitted consumption event cannot recreate this authority. Owned initializer relationships are retained explicitly; neither source-span searches nor current checker payloads reconstruct a missing relationship. The existing 64 KiB record and 4,096-field limits are unchanged.
 
 The canonical codec tests execute Incan encode/decode round trips and compare the complete restored selected owner with an independent fresh check after source positions move. They also remove ownership facts and corrupt versions, map order, counts and graph references. Passing the primitive Rust adapters alone is insufficient evidence for this boundary.
+
+Invocation controls additionally test exact protocol-field restoration and synthetic Incan codec records, including receiver intervals. Complete owner projection still refuses call-related `ExpressionArtifacts.body_ir_parameter_requirements`; these protocol controls do not claim complete-owner call round trips.
