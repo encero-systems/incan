@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
+mod operations;
+pub(in crate::typechecker) use operations::{OperandDependency, OperationInputs};
+
 /// One source storage projection. Dynamic indices conservatively overlap every element projection.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::typechecker) enum Projection {
@@ -202,6 +205,8 @@ pub(in crate::typechecker) struct Graph {
     pub owned_locals: BTreeMap<CanonicalSymbolId, OwnedInitialization>,
     /// Argument-to-loan bindings are retained at construction; lowering must not recover them from similar spans.
     pub invocations: BTreeMap<HirSourceSpan, Invocation>,
+    /// Observer and operator dependencies retain their evaluated operand and exact consumption event.
+    pub operations: BTreeMap<HirSourceSpan, OperationInputs>,
     pub nodes: Vec<Node>,
     pub entry: usize,
 }
@@ -270,6 +275,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
     }
     validate_invocations(graph)?;
     validate_owned_initializations(graph)?;
+    operations::validate_operations(graph)?;
     let mut origins = vec![None; graph.loans.len()];
     let mut destinations = BTreeSet::new();
     for (local, loan) in &graph.local_loans {
@@ -739,6 +745,7 @@ mod tests {
             .into(),
             loans,
             local_loans: BTreeMap::new(),
+            operations: BTreeMap::new(),
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             nodes: events

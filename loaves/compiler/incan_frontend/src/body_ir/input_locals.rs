@@ -6,6 +6,8 @@ use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use super::{BodyBuilder, ast, bir};
 use crate::typechecker::CheckedInputSource;
 
+mod reads;
+
 /// Physical place selected by a checked canonical alias. The source graph, not this map, owns lifetime analysis.
 pub(super) struct LocalInputAlias {
     /// Existing owner and static field projection; no separate reference-valued frame slot is introduced.
@@ -65,7 +67,7 @@ impl BodyBuilder<'_, '_> {
                     Some(CheckedInputSource::Place { root, fields }) => {
                         let place = self.lower_expr_to_place(&assignment.value, scope, out);
                         self.authenticate_input_place(&place, &root, &fields)?;
-                        self.explicit_place_operand(place, &ty, IncanInputAccess::Owned)?
+                        self.explicit_place_operand(place, &ty, IncanInputAccess::Owned, &assignment.value)?
                     }
                     None => {
                         let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
@@ -93,9 +95,6 @@ impl BodyBuilder<'_, '_> {
             }
             let loan = proof.local_loan(&identity, assignment.value.span)?;
             let ty = self.checked_type(loan.value_type);
-            if !ty.abi_v0_facts().ownership.is_trivially_copy() {
-                return Err("non-Copy local alias requires checked value-consumption projection".into());
-            }
             if self.resolve_ty(assignment.value.span) != ty {
                 return Err("explicit local loan cannot coerce or copy its source".into());
             }
@@ -109,6 +108,7 @@ impl BodyBuilder<'_, '_> {
             }
             let place = self.lower_expr_to_place(&assignment.value, scope, out);
             self.authenticate_input_place(&place, &root, &fields)?;
+            self.consume_input_source_read(&assignment.value, &place);
             if self.identity_bindings.contains_key(&destination) || self.input_aliases.contains_key(&destination) {
                 return Err("explicit local alias already has an owner or another source place".into());
             }

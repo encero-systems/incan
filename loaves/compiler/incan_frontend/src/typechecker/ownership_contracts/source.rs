@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::TypeChecker;
 use super::flow::{
-    Access, Event, Graph, Loan, LoanId, LoanKind, Node, OwnedInitialization, Permission, Place, Projection, Root,
+    Access, Event, Graph, Loan, LoanId, LoanKind, Node, OperandDependency, OperationInputs, OwnedInitialization,
+    Permission, Place, Projection, Root,
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, FunctionDecl,
@@ -142,6 +143,7 @@ pub(super) fn build(
             local_loans: BTreeMap::new(),
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
+            operations: BTreeMap::new(),
             nodes: vec![Node {
                 event: Event::Nothing,
                 successors: Vec::new(),
@@ -387,7 +389,7 @@ impl Builder<'_> {
             }
             Expr::Literal(_) => Ok(incoming),
             Expr::List(entries) => self.scalar_list(entries, incoming),
-            Expr::FString(parts) => self.formatted_text(parts, incoming),
+            Expr::FString(parts) => self.formatted_text(parts, expression.span, incoming),
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, expression.span, incoming)
@@ -399,13 +401,81 @@ impl Builder<'_> {
                 if matches!(operation, BinaryOp::And | BinaryOp::Or) {
                     outgoing.extend(incoming);
                 }
-                Ok(outgoing)
+                self.finish_operation(expression.span, &[left, right], outgoing)
             }
             _ => Err(Unavailable {
                 span: expression.span,
                 reason: "expression needs checked call or dependency access facts".into(),
             }),
         }
+    }
+
+    /// A non-Copy alias operand remains borrowed until the enclosing operation consumes it. Evaluating a later
+    /// operand cannot mutate the same storage merely because the alias's textual occurrence was evaluated first.
+    /// Fresh computed results have their own storage; Copy reads retain the ordinary snapshot behavior.
+    fn finish_operation(
+        &mut self,
+        operation: Span,
+        expressions: &[&Spanned<Expr>],
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let mut retained = Vec::new();
+        for expression in expressions {
+            let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
+                span: expression.span,
+                reason: "missing checked operand type",
+            })?;
+            if self.copy_value(ty) {
+                continue;
+            }
+            if let Some(path) = self.optional_place(expression)?
+                && let Some(loan) = path.through
+            {
+                retained.push((expression.span, path.place, loan));
+            }
+        }
+        if retained.is_empty() {
+            return Ok(incoming);
+        }
+        let completion_node = self.graph.nodes.len();
+        incoming = self.event(incoming, Event::Nothing, operation);
+        let mut operands = Vec::new();
+        for (operand, source, loan) in retained {
+            let final_access = self.graph.nodes.len();
+            incoming = self.event(
+                incoming,
+                Event::Access {
+                    place: source.clone(),
+                    access: Access::Read,
+                    through: Some(loan),
+                },
+                operand,
+            );
+            operands.push(OperandDependency {
+                operand,
+                source,
+                loan,
+                final_access,
+            });
+        }
+        if self
+            .graph
+            .operations
+            .insert(
+                operation,
+                OperationInputs {
+                    completion_node,
+                    operands,
+                },
+            )
+            .is_some()
+        {
+            return Err(Unavailable {
+                span: operation,
+                reason: "operation has more than one dependency binding",
+            });
+        }
+        Ok(incoming)
     }
 
     /// Use the checker's derive relation for transfer proofs rather than the legacy ABI adaptation heuristic.

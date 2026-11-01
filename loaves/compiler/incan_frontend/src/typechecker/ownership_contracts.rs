@@ -1271,6 +1271,126 @@ mod tests {
         Ok(())
     }
 
+    /// Restored graphs cannot omit an operand's consumption dependency and recompute themselves into acceptance.
+    #[test]
+    fn restored_alias_flow_requires_operation_consumption() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main() -> None:\n    mut original = \"payload\"\n    let view: Borrowed[str] = original\n    print(view, replace(original))\n";
+        let mut checker = checked(source)?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126"))
+        );
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) if function.name == "main" => Some(function),
+                _ => None,
+            })
+            .ok_or("missing main")?;
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .find(|owner| owner.declaration_name == "main")
+            .cloned()
+            .ok_or("missing owner")?;
+        let InputFlow::Checked { graph, analysis } = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .get_mut(&owner)
+            .ok_or("missing flow")?
+        else {
+            return Err("missing checked graph".into());
+        };
+        let loan = *graph.local_loans.values().next().ok_or("missing alias loan")?;
+        let consumption = graph
+            .nodes
+            .iter_mut()
+            .rev()
+            .find(|node| {
+                matches!(node.event,
+                    flow::Event::Access { access: flow::Access::Read, through: Some(id), .. } if id == loan
+                )
+            })
+            .ok_or("missing consumption read")?;
+        consumption.event = flow::Event::Nothing;
+        graph.operations.clear();
+        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+        assert!(analysis.conflicts.is_empty());
+        assert!(
+            checker.type_info.direct_input_admission(&owner, function).is_err(),
+            "stripped operation dependency admitted an invalid alias read"
+        );
+        Ok(())
+    }
+
+    /// Existing operation metadata cannot authorize missing, reused or changed consumption events.
+    #[test]
+    fn operation_consumption_rejects_altered_relationships() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "def read(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
+        let checker = checked(source)?;
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let crate::ast::Declaration::Function(function) =
+            &program.declarations.first().ok_or("missing declaration")?.node
+        else {
+            return Err("expected function".into());
+        };
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .next()
+            .cloned()
+            .ok_or("missing owner")?;
+        for corruption in 0..7 {
+            let mut facts = checker.type_info.clone();
+            let InputFlow::Checked { graph, analysis } = facts
+                .protocols
+                .explicit_input_flow
+                .get_mut(&owner)
+                .ok_or("missing flow")?
+            else {
+                return Err("missing checked graph".into());
+            };
+            let inputs = graph.operations.values_mut().next().ok_or("missing operation")?;
+            let dependency = inputs.operands.first_mut().ok_or("missing operand")?;
+            match corruption {
+                0 => graph.operations.clear(),
+                1 => graph.nodes[dependency.final_access].event = flow::Event::Nothing,
+                2 => dependency.final_access = inputs.completion_node,
+                3 => inputs.completion_node = 0,
+                4 => dependency.operand.start += 1,
+                5 => dependency.loan = flow::LoanId(graph.loans.len()),
+                _ => {
+                    let flow::Root::Binding(root) = &mut dependency.source.root else {
+                        return Err("expected declared source".into());
+                    };
+                    root.declaration_name = "foreign".into();
+                }
+            }
+            // Recompute when structurally possible; retained analysis alone must not be the refusal mechanism.
+            if let Ok(recomputed) = flow::analyze(graph) {
+                *analysis = recomputed;
+            }
+            assert!(
+                facts.direct_input_admission(&owner, function).is_err(),
+                "accepted corruption {corruption}"
+            );
+        }
+        Ok(())
+    }
+
     /// Fixed named calls retain declaration-order evaluation and distinct written positions, slots and source loans.
     #[test]
     fn invocation_projection_retains_slots_and_loans() -> Result<(), Box<dyn std::error::Error>> {
@@ -1420,13 +1540,13 @@ mod tests {
         Ok(checker)
     }
 
-    /// Reannotation, method bodies, non-Copy aliases and conditional owned locals remain outside direct admission.
+    /// Reannotation, method bodies, returned aliases and conditional owned locals remain outside direct admission.
     #[test]
     fn local_alias_admission_preserves_other_boundaries() -> Result<(), Box<dyn std::error::Error>> {
         for source in [
             "def wrong() -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n",
             "class Counter:\n    value: int\n    def read(self) -> int:\n        let local: Borrowed[int] = self.value\n        return local\n",
-            "def read(value: Borrowed[str]) -> int:\n    let local: Borrowed[str] = value\n    return len(local)\n",
+            "def read(value: Borrowed[str]) -> Borrowed[str] from value:\n    let local: Borrowed[str] = value\n    return local\n",
             "def read(value: Owned[int], choose: bool) -> int:\n    if choose:\n        let local: Owned[int] = value\n        return local\n    return value\n",
         ] {
             let checker = checked(source)?;

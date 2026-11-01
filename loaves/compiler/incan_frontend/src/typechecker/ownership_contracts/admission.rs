@@ -54,12 +54,13 @@ impl TypeCheckInfo {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
         }
         proof.validate_direct_call_storage()?;
+        proof.validate_operation_coverage(function)?;
         Ok(Some(proof))
     }
 }
 
 impl CheckedInputBody<'_> {
-    /// Copy aliases preserve existing storage. Owned locals use their exact initializer relationship; a whole
+    /// Local aliases preserve existing storage. Owned locals use their exact initializer relationship; a whole
     /// non-Copy owner may transfer, while projected transfers still require partial-drop obligations.
     fn validate_local_storage(&self) -> Result<(), &'static str> {
         for (local, mode) in self
@@ -103,14 +104,7 @@ impl CheckedInputBody<'_> {
                 .get(local)
                 .and_then(|id| self.graph.loans.get(id.0))
                 .ok_or("explicit local alias has no checked source loan")?;
-            let retained = self.local_loan(local, loan.span)?;
-            if !crate::typechecker::semantic_type_from_resolved(retained.value_type)
-                .abi_v0_facts()
-                .ownership
-                .is_trivially_copy()
-            {
-                return Err("non-Copy local alias requires checked value-consumption projection");
-            }
+            self.local_loan(local, loan.span)?;
         }
         Ok(())
     }

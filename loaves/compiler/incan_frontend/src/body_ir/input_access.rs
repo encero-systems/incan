@@ -278,22 +278,17 @@ mod tests {
         Ok(())
     }
 
-    /// Checking a source alias does not authorize lowering it as an ordinary owned copy or first-class reference.
+    /// A non-Copy alias reads the original borrowed storage without an owned copy or first-class reference local.
     #[test]
-    fn local_source_alias_waits_for_storage_projection() -> Result<(), Box<dyn std::error::Error>> {
+    fn noncopy_local_alias_reads_retain_borrowed_storage() -> Result<(), Box<dyn std::error::Error>> {
         let source =
             "def read(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = crate::typechecker::TypeChecker::new();
-        let errors = checker
+        checker
             .check_program(&program)
-            .err()
-            .ok_or("source execution gate unexpectedly opened")?;
-        assert!(
-            errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
-            "{errors:?}"
-        );
+            .map_err(|errors| format!("{errors:?}"))?;
         let facts = checker.into_type_info();
         let providers = super::super::ProviderOperationCatalog::new();
         let context = super::super::BodyIrContext {
@@ -304,8 +299,25 @@ mod tests {
         };
         let module = super::super::build_module_seed(&program, &[], &facts, &context);
         let body = module.bodies.first().ok_or("missing body")?;
-        assert!(body.block.stmts.iter().any(|statement| matches!(&statement.kind,
-            bir::StatementKind::Unsupported { description } if description.contains("non-Copy local alias"))));
+        assert!(body.first_representation_gap().is_none());
+        let arguments = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call { args, .. } => Some(args),
+                _ => None,
+            })
+            .ok_or("missing length observation")?;
+        let [bir::ArgumentElement::One(bir::Operand::Place(read))] = arguments.as_slice() else {
+            return Err("missing borrowed observation operand".into());
+        };
+        assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+        assert!(!read.last_use);
+        assert_eq!(
+            read.place.local_id(),
+            body.params.first().map(|parameter| parameter.local)
+        );
         assert!(
             !body
                 .locals
