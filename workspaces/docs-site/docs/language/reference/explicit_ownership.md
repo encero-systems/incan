@@ -50,6 +50,22 @@ Methods, returned dependencies, indirect calls, indexed access, conditional tran
 
 Assertion messages are evaluated only on failure. They may read borrowed values or use a checked exclusive input, but transferring a stored non-Copy owner from a message receives `INCAN-T0123` until conditional cleanup is supported. This also applies to ordinary locals passed to an `Owned` parameter. A fresh value constructed for the failure message and a Copy input do not transfer a surviving outer owner.
 
+## Ordinary helpers within an input-checked body
+
+A body that already requires explicit-input checking can call a plain synchronous free function with immutable Copy arguments and a scalar or owned text/byte result. The selected parameter types must match the canonical declaration without parameter substitution; missing or conflicting header facts receive `INCAN-T0123`. This does not change the helper's inferred parameter ABI or require ownership annotations in an otherwise ordinary caller.
+
+```incan
+# accepted by source checking; native qualification remains separate
+def add(value: int) -> int:
+    return value + 1
+
+
+def use(value: Borrowed[int]) -> int:
+    return add(value)
+```
+
+Named fixed arguments retain their existing declaration-order evaluation. Mutable ordinary inputs, non-Copy ordinary arguments, defaults, indirect calls and nominal result dependencies remain refused within this profile. A generic binder alone does not change input access: an instantiation that leaves the checked parameter inventory unchanged can satisfy this source rule, while a substituted parameter inventory needs further retained evidence. These helper facts do not enable conditional execution.
+
 ## Result-source syntax
 
 

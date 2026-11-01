@@ -5,7 +5,7 @@ use super::input_flow::{self, Reader};
 use super::types::{parameter_fields, read_parameters, read_type, type_fields};
 use super::{BodyLocal, Fields, NodeBindingError, Positions, span_of};
 use crate::ast::Receiver;
-use crate::typechecker::ownership_contracts::{InputCall, InputFlow, LocalMode, Unavailable, flow};
+use crate::typechecker::ownership_contracts::{InputCall, InputCallKind, InputFlow, LocalMode, Unavailable, flow};
 use incan_lang::lang::types::ownership;
 use std::collections::HashMap;
 
@@ -41,6 +41,13 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
             "contract".into(),
             "1".into(),
         ];
+        row.push(
+            match call.kind {
+                InputCallKind::Explicit => "explicit",
+                InputCallKind::Ordinary => "ordinary",
+            }
+            .into(),
+        );
         match &call.owner {
             Some(owner) => row.extend(["some".into(), positions.identity(owner)?]),
             None => row.push("none".into()),
@@ -148,6 +155,11 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
             local.protocols.explicit_input_copy.insert(owner, decisions);
         }
         ("input-call", "contract") => {
+            let kind = match reader.token()? {
+                "explicit" => InputCallKind::Explicit,
+                "ordinary" => InputCallKind::Ordinary,
+                _ => return Err(NodeBindingError::MissingNode),
+            };
             let owner = match reader.token()? {
                 "none" => None,
                 "some" => Some(reader.identity()?),
@@ -167,6 +179,7 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
                 .insert(
                     anchor,
                     InputCall {
+                        kind,
                         owner,
                         callee,
                         receiver,

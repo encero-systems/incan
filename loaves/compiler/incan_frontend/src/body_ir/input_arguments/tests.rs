@@ -781,3 +781,54 @@ fn borrowed_parameter_operations_keep_disjoint_and_copy_behavior() -> Result<(),
     );
     Ok(())
 }
+
+/// A plain Copy helper keeps its inferred declaration ABI, while an explicit local still gives its caller a profile.
+/// Native persistence of that local-only obligation is a separate representation acceptance gate.
+#[test]
+fn ordinary_copy_helper_retains_caller_profile_and_value_operand() -> Result<(), Box<dyn std::error::Error>> {
+    let module = admitted(
+        "def add(value: int) -> int:\n    return value + 1\ndef use(value: int) -> int:\n    let view: Borrowed[int] = value\n    return add(view)\n",
+    )?;
+    let caller = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "use")
+        .ok_or("missing caller")?;
+    let callee = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "add")
+        .ok_or("missing callee")?;
+    assert!(
+        caller
+            .params
+            .iter()
+            .all(|parameter| parameter.input_access.is_inferred())
+    );
+    assert!(
+        callee
+            .params
+            .iter()
+            .all(|parameter| parameter.input_access.is_inferred())
+    );
+    assert!(
+        caller
+            .checked_input_profile
+            .as_ref()
+            .is_some_and(|profile| profile.version == 1)
+    );
+    assert!(callee.checked_input_profile.is_none());
+    let argument = caller
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call { args, .. } => args.first(),
+            _ => None,
+        })
+        .ok_or("missing helper call")?;
+    assert!(
+        matches!(argument, bir::ArgumentElement::One(bir::Operand::Place(read)) if read.fact == bir::OwnershipFact::Copy)
+    );
+    Ok(())
+}
