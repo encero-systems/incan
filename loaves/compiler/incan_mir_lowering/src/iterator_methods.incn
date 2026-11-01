@@ -23,7 +23,7 @@ pub def iterator_methods(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
-    native_names: &list[str],
+    native_names: list[str],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[IteratorMethods], str]:
     """Authorize only a concrete source adopter actually retained as an SDK storage argument; native bounds remain checked."""
@@ -33,13 +33,15 @@ pub def iterator_methods(
     if library_item(declaration) != "":
         return Ok(None)
     mut selected: Option[IteratorMethods] = None
-    for protocol in module.trait_declarations:
+    for protocol_position in range(len(module.trait_declarations)):
+        protocol = borrowed_at(module.trait_declarations, protocol_position)
         if not standard_protocol(protocol):
             continue
         mut arguments: list[RustType] = []
         mut next: Option[CanonicalSymbolId] = None
         mut slots: list[str] = []
-        for implementation in module.trait_implementations:
+        for implementation_position in range(len(module.trait_implementations)):
+            implementation = borrowed_at(module.trait_implementations, implementation_position)
             if (
                 implementation.owner != declaration.canonical
                 or implementation.method.origin != protocol.origin
@@ -80,7 +82,8 @@ pub def iterator_methods(
             None => return Err("unsupported Body IR native iterator without checked poll")
             Some(identity) =>
                 mut bodies: list[Body] = []
-                for body in module.bodies:
+                for body_position in range(len(module.bodies)):
+                    body = borrowed_at(module.bodies, body_position)
                     if body.canonical == Some(identity.clone()):
                         bodies.append(body.clone())
                 if len(bodies) != 1 or not poll_abi(constructors, module, bodies[0], owner, arguments[0], intrinsics)?:

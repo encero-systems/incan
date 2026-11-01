@@ -22,7 +22,7 @@ pub def callable_methods(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
-    native_names: &list[str],
+    native_names: list[str],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[str, list[PlanType]], str]:
     """
@@ -75,14 +75,16 @@ pub def callable_methods(
                         intrinsics,
                     )?,
                 )
-            for implementation in module.trait_implementations:
+            for implementation_position in range(len(module.trait_implementations)):
+                implementation = borrowed_at(module.trait_implementations, implementation_position)
                 if (
                     implementation.owner != declaration.canonical
                     or implementation.method != slot
                     or implementation.implementation == slot
                 ):
                     continue
-                for body in module.bodies:
+                for body_position in range(len(module.bodies)):
+                    body = borrowed_at(module.bodies, body_position)
                     if (
                         body.canonical != Some(implementation.implementation.clone())
                         or len(body.type_parameters) != 0

@@ -567,7 +567,8 @@ def validate_declarations_and_bodies(module: &BodyIrModule, modules: &list[BodyI
     for declaration in module.fieldless_enum_declarations:
         if not module.is_well_formed_fieldless_enum_declaration(declaration):
             return Err("invalid Body IR fieldless enum declaration identity")
-    for declaration in module.value_enum_declarations:
+    for declaration_position in range(len(module.value_enum_declarations)):
+        declaration = borrowed_at(module.value_enum_declarations, declaration_position)
         if not module.is_well_formed_value_enum_declaration(declaration):
             return Err("invalid Body IR value enum declaration identity")
     for body_position in range(len(module.bodies)):
@@ -7953,9 +7954,9 @@ def program_context(
             statics=Arc.new(list(module.static_declarations)),
             comparison_functions=Arc.new(comparison_functions(constructor_view, module, intrinsics)?),
             union_types=union_index(unions),
-            nominals=Arc.new(borrowed_table(module.nominal_declarations)),
+            nominals=Arc.new(list(module.nominal_declarations)),
             constructors=constructors,
-            enums=Arc.new(borrowed_table(module.enum_declarations)),
+            enums=Arc.new(list(module.enum_declarations)),
             value_enums=Arc.new(list(module.value_enum_declarations)),
             decorated_bindings=Arc.new(list(module.decorated_bindings)),
             overflow_checks=overflow_checks,
@@ -8384,7 +8385,8 @@ def finalize_plan_layouts(
 ) -> Result[None, str]:
     """Publish completed layouts and validate callable and coroutine storage after every instance has contributed."""
     # Instance lowering can append carriers needed by a callable or coroutine capture.
-    for declaration in intrinsics:
+    for declaration_position in range(len(intrinsics)):
+        declaration = borrowed_at(intrinsics, declaration_position)
         enums.append(declaration)
     if publish:
         publish_local_layouts(models, enums)

@@ -98,11 +98,11 @@ pub def native_source_type(
     intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
-    mut index = 0
-    for declaration in intrinsics:
+    # Borrow each intrinsic: this runs for every resolved type, so a cloned declaration per entry dominates lowering.
+    for index in range(len(intrinsics)):
+        declaration = borrowed_at(intrinsics, index)
         if semantic_type_matches(declaration, ty):
             return Ok(PlanType.Enum(len(enums) + index, declaration.name))
-        index += 1
     match enum_type(enums, ty):
         Some(result) => return Ok(result)
         None => pass
@@ -468,7 +468,8 @@ def hashed_leaf(
                 for argument in arguments:
                     hashed_leaf(constructors, nominals, enums, argument, intrinsics)?
                 mut index = 0
-                for carrier in intrinsics:
+                for carrier_position in range(len(intrinsics)):
+                    carrier = borrowed_at(intrinsics, carrier_position)
                     if carrier.carrier == str(base) and semantic_type_matches(carrier, ty):
                         return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
                     index += 1

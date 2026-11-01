@@ -8,7 +8,8 @@ from table_views import borrowed_at
 pub def specialize_classes(module: &BodyIrModule) -> Result[list[Body], str]:
     """Add one concrete receiver frame per inherited implementation after original module validation."""
     mut result: list[Body] = []
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         match declaration.class_inheritance:
             None => pass
             Some(inheritance) =>
@@ -18,7 +19,8 @@ pub def specialize_classes(module: &BodyIrModule) -> Result[list[Body], str]:
                         continue
                     instantiated.append(record.implementation.clone())
                     mut found = false
-                    for body in module.bodies:
+                    for body_position in range(len(module.bodies)):
+                        body = borrowed_at(module.bodies, body_position)
                         if body.canonical != Some(record.implementation):
                             continue
                         found = true

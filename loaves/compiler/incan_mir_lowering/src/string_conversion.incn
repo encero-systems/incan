@@ -81,7 +81,8 @@ pub def string_conversion_callee(
                     )
                     return Ok(Some((CalleeKind.External(path), result)))
                 RustType.Named(name) =>
-                    for declaration in module.nominal_declarations:
+                    for declaration_position in range(len(module.nominal_declarations)):
+                        declaration = borrowed_at(module.nominal_declarations, declaration_position)
                         if declaration.name == name or declaration.carrier_name() == name:
                             root = conversion_name(module, declaration)?
                             if root != "":
@@ -224,7 +225,8 @@ def underlying_conversion(
         RustType.Named(name) =>
             match owner.named_type_identities.get(name):
                 Some(identity) =>
-                    for declaration in module.nominal_declarations:
+                    for declaration_position in range(len(module.nominal_declarations)):
+                        declaration = borrowed_at(module.nominal_declarations, declaration_position)
                         # The foreign map exposes a borrowed identity; compare owned identity values.
                         if declaration.canonical == identity.clone():
                             root = conversion_name(module, declaration)?

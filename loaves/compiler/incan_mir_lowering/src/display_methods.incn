@@ -25,7 +25,8 @@ pub def display_functions(
         match declaration.display_method:
             None => pass
             Some(selected) =>
-                for body in module.bodies:
+                for body_position in range(len(module.bodies)):
+                    body = borrowed_at(module.bodies, body_position)
                     if body.canonical != Some(selected.clone()) or len(body.type_parameters) != 0:
                         continue
                     if len(body.params) != 1 or len(body.locals) == 0:

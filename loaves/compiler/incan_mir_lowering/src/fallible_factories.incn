@@ -100,7 +100,8 @@ def published_factory(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
     """A spelling grants no factory: the actual standard trait must enclose the checked member identity."""
     if slot.kind != SemanticSourceTargetKind.Method or slot.namespace != SymbolNamespace.Member:
         return false
-    for root in module.trait_declarations:
+    for root_position in range(len(module.trait_declarations)):
+        root = borrowed_at(module.trait_declarations, root_position)
         if root.origin == slot.origin and standard_protocol(root) and contains(root, slot):
             return true
     return false
@@ -108,7 +109,8 @@ def published_factory(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
 
 def concrete_return(module: &BodyIrModule, slot: &CanonicalSymbolId, declaration: &NominalDeclaration) -> bool:
     """Require the exact published body and its return binding's canonical owner before substituting a runtime ABI."""
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         if body.canonical != Some(slot.clone()) or body.first_representation_gap() != None:
             continue
         match body.return_type:
@@ -243,7 +245,8 @@ def retain_shared_factory_poll(
     if library_item(declaration) != "incan_stdlib_core::derives::collection::MapErrFallibleIterator":
         return Err("unsupported Body IR shared factory poll owner")
     mut found = false
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         match body.canonical:
             Some(identity) =>
                 if (

@@ -60,9 +60,9 @@ pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[Const
         statics=Arc.new(list(module.static_declarations)),
         comparison_functions=Arc.new(comparisons),
         union_types=Arc.new(unions),
-        nominals=Arc.new(borrowed_table(module.nominal_declarations)),
+        nominals=Arc.new(list(module.nominal_declarations)),
         constructors=constructors,
-        enums=Arc.new(borrowed_table(module.enum_declarations)),
+        enums=Arc.new(list(module.enum_declarations)),
         value_enums=Arc.new(list(module.value_enum_declarations)),
         decorated_bindings=Arc.new(bindings),
     )
@@ -83,5 +83,5 @@ pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule
     retained: &list[NominalDeclaration] = program.nominals.as_ref()
     if len(retained) != len(module.nominal_declarations):
         constructors = constructor_index(module.nominal_declarations)
-        program.nominals = Arc.new(borrowed_table(module.nominal_declarations))
+        program.nominals = Arc.new(list(module.nominal_declarations))
         program.constructors = Arc.new(constructors)

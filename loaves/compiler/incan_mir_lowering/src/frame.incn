@@ -29,13 +29,13 @@ from program_context import ProgramContext
 from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId, IncanInputAccess
 from rust::incan_semantics_core::body_ir import (
-from table_views import borrowed_at
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
     ValueEnumDeclaration as RustValueEnumDeclaration,
     DecoratedBinding as RustDecoratedBinding,
     TraitDefaultInstantiation,
 )
+from table_views import borrowed_at
 
 
 pub model Builder:

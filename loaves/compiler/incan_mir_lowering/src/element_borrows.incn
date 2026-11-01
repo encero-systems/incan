@@ -33,7 +33,6 @@ from layout_types import shared_receiver_type
 from classes import frame_type
 from tuples import is_tuple_type
 from lowering import (
-from table_views import borrowed_at
     list_borrow,
     list_slice_view,
     scalar_operand,
@@ -41,6 +40,7 @@ from table_views import borrowed_at
     materialized_receiver,
     instantiated_external_call,
 )
+from table_views import borrowed_at
 
 
 pub def shared_element_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:

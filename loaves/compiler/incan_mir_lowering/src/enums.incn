@@ -190,7 +190,8 @@ pub def native_source_type(
 ) -> Result[PlanType, str]:
     """Resolve retained standard carriers and source enums before delegating the existing scalar/model boundary."""
     mut index = 0
-    for declaration in intrinsics:
+    for declaration_position in range(len(intrinsics)):
+        declaration = borrowed_at(intrinsics, declaration_position)
         if semantic_type_matches(declaration, ty):
             return Ok(PlanType.Enum(len(declarations) + index, declaration.name))
         index += 1

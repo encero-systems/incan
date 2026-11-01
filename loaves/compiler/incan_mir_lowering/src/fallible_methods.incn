@@ -23,7 +23,7 @@ pub def fallible_methods(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
-    native_names: &list[str],
+    native_names: list[str],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[FallibleIteratorMethods], str]:
     """Grant the native protocol only for source layouts occurring inside a retained SDK instantiation."""
@@ -32,13 +32,15 @@ pub def fallible_methods(
     declaration = borrowed_at(module.nominal_declarations, owner)
     if library_item(declaration) != "":
         return Ok(None)
-    for protocol in module.trait_declarations:
+    for protocol_position in range(len(module.trait_declarations)):
+        protocol = borrowed_at(module.trait_declarations, protocol_position)
         if not standard_protocol(protocol):
             continue
         mut arguments: list[RustType] = []
         mut next: Option[CanonicalSymbolId] = None
         mut slots: list[str] = []
-        for implementation in module.trait_implementations:
+        for implementation_position in range(len(module.trait_implementations)):
+            implementation = borrowed_at(module.trait_implementations, implementation_position)
             if (
                 implementation.owner != declaration.canonical
                 or implementation.method.origin != protocol.origin
@@ -89,7 +91,8 @@ pub def fallible_methods(
         match next:
             None => return Err("unsupported Body IR native fallible iterator without checked poll")
             Some(identity) =>
-                for body in module.bodies:
+                for body_position in range(len(module.bodies)):
+                    body = borrowed_at(module.bodies, body_position)
                     if (
                         body.canonical == Some(identity.clone())
                         and poll_abi(constructors, module, body, owner, arguments, intrinsics)?
@@ -123,7 +126,8 @@ pub def fallible_methods(
 
 def published_default(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
     """Require a complete published body; original owning modules were validated before their contexts were joined."""
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         if body.canonical != Some(identity.clone()):
             continue
         match body.first_representation_gap():

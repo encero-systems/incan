@@ -235,7 +235,8 @@ pub def serde_propagation(module: &BodyIrModule) -> Result[tuple[list[str], list
     """
     mut serialize: list[str] = []
     mut deserialize: list[str] = []
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         if library_item(declaration) != "":
             continue
         if "serde::Serialize" not in declaration.derives and "serde::Deserialize" not in declaration.derives:
@@ -255,10 +256,12 @@ pub def serde_propagation(module: &BodyIrModule) -> Result[tuple[list[str], list
 
 def declared_beside(module: &BodyIrModule, name: str, source: &NominalDeclaration) -> bool:
     """Whether `name` is a source enum or nominal declared in the same module as `source`."""
-    for declaration in module.enum_declarations:
+    for declaration_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, declaration_position)
         if str(declaration.name) == name:
             return declaration.canonical.origin == source.canonical.origin
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         if str(declaration.name) == name:
             return declaration.canonical.origin == source.canonical.origin
     return false

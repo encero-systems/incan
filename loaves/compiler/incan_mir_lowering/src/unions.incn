@@ -280,7 +280,8 @@ pub def require_native_union_signature(
                 _ = require_native_union_signature(argument, intrinsics, source_carriers)?
             if str(base) != "Union":
                 return Ok(None)
-            for declaration in intrinsics:
+            for declaration_position in range(len(intrinsics)):
+                declaration = borrowed_at(intrinsics, declaration_position)
                 if semantic_type_matches(declaration, ty) and (source_carriers or declaration.library_item != ""):
                     return Ok(None)
             return Err("unsupported Body IR Loaf union without admitted native representation")

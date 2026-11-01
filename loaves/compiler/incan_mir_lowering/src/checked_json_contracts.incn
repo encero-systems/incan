@@ -77,7 +77,8 @@ pub def selected_deserialize_hook(
             ):
                 return Err("unsupported Body IR checked Deserialize hook owner provenance")
             mut found: Option[Body] = None
-            for body in module.bodies:
+            for body_position in range(len(module.bodies)):
+                body = borrowed_at(module.bodies, body_position)
                 match body.canonical:
                     Some(identity) =>
                         if identity == hook:
