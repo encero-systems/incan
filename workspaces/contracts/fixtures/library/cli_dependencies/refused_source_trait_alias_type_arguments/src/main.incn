@@ -1,0 +1,14 @@
+# behavior: a forwarded callable trait retains its ordered input and result arguments
+# expect-exit: 1
+# expect-stderr-contains:
+#   Call to 'render' violates generic bound
+from pub::provider import Unary
+
+def render[F with Unary[int, str]](operation: F) -> str:
+    """Require an integer input and string result through the checked alias."""
+    return operation(42)
+
+def main() -> None:
+    """Refuse a callable with the input and result types reversed."""
+    operation: (str) -> int = (value) => len(value)
+    println(render(operation))
