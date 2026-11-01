@@ -1,10 +1,6 @@
 """Public facade over identifiers, search profiles, greetings, calculations and composition."""
 
-pub from ids import (
-    EntryId,
-    entry_id,
-    entry_id_text,
-)
+pub from ids import EntryId, entry_id, entry_id_text
 pub from labels import Candidate
 pub from search import (
     MAX_TOP_K,
@@ -19,20 +15,15 @@ pub from search import (
     build_index,
     exact_query,
 )
-pub from middle import (
-    Greeting,
-    Tone,
-    LOUDNESS,
-)
+pub from middle import Greeting, Tone, LOUDNESS
 pub from relabel import wave
 pub from calculations import calculate as facade_calculate
 pub from compose import compose
-
 pub from std.math import sqrt as square_root
 pub from std.io import IoError as BinaryError
 pub from standard import relayed_root, RelayedError
-
-pub from std.environ import EnvironError, get_as as read_value
+pub from std.environ import EnvironError, get_as as read_value, EnvironErrorKind as EnvironmentKind
+pub from std.primitives.environ import read as observe_environment
 
 
 pub def format_scalar(value: int) -> int:

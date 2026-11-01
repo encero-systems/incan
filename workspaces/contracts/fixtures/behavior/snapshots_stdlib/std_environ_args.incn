@@ -1,18 +1,120 @@
-# behavior: std.environ args() returns the program's arguments with the program itself first, so a run without arguments selects the help subcommand (#1668)
+# behavior: environment primitives preserve precise observations, actual-NUL validation, facade defaults, and the process argument vector (RFC 168, #2501, #1668)
 # expect-stdout:
 #   help
 
-from std.environ import EnvironError, args
+"""Check real child-process observations without depending on the reviewer's environment."""
+
+from rust::std::env import current_exe
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.environ import args, get, get_as, get_optional, get_or, EnvironErrorKind as LegacyKind
+from std.primitives.environ import read, EnvironErrorKind
 
 
 def subcommand(arguments: list[str]) -> str:
+    """Select the program's first argument, preserving the no-argument help behavior."""
     if len(arguments) < 2:
         return "help"
     return arguments[1]
 
 
-def main() -> Result[None, EnvironError]:
-    arguments = args()?
+def precise_observations() -> None:
+    """Observe present, empty, absent and invalid keys with one shared category identity."""
+    match read("INCAN_ENV_PRESENT"):
+        Ok(value) =>
+            assert value == "héllo"
+        Err(_) =>
+            assert false
+    match read("INCAN_ENV_EMPTY"):
+        Ok(value) =>
+            assert value == ""
+        Err(_) =>
+            assert false
+    match read("INCAN_ENV_MISSING"):
+        Err(EnvironErrorKind.Missing) => pass
+        _ =>
+            assert false
+    for key in ["", "bad=key"]:
+        match read(key):
+            Err(kind) =>
+                same: LegacyKind = kind
+                assert same == LegacyKind.InvalidKey
+                assert same.as_str() == "invalid_key"
+            Ok(_) =>
+                assert false
+
+
+def facade_observations() -> None:
+    """Keep lossy string defaults separate from absent-only typed defaults and redacted failures."""
+    assert get_or("INCAN_ENV_EMPTY", "fallback") == ""
+    assert get_or("INCAN_ENV_MISSING", "fallback") == "fallback"
+    assert get_or("bad=key", "fallback") == "fallback"
+    assert get_optional("bad=key") == None
+    match get("bad=key"):
+        Err(error) =>
+            assert error.kind() == EnvironErrorKind.InvalidKey
+        Ok(_) =>
+            assert false
+    match get_as[int]("INCAN_ENV_NUMBER", default=7):
+        Ok(value) =>
+            assert value == 42
+        Err(_) =>
+            assert false
+    match get_as[int]("INCAN_ENV_MISSING", default=7):
+        Ok(value) =>
+            assert value == 7
+        Err(_) =>
+            assert false
+    match get_as[int]("INCAN_ENV_SECRET", default=7):
+        Err(error) =>
+            assert error.kind() == EnvironErrorKind.InvalidValue
+            assert not error.message().contains("secret-invalid-number")
+        Ok(_) =>
+            assert false
+    match get_as[int]("bad=key", default=7):
+        Err(error) =>
+            assert error.kind() == EnvironErrorKind.InvalidKey
+        Ok(_) =>
+            assert false
+
+
+def nul_key_observation(key: str) -> None:
+    """Reject an actual NUL byte through both layers, independently of text escape syntax."""
+    assert len(key) == 7
+    match read(key):
+        Err(EnvironErrorKind.InvalidKey) => pass
+        _ =>
+            assert false
+    match get(key):
+        Err(error) =>
+            assert error.kind() == EnvironErrorKind.InvalidKey
+        Ok(_) =>
+            assert false
+
+
+def main() -> Result[None, str]:
+    """Run a controlled child for observations, then retain the original argument-vector output."""
+    arguments = args().map_err((error) => error.message())?
+    if subcommand(arguments) == "observe":
+        precise_observations()
+        facade_observations()
+        raw_key = RustString.from_utf8(b"bad\x00key").map_err((error) => str(error))?
+        nul_key_observation(str(raw_key))
+        return Ok(None)
+    executable = current_exe().map_err((error) => str(error))?
+    output = Command
+        .new(executable)
+        .arg("observe")
+        .env_remove("INCAN_ENV_MISSING")
+        .env("INCAN_ENV_PRESENT", "héllo")
+        .env("INCAN_ENV_EMPTY", "")
+        .env("INCAN_ENV_NUMBER", "42")
+        .env("INCAN_ENV_SECRET", "secret-invalid-number")
+        .output()
+        .map_err((error) => str(error))?
+    if not output.status.success():
+        return Err(RustString.from_utf8(output.stderr).map_err((error) => str(error))?)
+    assert len(output.stdout) == 0
     println(subcommand(arguments))
     for argument in arguments[1:]:
         println(argument)
