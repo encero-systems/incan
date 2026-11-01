@@ -17,10 +17,10 @@ use crate::ast::{
 use crate::decorator_resolution;
 use crate::diagnostics::CompileError;
 use crate::library_exports::{
-    CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedField, CheckedFunctionExport,
-    CheckedMethod, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedPartialExport,
-    CheckedPartialTargetKind, CheckedPresetValue, CheckedProperty, CheckedTraitExport, CheckedTypeAliasExport,
-    CheckedTypeBound, CheckedTypeParam, collect_checked_public_exports,
+    CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedExportProjection,
+    CheckedField, CheckedFunctionExport, CheckedMethod, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport,
+    CheckedPartialExport, CheckedPartialTargetKind, CheckedPresetValue, CheckedProperty, CheckedTraitExport,
+    CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam, collect_checked_public_exports,
 };
 use crate::library_manifest::{
     CanonicalIdentityExport, ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport,
@@ -760,9 +760,11 @@ pub fn collect_checked_api_metadata(
 
     for declaration in &mut declarations {
         if let ApiDeclaration::Alias(alias) = declaration
-            && let Some(CheckedExportKind::Alias(checked)) = checked_kind(&checked_by_name, &alias.name)
+            && let Some(export) = checked_by_name.get(&alias.name)
+            && let CheckedExportKind::Alias(checked) = &export.kind
         {
             alias.projected_type = checked.projected_type.as_ref().map(type_ref_from_resolved);
+            alias.projected_function = checked_provider_alias_projection(alias, export, checker);
         }
     }
 
@@ -778,7 +780,8 @@ pub fn collect_checked_api_metadata(
 }
 
 /// Select a source overload by its checked declaration identity, including any expansion ancestry. Name lookup
-/// selects an overload set and cannot supply one declaration's defaults or ownership contract.
+/// selects an overload set and cannot supply one declaration's defaults or ownership contract. A public alias shares
+/// its target's canonical identity but must never rename the authored declaration in checked API metadata.
 fn checked_source_function<'a>(
     exports: &'a [CheckedNamedExport],
     checker: &TypeChecker,
@@ -792,7 +795,9 @@ fn checked_source_function<'a>(
         .identity
         .as_ref()?;
     exports.iter().find_map(|export| {
-        if export.identity.canonical.as_ref() != Some(identity) {
+        if export.identity.projection != CheckedExportProjection::Direct
+            || export.identity.canonical.as_ref() != Some(identity)
+        {
             return None;
         }
         match &export.kind {
@@ -875,6 +880,44 @@ fn checked_nominal_api_declaration(
     }
 }
 
+/// Retain an imported callable's admitted API facts on its public alias before local projection materialization.
+///
+/// A provider's source declarations are deliberately absent from the consumer's API module list. Follow the checked
+/// canonical identity to the declaring Loaf instead of attempting to resolve `std` or `pub` as a local source module.
+/// The public hop remains the alias's target path; callable defaults and decorators come from the actual declaration.
+fn checked_provider_alias_projection(
+    alias: &ApiAlias,
+    export: &CheckedNamedExport,
+    checker: &TypeChecker,
+) -> Option<ApiProjectedFunction> {
+    if !alias
+        .target_path
+        .first()
+        .is_some_and(|root| matches!(root.as_str(), "pub" | "std"))
+    {
+        return None;
+    }
+    let canonical = export.identity.canonical.as_ref()?;
+    let provider = checker.loaves.declaring_loaf(canonical)?;
+    let api = provider.artifact.manifest.contract_metadata.api.as_ref()?;
+    let SymbolOrigin::Package { module_path, .. } = &canonical.origin else {
+        return None;
+    };
+    let module = api.modules.iter().find(|module| module.module_path == *module_path)?;
+    let function = module.declarations.iter().find_map(|declaration| match declaration {
+        ApiDeclaration::Function(function) if function.name == canonical.declaration_name => Some(function),
+        _ => None,
+    })?;
+    let mut callable = callable_from_function(function);
+    callable.name = alias.name.clone();
+    callable.anchor = alias.anchor.clone();
+    Some(ApiProjectedFunction {
+        source_path: alias.target_path.clone(),
+        callable,
+        decorators: function.decorators.clone(),
+    })
+}
+
 /// Collect only the checked public alias projection for one parsed module.
 ///
 /// Callers use this after the owning compilation session has successfully checked the module. Keeping this projection
@@ -931,7 +974,11 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                     let path = declaration_path(&module.module_path, &alias.name);
                     // External projections are already bound to admitted artifacts. Local aliases are refreshed
                     // from their current declaration after native representation publication updates that target.
-                    if alias.target_path.first().is_some_and(|root| root == "pub") {
+                    if alias
+                        .target_path
+                        .first()
+                        .is_some_and(|root| matches!(root.as_str(), "pub" | "std"))
+                    {
                         if let Some(function) = &alias.projected_function {
                             projections.insert(path.clone(), function.clone());
                         }
@@ -2944,6 +2991,55 @@ mod tests {
             &checker,
             vec!["lib".to_string()],
         ))
+    }
+
+    /// Every public overload must retain its own authored anchor so nested aliases can prove canonical backing.
+    #[test]
+    fn checked_api_preserves_each_overloaded_alias_target() -> Result<(), String> {
+        let source = r#"
+pub def select(value: int) -> int:
+    return value
+
+pub def select(value: str) -> str:
+    return value
+
+pub pick = alias select
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_package_identity(Some("alias_repro".to_string()));
+        checker.set_current_module_path(Some(vec!["entries".to_string()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let exports = collect_checked_public_exports(&program, &checker);
+        let metadata = collect_checked_api_metadata(&program, &checker, vec!["entries".to_string()]);
+        let functions = metadata
+            .declarations
+            .iter()
+            .filter_map(|declaration| match declaration {
+                ApiDeclaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(functions.len(), 2, "checked exports: {exports:#?}; API: {metadata:#?}");
+        for export in exports.iter().filter(|export| export.name == "select") {
+            let identity = export
+                .identity
+                .canonical
+                .as_ref()
+                .ok_or("missing canonical overload identity")?;
+            assert!(
+                functions
+                    .iter()
+                    .any(|function| function.name == identity.declaration_name
+                        && function.anchor.span == identity.declaration_span),
+                "unbacked overload: {identity:#?}; API: {metadata:#?}"
+            );
+        }
+        assert_ne!(functions[0].return_type, functions[1].return_type);
+        Ok(())
     }
 
     #[test]

@@ -4,6 +4,8 @@ Models and classes provide built-in reflection helpers for runtime introspection
 
 For the curated `std.reflection` module surface, see [Standard library reference: `std.reflection`](stdlib/reflection.md).
 
+For examples and the distinction between value metadata, type metadata and field values, see [Reflection contracts and use](../explanation/reflection.md).
+
 ## `__class_name__() -> str`
 
 Returns the type's name as a string.
@@ -14,7 +16,7 @@ model User:
 
 def main() -> None:
     u = User(name="Alice")
-    println(u.__class_name__())  # "User"
+    println(u.__class_name__())
 ```
 
 ## `__fields__() -> FrozenList[FieldInfo]`
@@ -34,16 +36,26 @@ def main() -> None:
 
 ## Generic Value Reflection
 
-Generic helpers may call `value.__class_name__()` and `value.__fields__()` on a type parameter. The compiler treats those calls as reflection capabilities and emits the required runtime bounds for the generated Rust function, so the generic helper has the same field metadata result as a direct concrete call when it is instantiated with a reflectable model or class.
+Generic helpers may call `value.__class_name__()` and `value.__fields__()` on a type parameter. A reflectable model or class has the same immutable field metadata, declaration order and visibility rules through a generic value as through a direct concrete call. The metadata result is `FrozenList[FieldInfo]`. An authored method named `__fields__` remains an ordinary method with its declared result. A non-reflectable receiver without an authored method is refused.
 
 ```incan
+model User:
+    name: str
+    email: str
+
+
 def reflected_field_count[T](value: T) -> int:
     return len(value.__fields__())
+
+
+def main() -> None:
+    user = User(name="Alice", email="alice@example.com")
+    println(reflected_field_count(user))
 ```
 
 ## Generic Type Reflection
 
-Generic schema helpers may also reflect on an explicit type argument without constructing a dummy value. This is the intended shape for APIs that need a model's schema rather than one model instance.
+Generic helpers may reflect on an explicit model or class type argument without a value receiver.
 
 ```incan
 def schema_field_count[T]() -> int:
@@ -64,44 +76,25 @@ println(schema_name[User]())
 println(schema_field_count[User]())
 ```
 
-Primitive type arguments support `T.__class_name__()` for type-directed APIs that need a stable source-level primitive identity:
+Primitive type arguments support `T.__class_name__()`, returning their source names:
 
 ```incan
 def primitive_target[T]() -> str:
     return str(T.__class_name__())
 
-println(primitive_target[int]())    # "int"
-println(primitive_target[float]())  # "float"
-println(primitive_target[str]())    # "str"
-println(primitive_target[bool]())   # "bool"
+println(primitive_target[int]())
+println(primitive_target[float]())
+println(primitive_target[str]())
+println(primitive_target[bool]())
 ```
 
-Primitive type arguments do not support `T.__fields__()`, because primitives do not have source fields.
+Primitive type arguments do not support `T.__fields__()`.
 
 ## Type Tokens
 
-A type name in value position is accepted only when the expected type is a compiler-emitted `Type[T]` token. `Type[T]` is a zero-sized marker used for type-directed APIs, not a general runtime type object. This lets libraries offer overloads whose return types remain precise:
+A type name in value position is accepted only when the expected type is a `Type[T]` token. `Type[T]` is a zero-sized marker, not a general runtime type object. An overload may accept a specific token such as `Type[int]` and declare its own result type. Aliases preserve the overload set. A single generic function has one declared return type; its explicit type arguments do not select different result declarations.
 
-```incan
-def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
-    return int_column_expr(expr)
-
-def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
-    return float_column_expr(expr)
-
-def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
-    return dynamic_cast(expr, target)
-
-amount: IntColumnExpr = cast(col("amount"), int)
-total: FloatColumnExpr = mul(cast(col("unit_price"), float), cast(col("qty"), float))
-fallback: ColumnExpr = cast(col("amount"), "decimal(10,2)")
-```
-
-Aliases preserve the overload set, so compatibility spellings such as `safe_cast = alias cast` can expose the same `Type[T]` token and fallback-string call surface without wrapper overloads.
-
-Use explicit type arguments such as `helper[int](...)` when an API needs compile-time type reflection inside the function body. A single generic function still has one declared return type, so `cast[T](expr)` cannot by itself express "return `IntColumnExpr` for `T=int` and `FloatColumnExpr` for `T=float`" unless that API declares a broader union or a future type-level return mapping feature.
-
-### `FieldInfo` structure
+## `FieldInfo` structure
 
 Each `FieldInfo` record contains:
 
@@ -113,33 +106,19 @@ Each `FieldInfo` record contains:
 | `wire_name`   | `FrozenStr`                       | Effective wire name (alias if present, else canonical name)   |
 | `type_name`   | `FrozenStr`                       | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`)   |
 | `has_default` | `bool`                            | Whether the field has a default value                         |
-| `extra`       | `FrozenDict[FrozenStr, FrozenStr]`| Reserved for future metadata; always empty in current version |
+| `extra`       | `FrozenDict[FrozenStr, FrozenStr]`| Empty metadata dictionary |
 
 Notes:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is **model-only**.
 - For a `class`, `FieldInfo.alias` and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
-- Fields without `pub` on a public model, and private class fields, are excluded from runtime `__fields__()`, `__field_value__()`, and `__field_items__()` results. Compiler-owned checked API and library manifests retain their declarations and private visibility.
-- Inherited fields retain the declaring package's Incan `type_name` spelling across compiled-library boundaries, even when generated Rust uses a fully qualified provider-owned type path.
-- You do not need to import `FieldInfo` just to call `obj.__fields__()` and inspect the returned records. Import `FieldInfo` only when you want to spell the type explicitly in an annotation.
-
-### Common patterns
-
-If you only need canonical field names:
-
-```incan
-field_names = [f.name for f in model.__fields__()]
-```
-
-Check if a field exists:
-
-```incan
-has_email = any(f.name == "email" for f in user.__fields__())
-```
+- Fields without `pub` on a public model, and private class fields, are excluded from runtime `__fields__()`, `__field_value__()`, and `__field_items__()` results.
+- Inherited fields retain the declaring package's Incan `type_name` spelling.
+- Calling `obj.__fields__()` and inspecting its records requires no `FieldInfo` import. An explicit `FieldInfo` type annotation requires the corresponding import.
 
 ## Runtime Field Overlay Views
 
-Models and classes also expose compiler-generated read-only field value views. These hooks are intended for collection and reflection protocols that need to treat a model or class value as a stable named-field overlay without using stringly dynamic attribute access.
+Models and classes expose read-only field value views.
 
 | API | Returns | Description |
 | --- | --- | --- |
@@ -147,3 +126,5 @@ Models and classes also expose compiler-generated read-only field value views. T
 | `obj.__field_items__()` | `list[tuple[str, T]]` | Returns public `(field_name, value)` pairs in the same field order used by `__fields__()`. `T` follows the same common-type-or-union rule as `__field_value__`. |
 
 For `class` values, inherited fields are included before fields declared on the child class, matching `__fields__()` ordering. The returned views are read-only snapshots of field names and values; mutating a returned list does not add, remove, rename, or update object fields.
+
+Through an inferred generic value parameter, `__field_value__()` returns `Option[str]` and `__field_items__()` returns `list[tuple[str, str]]`. These field-value strings are distinct from the `FrozenList[FieldInfo]` metadata returned by `__fields__()`.

@@ -22,7 +22,7 @@ impl Builder<'_> {
     ) -> Result<(Vec<usize>, Option<PendingOperand>), Unavailable> {
         let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
             span: expression.span,
-            reason: "missing checked operand type",
+            reason: "missing checked operand type".into(),
         })?;
         if self.copy_value(ty) {
             return Ok((incoming, None));
@@ -98,7 +98,7 @@ impl Builder<'_> {
         {
             return Err(Unavailable {
                 span: operation,
-                reason: "operation has more than one dependency binding",
+                reason: "operation has more than one dependency binding".into(),
             });
         }
         Ok(incoming)

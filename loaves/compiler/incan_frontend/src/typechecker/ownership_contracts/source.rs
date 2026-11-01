@@ -22,9 +22,9 @@ mod values;
 
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Unavailable {
+pub(in crate::typechecker) struct Unavailable {
     pub span: Span,
-    pub reason: &'static str,
+    pub reason: String,
 }
 
 /// The source callable whose already prepared declaration facts govern this body. Methods retain a distinct
@@ -82,7 +82,7 @@ pub(super) fn build(
             &method.params,
             method.body.as_ref().ok_or(Unavailable {
                 span,
-                reason: "abstract method has no body",
+                reason: "abstract method has no body".into(),
             })?,
             method.is_async(),
             method.receiver_binding.as_ref().zip(method.receiver),
@@ -93,7 +93,7 @@ pub(super) fn build(
     if identity.declaration_span != span || identity.declaration_name != *name || identity.kind != kind {
         return Err(Unavailable {
             span,
-            reason: "checked owner does not match the callable declaration",
+            reason: "checked owner does not match the callable declaration".into(),
         });
     }
     let contract = checker.type_info.declarations.ownership_contracts.get(identity);
@@ -109,7 +109,7 @@ pub(super) fn build(
     {
         return Err(Unavailable {
             span,
-            reason: "escaping or nested ownership contract",
+            reason: "escaping or nested ownership contract".into(),
         });
     }
     let mut builder = Builder {
@@ -194,7 +194,7 @@ impl Builder<'_> {
             .cloned()
             .ok_or(Unavailable {
                 span,
-                reason: "missing prepared parameter identity",
+                reason: "missing prepared parameter identity".into(),
             })
     }
 
@@ -255,12 +255,12 @@ impl Builder<'_> {
             if identity.kind != SemanticSourceTargetKind::Local {
                 return Err(Unavailable {
                     span,
-                    reason: "place is not a prepared parameter or checked local",
+                    reason: "place is not a prepared parameter or checked local".into(),
                 });
             }
             let permission = self.locals.get(identity).copied().ok_or(Unavailable {
                 span,
-                reason: "missing checked local permissions",
+                reason: "missing checked local permissions".into(),
             })?;
             self.graph.permissions.insert(root.clone(), permission);
         }
@@ -280,7 +280,7 @@ impl Builder<'_> {
                     .resolved_identity(expression.span)
                     .ok_or(Unavailable {
                         span: expression.span,
-                        reason: "missing checked place identity",
+                        reason: "missing checked place identity".into(),
                     })?
                     .clone();
                 match self.aliases.get(&identity) {
@@ -301,7 +301,7 @@ impl Builder<'_> {
                 {
                     return Err(Unavailable {
                         span: expression.span,
-                        reason: "computed property access",
+                        reason: "computed property access".into(),
                     });
                 }
                 let identity = self
@@ -311,7 +311,7 @@ impl Builder<'_> {
                     .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
                     .ok_or(Unavailable {
                         span: expression.span,
-                        reason: "field lacks a checked stored identity",
+                        reason: "field lacks a checked stored identity".into(),
                     })?
                     .clone();
                 let mut place = self.place(base)?;
@@ -325,7 +325,7 @@ impl Builder<'_> {
             }
             _ => Err(Unavailable {
                 span: expression.span,
-                reason: "expression is not a stored place",
+                reason: "expression is not a stored place".into(),
             }),
         }
     }
@@ -341,7 +341,7 @@ impl Builder<'_> {
             }
             _ => Err(Unavailable {
                 span: expression.span,
-                reason: "unsupported place evaluation",
+                reason: "unsupported place evaluation".into(),
             }),
         }
     }
@@ -363,7 +363,7 @@ impl Builder<'_> {
         {
             return Err(Unavailable {
                 span: expression.span,
-                reason: "operator needs selected callable access facts",
+                reason: "operator needs selected callable access facts".into(),
             });
         }
         match &expression.node {
@@ -372,7 +372,7 @@ impl Builder<'_> {
                 let incoming = self.evaluate_place(expression, incoming)?;
                 let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
                     span: expression.span,
-                    reason: "missing checked access type",
+                    reason: "missing checked access type".into(),
                 })?;
                 let access = if consume
                     && (place.through.is_some() || self.constrained.contains(&place.place.root))
@@ -417,7 +417,7 @@ impl Builder<'_> {
             }
             _ => Err(Unavailable {
                 span: expression.span,
-                reason: "expression needs checked call or dependency access facts",
+                reason: "expression needs checked call or dependency access facts".into(),
             }),
         }
     }
@@ -435,7 +435,7 @@ impl Builder<'_> {
             Condition::Expr(value) => self.expression(value, incoming, false),
             Condition::Let { .. } => Err(Unavailable {
                 span: condition.span(),
-                reason: "pattern condition dependency",
+                reason: "pattern condition dependency".into(),
             }),
         }
     }
@@ -478,7 +478,7 @@ impl Builder<'_> {
             .resolved_write_identity(assignment.name_span, &assignment.name)
             .ok_or(Unavailable {
                 span: assignment.name_span,
-                reason: "missing checked assignment target",
+                reason: "missing checked assignment target".into(),
             })?
             .clone();
         let mode = (root.declaration_span == assignment.name_span)
@@ -489,25 +489,25 @@ impl Builder<'_> {
             if root.kind != SemanticSourceTargetKind::Local || mode.owner != self.owner {
                 return Err(Unavailable {
                     span: mode.annotation,
-                    reason: "local ownership annotation does not belong to its checked declaration",
+                    reason: "local ownership annotation does not belong to its checked declaration".into(),
                 });
             }
             if mode.mode == OwnershipMode::Reference {
                 return Err(Unavailable {
                     span: mode.annotation,
-                    reason: "returned-reference local dependency",
+                    reason: "returned-reference local dependency".into(),
                 });
             }
             if self.checker.type_info.assignment_binding_type(span) != Some(&mode.value_type) {
                 return Err(Unavailable {
                     span: mode.annotation,
-                    reason: "local mode and checked value type disagree",
+                    reason: "local mode and checked value type disagree".into(),
                 });
             }
             if mode.mode != OwnershipMode::Owned {
                 let source = source.ok_or(Unavailable {
                     span: assignment.value.span,
-                    reason: "local borrow requires a checked owner place",
+                    reason: "local borrow requires a checked owner place".into(),
                 })?;
                 let incoming = self.evaluate_place(&assignment.value, incoming)?;
                 let loan = LoanId(self.graph.loans.len());
@@ -525,7 +525,7 @@ impl Builder<'_> {
                 if self.graph.local_loans.insert(root.clone(), loan).is_some() {
                     return Err(Unavailable {
                         span: mode.annotation,
-                        reason: "local declaration has more than one ownership destination",
+                        reason: "local declaration has more than one ownership destination".into(),
                     });
                 }
                 self.aliases.insert(
@@ -547,7 +547,7 @@ impl Builder<'_> {
                 let [node] = incoming.as_slice() else {
                     return Err(Unavailable {
                         span: assignment.value.span,
-                        reason: "owned initializer needs one final stored access",
+                        reason: "owned initializer needs one final stored access".into(),
                     });
                 };
                 Some(*node)
@@ -562,7 +562,7 @@ impl Builder<'_> {
             if self.graph.owned_locals.insert(root.clone(), retained).is_some() {
                 return Err(Unavailable {
                     span: assignment.name_span,
-                    reason: "owned local has more than one initializer",
+                    reason: "owned local has more than one initializer".into(),
                 });
             }
         }
@@ -613,7 +613,7 @@ impl Builder<'_> {
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
             .ok_or(Unavailable {
                 span: assignment.target_span,
-                reason: "field write lacks a checked stored identity",
+                reason: "field write lacks a checked stored identity".into(),
             })?
             .clone();
         let mut path = self.place(&assignment.object)?;
@@ -631,7 +631,7 @@ impl Builder<'_> {
         {
             return Err(Unavailable {
                 span: assignment.target_span,
-                reason: "compound field destination needs checked scalar single-evaluation facts",
+                reason: "compound field destination needs checked scalar single-evaluation facts".into(),
             });
         }
         let incoming = self.evaluate_place(&assignment.object, incoming)?;
@@ -668,14 +668,14 @@ impl Builder<'_> {
         {
             return Err(Unavailable {
                 span,
-                reason: "compound operator needs selected callable access facts",
+                reason: "compound operator needs selected callable access facts".into(),
             });
         }
         let identity = info
             .resolved_write_identity(assignment.name_span, &assignment.name)
             .ok_or(Unavailable {
                 span: assignment.name_span,
-                reason: "compound target lacks a checked identity",
+                reason: "compound target lacks a checked identity".into(),
             })?
             .clone();
         let path = match self.aliases.get(&identity) {
@@ -715,13 +715,13 @@ impl Builder<'_> {
                 let crate::ast::AssertKind::Condition(condition) = &assertion.kind else {
                     return Err(Unavailable {
                         span: statement.span,
-                        reason: "pattern assertion needs checked binding access",
+                        reason: "pattern assertion needs checked binding access".into(),
                     });
                 };
                 if self.checker.type_info.expr_type(condition.span) != Some(&ResolvedType::Bool) {
                     return Err(Unavailable {
                         span: condition.span,
-                        reason: "assertion truthiness needs checked callable access",
+                        reason: "assertion truthiness needs checked callable access".into(),
                     });
                 }
                 let incoming = self.expression(condition, incoming, false)?;
@@ -732,7 +732,7 @@ impl Builder<'_> {
                     ) {
                         return Err(Unavailable {
                             span: message.span,
-                            reason: "assertion message needs checked display access",
+                            reason: "assertion message needs checked display access".into(),
                         });
                     }
                     // The failure message is evaluated only on the terminating failure path. Its reads remain in
@@ -774,7 +774,7 @@ impl Builder<'_> {
                 self.connect(&body, header);
                 let loop_ = self.loops.pop().ok_or(Unavailable {
                     span: statement.span,
-                    reason: "missing loop owner",
+                    reason: "missing loop owner".into(),
                 })?;
                 Ok(condition.into_iter().chain(loop_.breaks).collect())
             }
@@ -791,7 +791,7 @@ impl Builder<'_> {
                     .pop()
                     .ok_or(Unavailable {
                         span: statement.span,
-                        reason: "missing loop owner",
+                        reason: "missing loop owner".into(),
                     })?
                     .breaks)
             }
@@ -800,7 +800,7 @@ impl Builder<'_> {
                     .last_mut()
                     .ok_or(Unavailable {
                         span: statement.span,
-                        reason: "break without loop",
+                        reason: "break without loop".into(),
                     })?
                     .breaks
                     .extend(incoming);
@@ -812,7 +812,7 @@ impl Builder<'_> {
                     .last()
                     .ok_or(Unavailable {
                         span: statement.span,
-                        reason: "continue without loop",
+                        reason: "continue without loop".into(),
                     })?
                     .header;
                 self.connect(&incoming, header);
@@ -820,7 +820,7 @@ impl Builder<'_> {
             }
             _ => Err(Unavailable {
                 span: statement.span,
-                reason: "statement needs additional checked dependency facts",
+                reason: "statement needs additional checked dependency facts".into(),
             }),
         }
     }

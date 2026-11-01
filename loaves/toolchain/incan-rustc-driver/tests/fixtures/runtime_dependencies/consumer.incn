@@ -1,0 +1,8 @@
+"""Consume a separately compiled core-free library through its public declaration identity."""
+
+from pub::runtime_requirement_hex import hexlify
+
+
+def main() -> None:
+    assert hexlify(b"atoms") == "61746f6d73"
+    println("core-free-consumer-ok")

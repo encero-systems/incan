@@ -1291,26 +1291,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
-    /// Return the checked enum variant a `Type.Variant` spelling selects, for any enum the narrower fieldless and
-    /// value-enum targets do not cover.
+    /// Return an enum constructor selected by checked declaration identity, including module-qualified and explicitly
+    /// applied type receivers.
     ///
-    /// The base must be an unshadowed type name, and the checker must have resolved `variant_span` to a variant: the
-    /// spelling alone never selects one. `variant_span` is the member access for `Shape.Empty` and the call for
-    /// `Shape.Circle(r)`, which is where the checker records the selection. The returned target binds no payload yet.
+    /// Type application and parentheses do not create runtime receivers. The underlying receiver must still be a
+    /// checked type name, and the call/member span must select a variant. A shadowing local never gains constructor
+    /// semantics from its spelling.
     pub(super) fn checked_enum_variant_target(
         &self,
         base: &ast::Spanned<ast::Expr>,
         _variant_name: &str,
         variant_span: ast::Span,
     ) -> Option<bir::EnumVariantTarget> {
-        let ast::Expr::Ident(enum_name) = &base.node else {
-            return None;
-        };
-        if self.bindings.contains_key(enum_name)
-            || !matches!(
-                self.type_info.ident_kind(base.span),
-                Some(IdentKind::TypeName | IdentKind::RustImport)
-            )
+        let mut type_receiver = base;
+        while let ast::Expr::Index(inner, _) | ast::Expr::Paren(inner) = &type_receiver.node {
+            type_receiver = inner;
+        }
+        if !matches!(
+            self.type_info.ident_kind(type_receiver.span),
+            Some(IdentKind::TypeName | IdentKind::RustImport)
+        ) || matches!(&type_receiver.node, ast::Expr::Ident(name) if self.bindings.contains_key(name))
         {
             return None;
         }
@@ -1321,10 +1321,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .clone();
         let enum_canonical = match &variant_canonical.origin {
             SymbolOrigin::RustCrate(path) => bir::rust_item_identity(&path.join("::")),
-            _ => self.type_info.resolved_identity(base.span).cloned(),
+            _ => self.type_info.resolved_identity(type_receiver.span).cloned(),
+        };
+        let enum_name = match &type_receiver.node {
+            ast::Expr::Ident(name) => name.clone(),
+            _ => enum_canonical
+                .as_ref()
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Enum)?
+                .declaration_name
+                .clone(),
         };
         Some(bir::EnumVariantTarget {
-            enum_name: enum_name.clone(),
+            enum_name,
             variant_name: variant_canonical.declaration_name.clone(),
             enum_canonical,
             variant_canonical,
@@ -3087,7 +3095,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Retain reflection only when the checked canonical member belongs to the compiler-generated owner table.
-    /// Generic-binder ownership selects string results before substitution; concrete ownership selects typed values.
+    /// Generic-binder ownership selects string field values or generic metadata before substitution; concrete
+    /// ownership selects typed values and exact-declaration metadata.
     fn checked_reflection_operation(&self, span: ast::Span) -> Option<bir::ReflectionOperation> {
         let identity = self.type_info.resolved_identity(span)?;
         let owner = self
@@ -3098,6 +3107,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let generic = owner.kind == SemanticSourceTargetKind::GenericBinder;
         match (identity.declaration_name.as_str(), generic) {
             ("__fields__", false) => Some(bir::ReflectionOperation::Metadata),
+            ("__fields__", true) => Some(bir::ReflectionOperation::GenericMetadata(owner.clone())),
             ("__field_value__", false) => Some(bir::ReflectionOperation::TypedValue),
             ("__field_items__", false) => Some(bir::ReflectionOperation::TypedItems),
             ("__field_value__", true) => Some(bir::ReflectionOperation::StringValue),

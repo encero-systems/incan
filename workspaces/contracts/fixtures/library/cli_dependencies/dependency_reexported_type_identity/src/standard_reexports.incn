@@ -1,0 +1,39 @@
+"""Standard and facade imports keep their declaring callable and nominal identities."""
+
+from std.io import IoError
+from pub::facades import EnvironError, read_value
+from pub::facades import BinaryError, RelayedError, square_root, relayed_root
+from pub::facades.standard import RelayedError as NestedError, relayed_root as nested_root
+
+
+def describe(error: IoError) -> str:
+    return error.message()
+
+
+pub def run_standard_reexports() -> None:
+    """Use the same standard declaration through direct and transitive public names."""
+    assert square_root(4.0) == 2.0
+    assert relayed_root(9.0) == 3.0
+    assert nested_root(16.0) == 4.0
+    match read_overloads():
+        Ok(_) => pass
+        Err(error) =>
+            println(error.message())
+            assert false
+    original = IoError(kind="other", detail="retained")
+    projected: BinaryError = original
+    transitive: RelayedError = projected
+    nested: NestedError = transitive
+    assert describe(nested) == "retained"
+    assert describe(BinaryError(kind="other", detail="constructed")) == "constructed"
+
+
+def read_overloads() -> Result[None, EnvironError]:
+    """Close both generic arities through aliases without a direct get_as or TryFrom import."""
+    key = "INCAN_BEHAVIOR_FIXTURE_UNSET_KEY"
+    optional: Option[int] = read_value[int](key)?
+    match optional:
+        None => pass
+        Some(_) => assert false
+    assert read_value[int](key, 7)? == 7
+    return Ok(None)

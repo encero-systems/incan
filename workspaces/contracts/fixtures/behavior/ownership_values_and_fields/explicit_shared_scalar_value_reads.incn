@@ -1,0 +1,172 @@
+# behavior: Scalar and text borrows preserve caller storage through reads, replacement and forwarding (#2500).
+# expect-stdout:
+#   1
+#   2
+#   scalar value reads passed
+
+
+def invert(value: Borrowed[bool]) -> bool:
+    """Read a shared Boolean as the operand of a unary operation."""
+    return not value
+
+
+def less(left: Borrowed[int], right: Borrowed[int]) -> bool:
+    """Compare the scalar values held behind two shared inputs."""
+    return left < right
+
+
+def combine(left: Borrowed[int], right: Borrowed[int]) -> int:
+    """Use both shared inputs in arithmetic after named argument selection."""
+    return left * 10 + right
+
+
+def squared(value: Borrowed[float]) -> float:
+    """Repeated reads of the same shared scalar do not consume it."""
+    return value * value
+
+
+def forward(value: Borrowed[int]) -> int:
+    """A shared scalar can be forwarded to another shared input."""
+    return echo(value)
+
+
+def echo(value: Borrowed[int]) -> int:
+    """Returning a shared scalar reads the value rather than the reference carrier."""
+    return value
+
+
+def replace(mut value: BorrowedMut[int]) -> None:
+    """Replacement writes the scalar behind the exclusive input, not a copied local."""
+    value = 9
+
+
+def increment(mut value: BorrowedMut[int]) -> int:
+    """Compound assignment reads and writes the same borrowed scalar."""
+    value += 1
+    return value
+
+
+def forward_exclusively(mut value: BorrowedMut[int]) -> int:
+    """Forwarding an exclusive input reborrows the caller's original slot."""
+    return increment(value)
+
+
+def flip(mut value: BorrowedMut[bool]) -> bool:
+    """Boolean replacement and its result both use the caller's scalar."""
+    value = not value
+    return value
+
+
+def scale(mut value: BorrowedMut[float]) -> float:
+    """Floating compound assignment preserves the exact exclusive input place."""
+    value *= 2.0
+    return value
+
+
+def marked(value: Owned[int]) -> int:
+    """Named calls preserve declaration-order evaluation of fresh owned scalar arguments."""
+    println(value)
+    return value
+
+
+def invert_owned(value: Owned[bool]) -> bool:
+    """A scalar literal needs no earlier storage owner to copy or retain."""
+    return not value
+
+
+def half_owned(value: Owned[float]) -> float:
+    """A fresh floating literal uses the callee's checked scalar carrier."""
+    return value / 2.0
+
+
+def width_owned(value: Owned[str]) -> int:
+    """A fresh literal string is constructed once and owned by this callee."""
+    return len(value)
+
+
+def echo_owned(value: Owned[str]) -> str:
+    """Returning an owned literal transfers its owner to the caller."""
+    return value
+
+
+model TextAddress:
+    city: str
+    postcode: str
+
+
+model TextCustomer:
+    address: TextAddress
+    name: str
+
+
+def replace_text(mut city: BorrowedMut[str], replacement: Borrowed[str]) -> None:
+    """Replacement drops the previous string in the borrowed slot, preserving its containing owner."""
+    city = f"{replacement}"
+
+
+def forward_text(mut city: BorrowedMut[str], replacement: Borrowed[str]) -> None:
+    """Forward both reference kinds without losing the original storage or constructing a copy."""
+    replace_text(city, replacement)
+
+
+def append_text(mut text: BorrowedMut[str]) -> None:
+    """Read the prior string before replacing it through the same exclusive input."""
+    text = f"{text}!"
+
+
+def clear_text(mut text: BorrowedMut[str]) -> None:
+    """A literal replacement uses the same projected ownership path as formatting."""
+    text = ""
+
+
+def main() -> None:
+    """Observe shared reads and exclusive writes through the original caller storage."""
+    mut enabled = true
+    small = 2
+    large = 7
+    mut amount = 2.5
+    assert invert(enabled) == false
+    assert enabled == true
+    assert less(small, large)
+    assert combine(right=large, left=small) == 27
+    assert small == 2
+    assert large == 7
+    assert squared(amount) == 6.25
+    assert amount == 2.5
+    assert forward(large) == 7
+    assert large == 7
+    mut count = 4
+    assert increment(count) == 5
+    assert count == 5
+    assert forward_exclusively(count) == 6
+    assert count == 6
+    replace(count)
+    assert count == 9
+    assert flip(enabled) == false
+    assert enabled == false
+    assert scale(amount) == 5.0
+    assert amount == 5.0
+    assert combine(right=marked(2), left=marked(1)) == 12
+    assert echo(5) == 5
+    assert invert_owned(true) == false
+    assert half_owned(8.0) == 4.0
+    assert width_owned("fresh text") == 10
+    text = echo_owned("moved literal")
+    assert text == "moved literal"
+    mut customer = TextCustomer(address=TextAddress(city="Delft", postcode="2611"), name="Ada")
+    replacement = "Rotterdam"
+    replace_text(customer.address.city, replacement)
+    assert customer.address.city == "Rotterdam"
+    forward_text(customer.address.city, "Leiden")
+    append_text(customer.address.city)
+    assert customer.address.city == "Leiden!"
+    assert customer.address.postcode == "2611"
+    assert customer.name == "Ada"
+    assert replacement == "Rotterdam"
+    mut local = "old"
+    forward_text(local, replacement)
+    append_text(local)
+    assert local == "Rotterdam!"
+    clear_text(local)
+    assert local == ""
+    println("scalar value reads passed")

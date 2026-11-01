@@ -380,6 +380,7 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
     validate_models(plan)?;
     validate_enums(plan)?;
     validate_generic_models(plan)?;
+    validate_generic_enums(plan)?;
     library_model_order(plan)?;
     crate::checked_json::validate_roots(plan)?;
     crate::checked_json::validate_source_roots(plan)?;
@@ -513,7 +514,7 @@ fn span(source: &SourceSpan) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Check the parameter-local convention and all nodes in one function. Exact shared scalar inputs borrow caller
+/// Check the parameter-local convention and all nodes in one function. Exact scalar inputs borrow caller
 /// storage; return types keep their separate lifetime and representation gate. Validated future boxing frames also
 /// admit the exact native inputs whose loans their constructor lifetime retains.
 fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
@@ -1583,10 +1584,11 @@ fn shared_reference(ty: &Scalar) -> bool {
     )
 }
 
-/// Source inputs additionally admit checked borrows of owned text and exact copyable scalar referents. Owned return
-/// and stored-value admission remain governed by `source_signature_type` rather than this parameter-only boundary.
+/// Source inputs additionally admit checked borrows of owned text and exact scalar referents, including exclusive
+/// inputs. Owned return and stored-value admission remain governed by `source_signature_type` rather than this
+/// parameter-only boundary.
 fn source_parameter_type(ty: &Scalar) -> bool {
-    if let Scalar::ScalarRef(elements) = ty {
+    if let Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) = ty {
         return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
     }
     source_signature_type(ty)
@@ -3100,6 +3102,59 @@ fn validate_generic_models(plan: &Plan) -> Result<(), PlanError> {
     Ok(())
 }
 
+/// Admit generic enum templates independently of closed aliases; their variants remain source ordered and exact.
+fn validate_generic_enums(plan: &Plan) -> Result<(), PlanError> {
+    let mut names: BTreeSet<_> = plan
+        .functions
+        .iter()
+        .map(|value| value.name.as_str())
+        .chain(plan.models.iter().map(|value| value.name.as_str()))
+        .chain(plan.enums.iter().map(|value| value.name.as_str()))
+        .chain(plan.generic_models.iter().map(|value| value.name.as_str()))
+        .collect();
+    for value in &plan.generic_enums {
+        span(&value.span)?;
+        let parameters = value.parameters.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        let mut variants = BTreeSet::new();
+        if !identifier(&value.name)
+            || !names.insert(&value.name)
+            || parameters.is_empty()
+            || parameters.len() != value.parameters.len()
+            || parameters.iter().any(|name| !identifier(name))
+            || value.variants.is_empty()
+            || value.derives.iter().any(|name| {
+                !matches!(
+                    derives::from_str(name),
+                    Some(
+                        DeriveId::Copy
+                            | DeriveId::Clone
+                            | DeriveId::Debug
+                            | DeriveId::PartialEq
+                            | DeriveId::Eq
+                            | DeriveId::PartialOrd
+                            | DeriveId::Ord
+                            | DeriveId::Hash
+                    )
+                ) && !(name.contains("::") && valid_library_item(name))
+            })
+            || value.variants.iter().any(|variant| {
+                !identifier(&variant.name)
+                    || !variants.insert(&variant.name)
+                    || variant
+                        .fields
+                        .iter()
+                        .any(|field| !generic_field_type(field, &parameters))
+            })
+        {
+            return Err(PlanError::Invalid {
+                function: value.name.clone(),
+                reason: "invalid generic enum declaration".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// A generic field may mention only its declared binders, complete concrete carriers, and explicit nominal paths.
 fn generic_field_type(ty: &GenericLayoutType, parameters: &BTreeSet<&str>) -> bool {
     match ty {
@@ -3737,3 +3792,7 @@ fn library_argument_is_borrowed(ty: &PlanType) -> bool {
             | PlanType::ClosureRef(..)
     )
 }
+
+#[cfg(test)]
+#[path = "validation/scalar_inputs_tests.rs"]
+mod scalar_inputs_tests;
