@@ -8,6 +8,8 @@ use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, S
 use super::{CheckedInputBody, flow};
 use crate::ast::{AssertKind, CallArg, Expr, FStringPart, FunctionDecl, ListEntry, Spanned, Statement};
 
+mod paths;
+
 impl CheckedInputBody<'_> {
     /// Select the retained operand relationship after graph validation. The enclosing source admission separately
     /// proves complete AST coverage, so this lookup cannot grant execution to an orphan or missing body proof.
@@ -38,7 +40,7 @@ impl CheckedInputBody<'_> {
     ) -> Result<(), &'static str> {
         let mut seen = BTreeSet::new();
         let parameters = self.borrowed_operation_parameters(function)?;
-        let execution = self.operation_execution_order()?;
+        let execution = paths::execution_order(self.graph, function)?;
         for statement in &function.body {
             match &statement.node {
                 Statement::Pass => {}
@@ -75,33 +77,6 @@ impl CheckedInputBody<'_> {
             return Err("operation dependency has no matching source operation");
         }
         Ok(())
-    }
-
-    /// The admitted source profile is straight-line, so every retained event must occur once on its single path.
-    /// Traversing successors authenticates execution order independently of node storage order and rejects bypassed
-    /// creation/consumption evidence. Branching admission needs its own path proof before relaxing this requirement.
-    fn operation_execution_order(&self) -> Result<Vec<usize>, &'static str> {
-        let mut order = vec![None; self.graph.nodes.len()];
-        let mut current = self.graph.entry;
-        let mut rank = 0;
-        loop {
-            let visited = order
-                .get_mut(current)
-                .ok_or("operation execution leaves the checked graph")?;
-            if visited.replace(rank).is_some() {
-                return Err("operation execution revisits a checked event");
-            }
-            rank += 1;
-            match self.graph.nodes[current].successors.as_slice() {
-                [] => break,
-                [next] => current = *next,
-                _ => return Err("operation execution is not a single checked path"),
-            }
-        }
-        order
-            .into_iter()
-            .map(|rank| rank.ok_or("operation execution bypasses retained evidence"))
-            .collect()
     }
 
     /// Source parameter slots and canonical binding tokens select borrowed inputs; a graph permission bit or a

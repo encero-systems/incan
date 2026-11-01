@@ -47,6 +47,8 @@ def size() -> int:
 
 Methods, returned dependencies, indirect calls, indexed access, conditional transfers and projected non-Copy transfers remain refused. Every calling body also needs its own checked access proof. A valid parameter annotation or a borrowed native signature alone cannot grant that proof. Native call resolution checks the caller independently of the selected callee, including when persisted caller data contains only ordinary parameters.
 
+Assertion messages are evaluated only on failure. They may read borrowed values or use a checked exclusive input, but transferring a stored non-Copy owner from a message receives `INCAN-T0123` until conditional cleanup is supported. This also applies to ordinary locals passed to an `Owned` parameter. A fresh value constructed for the failure message and a Copy input do not transfer a surviving outer owner.
+
 ## Result-source syntax
 
 

@@ -54,12 +54,62 @@ impl TypeCheckInfo {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
         }
         proof.validate_direct_call_storage()?;
+        proof.validate_assertion_transfers(function)?;
         proof.validate_operation_coverage(function)?;
         Ok(Some(proof))
     }
 }
 
 impl CheckedInputBody<'_> {
+    /// An assertion message executes only on failure. Moving a stored owner there needs conditional cleanup even
+    /// though the surrounding source contains no `if`; fresh failure-local values and Copy inputs need no such join.
+    fn validate_assertion_transfers(&self, function: &FunctionDecl) -> Result<(), &'static str> {
+        for statement in &function.body {
+            let Statement::Assert(assertion) = &statement.node else {
+                continue;
+            };
+            let Some(message) = &assertion.message else {
+                continue;
+            };
+            for (span, invocation) in &self.graph.invocations {
+                if span.expansion != message.span.expansion
+                    || span.start < message.span.start
+                    || span.end > message.span.end
+                {
+                    continue;
+                }
+                let call = self
+                    .facts
+                    .protocols
+                    .explicit_input_calls
+                    .get(span)
+                    .ok_or("assertion call has no checked inputs")?;
+                for argument in &invocation.arguments {
+                    if argument.access != IncanInputAccess::Owned
+                        || !argument
+                            .source
+                            .as_ref()
+                            .is_some_and(|source| matches!(source.root, super::flow::Root::Binding(_)))
+                    {
+                        continue;
+                    }
+                    let parameter = call
+                        .parameters
+                        .get(argument.slot)
+                        .ok_or("assertion input has no checked slot")?;
+                    if !crate::typechecker::semantic_type_from_resolved(&parameter.ty)
+                        .abi_v0_facts()
+                        .ownership
+                        .is_trivially_copy()
+                    {
+                        return Err("explicit stored transfer in an assertion message requires conditional cleanup");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Local aliases preserve existing storage. Owned locals use their exact initializer relationship; a whole
     /// non-Copy owner may transfer, while projected transfers still require partial-drop obligations.
     fn validate_local_storage(&self) -> Result<(), &'static str> {
