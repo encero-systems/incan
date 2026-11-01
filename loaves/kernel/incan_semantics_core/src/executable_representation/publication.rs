@@ -1197,8 +1197,9 @@ impl<'a> PublicationAudit<'a> {
 
     /// Audit the checked callee and retain exact native selections without exporting producer-session activation.
     ///
-    /// Package calls keep canonical dispatch even within their own fragment. Provider, metadata, foreign and bridge
-    /// targets remain refused until their portable execution requirements have a represented contract.
+    /// Package calls keep canonical dispatch even within their own fragment. Generated generic field metadata
+    /// retains only its authenticated fragment-local binder; provider, type-metadata, foreign and bridge targets
+    /// remain refused until their portable execution requirements have a represented contract.
     fn callee(&mut self, callee: &mut Callee) -> Result<(), CoverageReason> {
         match callee {
             Callee::Function(CallableTarget::Named(target)) => {
