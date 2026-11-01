@@ -12,8 +12,10 @@
     - RFC 116 (checked C bindings)
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 120 and RFC 124 (source-symbol and compiled-unit identity)
+    - RFC 017 and RFC 085 (constrained types and field constraints)
     - RFC 126 (Oven debugging and evidence-backed investigations)
     - RFC 131 (error origins, cause chains and opt-in stack capture)
+    - RFC 165 (std.db typed embedded storage)
     - RFC 169 (typed datasets)
 - **Issue:** —
 - **RFC PR:** —
@@ -22,7 +24,7 @@
 
 ## Summary
 
-An Incan developer should be able to understand a compiler refusal, read a failed assertion, stop at an authored statement, explore and evaluate values in a stopped program, identify an allocation, profile an operation, and diagnose a failing test through one supported suite. This RFC defines the observable contracts: readable failures, readable symbols, source-matched native debugging, interactive exploration of a stopped program, consistent diagnostic records, correlated program and toolchain observations, memory and leak inspection, profiling, and checked C-boundary evidence. Oven builds Rust as well as Incan, so the suite gives Incan, Rust and mixed programs one debugging experience. It applies to ordinary safe programs as well as foreign calls and the toolchain itself. It supplies observations to RFC 126's durable investigations without requiring an investigation to inspect one failure.
+An Incan developer should be able to find most failures before running, understand a compiler refusal, read a failed assertion, stop at an authored statement, explore and evaluate values in a stopped program, ask where a value came from, change code and continue, identify an allocation, profile an operation, and diagnose a failing test through one supported suite. This RFC defines the observable contracts: compile-time exploration through the checker and language server, readable failures, readable symbols, source-matched native debugging, interactive exploration of a stopped program, recorded executions, live code changes, consistent diagnostic records, correlated program and toolchain observations, memory and leak inspection, profiling, and checked C-boundary evidence. Oven builds Rust as well as Incan, so the suite gives Incan, Rust and mixed programs one debugging experience on Linux, macOS and Windows. People, editors and agents use the same session contract, which answers in bounded, structured form. It applies to ordinary safe programs as well as foreign calls and the toolchain itself. It supplies observations to RFC 126's durable investigations without requiring an investigation to inspect one failure.
 
 ## Core model
 
@@ -31,16 +33,22 @@ An Incan developer should be able to understand a compiler refusal, read a faile
 3. **Identity and presentation are distinct.** A readable function name is a presentation of a symbol, not its identity. Source coordinates belong to a particular source revision and executable.
 4. **One fact has one authority.** Terminal, JSON, editor, debugger, memory and profile views consume the same underlying diagnostic, identity or observation. Combining them does not merge their meanings.
 5. **Capabilities are explicit.** Support depends on target, toolchain, artifact, optimization, observer and permissions. A partial report describes its limits before making a conclusion.
-6. **Failure evidence comes in three levels.** An ordinary failure says which condition failed, where, and which values it compared. A stack capture says how execution got there. A debugger or an explicit value capture says what the program's values were. Each level is a separate choice, and a lower level never claims to supply a higher one.
-7. **Incan and Rust share one experience.** Oven builds both languages. A mixed execution is reported, debugged and captured as one execution: frames of either language appear in one stack, stepping crosses the boundary, and each frame keeps its own language's names and value presentation.
+6. **Most failures are found before running.** The checker and the language server know types, constraints, contracts and where a value can come from without executing anything. Runtime evidence is for what only a run can show: outside data, timing and foreign code.
+7. **Runtime failure evidence comes in three levels.** An ordinary failure says which condition failed, where, and which values it compared. A stack capture says how execution got there. A debugger, a recorded execution or an explicit value capture says what the program's values were. Each level is a separate choice, and a lower level never claims to supply a higher one.
+8. **Incan and Rust share one experience.** Oven builds both languages. A mixed execution is reported, debugged and captured as one execution: frames of either language appear in one stack, stepping crosses the boundary, and each frame keeps its own language's names and value presentation.
+9. **Agents are first-class users.** Every operation answers in bounded, structured form with stable handles, and can be asked by meaning rather than step by step. A person at a terminal, an editor and an agent use the same session contract.
 
 ## Motivation
 
 A program that reports only an assertion message leaves the compared values, the caller, the source line and the surrounding state unknown. A native allocation stack can name a module through an encoded identifier while concealing the authored operation. A debugger may recognize an executable without having the matching line tables or names of its locals. These are obstacles in ordinary programming, independently of whether any source contains `unsafe:`.
 
+Much of what a Python developer debugs at runtime, such as a `None` where a value was expected, a missing attribute or a wrong type, an Incan checker reports before the program runs. Incan can go further. The same compiler facts that drive the debugger can answer, in the editor, which constructions can reach a use, whether a constant can ever satisfy its constraint, and what a pure expression evaluates to. Debugging should start there, with the runtime tools reserved for what only a run can show.
+
 Seeing one variable at a stop is only the start. Developers who work in interactive environments expect to explore a stopped program: browse its namespaces, view models and collections as tables, evaluate an expression against the current frame, and find where a value came from. That experience should not depend on a particular editor.
 
 Oven builds Rust as well as Incan, and a program often mixes them. Rust already has native debuggers, panic backtraces and profilers. A mixed program should not need two debugging experiences that disagree about the same execution.
+
+Agents debug too, and their costs differ from a person's. Stepping is a human loop: for an agent, every step is a full request that carries its whole context. Screens meant for people must be scraped, and an unbounded value dump consumes the context it was meant to inform. An agent needs one request per question, a bounded and structured answer, stable handles for follow-up questions, and questions asked by meaning, such as "stop when this condition holds" or "where did this value come from".
 
 The toolchain has the same needs. A slow command may spend time preparing a build, waiting for shared work, compiling a dependency, launching an executable or running the program. A large resident set may contain shared mappings, live allocations, allocator reserves or unreachable allocations. Treating these as one duration or one memory number does not explain them.
 
@@ -48,11 +56,15 @@ Existing compiler diagnostics, native debugging, engine observations and applica
 
 ## Goals
 
+- Find failures before running: constants that can never satisfy their constraints, where a value can come from, and pure-expression evaluation in the editor, from the same compiler facts the debugger uses.
 - Report a failed comparison's condition, location and compared values by default, without capturing a stack or evaluating an operand again.
 - Display authored names in supported stack, debugger, allocation, trace and profile views while preserving exact native identity.
 - Support breakpoints, stepping, call stacks and bounded value inspection against matching Incan source.
 - Let a developer explore a stopped program independently of the editor: namespaces, tabular views of models and collections, explicit evaluation in the selected frame, and where a value came from.
-- Give Incan, Rust and mixed programs built by Oven one debugging experience.
+- Record an execution on request, so that where a value came from can be answered after the fact, on every supported platform.
+- Change code in a stopped program and continue, within declared limits.
+- Give Incan, Rust and mixed programs built by Oven one debugging experience on Linux, macOS and Windows.
+- Serve agents through the same session contract: bounded, structured answers, stable handles and questions asked by meaning.
 - Preserve stable compiler codes and extend consistent diagnostics to runtime, toolchain, foreign-boundary and test outcomes.
 - Offer supported commands for program and toolchain tracing, memory and leak inspection, and CPU profiling.
 - Correlate observations across participating processes and language boundaries without contaminating program streams.
@@ -75,9 +87,52 @@ Existing compiler diagnostics, native debugging, engine observations and applica
 
 The following commands and transcripts describe the proposed surface. They are not claims of shipped commands. Counts and identifiers are illustrative; real reports obtain them from the selected execution. Existing `incan check --format json` keeps its established contract.
 
+### Find it before running
+
+The examples in this section use one invoice. When the invariant is part of the type, the checker can see a bad order line before anything runs:
+
+```incan
+model OrderLine:
+    product: str
+    quantity: int[gt=0]
+    unit_price: int
+
+
+def main() -> None:
+    lines = [
+        OrderLine(product="Keyboard", quantity=2, unit_price=80),
+        OrderLine(product="Monitor", quantity=-1, unit_price=300),
+    ]
+```
+
+A constant that can never satisfy its constraint is a diagnostic in the editor and at check time:
+
+```text
+main.incn:10: OrderLine.quantity requires int[gt=0]; the constant -1 can never satisfy it
+```
+
+That rule belongs to the checker's constraint and contract rules (RFC 017, RFC 085 and RFC 111). This suite presents it like any other diagnostic. When the quantity comes from outside, such as a file, it is checked at construction instead, and the failure names the field, the value and the construction site, before the bad line reaches any arithmetic.
+
+The language server answers exploration questions from the same facts, without a run. In the full invoice program below, asked where `line.quantity` in `line_total` can come from, it lists the constructions that can reach that use:
+
+```text
+can come from (static):
+  OrderLine(...) quantity=2      main.incn:21
+  OrderLine(...) quantity=-1     main.incn:22
+```
+
+It can also evaluate a pure expression with constant inputs, including calls to pure functions, using the same interpreter that evaluates read-only expressions at a stop:
+
+```text
+evaluate> line_total(OrderLine(product="Keyboard", quantity=2, unit_price=80))
+160   (int; evaluated before running; interpreted line_total)
+```
+
+An expression with effects, such as reading a file or the clock, is refused with an explanation that it needs a run.
+
 ### Read a failure
 
-The examples in this section use one invoice with a bad order line:
+Not every invariant fits a type, and data from outside is known only at runtime. The rest of this section keeps a plain `quantity: int`:
 
 ```incan
 model OrderLine:
@@ -131,7 +186,7 @@ Stack trace:
   main            main.incn:24
 ```
 
-Neither report says which product had the bad quantity. Frame values come from a debugger, or from an explicit capture made before the process exits; a saved stack trace cannot reconstruct them afterwards.
+Neither report says which product had the bad quantity. Frame values come from a debugger, from a recorded execution, or from an explicit capture made before the process exits; a saved stack trace cannot reconstruct them afterwards.
 
 ### Make a native stack readable
 
@@ -198,16 +253,47 @@ evaluate> line_total(lines[0])
 
 The first evaluation only reads values. The second calls program code, and the session says so, because a call can have effects.
 
-The session can also say where a value came from:
+The session can also say where a value came from. Without a recording, it combines the static answer with what the stop itself shows:
 
 ```text
 where> line.quantity
-  line         bound by `for line in lines`        main.incn:14
-  lines[1]     constructed by OrderLine(...)        main.incn:22
-  quantity     value -1, from the argument          main.incn:22
+  line       bound by `for line in lines`                main.incn:14   (this stop: iteration 2)
+  quantity   can come from OrderLine(...) quantity=2     main.incn:21   (static)
+             can come from OrderLine(...) quantity=-1    main.incn:22   (static)
 ```
 
-A developer can change a value and continue, for example setting `line.quantity` to `1`. The session records the change, and the execution's outcome is reported as the outcome of a modified run.
+### Record a run and ask where a value came from
+
+A recorded run answers that question exactly. Recording selects a build in which the compiler records each assignment, construction and return in the selected code, with its source location and value. It works on every supported platform because it relies on the compiler, not on processor or operating-system tracing.
+
+```sh
+incan debug --record main.incn
+```
+
+```text
+where> line.quantity
+  -1    OrderLine(product="Monitor", quantity=-1, unit_price=300)   main.incn:22
+        element 1 of lines                                           main.incn:20
+        bound to line, iteration 2                                   main.incn:14
+
+where> total
+  0     mut total = 0                 main.incn:13
+  160   total += line_total(line)     main.incn:15   iteration 1, line.product = "Keyboard"
+```
+
+The recording outlives the process. After it exits, the same questions get the same answers from the capture, without running anything again. Recording costs time and storage, so it is opt-in and bounded to the selected code.
+
+### Change code and continue
+
+A developer can change a value and continue, for example setting `line.quantity` to `1`. A developer can also change code. Fixing `line_total` in the editor and applying the change in a stopped session recompiles only the changed function and redirects later calls to it:
+
+```text
+apply> main.incn
+  patched: line_total
+  later calls use the new code; the call already running keeps the old code
+```
+
+A change to a model's fields, an enum's variants or a function's signature cannot apply to a live process, and the session says the run must restart. Every value change and code patch is recorded, and the execution's outcome is reported as the outcome of a modified run.
 
 ### Debug Rust and Incan together
 
@@ -241,6 +327,38 @@ Stack trace:
 ```
 
 Stepping out of the Rust frame returns to the Incan line that called it. Selecting a Rust frame shows its values with Rust names and types; selecting an Incan frame shows Incan's. A Rust-only project gets the same commands and reports.
+
+### Debug as an agent
+
+An agent uses the same session through structured requests, for example over MCP. One request asks a question by meaning and gets one bounded answer with handles for follow-up questions:
+
+```json
+{"op": "run_until", "session": "s1", "in": "line_total", "when": "line.quantity < 0"}
+```
+
+```json
+{
+  "stopped": {"frame": "f1", "function": "line_total", "location": "main.incn:8"},
+  "values": {
+    "line": {
+      "handle": "v3",
+      "type": "OrderLine",
+      "fields": {"product": "Monitor", "quantity": -1, "unit_price": 300}
+    }
+  },
+  "omitted": []
+}
+```
+
+Follow-up questions refer to handles instead of repeating earlier answers:
+
+```text
+{"op": "where", "session": "s1", "value": "v3.quantity"}
+{"op": "rows", "session": "s1", "value": "v7", "from": 100, "count": 50}
+{"op": "compare", "captures": ["run-41", "run-42"], "value": "total"}
+```
+
+Each answer names its source locations and identities, states what it left out and why, and fits a declared size. A handle stays valid for the session or capture it belongs to. The terminal client and editors use the same operations; nothing here is agent-only.
 
 ### Inspect memory through a supported command
 
@@ -343,7 +461,7 @@ The suite must expose the following operations through the Incan/Oven command ow
 | Proposed operation | Contract |
 | --- | --- |
 | `incan demangle [SYMBOL] --format text\|json` | Decode one symbol or stream stdin when the operand is absent. Text mode preserves non-symbol content; JSON mode reports original input, readable presentation, recognized format and decoding status. No program is executed. |
-| `incan debug PATH [-- ARGS...]` | Select a program and exact debug-capable artifact, then start a source-debugging session. Report unsupported capabilities before promising a session. |
+| `incan debug PATH [--record] [-- ARGS...]` | Select a program and exact debug-capable artifact, then start a source-debugging session. `--record` selects a recording artifact. Report unsupported capabilities before promising a session. |
 | `incan diagnose run PATH --capture KINDS --output CAPTURE [-- ARGS...]` | Execute a program under explicitly selected observations. |
 | `incan diagnose test PATH --capture KINDS --output CAPTURE` | Use ordinary test discovery and execution, retaining selected failure or resource observations. |
 | `incan diagnose command --capture KINDS --scope SCOPE --output CAPTURE -- COMMAND [ARGS...]` | Observe the explicitly launched command and identified work within scope. It must not require shell interpretation of operands. |
@@ -351,7 +469,7 @@ The suite must expose the following operations through the Incan/Oven command ow
 | `incan diagnose inspect CAPTURE --view VIEW --format text\|json` | Read a capture without running or attaching to its subject. |
 | `incan diagnose capabilities --format text\|json` | Report supported kinds, targets, providers, launch/attach requirements and known permission constraints. |
 
-`KINDS` is a comma-separated selection from `failures`, `trace`, `memory`, `leaks`, `cpu` and `ffi`; unknown kinds must be refused. `SCOPE` is `program`, `toolchain` or `all`. Run and test default to `program`; command requires an explicit scope; attach observes the selected process and explicitly included descendants. An observation must not silently broaden its scope. The views used above are `memory`, `timeline`, `foreign-calls` and `failures`; a view with no captured data must say `not captured`.
+`KINDS` is a comma-separated selection from `failures`, `values`, `trace`, `memory`, `leaks`, `cpu` and `ffi`; unknown kinds must be refused. `values` is a recorded execution and selects a recording artifact. `SCOPE` is `program`, `toolchain` or `all`. Run and test default to `program`; command requires an explicit scope; attach observes the selected process and explicitly included descendants. An observation must not silently broaden its scope. The views used above are `memory`, `timeline`, `foreign-calls` and `failures`; a view with no captured data must say `not captured`.
 
 A missing required observer, unsupported kind or invalid output destination must fail preflight before execution. A capture destination must not silently overwrite an existing capture. All selected kinds are required unless a caller explicitly accepts partial capture after seeing the capability report.
 
@@ -397,13 +515,39 @@ A debugging session must offer, for a stopped execution, a namespace view of the
 
 Collections and models must support bounded tabular views: rows for list and map entries, columns for model fields, with paging rather than complete materialization. Typed datasets (RFC 169) should use the same view when that RFC lands. A table must show its total size when known and must say when it shows only part of a collection.
 
-An evaluation must be an explicit request. It must be checked against the selected frame's scope and types, as source written at that location would be, and must be refused with an ordinary diagnostic when it does not check. An evaluation that only reads values must run no program code. An evaluation that calls program code must be requested as such, and its result must say that code ran. A result must identify the frame and execution it was evaluated in. Evaluation must never rerun the program or reconstruct a value from current source.
+An evaluation must be an explicit request. Its expression language is the selected frame's language. It must be checked against the selected frame's scope and types, as source written at that location would be, and must be refused with an ordinary diagnostic when it does not check. An evaluation that only reads values must run no code in the stopped process. An evaluation that calls program code must be requested as such; it runs in the stopped process, using code produced by the same compiler identity that built the artifact, and its result must say that code ran. A result must identify the frame and execution it was evaluated in. Evaluation must never rerun the program or reconstruct a value from current source.
 
-Where the debug information records it, the session must be able to report a value's provenance: its declaration, the binding or assignment that produced it, and the construction site of a model or collection element. When that information is unavailable, provenance must be reported as unavailable, not inferred from current source.
+The session must be able to report a value's provenance and must label each answer as static or observed. A static answer lists the declarations, assignments and constructions that can reach the use, from checked bodies. An observed answer reports what produced the value in this execution: the binding visible at the stop, and, in a recorded execution, the recorded chain of assignments and constructions. Provenance that is neither statically known nor observed must be reported as unavailable, not inferred from current source.
 
-A session may change a value at an explicit request. It must record the change, and the execution's outcome must be reported as the outcome of a modified execution.
+The terminal client, editor clients and agents must use the same session contract. Editor integration should use the Debug Adapter Protocol, so that an editor needs no Incan-specific debugger.
 
-The terminal client and editor clients must use the same session contract. Editor integration should use the Debug Adapter Protocol, so that an editor needs no Incan-specific debugger.
+### Before running
+
+The checker and the language server must present the facts this suite uses at runtime wherever they are known statically. Static provenance must be available in the editor for any checked use. A constant that can never satisfy its type's constraint should be diagnosed before running; the rule belongs to the checker's constraint and contract rules, and this suite presents it as an ordinary diagnostic.
+
+The language server must offer evaluation of pure expressions with constant inputs, using the same interpreter as read-only frame evaluation. It may interpret calls to pure functions, and its result must name the functions it interpreted. It must refuse an expression that reads files, the clock, randomness, the environment or foreign code, and must report that the expression needs a run. An edit-time result is not evidence about any execution.
+
+### Recorded executions
+
+A recorded execution must use an artifact built for recording, in which compiled code records assignments, constructions and returns in the selected code with their source locations, values and ordering. Recording must not change the program's semantics. It must be available on every supported platform and must not depend on processor or operating-system tracing facilities.
+
+A recording must state its scope, its bounds and what it omitted. Values of secret types (RFC 103) must be redacted when recorded, never stored in plaintext. Queries against a completed recording must run nothing and must return the same answer to the same question. Recording overhead must be measured and disclosed with the recording.
+
+### Changing values and code
+
+A session may change a value at an explicit request. It may also apply a code change to a stopped process: only the changed functions are recompiled, by the same compiler identity that built the artifact, and later calls to them use the new code. A frame already executing a changed function must keep the old code until it returns. A change to a type's layout, such as a model's fields or an enum's variants, or to a function's signature, must be refused for the live process with a diagnostic stating that the run must restart.
+
+Every value change and code patch must be recorded in the session, and the execution's outcome must be reported as the outcome of a modified execution. Code changes must be offered only for artifacts built to accept them; the supported targets must be declared.
+
+### Agent use
+
+Every session, capture and language-server operation in this suite must be available as a structured request with a versioned, structured response. A response must fit a declared size; content beyond it must be reachable through continuation handles rather than truncated silently. Sessions, frames, values and captures must have handles that stay valid for the lifetime of the session or capture they belong to, so that a follow-up request never needs an earlier answer repeated.
+
+The contract must support questions asked by meaning, including: run until a condition holds in a named function or location; report a value's provenance; and compare a value or outcome across two executions. A session must be addressable from separate requests. Every answer must carry the source locations and identities it refers to and must state explicitly what it did not capture, could not read or left out. These operations must be exposed through the same session contract that serves the terminal and editors, including over MCP.
+
+### Platforms and engines
+
+The suite must support Linux, macOS and Windows with one contract. A native debugger engine may provide process control, breakpoints, memory access and unwinding; the session, presentation, evaluation, provenance and agent contracts belong to the suite and must not change with the engine. A platform may use a different engine when it gives better support, and the capability report must name the engine in use.
 
 ### Rust and mixed executions
 
@@ -464,6 +608,13 @@ A claimed support profile must provide conformance evidence for the following ca
 | Changed value, then continue | Change recorded; outcome reported as that of a modified execution. |
 | Collection larger than one page | Bounded table with total size and a partial-view marker. |
 | Mixed Rust and Incan stack; Rust panic | One stack in call order with each frame's language and names; stepping across the boundary; panic message and location by default. |
+| Constant that can never satisfy its constraint; outside value that fails one | Diagnostic before running; construction-time failure naming field, value and construction site. |
+| Edit-time evaluation: pure call, effectful expression | Result naming the interpreted functions; effectful expression refused as needing a run. |
+| Provenance without and with a recording | Static candidates labeled static; recorded chain labeled observed; same answer after the process exits. |
+| Recording with a secret value | Secret redacted at record time; recording states scope, bounds, omissions and overhead. |
+| Code change: function body, then a model field | Later calls use the new body while the running call keeps the old one; the layout change refused with a restart diagnostic. |
+| Agent request with an oversized answer | Bounded response with continuation handles; follow-up through a handle without repeating the answer. |
+| Linux, macOS and Windows | The same contract and reports on each; capability report names the engine. |
 | Source moves, Unicode columns, stale source, relocated binary | Correct matching source or explicit mismatch/unavailability; no convincing stale location. |
 | Debug locals, shadowed names, optimized values | Correct values and scopes, or precise availability states. |
 | Safe program with allocating dependencies | Coverage-qualified allocation/leak evidence with readable and unresolved stacks separated. |
@@ -497,13 +648,22 @@ Capability reporting distinguishes provider absence, permission denial, unsuppor
 
 Explicit capture retains selected observations and references to the artifacts needed to interpret them. Retention and collection use the established artifact lifecycle; this RFC creates no second store or automatic global collection policy. Captures may be bounded by duration, event count, inspected bytes or selected processes. The store's total size is not such a bound. Export must declare omitted dependencies and whether later source or symbol resolution is still possible.
 
+### Prior art
+
+- **Rust.** `assert_eq!` prints both operands; plain `assert!` prints only its text, and the work to capture its operands has stayed unstable. `std::backtrace` is off by default and enabled through the environment, the same policy RFC 131 adopts. Rust has no debugger of its own: rustc emits standard debug information, and LLDB and GDB present it with Rust formatting scripts. GDB parses Rust expressions; LLDB does not, so editors built their own evaluators on top of it.
+- **evcxr**, Rust's interactive shell and Jupyter kernel, compiles each snippet into a small library, loads it into a running process and keeps variables between snippets. It shows that compile-and-load evaluation works, at the cost of a compilation per snippet.
+- **rust-analyzer** interprets Rust's intermediate representation to evaluate constants in the editor, and **Miri** interprets it to detect undefined behavior: interpretation over checked code is a working alternative to compiling each expression.
+- **Dioxus's subsecond** replaces functions in a running Rust process: calls go through a jump table, and only changed code is compiled and linked against the running program. It does not migrate state when a type's layout changes.
+- **Pernosco**, built on rr recordings, lets a developer click a value and see where it came from. It requires a recording made through processor facilities on one operating system and processor family.
+- **PyCharm's scientific mode** combines a variables view, tabular data viewers and evaluation in the stopped frame. It sets the experience bar for exploring a stopped program.
+
 ### Delivery order (non-normative)
 
 The suite is large, and its parts are useful on their own. A recommended order:
 
-1. Readable failures: conditions, locations, compared values and opt-in stacks, for Incan and Rust.
-2. Source debugging and exploring a stopped program: breakpoints, stepping, namespaces, tables, evaluation and provenance, with the terminal client and the editor adapter.
-3. Symbols and captures: `incan demangle`, failure captures for tests, trace correlation.
+1. Before running and readable failures: static provenance and edit-time evaluation in the language server; conditions, locations, compared values and opt-in stacks, for Incan and Rust.
+2. Source debugging, exploring a stopped program and agent use: breakpoints, stepping, namespaces, tables, frame evaluation and provenance, with the terminal client, the editor adapter and MCP.
+3. Recorded executions, code changes in a stopped program, symbols and captures: `incan demangle`, failure captures for tests, trace correlation.
 4. Memory and leak inspection, profiling, and foreign-call capture.
 
 ## Alternatives considered
@@ -517,25 +677,39 @@ The suite is large, and its parts are useful on their own. A recommended order:
 - **Show no values in ordinary failures.** Keeps default output smallest, but hides the single most useful fact about a failed comparison, which the program has already computed. Showing them needs no stack capture and no second evaluation.
 - **Show the stack and frame values by default.** Contradicts RFC 131's off-by-default stack policy, costs every failing run, and exposes values that only a debugger session or an explicit capture should reveal.
 - **Keep Rust and Incan debugging separate.** Simpler to build, but a mixed program would get two stacks, two failure formats and two sessions for one execution, with no stepping across the boundary.
+- **Record executions through processor tracing, as record-and-replay debuggers do.** Gives complete recordings, but the established tools need specific processors and one operating system. Compiler-emitted recording works everywhere and records in source terms.
+- **Write a debugger engine.** Would remove a dependency, but means separate process-control, debug-information and unwinding layers for each operating system. The suite's value is above the engine.
+- **Give agents a separate interface.** Would let the human interface stay unstructured, but splits one debugging fact into two presentations that can drift. Bounded, structured answers serve people's tools as well.
 
 ## Drawbacks
 
-Source debugging and observer integration require a maintained platform and toolchain support matrix. Retaining matching source and debug artifacts consumes storage and can expose implementation details. Memory instrumentation and sampling change execution costs, and some faults prevent complete capture. Versioned symbol formats and typed observation outcomes impose compatibility work. The suite also adds command concepts; the benefit depends on keeping ordinary workflows small and unsupported cases explicit.
+Source debugging and observer integration require a maintained platform and toolchain support matrix. Retaining matching source and debug artifacts consumes storage and can expose implementation details. Memory instrumentation and sampling change execution costs, and some faults prevent complete capture. Recording and patchable artifacts are further artifact kinds to build, identify and qualify. Versioned symbol formats and typed observation outcomes impose compatibility work. The suite also adds command concepts; the benefit depends on keeping ordinary workflows small and unsupported cases explicit.
+
+## Implementation architecture (non-normative)
+
+- **Engine and session.** LLDB, the LLVM project's debugger, provides process control, breakpoints, memory access and unwinding on Linux, macOS and Windows. Oven owns the session above it: presentation, evaluation, provenance, recording, patching and the agent contract. The terminal client, a Debug Adapter Protocol adapter and MCP tools are clients of that session.
+- **Debug information.** Incan code compiles through the pinned rustc, so Incan and Rust frames share one debug-information format, one unwinder and one panic mechanism. Incan source lines and scopes must be carried into that debug information.
+- **Values.** Oven presents Incan values from the compiler's type facts and Rust values through the toolchain's Rust formatting, so nothing is written per debugger.
+- **Evaluation.** Read-only expressions are interpreted over checked bodies against values read from the stopped process; the same interpreter evaluates pure expressions in the language server. Expressions that call program code are compiled as a small function against the frame's types, by the compiler identity that built the artifact, then loaded into the process and called.
+- **Recording.** A recording artifact is compiled with instrumentation that writes assignments, constructions and returns, with locations, to a bounded buffer. Static provenance comes from checked bodies and the code graph.
+- **Patching.** A patchable artifact routes calls to patchable functions through an indirection table. Applying a change compiles only the changed functions, links them against the running program's symbols and updates the table.
+- **Storage.** Captures and recordings are typed records stored through std.db (RFC 165) within the established artifact lifecycle.
 
 ## Layers affected
 
-- **Compiler diagnostics and semantic identity:** stable codes, source-anchor projection, declaration provenance and shared rendering contracts.
-- **Checked bodies and native lowering:** source scopes, local names, assertion operands, value provenance and generated-frame relationships.
-- **Native backend and artifact distribution:** target debug information, symbol identity, matching source/debug artifacts and relocation.
+- **Compiler diagnostics and semantic identity:** stable codes, source-anchor projection, declaration provenance, constants that can never satisfy their constraints, and shared rendering contracts.
+- **Checked bodies and native lowering:** source scopes, local names, assertion operands, static value provenance, recording instrumentation, patchable call indirection and generated-frame relationships.
+- **Native backend and artifact distribution:** target debug information carrying Incan source lines and scopes, symbol identity, recording and patchable artifacts, matching source/debug artifacts and relocation.
+- **Language server:** static provenance, edit-time evaluation of pure expressions and the shared read-only interpreter.
 - **Runtime and standard library:** panic/assertion observations, safe value representations, telemetry correlation and checked foreign boundaries.
-- **Platform and Oven tooling:** observer capability discovery, process scope, capture lifecycle, memory/profiling operations and report projections.
+- **Platform and Oven tooling:** the debugging session on Linux, macOS and Windows, observer capability discovery, process scope, capture lifecycle and storage, code patching, memory/profiling operations, report projections and the structured agent contract over MCP.
 - **Debugger and editor integration:** source-level control across Rust and Incan frames, bounded value inspection, namespace and tabular views, frame evaluation, exact-source validation, the Debug Adapter Protocol adapter and diagnostic parity.
 - **Tests and contract tooling:** structured failure observations and support-profile conformance.
 
 ## Unresolved questions
 
-- Which operating systems, architectures and native debugger/provider combinations must qualify for the first supported release, and which may initially be explicitly unsupported? The proposed minimum source-debugging and value contracts apply to every target claimed as supported.
-- How does an evaluation in a stopped frame run? Incan compiles to native code, so an expression must either be compiled against the frame's types and called inside the stopped process, or interpreted over checked bodies against values read from it. The choice decides which expressions are supported, their cost, and how far evaluation reaches into Rust frames.
+- Linux, macOS and Windows are required. Which architectures, engine versions and observer providers must qualify for the first supported release on each, and which may initially be explicitly unsupported? The proposed minimum source-debugging and value contracts apply to every target claimed as supported.
+- What does a recording record by default: all code in the project, the selected modules, or only functions named in the request? The default sets the overhead and storage of `--record`, and what provenance can answer without a second run.
 - What debug-artifact distribution policy should official releases and published dependencies guarantee: bundled source and symbols, separately obtainable matching artifacts, or source-free symbols by default? This determines download/storage cost and source-disclosure expectations, not the requirement to report missing artifacts honestly.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
