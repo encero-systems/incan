@@ -48,6 +48,16 @@ fn staged(source: &str, remove_call_proof: bool) -> Result<bir::BodyIrModule, Bo
     Ok(module)
 }
 
+/// Positive execution profiles must pass source checking as well as materialize complete Body IR.
+fn admitted(source: &str) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    crate::typechecker::TypeChecker::new()
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    staged(source, false)
+}
+
 /// Shared and exclusive scalar requests retain their source storage despite the carrier being Copy.
 #[test]
 fn scalar_inputs_borrow_existing_places() -> Result<(), Box<dyn std::error::Error>> {
@@ -583,5 +593,115 @@ fn noncopy_alias_observers_preserve_disjoint_and_completed_reads() -> Result<(),
             body.first_representation_gap()
         );
     }
+    Ok(())
+}
+
+/// Explicit borrowed parameters retain their original storage at a primitive observer, without a repair snapshot.
+#[test]
+fn borrowed_text_parameter_observers_keep_source_storage() -> Result<(), Box<dyn std::error::Error>> {
+    for mode in ["Borrowed", "BorrowedMut"] {
+        let module = admitted(&format!(
+            "def read(value: {mode}[str]) -> int:\n    return len(value)\n"
+        ))?;
+        let body = module.bodies.first().ok_or("missing body")?;
+        let arguments = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call { args, .. } => Some(args),
+                _ => None,
+            })
+            .ok_or("missing observer")?;
+        let [bir::ArgumentElement::One(bir::Operand::Place(read))] = arguments.as_slice() else {
+            return Err("missing observer operand".into());
+        };
+        assert_eq!(read.fact, bir::OwnershipFact::Borrow, "{mode}");
+        assert_eq!(
+            read.place.local_id(),
+            body.params.first().map(|parameter| parameter.local),
+            "{mode}"
+        );
+        assert!(!read.last_use);
+    }
+    Ok(())
+}
+
+/// A direct exclusive parameter's observed text remains shared until later operands finish evaluating.
+#[test]
+fn borrowed_parameter_operation_refuses_later_mutation() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "print(value, replace(value))",
+        "assert value == replace(value)",
+        "print(f\"{value}{replace(value)}\")",
+    ] {
+        let source = format!(
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    {expression}\n"
+        );
+        let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("borrowed operand was silently snapshotted")?;
+        assert!(
+            errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{expression}: {errors:?}"
+        );
+    }
+    Ok(())
+}
+
+/// An exclusive alias cannot use its parent capability to mutate a text operand still shared by an operation.
+#[test]
+fn exclusive_alias_operation_requires_a_shared_child() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    mut view: BorrowedMut[str] = value\n    print(view, replace(view))\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = crate::typechecker::TypeChecker::new();
+    let errors = checker
+        .check_program(&program)
+        .err()
+        .ok_or("exclusive parent bypassed operation read")?;
+    assert!(
+        errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{errors:?}"
+    );
+    Ok(())
+}
+
+/// Disjoint parameter mutations and completed inner values remain usable; Copy snapshots retain ordinary behavior.
+#[test]
+fn borrowed_parameter_operations_keep_disjoint_and_copy_behavior() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "print(value, value)",
+        "print(value, replace(other))",
+        "print(replace(other), value)",
+        "assert value != replace(other)",
+        "print(f\"{value}{replace(other)}\")",
+        "print(f\"{value}\", replace(value))",
+    ] {
+        let source = format!(
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str], mut other: BorrowedMut[str]) -> None:\n    {expression}\n"
+        );
+        let module = admitted(&source)?;
+        assert!(
+            module
+                .bodies
+                .iter()
+                .all(|body| body.first_representation_gap().is_none()),
+            "{expression}"
+        );
+    }
+    let module = admitted(
+        "def bump(mut value: BorrowedMut[int]) -> int:\n    value += 1\n    return value\ndef inspect(mut value: BorrowedMut[int]) -> None:\n    print(value, bump(value))\n",
+    )?;
+    assert!(
+        module
+            .bodies
+            .iter()
+            .all(|body| body.first_representation_gap().is_none())
+    );
     Ok(())
 }

@@ -3,12 +3,33 @@
 use std::collections::BTreeSet;
 
 use incan_lang::lang::builtins::BuiltinFnId;
-use incan_semantics_core::{HirSourceSpan, SemanticSourceTargetKind};
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{AssertKind, CallArg, Expr, FStringPart, FunctionDecl, ListEntry, Spanned, Statement};
 
 impl CheckedInputBody<'_> {
+    /// Select the retained operand relationship after graph validation. The enclosing source admission separately
+    /// proves complete AST coverage, so this lookup cannot grant execution to an orphan or missing body proof.
+    pub(crate) fn operation_operand_source(
+        &self,
+        operand: HirSourceSpan,
+    ) -> Result<Option<super::CheckedInputSource>, &'static str> {
+        let mut matches = self
+            .graph
+            .operations
+            .values()
+            .flat_map(|operation| &operation.operands)
+            .filter(|dependency| dependency.operand == operand);
+        let Some(dependency) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some() {
+            return Err("operand belongs to multiple operation dependencies");
+        }
+        super::calls::project_source(&dependency.source).map(Some)
+    }
+
     /// Require every admitted borrowed operand's operation record, including after restoring persisted checker
     /// facts. Recomputed liveness over a graph with removed consumption reads cannot substitute for this coverage.
     pub(in crate::typechecker::ownership_contracts) fn validate_operation_coverage(
@@ -16,19 +37,24 @@ impl CheckedInputBody<'_> {
         function: &FunctionDecl,
     ) -> Result<(), &'static str> {
         let mut seen = BTreeSet::new();
+        let parameters = self.borrowed_operation_parameters(function)?;
         for statement in &function.body {
             match &statement.node {
                 Statement::Pass => {}
-                Statement::Assignment(value) => self.visit_operation_expression(&value.value, &mut seen)?,
-                Statement::CompoundAssignment(value) => self.visit_operation_expression(&value.value, &mut seen)?,
-                Statement::FieldAssignment(value) => {
-                    self.visit_operation_expression(&value.object, &mut seen)?;
-                    self.visit_operation_expression(&value.value, &mut seen)?;
+                Statement::Assignment(value) => {
+                    self.visit_operation_expression(&value.value, &parameters, &mut seen)?
                 }
-                Statement::Expr(value) => self.visit_operation_expression(value, &mut seen)?,
+                Statement::CompoundAssignment(value) => {
+                    self.visit_operation_expression(&value.value, &parameters, &mut seen)?
+                }
+                Statement::FieldAssignment(value) => {
+                    self.visit_operation_expression(&value.object, &parameters, &mut seen)?;
+                    self.visit_operation_expression(&value.value, &parameters, &mut seen)?;
+                }
+                Statement::Expr(value) => self.visit_operation_expression(value, &parameters, &mut seen)?,
                 Statement::Return(value) => {
                     if let Some(value) = value {
-                        self.visit_operation_expression(value, &mut seen)?;
+                        self.visit_operation_expression(value, &parameters, &mut seen)?;
                     }
                     break;
                 }
@@ -36,9 +62,9 @@ impl CheckedInputBody<'_> {
                     let AssertKind::Condition(condition) = &value.kind else {
                         return Err("operation coverage requires a checked ordinary assertion");
                     };
-                    self.visit_operation_expression(condition, &mut seen)?;
+                    self.visit_operation_expression(condition, &parameters, &mut seen)?;
                     if let Some(message) = &value.message {
-                        self.visit_operation_expression(message, &mut seen)?;
+                        self.visit_operation_expression(message, &parameters, &mut seen)?;
                     }
                 }
                 _ => return Err("operation coverage requires the admitted straight-line statement profile"),
@@ -50,22 +76,47 @@ impl CheckedInputBody<'_> {
         Ok(())
     }
 
+    /// Source parameter slots and canonical binding tokens select borrowed inputs; a graph permission bit or a
+    /// parameter's display name alone cannot authorize removing an owned snapshot.
+    fn borrowed_operation_parameters(
+        &self,
+        function: &FunctionDecl,
+    ) -> Result<BTreeSet<CanonicalSymbolId>, &'static str> {
+        let contract = self.facts.declarations.ownership_contracts.get(self.canonical_owner());
+        let mut parameters = BTreeSet::new();
+        for (slot, parameter) in function.params.iter().enumerate() {
+            if matches!(
+                crate::ownership_metadata::direct_input_access(contract, slot)?,
+                IncanInputAccess::Shared | IncanInputAccess::Exclusive
+            ) {
+                let identity = self
+                    .facts
+                    .resolved_write_identity(parameter.span, &parameter.node.name)
+                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Parameter)
+                    .ok_or("borrowed operation parameter has no canonical binding")?;
+                parameters.insert(identity.clone());
+            }
+        }
+        Ok(parameters)
+    }
+
     /// Follow the supported expression forms and their operand order. This is an admission validator: extending
     /// source-flow coverage does not automatically grant execution to another expression or evaluation policy.
     fn visit_operation_expression(
         &self,
         expression: &Spanned<Expr>,
+        parameters: &BTreeSet<CanonicalSymbolId>,
         seen: &mut BTreeSet<HirSourceSpan>,
     ) -> Result<(), &'static str> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Literal(_) => {}
             Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Field(inner, _) => {
-                self.visit_operation_expression(inner, seen)?;
+                self.visit_operation_expression(inner, parameters, seen)?;
             }
             Expr::Binary(left, _, right) => {
-                self.visit_operation_expression(left, seen)?;
-                self.visit_operation_expression(right, seen)?;
-                self.require_operation(expression.span, &[left.as_ref(), right.as_ref()], seen)?;
+                self.visit_operation_expression(left, parameters, seen)?;
+                self.visit_operation_expression(right, parameters, seen)?;
+                self.require_operation(expression.span, &[left.as_ref(), right.as_ref()], parameters, seen)?;
             }
             Expr::FString(parts) => {
                 let operands = parts
@@ -76,25 +127,25 @@ impl CheckedInputBody<'_> {
                     })
                     .collect::<Vec<_>>();
                 for operand in &operands {
-                    self.visit_operation_expression(operand, seen)?;
+                    self.visit_operation_expression(operand, parameters, seen)?;
                 }
-                self.require_operation(expression.span, &operands, seen)?;
+                self.require_operation(expression.span, &operands, parameters, seen)?;
             }
             Expr::Call(callee, _, arguments) => {
-                self.visit_operation_expression(callee, seen)?;
+                self.visit_operation_expression(callee, parameters, seen)?;
                 let mut operands = Vec::new();
                 for argument in arguments {
                     let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
                         return Err("operation coverage needs checked fixed call arguments");
                     };
-                    self.visit_operation_expression(value, seen)?;
+                    self.visit_operation_expression(value, parameters, seen)?;
                     operands.push(value);
                 }
                 if matches!(
                     self.facts.resolved_builtin_call(expression.span),
                     Some(BuiltinFnId::Print | BuiltinFnId::Len)
                 ) {
-                    self.require_operation(expression.span, &operands, seen)?;
+                    self.require_operation(expression.span, &operands, parameters, seen)?;
                 }
             }
             Expr::List(entries) => {
@@ -102,7 +153,7 @@ impl CheckedInputBody<'_> {
                     let ListEntry::Element(value) = entry else {
                         return Err("operation coverage cannot infer list-spread access");
                     };
-                    self.visit_operation_expression(value, seen)?;
+                    self.visit_operation_expression(value, parameters, seen)?;
                 }
             }
             _ => return Err("operation coverage requires an admitted expression"),
@@ -116,6 +167,7 @@ impl CheckedInputBody<'_> {
         &self,
         operation: HirSourceSpan,
         operands: &[&Spanned<Expr>],
+        parameters: &BTreeSet<CanonicalSymbolId>,
         seen: &mut BTreeSet<HirSourceSpan>,
     ) -> Result<(), &'static str> {
         let mut required = Vec::new();
@@ -128,7 +180,7 @@ impl CheckedInputBody<'_> {
                 .abi_v0_facts()
                 .ownership
                 .is_trivially_copy()
-                && let Some((source, loan)) = self.operation_alias_place(operand)?
+                && let Some((source, loan)) = self.operation_borrowed_place(operand, parameters)?
             {
                 required.push((operand.span, source, loan));
             }
@@ -145,33 +197,88 @@ impl CheckedInputBody<'_> {
             return Err("operation dependencies do not match source operand coverage");
         }
         for (actual, (operand, source, loan)) in retained.operands.iter().zip(required) {
-            if actual.operand != operand || actual.source != source || actual.loan != loan {
+            let observed = self
+                .graph
+                .loans
+                .get(actual.loan.0)
+                .ok_or("operation read loan is absent")?;
+            if actual.operand != operand
+                || actual.source != source
+                || observed.source != source
+                || observed.parent != loan
+                || observed.kind != flow::LoanKind::Shared
+                || observed.writable
+                || observed.span != operand
+            {
                 return Err("operation dependency differs from its checked operand source");
+            }
+            let origin = self
+                .graph
+                .nodes
+                .iter()
+                .position(|node| matches!(node.event, flow::Event::Borrow(id) if id == actual.loan))
+                .ok_or("operation read loan has no creation event")?;
+            let evaluated = origin
+                .checked_sub(1)
+                .and_then(|index| self.graph.nodes.get(index))
+                .ok_or("operation read loan has no evaluated operand")?;
+            if origin >= retained.completion_node
+                || self.graph.nodes[origin].span != operand
+                || evaluated.span.expansion != operand.expansion
+                || evaluated.span.start < operand.start
+                || evaluated.span.end > operand.end
+                || !matches!(&evaluated.event, flow::Event::Access { place, access: flow::Access::Read, through }
+                    if place == &source && *through == loan)
+            {
+                return Err("operation read loan was not created at its evaluated operand");
+            }
+            let position = operands
+                .iter()
+                .position(|expression| expression.span == operand)
+                .ok_or("operation dependency has no source operand position")?;
+            for later in &operands[position + 1..] {
+                if self.graph.nodes.iter().enumerate().any(|(index, node)| {
+                    index <= origin
+                        && node.span.expansion == later.span.expansion
+                        && later.span.start <= node.span.start
+                        && node.span.end <= later.span.end
+                }) {
+                    return Err("operation read loan starts after a later operand was evaluated");
+                }
             }
         }
         Ok(())
     }
 
-    /// Resolve only stored alias paths using canonical expression identities and the already authenticated local
-    /// loan. Fresh expression results retain no upstream alias dependency after their own operation completes.
-    fn operation_alias_place(
+    /// Resolve stored aliases and declared borrowed parameters through canonical identities. Fresh expression
+    /// results retain no upstream storage dependency after their own operation completes.
+    fn operation_borrowed_place(
         &self,
         expression: &Spanned<Expr>,
-    ) -> Result<Option<(flow::Place, flow::LoanId)>, &'static str> {
+        parameters: &BTreeSet<CanonicalSymbolId>,
+    ) -> Result<Option<(flow::Place, Option<flow::LoanId>)>, &'static str> {
         match &expression.node {
             Expr::Ident(_) => {
                 let Some(identity) = self.facts.resolved_identity(expression.span) else {
                     return Ok(None);
                 };
-                let Some(id) = self.graph.local_loans.get(identity) else {
-                    return Ok(None);
-                };
-                let loan = self.graph.loans.get(id.0).ok_or("operation alias has no source loan")?;
-                Ok(Some((loan.source.clone(), *id)))
+                if let Some(id) = self.graph.local_loans.get(identity) {
+                    let loan = self.graph.loans.get(id.0).ok_or("operation alias has no source loan")?;
+                    return Ok(Some((loan.source.clone(), Some(*id))));
+                }
+                Ok(parameters.contains(identity).then(|| {
+                    (
+                        flow::Place {
+                            root: flow::Root::Binding(identity.clone()),
+                            projection: Vec::new(),
+                        },
+                        None,
+                    )
+                }))
             }
-            Expr::Paren(inner) => self.operation_alias_place(inner),
+            Expr::Paren(inner) => self.operation_borrowed_place(inner, parameters),
             Expr::Field(base, _) => {
-                let Some((mut place, loan)) = self.operation_alias_place(base)? else {
+                let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
                     return Ok(None);
                 };
                 let field = self
