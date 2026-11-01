@@ -158,6 +158,11 @@ impl Builder<'_> {
             }
             incoming = self.expression(expr, incoming, false)?;
         }
+        for part in parts {
+            if let FStringPart::Expr { expr, .. } = part {
+                incoming = self.consume_alias_operand(expr, incoming)?;
+            }
+        }
         Ok(incoming)
     }
 }

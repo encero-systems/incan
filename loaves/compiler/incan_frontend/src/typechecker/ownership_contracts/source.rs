@@ -399,6 +399,8 @@ impl Builder<'_> {
                 if matches!(operation, BinaryOp::And | BinaryOp::Or) {
                     outgoing.extend(incoming);
                 }
+                outgoing = self.consume_alias_operand(left, outgoing)?;
+                outgoing = self.consume_alias_operand(right, outgoing)?;
                 Ok(outgoing)
             }
             _ => Err(Unavailable {
@@ -406,6 +408,38 @@ impl Builder<'_> {
                 reason: "expression needs checked call or dependency access facts",
             }),
         }
+    }
+
+    /// A non-Copy alias operand remains borrowed until the enclosing operation consumes it. Evaluating a later
+    /// operand cannot mutate the same storage merely because the alias's textual occurrence was evaluated first.
+    /// Fresh computed results have their own storage; Copy reads retain the ordinary snapshot behavior.
+    fn consume_alias_operand(
+        &mut self,
+        expression: &Spanned<Expr>,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
+            span: expression.span,
+            reason: "missing checked operand type",
+        })?;
+        if self.copy_value(ty) {
+            return Ok(incoming);
+        }
+        let Some(path) = self.optional_place(expression)? else {
+            return Ok(incoming);
+        };
+        if path.through.is_none() {
+            return Ok(incoming);
+        }
+        Ok(self.event(
+            incoming,
+            Event::Access {
+                place: path.place,
+                access: Access::Read,
+                through: path.through,
+            },
+            expression.span,
+        ))
     }
 
     /// Use the checker's derive relation for transfer proofs rather than the legacy ABI adaptation heuristic.

@@ -105,6 +105,11 @@ impl Builder<'_> {
             }
             incoming = self.expression(expression, incoming, false)?;
         }
+        for argument in arguments {
+            if let CallArg::Positional(expression) | CallArg::Named(_, expression) = argument {
+                incoming = self.consume_alias_operand(expression, incoming)?;
+            }
+        }
         Ok(incoming)
     }
 

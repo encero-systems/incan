@@ -466,12 +466,13 @@ fn owned_locals_keep_missing_proof_and_projected_transfer_refusals() -> Result<(
     Ok(())
 }
 
-/// An owned local transfer makes later source use invalid and cannot consume through a non-Copy shared input.
+/// An owned local transfer makes later source use invalid; shared inputs and local loans cannot be consumed.
 #[test]
 fn owned_local_source_conflicts_remain_typed() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
         "def main() -> int:\n    original = \"payload\"\n    let held: Owned[str] = original\n    return len(original)\n",
         "def read(original: Borrowed[str]) -> int:\n    let held: Owned[str] = original\n    return len(held)\n",
+        "def read(original: Owned[str]) -> str:\n    let view: Borrowed[str] = original\n    return view\n",
     ] {
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -483,6 +484,103 @@ fn owned_local_source_conflicts_remain_typed() -> Result<(), Box<dyn std::error:
         assert!(
             errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
             "{errors:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A non-Copy alias borrows its original owner for a direct call, then permits transfer after its final use.
+#[test]
+fn noncopy_local_alias_retains_owner_until_last_use() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "def length(value: Borrowed[str]) -> int:\n    return len(value)\ndef main() -> int:\n    original = \"payload\"\n    let view: Borrowed[str] = original\n    assert length(view) == 7\n    let held: Owned[str] = original\n    return len(held)\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no main body")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}",
+        body.first_representation_gap()
+    );
+    assert!(!body.locals.iter().any(|local| local.name.as_deref() == Some("view")));
+    Ok(())
+}
+
+/// An exclusive model alias projects nested fields into the original aggregate without a second owner.
+#[test]
+fn noncopy_model_alias_keeps_nested_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "model Page:\n    title: str\n    count: int\ndef main() -> None:\n    mut page = Page(title=\"old\", count=1)\n    mut view: BorrowedMut[Page] = page\n    view.title = \"new\"\n    view.count += 1\n    assert view.title == \"new\"\n    assert page.count == 2\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no main body")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}",
+        body.first_representation_gap()
+    );
+    assert!(!body.locals.iter().any(|local| local.name.as_deref() == Some("view")));
+    Ok(())
+}
+
+/// Observers consume alias operands after evaluating the other operands, without a hidden owned snapshot.
+#[test]
+fn noncopy_alias_operation_retains_loan_through_later_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "print(view, replace(original))",
+        "assert view == replace(original)",
+        "print(f\"{view}{replace(original)}\")",
+    ] {
+        let source = format!(
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main() -> None:\n    mut original = \"payload\"\n    let view: Borrowed[str] = original\n    {expression}\n"
+        );
+        let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("later mutation released alias too early")?;
+        assert!(
+            errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{expression}: {errors:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Disjoint mutation is permitted, and a fresh formatted value ends its source dependency before the next argument.
+#[test]
+fn noncopy_alias_observers_preserve_disjoint_and_completed_reads() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "print(view)",
+        "print(view, replace(other))",
+        "print(replace(other), view)",
+        "assert view != replace(other)",
+        "print(f\"{view}{replace(other)}\")",
+        "print(f\"{view}\", replace(original))",
+    ] {
+        let source = format!(
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef main() -> None:\n    mut original = \"payload\"\n    mut other = \"other\"\n    let view: Borrowed[str] = original\n    {expression}\n"
+        );
+        let module = staged(&source, false)?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == "main")
+            .ok_or("missing main")?;
+        assert!(
+            body.first_representation_gap().is_none(),
+            "{expression}: {:?}",
+            body.first_representation_gap()
         );
     }
     Ok(())

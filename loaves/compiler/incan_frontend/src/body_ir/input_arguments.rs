@@ -76,7 +76,7 @@ impl BodyBuilder<'_, '_> {
                     }
                     let place = self.lower_expr_to_place(expression, scope, out);
                     self.authenticate_input_place(&place, &root, &fields)?;
-                    self.explicit_place_operand(place, &ty, argument.access)?
+                    self.explicit_place_operand(place, &ty, argument.access, expression)?
                 }
                 Some(CheckedInputSource::Temporary) | None => {
                     let value = self.lower_boundary_value(expression, Some(&ty), scope, out);
@@ -138,6 +138,7 @@ impl BodyBuilder<'_, '_> {
         place: bir::Place,
         ty: &IncanType,
         access: IncanInputAccess,
+        expression: &ast::Spanned<ast::Expr>,
     ) -> Result<bir::Operand, String> {
         let local = place.local_id().ok_or("explicit source input has no local storage")?;
         let copy = ty.abi_v0_facts().ownership.is_trivially_copy();
@@ -160,7 +161,7 @@ impl BodyBuilder<'_, '_> {
                 return Err("ordinary non-Copy input requires its inferred access proof".into());
             }
         };
-        self.consume_place_read(&place);
+        self.consume_input_source_read(expression, &place);
         Ok(bir::Operand::place(place, fact, last_use))
     }
 
