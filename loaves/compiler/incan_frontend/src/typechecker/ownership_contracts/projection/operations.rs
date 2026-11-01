@@ -38,23 +38,24 @@ impl CheckedInputBody<'_> {
     ) -> Result<(), &'static str> {
         let mut seen = BTreeSet::new();
         let parameters = self.borrowed_operation_parameters(function)?;
+        let execution = self.operation_execution_order()?;
         for statement in &function.body {
             match &statement.node {
                 Statement::Pass => {}
                 Statement::Assignment(value) => {
-                    self.visit_operation_expression(&value.value, &parameters, &mut seen)?
+                    self.visit_operation_expression(&value.value, &parameters, &execution, &mut seen)?
                 }
                 Statement::CompoundAssignment(value) => {
-                    self.visit_operation_expression(&value.value, &parameters, &mut seen)?
+                    self.visit_operation_expression(&value.value, &parameters, &execution, &mut seen)?
                 }
                 Statement::FieldAssignment(value) => {
-                    self.visit_operation_expression(&value.object, &parameters, &mut seen)?;
-                    self.visit_operation_expression(&value.value, &parameters, &mut seen)?;
+                    self.visit_operation_expression(&value.object, &parameters, &execution, &mut seen)?;
+                    self.visit_operation_expression(&value.value, &parameters, &execution, &mut seen)?;
                 }
-                Statement::Expr(value) => self.visit_operation_expression(value, &parameters, &mut seen)?,
+                Statement::Expr(value) => self.visit_operation_expression(value, &parameters, &execution, &mut seen)?,
                 Statement::Return(value) => {
                     if let Some(value) = value {
-                        self.visit_operation_expression(value, &parameters, &mut seen)?;
+                        self.visit_operation_expression(value, &parameters, &execution, &mut seen)?;
                     }
                     break;
                 }
@@ -62,9 +63,9 @@ impl CheckedInputBody<'_> {
                     let AssertKind::Condition(condition) = &value.kind else {
                         return Err("operation coverage requires a checked ordinary assertion");
                     };
-                    self.visit_operation_expression(condition, &parameters, &mut seen)?;
+                    self.visit_operation_expression(condition, &parameters, &execution, &mut seen)?;
                     if let Some(message) = &value.message {
-                        self.visit_operation_expression(message, &parameters, &mut seen)?;
+                        self.visit_operation_expression(message, &parameters, &execution, &mut seen)?;
                     }
                 }
                 _ => return Err("operation coverage requires the admitted straight-line statement profile"),
@@ -74,6 +75,33 @@ impl CheckedInputBody<'_> {
             return Err("operation dependency has no matching source operation");
         }
         Ok(())
+    }
+
+    /// The admitted source profile is straight-line, so every retained event must occur once on its single path.
+    /// Traversing successors authenticates execution order independently of node storage order and rejects bypassed
+    /// creation/consumption evidence. Branching admission needs its own path proof before relaxing this requirement.
+    fn operation_execution_order(&self) -> Result<Vec<usize>, &'static str> {
+        let mut order = vec![None; self.graph.nodes.len()];
+        let mut current = self.graph.entry;
+        let mut rank = 0;
+        loop {
+            let visited = order
+                .get_mut(current)
+                .ok_or("operation execution leaves the checked graph")?;
+            if visited.replace(rank).is_some() {
+                return Err("operation execution revisits a checked event");
+            }
+            rank += 1;
+            match self.graph.nodes[current].successors.as_slice() {
+                [] => break,
+                [next] => current = *next,
+                _ => return Err("operation execution is not a single checked path"),
+            }
+        }
+        order
+            .into_iter()
+            .map(|rank| rank.ok_or("operation execution bypasses retained evidence"))
+            .collect()
     }
 
     /// Source parameter slots and canonical binding tokens select borrowed inputs; a graph permission bit or a
@@ -106,17 +134,24 @@ impl CheckedInputBody<'_> {
         &self,
         expression: &Spanned<Expr>,
         parameters: &BTreeSet<CanonicalSymbolId>,
+        execution: &[usize],
         seen: &mut BTreeSet<HirSourceSpan>,
     ) -> Result<(), &'static str> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Literal(_) => {}
             Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Field(inner, _) => {
-                self.visit_operation_expression(inner, parameters, seen)?;
+                self.visit_operation_expression(inner, parameters, execution, seen)?;
             }
             Expr::Binary(left, _, right) => {
-                self.visit_operation_expression(left, parameters, seen)?;
-                self.visit_operation_expression(right, parameters, seen)?;
-                self.require_operation(expression.span, &[left.as_ref(), right.as_ref()], parameters, seen)?;
+                self.visit_operation_expression(left, parameters, execution, seen)?;
+                self.visit_operation_expression(right, parameters, execution, seen)?;
+                self.require_operation(
+                    expression.span,
+                    &[left.as_ref(), right.as_ref()],
+                    parameters,
+                    execution,
+                    seen,
+                )?;
             }
             Expr::FString(parts) => {
                 let operands = parts
@@ -127,25 +162,25 @@ impl CheckedInputBody<'_> {
                     })
                     .collect::<Vec<_>>();
                 for operand in &operands {
-                    self.visit_operation_expression(operand, parameters, seen)?;
+                    self.visit_operation_expression(operand, parameters, execution, seen)?;
                 }
-                self.require_operation(expression.span, &operands, parameters, seen)?;
+                self.require_operation(expression.span, &operands, parameters, execution, seen)?;
             }
             Expr::Call(callee, _, arguments) => {
-                self.visit_operation_expression(callee, parameters, seen)?;
+                self.visit_operation_expression(callee, parameters, execution, seen)?;
                 let mut operands = Vec::new();
                 for argument in arguments {
                     let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
                         return Err("operation coverage needs checked fixed call arguments");
                     };
-                    self.visit_operation_expression(value, parameters, seen)?;
+                    self.visit_operation_expression(value, parameters, execution, seen)?;
                     operands.push(value);
                 }
                 if matches!(
                     self.facts.resolved_builtin_call(expression.span),
                     Some(BuiltinFnId::Print | BuiltinFnId::Len)
                 ) {
-                    self.require_operation(expression.span, &operands, parameters, seen)?;
+                    self.require_operation(expression.span, &operands, parameters, execution, seen)?;
                 }
             }
             Expr::List(entries) => {
@@ -153,7 +188,7 @@ impl CheckedInputBody<'_> {
                     let ListEntry::Element(value) = entry else {
                         return Err("operation coverage cannot infer list-spread access");
                     };
-                    self.visit_operation_expression(value, parameters, seen)?;
+                    self.visit_operation_expression(value, parameters, execution, seen)?;
                 }
             }
             _ => return Err("operation coverage requires an admitted expression"),
@@ -168,6 +203,7 @@ impl CheckedInputBody<'_> {
         operation: HirSourceSpan,
         operands: &[&Spanned<Expr>],
         parameters: &BTreeSet<CanonicalSymbolId>,
+        execution: &[usize],
         seen: &mut BTreeSet<HirSourceSpan>,
     ) -> Result<(), &'static str> {
         let mut required = Vec::new();
@@ -196,6 +232,20 @@ impl CheckedInputBody<'_> {
         if !seen.insert(operation) || retained.operands.len() != required.len() {
             return Err("operation dependencies do not match source operand coverage");
         }
+        for (index, node) in self.graph.nodes.iter().enumerate() {
+            if node.span.expansion == operation.expansion
+                && operation.start <= node.span.start
+                && node.span.end <= operation.end
+                && index != retained.completion_node
+                && !retained
+                    .operands
+                    .iter()
+                    .any(|dependency| dependency.final_access == index)
+                && execution[index] >= execution[retained.completion_node]
+            {
+                return Err("operation execution consumes operands before their evaluation completes");
+            }
+        }
         for (actual, (operand, source, loan)) in retained.operands.iter().zip(required) {
             let observed = self
                 .graph
@@ -222,7 +272,8 @@ impl CheckedInputBody<'_> {
                 .checked_sub(1)
                 .and_then(|index| self.graph.nodes.get(index))
                 .ok_or("operation read loan has no evaluated operand")?;
-            if origin >= retained.completion_node
+            if execution[origin] >= execution[retained.completion_node]
+                || evaluated.successors.as_slice() != [origin]
                 || self.graph.nodes[origin].span != operand
                 || evaluated.span.expansion != operand.expansion
                 || evaluated.span.start < operand.start
@@ -238,7 +289,7 @@ impl CheckedInputBody<'_> {
                 .ok_or("operation dependency has no source operand position")?;
             for later in &operands[position + 1..] {
                 if self.graph.nodes.iter().enumerate().any(|(index, node)| {
-                    index <= origin
+                    execution[index] <= execution[origin]
                         && node.span.expansion == later.span.expansion
                         && later.span.start <= node.span.start
                         && node.span.end <= later.span.end
