@@ -51,11 +51,13 @@ use crate::body_ir::{
 /// Version 35 retains expansion contexts in every checked source span and canonical identity.
 /// Version 36 appends the typed C span bridge operations.
 /// Version 37 carries explicit input access independently of binding mutability and native collection ownership.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 37;
+/// Version 39 carries a source-owned explicit-input body profile. Version 38 belongs to the isolated reflection
+/// layout; neither layout is compatible with this one. Their combined generation uses its own version.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 39;
 
-/// Version 37 adds positional callable fields. Older providers must be rebuilt; a missing field cannot be
-/// interpreted as an explicit access contract or silently shifted onto the next parameter field.
-const OLDEST_SUPPORTED_VERSION: u32 = 37;
+/// Version 39 adds a positional body field. Earlier providers must be rebuilt; missing source admission cannot be
+/// recovered from a native input ABI or silently shifted onto the next body field.
+const OLDEST_SUPPORTED_VERSION: u32 = 39;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -1315,7 +1317,8 @@ mod tests {
 
     use super::{
         CoverageReason, DeclarationCoverage, EXECUTABLE_REPRESENTATION_VERSION, ExecutableDeclaration,
-        ExecutableRepresentationError, SurfaceReader, build_surface, decode_module,
+        ExecutableRepresentationError, SurfaceReader, build_surface, decode_module, publication,
+        require_supported_version,
     };
     use crate::body_ir::{
         ArgumentBinding, Block, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee,
@@ -1363,6 +1366,7 @@ mod tests {
             name: name.into(),
             span: identity.declaration_span,
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+            checked_input_profile: None,
             callable_representation: None,
             named_type_identities: Default::default(),
             locals: Vec::new(),
@@ -1411,6 +1415,53 @@ mod tests {
         public: &BTreeSet<CanonicalSymbolId>,
     ) -> Result<Vec<u8>, ExecutableRepresentationError> {
         build_surface(std::slice::from_ref(module), "probe", "1.2.3", public, &BTreeSet::new())
+    }
+
+    /// Publication rebases the profile's proven owner together with the body, without repairing a wrong owner.
+    #[test]
+    fn input_profile_publication_retains_canonical_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let mut source = body("input", 1);
+        source.type_parameters.clear();
+        source.canonical = Some(CanonicalSymbolId::module_declaration(
+            vec!["lib".into()],
+            "input",
+            SemanticSourceTargetKind::Function,
+            source.span,
+        ));
+        let owner = source.canonical.clone().ok_or("missing source owner")?;
+        source.checked_input_profile = Some(crate::body_ir::CheckedInputProfile {
+            version: 1,
+            owner: owner.clone(),
+            parameters: Vec::new(),
+        });
+        let context = module(vec![source.clone()]);
+        let eligible = BTreeSet::from([identity("input", 1)]);
+        let projected =
+            publication::project_body(&source, &context, "probe", &eligible).map_err(|error| format!("{error:?}"))?;
+        assert_eq!(
+            projected
+                .body
+                .checked_input_profile
+                .as_ref()
+                .map(|profile| &profile.owner),
+            projected.body.canonical.as_ref()
+        );
+        let (frame, _) = publication::project_compiled_frame(&source, &context, "probe", &eligible)
+            .map_err(|error| format!("{error:?}"))?;
+        let ExecutableDeclaration::CompiledCallableFrame { frame, .. } = frame else {
+            return Err("expected compiled frame".into());
+        };
+        assert_eq!(
+            frame.checked_input_profile.as_ref().map(|profile| &profile.owner),
+            frame.canonical.as_ref()
+        );
+        source.checked_input_profile.as_mut().ok_or("missing profile")?.owner = identity("other", 2);
+        assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
+        assert!(publication::project_compiled_frame(&source, &context, "probe", &eligible).is_err());
+        for obsolete in [36_u32, 37, 38] {
+            assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
+        }
+        Ok(())
     }
 
     /// A canonical call participates in closure even before any branch is executed.

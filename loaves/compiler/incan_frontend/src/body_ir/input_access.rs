@@ -1,5 +1,5 @@
 //! Canonical source input requests, independent of binding mutation and native collection ownership. Transporting
-//! these facts does not admit execution; the source and Body IR execution gates remain closed.
+//! these facts alone does not admit execution; the owning body must retain its independently checked input profile.
 
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, IncanType};
 
@@ -281,7 +281,8 @@ mod tests {
     /// Checking a source alias does not authorize lowering it as an ordinary owned copy or first-class reference.
     #[test]
     fn local_source_alias_waits_for_storage_projection() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "def read(value: Borrowed[int]) -> int:\n    let view: Borrowed[int] = value\n    return view\n";
+        let source =
+            "def read(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = crate::typechecker::TypeChecker::new();
@@ -304,7 +305,7 @@ mod tests {
         let module = super::super::build_module_seed(&program, &[], &facts, &context);
         let body = module.bodies.first().ok_or("missing body")?;
         assert!(body.block.stmts.iter().any(|statement| matches!(&statement.kind,
-            bir::StatementKind::Unsupported { description } if description.contains("source-place storage projection"))));
+            bir::StatementKind::Unsupported { description } if description.contains("non-Copy local alias"))));
         assert!(
             !body
                 .locals

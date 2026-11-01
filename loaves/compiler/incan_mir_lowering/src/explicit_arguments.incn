@@ -1,11 +1,34 @@
 """Materialize explicit input contracts without legacy repair copies or ownership inference."""
 
 from rust::incan_semantics_core import IncanInputAccess
-from rust::incan_semantics_core::body_ir import CallableParam, OwnershipFact
+from rust::incan_semantics_core::body_ir import CallableParam, OwnershipFact, Body as RustBody
 from pub::incan_mir_plan import Local, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, FieldProjection
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, place_type, dereferenced_place
 from numerics import numeric_carrier
+from program_context import body_at
+
+
+pub def validate_source_input_call(builder: &Builder, callee: &RustBody) -> Result[None, str]:
+    """Authenticate the caller independently of the selected source callee; lifted frames inherit no permission."""
+    mut explicit = false
+    for parameter in callee.params:
+        if parameter.input_access != IncanInputAccess.Inferred:
+            explicit = true
+    if not explicit:
+        return Ok(None)
+    match builder.callable_identity:
+        None => return Err("unsupported Body IR explicit source call without a declared caller")
+        Some(identity) =>
+            match builder.program.body_indices.unique(identity):
+                None => return Err("unsupported Body IR explicit source call without a unique checked caller")
+                Some(index) =>
+                    caller = body_at(builder.program.bodies.as_ref(), index)
+                    if caller.canonical != Some(identity.clone()):
+                        return Err("unsupported Body IR explicit source caller identity mismatch")
+                    match caller.input_call_profile_gap(callee):
+                        Some(reason) => return Err(f"unsupported Body IR {reason}")
+                        None => return Ok(None)
 
 
 pub def parameter_accesses(parameters: &list[CallableParam], offset: int) -> Result[list[IncanInputAccess], str]:

@@ -926,7 +926,17 @@ impl TypeChecker {
     /// trait-typed locals must not proceed to codegen because Rust has no valid bare trait type for `let` annotations.
     fn check_assignment_binding(&mut self, assign: &AssignmentStmt, span: Span) {
         let target_span = assign.name_span;
-        let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
+        let new_local = Self::binding_introduces_name(assign.binding)
+            || (self.lookup_variable_info_in_scope_chain(&assign.name).is_none()
+                && self.lookup_static_info(&assign.name).is_none());
+        let defer_local = new_local
+            && self
+                .current_body_identity()
+                .is_some_and(|owner| owner.kind == incan_semantics_core::SemanticSourceTargetKind::Function);
+        let annotated_ty = assign
+            .ty
+            .as_ref()
+            .map(|ty_ann| self.resolve_type_checked_for_input(ty_ann, defer_local));
         let explicit_mode = assign
             .ty
             .as_ref()

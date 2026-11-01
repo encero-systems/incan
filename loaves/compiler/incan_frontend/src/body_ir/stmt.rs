@@ -256,18 +256,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
-        if let Some(identity) = self
-            .type_info
-            .resolved_write_identity(assignment.name_span, &assignment.name)
-            && identity.declaration_span == assignment.name_span
-            && let Ok(Some(proof)) = &self.input_body
-            && proof.local_mode(identity).is_some()
-        {
-            self.push_unsupported_stmt(
-                "checked explicit local ownership still requires source-place storage projection".to_owned(),
-                span,
-                out,
-            );
+        if let Some(result) = self.lower_local_input_binding(assignment, scope, out) {
+            if let Err(reason) = result {
+                self.push_unsupported_stmt(reason, span, out);
+            }
             return;
         }
         let mut ty = self.assignment_binding_type(assignment, span, out);
@@ -485,7 +477,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let place = match assignment.binding {
             ast::BindingKind::Inferred | ast::BindingKind::Reassign => {
                 if let Some(identity) = target_identity {
-                    if let Some(&local) = self.identity_bindings.get(&identity) {
+                    if let Some(alias) = self.input_alias(&identity) {
+                        if !alias.writable {
+                            self.push_unsupported_stmt(
+                                "explicit local alias does not permit writes".to_owned(),
+                                span,
+                                out,
+                            );
+                            return None;
+                        }
+                        alias.place.clone()
+                    } else if let Some(&local) = self.identity_bindings.get(&identity) {
                         bir::Place::from_local(local)
                     } else if let Some(global) = self.global_place(identity.clone(), ty.clone()) {
                         bir::Place::from_global(global)
@@ -668,11 +670,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
         let place = if let Some(identity) = target_identity {
-            self.identity_bindings
-                .get(&identity)
-                .copied()
-                .map(bir::Place::from_local)
-                .or_else(|| self.global_place(identity, lhs_ty.clone()).map(bir::Place::from_global))
+            if let Some(alias) = self.input_alias(&identity) {
+                if !alias.writable {
+                    self.push_unsupported_stmt("explicit local alias does not permit writes".to_owned(), span, out);
+                    return;
+                }
+                Some(alias.place.clone())
+            } else {
+                self.identity_bindings
+                    .get(&identity)
+                    .copied()
+                    .map(bir::Place::from_local)
+                    .or_else(|| self.global_place(identity, lhs_ty.clone()).map(bir::Place::from_global))
+            }
         } else {
             self.bindings
                 .get(&compound_assignment.name)

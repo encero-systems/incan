@@ -15,6 +15,7 @@ use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod calls;
+mod values;
 
 /// A source shape whose access behavior has not been projected. The anchor is the unsupported operation itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -382,6 +383,7 @@ impl Builder<'_> {
                 ))
             }
             Expr::Literal(_) => Ok(incoming),
+            Expr::FString(parts) => self.formatted_text(parts, incoming),
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, expression.span, incoming)
@@ -563,18 +565,13 @@ impl Builder<'_> {
     }
 
     /// Evaluate a stored field destination before its replacement value. Only canonical stored fields participate;
-    /// computed setters and compound destinations need their own checked evaluation/dependency contract.
+    /// computed setters remain unavailable. A primitive compound update already contains its checked read/operator
+    /// expression; only static stored projections can reuse it without repeating an effectful destination.
     fn field_assignment(
         &mut self,
         assignment: &FieldAssignmentStmt,
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
-        if assignment.compound_op.is_some() {
-            return Err(Unavailable {
-                span: assignment.target_span,
-                reason: "compound field destination needs single-evaluation facts".into(),
-            });
-        }
         let identity = self
             .checker
             .type_info
@@ -587,6 +584,22 @@ impl Builder<'_> {
             .clone();
         let mut path = self.place(&assignment.object)?;
         path.place.projection.push(Projection::Field(identity));
+        if assignment.compound_op.is_some()
+            && (path
+                .place
+                .projection
+                .iter()
+                .any(|projection| matches!(projection, Projection::Element(_)))
+                || !matches!(
+                    self.checker.type_info.expr_type(assignment.target_span),
+                    Some(ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool)
+                ))
+        {
+            return Err(Unavailable {
+                span: assignment.target_span,
+                reason: "compound field destination needs checked scalar single-evaluation facts".into(),
+            });
+        }
         let incoming = self.evaluate_place(&assignment.object, incoming)?;
         let incoming = self.expression(&assignment.value, incoming, true)?;
         Ok(self.event(

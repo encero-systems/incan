@@ -109,7 +109,7 @@ impl BodyBuilder<'_, '_> {
 
     /// The physical local and every stored field must name the checked source place; similar names or layouts do
     /// not authorize a borrow. Indexed, global and adapted carriers remain refused by this first consumer.
-    fn authenticate_input_place(
+    pub(super) fn authenticate_input_place(
         &self,
         place: &bir::Place,
         root: &CanonicalSymbolId,

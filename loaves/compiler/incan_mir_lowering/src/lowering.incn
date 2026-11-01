@@ -61,7 +61,7 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place, block as plan_block
-from explicit_arguments import parameter_accesses, argument_access, explicit_place_argument
+from explicit_arguments import parameter_accesses, argument_access, explicit_place_argument, validate_source_input_call
 from bytes_plan import bytes_literal
 from types import static_method_result_type
 from native_callables import native_callable_storage
@@ -5059,6 +5059,7 @@ def emit_selected_body_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve the selected body's result carrier and unwind cleanup for direct and guarded static calls."""
+    validate_source_input_call(builder, body)?
     declared = native_source_type(
         builder.constructors,
         builder.nominals,
@@ -5441,6 +5442,7 @@ def lower_delegated_call(
         )
     match delegation.declaration_frame():
         Some(frame) =>
+            validate_source_input_call(builder, frame)?
             parameters = []
             for index in range(len(frame.params)):
                 parameters.append(call_parameter_type(builder, frame, frame.params[index])?)

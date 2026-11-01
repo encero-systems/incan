@@ -265,6 +265,7 @@ pub(super) fn finish_static_initializer_body(
         name: canonical.declaration_name.clone(),
         span,
         return_type: ty.clone(),
+        checked_input_profile: None,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -337,7 +338,7 @@ pub(super) fn lower_function_body(
         .decorated_function_bindings_by_span
         .contains_key(&decl_span)
         && !decorated_bindings::supports_function(function, decl_span, lowering_facts);
-    let (stmts, extern_delegation) = lower_declaration_statements(
+    let (mut stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
         decorator_rebinding(rebound, &function.name)
             .or_else(|| extern_delegation(&function.decorators, &function.name, lowering_facts)),
@@ -346,6 +347,29 @@ pub(super) fn lower_function_body(
         hir_span(decl_span),
     );
     builder.retain_empty_collection_context(&stmts);
+
+    let checked_input_profile = match binding.and_then(|binding| binding.identity.as_ref()) {
+        Some(owner) => match lowering_facts.type_info.direct_input_admission(owner, function) {
+            Ok(Some(proof)) => Some(bir::CheckedInputProfile {
+                version: 1,
+                owner: proof.canonical_owner().clone(),
+                parameters: params
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, parameter)| bir::CheckedInputParameter {
+                        slot,
+                        access: parameter.input_access,
+                    })
+                    .collect(),
+            }),
+            Ok(None) => None,
+            Err(reason) => {
+                builder.push_unsupported_stmt(reason.to_owned(), hir_span(decl_span), &mut stmts);
+                None
+            }
+        },
+        None => None,
+    };
 
     if builder
         .locals
@@ -367,6 +391,7 @@ pub(super) fn lower_function_body(
         name: function.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
+        checked_input_profile,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -517,6 +542,7 @@ pub(super) fn lower_method_body(
         name: method.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
+        checked_input_profile: None,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,

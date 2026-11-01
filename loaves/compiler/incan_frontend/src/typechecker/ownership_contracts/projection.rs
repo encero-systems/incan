@@ -7,17 +7,22 @@ use super::{InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
 
 mod calls;
+mod locals;
 pub(crate) use calls::{CheckedInputInvocation, CheckedInputSource};
 
 /// A completed source proof belongs to one exact callable. The view never grants authority to a nested closure,
 /// default evaluator or another declaration that happens to reuse the same source range or display name.
 pub(crate) struct CheckedInputBody<'a> {
     owner: CanonicalSymbolId,
-    facts: &'a TypeCheckInfo,
-    graph: &'a flow::Graph,
+    pub(super) facts: &'a TypeCheckInfo,
+    pub(super) graph: &'a flow::Graph,
 }
 
 impl CheckedInputBody<'_> {
+    /// Retain the source proof's exact owner when the next stage publishes its supported frame profile.
+    pub(crate) fn canonical_owner(&self) -> &CanonicalSymbolId {
+        &self.owner
+    }
     /// Read a local's already authenticated request; bindings from other bodies are not part of this view.
     pub(crate) fn local_mode(&self, local: &CanonicalSymbolId) -> Option<OwnershipMode> {
         self.facts
