@@ -1,0 +1,52 @@
+# behavior: Explicitly shared scalar inputs read their values without consuming caller storage (#2500).
+# expect-stdout:
+#   scalar value reads passed
+
+
+def invert(value: Borrowed[bool]) -> bool:
+    """Read a shared Boolean as the operand of a unary operation."""
+    return not value
+
+
+def less(left: Borrowed[int], right: Borrowed[int]) -> bool:
+    """Compare the scalar values held behind two shared inputs."""
+    return left < right
+
+
+def combine(left: Borrowed[int], right: Borrowed[int]) -> int:
+    """Use both shared inputs in arithmetic after named argument selection."""
+    return left * 10 + right
+
+
+def squared(value: Borrowed[float]) -> float:
+    """Repeated reads of the same shared scalar do not consume it."""
+    return value * value
+
+
+def forward(value: Borrowed[int]) -> int:
+    """A shared scalar can be forwarded to another shared input."""
+    return echo(value)
+
+
+def echo(value: Borrowed[int]) -> int:
+    """Returning a shared scalar reads the value rather than the reference carrier."""
+    return value
+
+
+def main() -> None:
+    """Observe arithmetic, comparison, return and forwarding while retaining every caller value."""
+    enabled = true
+    small = 2
+    large = 7
+    amount = 2.5
+    assert invert(enabled) == false
+    assert enabled == true
+    assert less(small, large)
+    assert combine(right=large, left=small) == 27
+    assert small == 2
+    assert large == 7
+    assert squared(amount) == 6.25
+    assert amount == 2.5
+    assert forward(large) == 7
+    assert large == 7
+    println("scalar value reads passed")
