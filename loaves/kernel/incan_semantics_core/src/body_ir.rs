@@ -1088,8 +1088,9 @@ pub struct EnumDeclaration {
     /// Older publications retain an empty list and cannot authorize a generic payload layout.
     #[serde(default)]
     pub type_parameters: Vec<String>,
-    /// Concrete arguments of a specialized SDK enum alias, in declaration order. Source enums redeclare their closed
-    /// layout instead; only an SDK package owner and native metadata validation authorize this alias representation.
+    /// Concrete arguments of a specialized enum layout, in declaration order. Published generic source enums and SDK
+    /// enums alias their provider-owned templates; native metadata verification checks the instantiated variants and
+    /// payloads.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
     /// Declaration-ordered variants; each index selects rustc's actual discriminant value for native matching.
