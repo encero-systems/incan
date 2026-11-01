@@ -15,19 +15,22 @@ from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from trait_links import contains
-from native_arguments import uses_native_argument
 from decls import library_item
+from table_views import borrowed_at
 
 
 pub def fallible_methods(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
+    native_names: &list[str],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[FallibleIteratorMethods], str]:
     """Grant the native protocol only for source layouts occurring inside a retained SDK instantiation."""
-    declaration = module.nominal_declarations[owner]
-    if library_item(declaration) != "" or not uses_native_argument(module, str(declaration.name))?:
+    if str(borrowed_at(module.nominal_declarations, owner).name) not in native_names:
+        return Ok(None)
+    declaration = borrowed_at(module.nominal_declarations, owner)
+    if library_item(declaration) != "":
         return Ok(None)
     for protocol in module.trait_declarations:
         if not standard_protocol(protocol):
@@ -155,7 +158,7 @@ def poll_abi(
     """Require the selected concrete mutable receiver and its exact Result[Option[item], error] contract."""
     if len(body.type_parameters) != 0 or len(body.params) != 1:
         return Ok(false)
-    reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
+    reference = PlanType.ModelMutRef(owner, str(borrowed_at(module.nominal_declarations, owner).name))
     local = body.locals[parameter_local_index(body, 0)]
     if frame_type(constructors, module.nominal_declarations, module.enum_declarations, local, intrinsics)? != reference:
         return Ok(false)
