@@ -13,7 +13,7 @@ use crate::error::PlanError;
 use crate::plan::Plan;
 use incan_frontend::library_manifest::{LibraryManifest, TypeRef};
 use incan_semantics_core::body_ir::loaf_item_path;
-use incan_semantics_core::{SymbolOrigin, encode_incan_symbol_identity};
+use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
 /// Publish canonical ABI items, nongeneric public Loaf facades and checked Rust item reexports. Facade aliases point
 /// to those same items; they introduce neither layouts nor callable implementations. An executable has no manifest.
@@ -70,7 +70,8 @@ pub(crate) fn items(
 
 /// Select concrete Loaf facades and explicit aliases of checked Rust items. Rust reexports retain the original item's
 /// parameters; generic Incan bodies and open Incan nominals still have no single Rust item to name. Overload ambiguity
-/// remains the identity graph's decision.
+/// remains the identity graph's decision. Package-owned source traits stay in checked metadata: they have no native
+/// item to reexport, even when their alias has a nominal type projection. Actual Rust traits retain their native items.
 fn public_names(manifest: &LibraryManifest) -> BTreeSet<&str> {
     let exports = &manifest.exports;
     let mut names = BTreeSet::new();
@@ -110,11 +111,16 @@ fn public_names(manifest: &LibraryManifest) -> BTreeSet<&str> {
             .map(|item| item.name.as_str()),
     );
     for alias in &exports.aliases {
-        let rust_item = manifest
+        let canonical = manifest
             .contract_metadata
             .identity_graph
-            .canonical_for_public_name(&alias.name)
-            .is_some_and(|canonical| matches!(canonical.origin, SymbolOrigin::RustCrate(_)));
+            .canonical_for_public_name(&alias.name);
+        if canonical.as_ref().is_some_and(|identity| {
+            identity.kind == SemanticSourceTargetKind::Trait && matches!(identity.origin, SymbolOrigin::Package { .. })
+        }) {
+            continue;
+        }
+        let rust_item = canonical.is_some_and(|identity| matches!(identity.origin, SymbolOrigin::RustCrate(_)));
         if rust_item
             || alias
                 .projected_function
