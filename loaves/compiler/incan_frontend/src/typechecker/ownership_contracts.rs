@@ -1,19 +1,108 @@
-//! Recognition of RFC 164 contracts before their executable ownership stages are enabled.
+//! Canonical RFC 164 contracts, source access checks and staged executable-body admission.
 //!
-//! Source parsing and formatting preserve declarations. Every resolved prelude mode and result-source clause is
-//! refused before native lowering until checked loan and transfer facts can implement it without repair copies.
+//! A direct input annotation is admitted only with its complete supported body proof. Returned dependencies,
+//! deferred boundaries and unsupported storage shapes remain refused rather than acquiring repair copies.
 
 use incan_lang::lang::types::ownership::{self, OwnershipMode};
 use incan_semantics_core::SymbolOrigin;
 
+mod admission;
 mod checked;
+mod flow;
+pub(super) mod projection;
+mod report;
+mod source;
+
+pub(super) use admission::direct_function_boundary;
+pub(super) use source::CallableSource;
 
 use super::TypeChecker;
 use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Type};
 use crate::diagnostics::CompileError;
 use crate::symbols::{ResolvedType, TypeInfo};
 
+/// One body-owned source analysis. Unsupported projection and malformed internal facts remain distinct from a
+/// completed analysis with user-program conflicts; none of these variants alone enables executable lowering.
+#[derive(Debug, Clone)]
+pub(super) enum InputFlow {
+    Checked {
+        graph: flow::Graph,
+        analysis: flow::Analysis,
+    },
+    Unavailable(source::Unavailable),
+    Invalid {
+        graph: flow::Graph,
+        fault: flow::InvalidGraph,
+    },
+}
+
+/// Canonical local annotation facts captured before a later binding can shadow a prelude or alias name.
+#[derive(Debug, Clone)]
+pub(super) struct LocalMode {
+    pub owner: incan_semantics_core::CanonicalSymbolId,
+    pub mode: OwnershipMode,
+    pub value_type: ResolvedType,
+    pub writable: bool,
+    pub annotation: Span,
+}
+
+/// One successfully checked call retains the exact contract owner and instantiated parameter values. A call in
+/// declaration/default evaluation has no callable body owner, but still cannot cross a record profile unaware of it.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct InputCall {
+    pub owner: Option<incan_semantics_core::CanonicalSymbolId>,
+    pub callee: incan_semantics_core::CanonicalSymbolId,
+    pub parameters: Vec<crate::symbols::CallableParam>,
+    pub receiver: Option<crate::ast::Receiver>,
+}
+
 impl TypeChecker {
+    /// Capture explicit input flow while the checked lexical frame and body-owned expression facts are active.
+    /// Statement output owns the result; it is never rediscovered by lowering or published as a valid empty graph.
+    pub(super) fn record_explicit_input_flow(&mut self, callable: CallableSource<'_>, span: Span) {
+        let Some(identity) = self.current_body_identity().cloned() else {
+            return;
+        };
+        if !self.type_info.declarations.ownership_contracts.contains_key(&identity)
+            && !self
+                .type_info
+                .protocols
+                .explicit_local_modes
+                .values()
+                .any(|mode| mode.owner == identity)
+            && !self
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .values()
+                .any(|call| call.owner.as_ref() == Some(&identity))
+        {
+            return;
+        }
+        let output = match source::build(self, callable, span, &identity) {
+            Ok(graph) => match flow::analyze(&graph) {
+                Ok(analysis) => {
+                    self.errors.extend(report::conflicts(&graph, &analysis));
+                    InputFlow::Checked { graph, analysis }
+                }
+                Err(fault) => InputFlow::Invalid { graph, fault },
+            },
+            Err(reason) => InputFlow::Unavailable(reason),
+        };
+        self.type_info
+            .protocols
+            .explicit_input_flow
+            .insert(identity.clone(), output);
+        if let CallableSource::Function(function) = callable
+            && let Err(reason) = self.type_info.direct_input_admission(&identity, function)
+        {
+            self.errors.push(CompileError::type_error(
+                format!("Ownership contract cannot be proved: {reason}"), span,
+            ).with_stable_code("INCAN-T0123")
+                .with_note("The entire owning body must retain supported access, storage and cleanup facts; a valid annotation alone is insufficient"));
+        }
+    }
+
     /// Warn when a new local copies a place that a place binding borrows, without changing runtime behavior or
     /// inferring a repair clone.
     ///
@@ -147,231 +236,4 @@ impl TypeChecker {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Check source directly so ownership diagnostics cannot be supplied by a native compiler failure.
-    fn checked(source: &str) -> Result<TypeChecker, Box<dyn std::error::Error>> {
-        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let mut checker = TypeChecker::new();
-        if let Err(errors) = checker.check_program(&program) {
-            checker.errors = errors;
-        }
-        Ok(checker)
-    }
-
-    /// A source declaration shadowing a prelude spelling remains an ordinary nominal type.
-    #[test]
-    fn shadowed_mode_is_not_an_ownership_contract() -> Result<(), Box<dyn std::error::Error>> {
-        let checker = checked(
-            "model Borrowed[T]:\n    value: T\ndef identity(value: Borrowed[int]) -> Borrowed[int]:\n    return value\n",
-        )?;
-        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-        Ok(())
-    }
-
-    /// Every explicit form is refused before executable storage can be selected, also when nested.
-    #[test]
-    fn modes_are_refused_at_every_annotation_depth() -> Result<(), Box<dyn std::error::Error>> {
-        for mode in ["Borrowed", "BorrowedMut", "Owned", "Reference"] {
-            let checker = checked(&format!("def read(value: Option[{mode}[str]]) -> None:\n    pass\n"))?;
-            assert!(
-                checker
-                    .errors
-                    .iter()
-                    .any(|error| error.stable_code() == Some("INCAN-T0123")),
-                "{mode}: {:?}",
-                checker.errors
-            );
-        }
-        Ok(())
-    }
-
-    /// Even a single-source signature needs the explicit relationship, and globals cannot fulfill it.
-    #[test]
-    fn borrowed_result_source_is_mandatory_and_local_to_signature() -> Result<(), Box<dyn std::error::Error>> {
-        for source in [
-            "def view(value: Borrowed[str]) -> Borrowed[str]:\n    return value\n",
-            "def view(value: Borrowed[str]) -> Result[Borrowed[str], str]:\n    return Ok(value)\n",
-            "def view(value: Borrowed[str]) -> FrozenList[Borrowed[str]]:\n    return []\n",
-            "const other: str = \"outside\"\ndef view(value: str) -> str from other:\n    return value\n",
-        ] {
-            let checker = checked(source)?;
-            assert!(
-                checker
-                    .errors
-                    .iter()
-                    .any(|error| error.stable_code() == Some("INCAN-T0124")),
-                "{:?}",
-                checker.errors
-            );
-        }
-        Ok(())
-    }
-
-    /// A valid written source is still refused rather than authorizing old copied-result behavior.
-    #[test]
-    fn source_relationship_does_not_enable_execution() -> Result<(), Box<dyn std::error::Error>> {
-        let checker = checked("def view(value: str) -> str from value:\n    return value\n")?;
-        assert!(
-            checker
-                .errors
-                .iter()
-                .any(|error| error.stable_code() == Some("INCAN-T0123")),
-            "{:?}",
-            checker.errors
-        );
-        Ok(())
-    }
-
-    /// The known local-copy migration warns without rejecting or changing the program.
-    #[test]
-    fn mutable_stored_string_copy_warns() -> Result<(), Box<dyn std::error::Error>> {
-        let checker = checked(
-            "model Page:\n    title: str\ndef main() -> None:\n    page = Page(title=\"old\")\n    mut title = page.title\n    title = \"new\"\n",
-        )?;
-        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-        assert!(
-            checker
-                .warnings
-                .iter()
-                .any(|warning| warning.message.contains("copies a place that a place binding borrows")),
-            "{:?}",
-            checker.warnings
-        );
-        Ok(())
-    }
-    /// Compatible annotations, scalar fields and read-only locals do not accidentally request independent copies.
-    #[test]
-    fn place_migration_includes_annotations_scalars_and_readonly() -> Result<(), Box<dyn std::error::Error>> {
-        let checker = checked(
-            "model Page:\n    count: int\ndef main() -> None:\n    page = Page(count=1)\n    mut count: int = page.count\n    let saved = page.count\n    copy = int(2)\n    fresh = Page(count=2)\n",
-        )?;
-        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-        let warnings: Vec<_> = checker
-            .warnings
-            .iter()
-            .filter(|warning| warning.stable_code() == Some("INCAN-T0125"))
-            .collect();
-        assert_eq!(warnings.len(), 2, "{warnings:?}");
-        Ok(())
-    }
-
-    /// Abstract and concrete receiver sources share checked slots; concrete field paths retain their declaration.
-    #[test]
-    fn receiver_contracts_cover_abstract_and_concrete_methods() -> Result<(), Box<dyn std::error::Error>> {
-        for (source, fields) in [
-            ("pub trait Reader:\n    def view(self) -> Borrowed[str] from self\n", 0),
-            (
-                "pub class Page:\n    title: str\n    def view(self) -> Borrowed[str] from self.title:\n        return self.title\n",
-                1,
-            ),
-        ] {
-            let checker = checked(source)?;
-            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-            let exports = crate::library_exports::collect_checked_public_exports(&program, &checker);
-            let methods = match &exports.first().ok_or("missing public owner")?.kind {
-                crate::library_exports::CheckedExportKind::Class(owner) => &owner.methods,
-                crate::library_exports::CheckedExportKind::Trait(owner) => &owner.methods,
-                _ => return Err("wrong owner kind".into()),
-            };
-            assert!(methods.first().ok_or("missing public method")?.ownership.is_some());
-            let contract = checker
-                .type_info
-                .declarations
-                .ownership_contracts
-                .values()
-                .next()
-                .ok_or("missing method contract")?;
-            let dependency = contract.result_source.as_ref().ok_or("missing receiver source")?;
-            assert_eq!(dependency.slot, crate::ownership_metadata::SourceSlot::Receiver);
-            assert_eq!(dependency.fields.len(), fields);
-            assert!(
-                checker
-                    .errors
-                    .iter()
-                    .any(|error| error.stable_code() == Some("INCAN-T0123"))
-            );
-        }
-        Ok(())
-    }
-
-    /// Annotation constructors and aliases cannot silently opt into ordinary generic value behavior.
-    #[test]
-    fn modes_are_not_wrappers_or_alias_escape_hatches() -> Result<(), Box<dyn std::error::Error>> {
-        for source in [
-            "def main() -> None:\n    value = Owned(1)\n",
-            "type View = Borrowed[str]\ndef view(value: View) -> None:\n    pass\n",
-            "def read(value: Owned[int, str]) -> None:\n    pass\n",
-        ] {
-            let checker = checked(source)?;
-            assert!(
-                checker
-                    .errors
-                    .iter()
-                    .any(|error| error.stable_code() == Some("INCAN-T0123")),
-                "{:?}",
-                checker.errors
-            );
-        }
-        Ok(())
-    }
-    /// Source relationships use slots and canonical fields, including substituted nested generic owners.
-    #[test]
-    fn checked_source_retains_nested_field_identities() -> Result<(), Box<dyn std::error::Error>> {
-        let checker = checked(
-            "model Address:\n    street: str\nmodel Customer[T]:\n    address: T\ndef view(customer: Borrowed[Customer[Address]]) -> Borrowed[str] from customer.address.street:\n    return customer.address.street\n",
-        )?;
-        let contract = checker
-            .type_info
-            .declarations
-            .ownership_contracts
-            .values()
-            .next()
-            .ok_or("missing ownership contract")?;
-        let source = contract.result_source.as_ref().ok_or("missing checked source")?;
-        assert_eq!(source.slot, crate::ownership_metadata::SourceSlot::Parameter(0));
-        assert_eq!(
-            source
-                .fields
-                .iter()
-                .map(|field| field.declaration_name.as_str())
-                .collect::<Vec<_>>(),
-            ["address", "street"]
-        );
-        assert!(
-            source
-                .fields
-                .iter()
-                .all(|field| field.kind == incan_semantics_core::SemanticSourceTargetKind::Field)
-        );
-        assert_eq!(contract.modes.len(), 2);
-        Ok(())
-    }
-
-    /// An alias-expanded borrowed result still requires a source, and impossible fields have source diagnostics.
-    #[test]
-    fn checked_alias_and_invalid_field_contracts() -> Result<(), Box<dyn std::error::Error>> {
-        let missing =
-            checked("type View[T] = Borrowed[T]\ndef view(value: View[str]) -> View[str]:\n    return value\n")?;
-        assert!(
-            missing
-                .errors
-                .iter()
-                .any(|error| error.stable_code() == Some("INCAN-T0124"))
-        );
-        let invalid = checked(
-            "model Page:\n    title: str\ndef view(page: Borrowed[Page]) -> Borrowed[str] from page.absent:\n    return \"\"\n",
-        )?;
-        assert!(
-            invalid
-                .errors
-                .iter()
-                .any(|error| error.stable_code() == Some("INCAN-T0124"))
-        );
-        assert!(invalid.type_info.declarations.ownership_contracts.is_empty());
-        Ok(())
-    }
-}
+mod tests;

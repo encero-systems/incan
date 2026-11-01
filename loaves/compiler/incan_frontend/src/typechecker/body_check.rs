@@ -7,6 +7,7 @@
 
 use super::diagnostic_values::{AnchorFault, AnchoredDiagnostic, DiagnosticPositions};
 use super::mut_arguments::MutBodyLocal;
+use super::ownership_contracts::CallableSource;
 use super::type_info::{
     CAbiInteropArtifacts, CallArtifacts, ExpressionArtifacts, ProtocolArtifacts, ReferenceArtifacts,
     RustInteropArtifacts, TraitArtifacts, TypeCheckInfo,
@@ -466,6 +467,9 @@ fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
 /// Consume all protocols fields into the compatibility view; field additions require an explicit ownership choice.
 fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
     let ProtocolArtifacts {
+        explicit_input_calls,
+        explicit_local_modes,
+        explicit_input_flow,
         body_ir_truthiness_receivers,
         body_ir_iterations,
         iterations,
@@ -474,6 +478,9 @@ fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolArtifacts) {
         in_place_match_scrutinees,
         loan_free_scrutinees,
     } = local;
+    target.explicit_input_calls.extend(explicit_input_calls);
+    target.explicit_local_modes.extend(explicit_local_modes);
+    target.explicit_input_flow.extend(explicit_input_flow);
     target.body_ir_truthiness_receivers.extend(body_ir_truthiness_receivers);
     target.body_ir_iterations.extend(body_ir_iterations);
     target.iterations.extend(iterations);
@@ -698,6 +705,7 @@ impl TypeChecker {
         is_async: bool,
         span: Span,
         context: YieldContext,
+        ownership_source: CallableSource<'_>,
     ) {
         #[cfg(test)]
         if !self.legacy_body_checking {
@@ -710,10 +718,12 @@ impl TypeChecker {
         #[cfg(test)]
         if self.legacy_body_checking {
             self.check_callable_body_in_frame(body, is_async, context);
+            self.record_explicit_input_flow(ownership_source, span);
             return;
         }
         let scope = BodyCheckScope::enter(self);
         self.check_callable_body_in_frame(body, is_async, context);
+        self.record_explicit_input_flow(ownership_source, span);
         let mut local = scope.finish(self);
         local.owner = span;
         self.body_checks.push(BodyCheckInput::Local(local));

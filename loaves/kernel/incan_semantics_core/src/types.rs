@@ -360,6 +360,38 @@ impl fmt::Display for IncanPrimitiveType {
     }
 }
 
+/// Source input access, independent of binding mutability and the native collection ABI. Missing named metadata
+/// means ordinary inference only; positional executable records require their matching schema version.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum IncanInputAccess {
+    /// Preserve the existing unannotated parameter convention and its checked inference.
+    #[default]
+    Inferred,
+    /// Shared access without ownership transfer or permission to write.
+    Shared,
+    /// Exclusive access; the separate mutable binding flag governs writes.
+    Exclusive,
+    /// Ownership transfer, or a checked Copy value; never an implicit repair clone.
+    Owned,
+}
+
+impl IncanInputAccess {
+    /// Distinguish ordinary inference without interpreting a source type's display spelling.
+    pub const fn is_inferred(&self) -> bool {
+        matches!(self, Self::Inferred)
+    }
+
+    /// Render an explicit contract for diagnostics; this spelling is not used to recognize its identity.
+    pub const fn source_form(self) -> Option<&'static str> {
+        match self {
+            Self::Inferred => None,
+            Self::Shared => Some("Borrowed"),
+            Self::Exclusive => Some("BorrowedMut"),
+            Self::Owned => Some("Owned"),
+        }
+    }
+}
+
 /// Callable parameter metadata preserved in semantic function types.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct IncanCallableParam {
@@ -384,6 +416,9 @@ pub struct IncanCallableParam {
     /// collection. This passing fact is separate from the source callable's `mut` marker and preserves nested loans.
     #[serde(default)]
     pub native_owned: bool,
+    /// Checked explicit input access; ordinary legacy metadata grants no explicit borrowing or transfer.
+    #[serde(default)]
+    pub input_access: IncanInputAccess,
 }
 
 impl fmt::Display for IncanCallableParam {
@@ -392,9 +427,13 @@ impl fmt::Display for IncanCallableParam {
             write!(f, "mut ")?;
         }
         match self.kind {
-            IncanCallableParamKind::Normal => write!(f, "{}", self.ty),
-            IncanCallableParamKind::RestPositional => write!(f, "*{}", self.ty),
-            IncanCallableParamKind::RestKeyword => write!(f, "**{}", self.ty),
+            IncanCallableParamKind::Normal => {}
+            IncanCallableParamKind::RestPositional => write!(f, "*")?,
+            IncanCallableParamKind::RestKeyword => write!(f, "**")?,
+        }
+        match self.input_access.source_form() {
+            Some(mode) => write!(f, "{mode}[{}]", self.ty),
+            None => write!(f, "{}", self.ty),
         }
     }
 }
@@ -509,6 +548,7 @@ mod tests {
                     is_partial_preset: false,
                     is_mut: false,
                     native_owned: false,
+                    input_access: IncanInputAccess::Inferred,
                 },
                 IncanCallableParam {
                     name: Some("rest".to_string()),
@@ -518,6 +558,7 @@ mod tests {
                     is_partial_preset: false,
                     is_mut: false,
                     native_owned: false,
+                    input_access: IncanInputAccess::Inferred,
                 },
             ],
             return_type: Box::new(IncanType::Tuple(vec![

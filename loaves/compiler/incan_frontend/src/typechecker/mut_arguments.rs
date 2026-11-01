@@ -314,9 +314,10 @@ impl TypeChecker {
 
     /// Enter the body of a function or method declared as `name` at `span`, returning the enclosing body's state.
     ///
-    /// `kind` selects the identity namespace the declaration was collected under. The body's caller-visible `mut`
-    /// parameters become the places whose changes and rebinding this module tracks until
-    /// [`Self::exit_mut_param_body`] restores the returned state.
+    /// `kind` selects the identity namespace the declaration was collected under. The body's ordinary caller-visible
+    /// `mut` parameters become the places whose changes and rebinding this module tracks until
+    /// [`Self::exit_mut_param_body`] restores the returned state. Explicit ownership inputs retain their separate
+    /// source obligations and must not acquire this legacy parameter-rebinding prohibition.
     pub(in crate::typechecker) fn enter_mut_param_body(
         &mut self,
         name: &str,
@@ -332,8 +333,12 @@ impl TypeChecker {
         let caller_visible = params
             .iter()
             .zip(resolved)
-            .filter(|(param, resolved)| self.def_param_shows_changes_to_caller(&param.node, resolved))
-            .map(|(param, _)| (param.node.name.clone(), param.span))
+            .enumerate()
+            // Explicit modes own their access obligations. In particular, assignment through BorrowedMut writes
+            // through, while assignment to Owned replaces a local slot; neither is legacy parameter rebinding.
+            .filter(|(slot, _)| self.checked_input_contract(&identity, *slot).is_none())
+            .filter(|(_, (param, resolved))| self.def_param_shows_changes_to_caller(&param.node, resolved))
+            .map(|(_, (param, _))| (param.node.name.clone(), param.span))
             .collect::<HashMap<_, _>>();
         self.mut_params.bodies_checked.insert(identity.clone());
         let next = MutParamBody {

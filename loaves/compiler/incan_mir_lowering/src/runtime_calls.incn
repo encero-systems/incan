@@ -18,6 +18,7 @@ from rust::incan_semantics_core import (
     IncanPrimitiveType as Primitive,
     IncanCallableParam as RustCallableParam,
     IncanCallableParamKind as RustCallableParamKind,
+    IncanInputAccess,
     NumericTypeId,
     RuntimeBuiltinType,
     SemanticSourceTargetKind,
@@ -680,6 +681,7 @@ def runtime_callable_argument(
     for index in range(len(signature) - 1):
         parameter = RustCallableParam(
             native_owned=is_owned_collection(signature[index]),
+            input_access=IncanInputAccess.Inferred,
             name=None,
             ty=runtime_argument(module, signature[index], intrinsics, unions)?,
             kind=RustCallableParamKind.Normal,

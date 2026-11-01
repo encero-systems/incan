@@ -176,7 +176,11 @@ fn partial_parameters(
                 .name
                 .clone()
                 .unwrap_or_else(|| format!("__partial_arg_{index}"));
-            let ty = builder.checked_type(&parameter.ty);
+            let owner = match target {
+                Some(PartialTarget::Function(target)) => Some(&target.canonical),
+                _ => None,
+            };
+            let ty = super::input_access::value_type(builder, owner, index, &parameter.ty);
             let native_owned = parameter_types::native_collection_parameter(&parameter.ty, builder.type_info);
             let local = builder.declare_new_local_with_reads(name.clone(), ty.clone(), scope, span, 1);
             builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
@@ -185,7 +189,7 @@ fn partial_parameters(
             } else if parameter.is_mut {
                 builder.borrowed_parameters.insert(local);
             }
-            bir::CallableParam {
+            let mut projected = bir::CallableParam {
                 local,
                 kind: incan_semantics_core::IncanCallableParamKind::Normal,
                 name,
@@ -193,8 +197,11 @@ fn partial_parameters(
                 span,
                 default: bir::CallableParamDefault::Required,
                 mutable: parameter.is_mut,
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
                 native_owned,
-            }
+            };
+            super::input_access::apply(&mut projected, builder.type_info, owner, index);
+            projected
         })
         .collect::<Vec<_>>();
     // Deferred defaults may introduce temporaries; every parameter must already occupy its declaration slot.
@@ -389,6 +396,7 @@ pub(super) fn lower_source_partial(
         extern_delegation: None,
         native_attributes: Vec::new(),
         // No checked callable facts are recorded for a synthesized partial; callable signatures refuse by name.
+        checked_input_profile: None,
         callable_representation: None,
     }
 }

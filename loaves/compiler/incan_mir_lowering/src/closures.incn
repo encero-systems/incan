@@ -1,6 +1,11 @@
 """Callable signature admission from checked frontend representation facts."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanCallableParam,
+    IncanCallableParamKind,
+    IncanInputAccess,
+)
 from body_index import BodyIndex
 from native_type_identity import constructor_index
 from rust::incan_semantics_core::body_ir import (
@@ -41,7 +46,14 @@ from types import primitive_type
 from classes import receiver_mode, parameter_local_index
 from async_ import evaluator_name
 from collections import is_collection, is_owned_collection
-from layout_types import native_source_type, context_free_type, callable_parameter_type, collection_leaf
+from layout_types import (
+    native_source_type,
+    context_free_type,
+    callable_parameter_type,
+    collection_leaf,
+    shared_receiver_type,
+    mutable_receiver_type,
+)
 from lists import is_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
@@ -65,7 +77,9 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
             input = callable_input(parameter.ty)?
         else:
             input = callable_parameter_type(constructors, nominals, enums, unions, parameter, intrinsics)?
-        signature.append(packed_input(input, parameter.kind, parameter.is_mut, parameter.native_owned)?)
+        signature.append(
+            packed_input(input, parameter.kind, parameter.is_mut, parameter.native_owned, parameter.input_access)?,
+        )
     # 2. Append the owned return contract.
     signature.append(callable_result(result)?)
     return Ok(PlanType.FunctionPointer(signature))
@@ -89,13 +103,29 @@ def callable_result(ty: &RustType) -> Result[PlanType, str]:
     return callable_component(ty)
 
 
-pub def signature_input(ty: PlanType, mutable: bool, native_owned: bool = false) -> Result[PlanType, str]:
+pub def signature_input(
+    ty: PlanType,
+    mutable: bool,
+    native_owned: bool = false,
+    input_access: IncanInputAccess = IncanInputAccess.Inferred,
+) -> Result[PlanType, str]:
     """
     A callable's input as its declaration's frame receives it: a list or collection by the caller-owned reference, and
     for a `mut` parameter the exclusive borrow of the caller's value.
 
-    A checked native collection consumes its outer value; references inside its elements keep their own ABI.
+    Explicit checked access selects an owned value or a true shared/exclusive reference before ordinary defaults.
+    Binding mutability does not change that access. A checked native collection consumes its outer value;
+    references inside its elements keep their own ABI.
     """
+    # Explicit checked access precedes ordinary duckborrowing. Native collection ownership is a separate ABI fact.
+    if input_access != IncanInputAccess.Inferred:
+        if native_owned:
+            return Err("invalid Body IR simultaneous native and explicit input ownership")
+        match input_access:
+            IncanInputAccess.Owned => return Ok(ty)
+            IncanInputAccess.Shared => return shared_receiver_type(ty)
+            IncanInputAccess.Exclusive => return mutable_receiver_type(ty)
+            _ => return Err("invalid Body IR explicit input access")
     # Every function frame stores its parameters this way, so a function item, a lifted closure and an annotated
     # callable type all agree on this one input representation.
     if native_owned:
@@ -110,6 +140,7 @@ pub def semantic_input(
     kind: IncanCallableParamKind,
     mutable: bool,
     native_owned: bool = false,
+    input_access: IncanInputAccess = IncanInputAccess.Inferred,
 ) -> Result[PlanType, str]:
     """
     Project a checked callable element onto its parameter ABI.
@@ -120,8 +151,10 @@ pub def semantic_input(
     """
     # 1. Preserve ordinary input borrowing.
     if kind == IncanCallableParamKind.Normal:
-        return signature_input(ty, mutable, native_owned)
-    # 2. Refuse mutable rest parameters.
+        return signature_input(ty, mutable, native_owned, input_access)
+    # 2. Rest ownership requires its own checked pack contract.
+    if input_access != IncanInputAccess.Inferred:
+        return Err("unsupported Body IR explicit rest input access")
     if mutable:
         return Err("unsupported Body IR mutable rest parameter")
     # 3. Pack the checked element using the shared collection representation.
@@ -140,6 +173,7 @@ pub def packed_input(
     kind: IncanCallableParamKind,
     mutable: bool,
     native_owned: bool = false,
+    input_access: IncanInputAccess = IncanInputAccess.Inferred,
 ) -> Result[PlanType, str]:
     """
     Consume a checked frame pack as owned storage.
@@ -150,8 +184,10 @@ pub def packed_input(
     """
     # 1. Preserve ordinary input borrowing.
     if kind == IncanCallableParamKind.Normal:
-        return signature_input(ty, mutable, native_owned)
-    # 2. Refuse mutable rest parameters.
+        return signature_input(ty, mutable, native_owned, input_access)
+    # 2. Rest ownership requires its own checked pack contract.
+    if input_access != IncanInputAccess.Inferred:
+        return Err("unsupported Body IR explicit rest input access")
     if mutable:
         return Err("unsupported Body IR mutable rest parameter")
     # 3. Match the checked pack to its declared rest role.
@@ -665,10 +701,21 @@ def loaf_item_signature(
         if parameter.ty != declaration.parameters[index]:
             return Err("invalid Body IR Loaf function-item parameter contract")
         component = item_input(builder, declaration.parameters[index])?
-        mut input = packed_input(component, parameter.kind, parameter.mutable, parameter.native_owned)?
+        mut input = packed_input(
+            component,
+            parameter.kind,
+            parameter.mutable,
+            parameter.native_owned,
+            parameter.input_access,
+        )?
         match declaration.declaration_frame():
-            Some(frame) => input = call_parameter_type(builder, frame, frame.params[index])?
-            None => pass
+            Some(frame) =>
+                if parameter.input_access != frame.params[index].input_access:
+                    return Err("invalid Body IR Loaf function-item input access contract")
+                input = call_parameter_type(builder, frame, frame.params[index])?
+            None =>
+                if parameter.input_access != IncanInputAccess.Inferred:
+                    return Err("unsupported native Loaf function-item explicit input access without a provider frame")
         signature.append(input)
     mut result = item_result(builder, declaration.return_type)?
     match declaration.declaration_frame():
@@ -727,6 +774,8 @@ def item_signature(
         return Err("invalid Body IR function-item parameter count")
     mut signature: list[PlanType] = []
     for index in range(len(parameters)):
+        if parameters[index].input_access != body.params[index].input_access:
+            return Err("invalid Body IR function-item input access contract")
         if parameters[index].kind != body.params[index].kind:
             return Err("unsupported Body IR function-item parameter role")
         match receiver_mode(body.locals[parameter_local_index(body, index)].origin):
@@ -748,7 +797,10 @@ def item_signature(
             parameters[index].kind,
             parameters[index].mutable,
             parameters[index].native_owned,
+            parameters[index].input_access,
         )?
+        if body.is_generator() and parameters[index].input_access != IncanInputAccess.Inferred:
+            return Err("unsupported Body IR explicit input access in a deferred producer")
         if body.is_generator() and input != component:
             return Err("unsupported Body IR generator function item with borrowed parameters")
         signature.append(input)

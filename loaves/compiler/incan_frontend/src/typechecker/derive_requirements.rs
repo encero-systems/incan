@@ -1123,16 +1123,31 @@ impl TypeChecker {
         params: &'p [CallableParam],
         args: &'a [CallArg],
     ) -> Vec<(&'a Spanned<Expr>, Option<&'p CallableParam>)> {
+        Self::arguments_with_parameter_slots(params, args)
+            .into_iter()
+            .map(|(expression, slot)| (expression, slot.map(|slot| &params[slot])))
+            .collect()
+    }
+
+    /// Keep the canonical source parameter slot while pairing arguments in evaluation order. Unpacking ends this
+    /// projection, as in the derive caller; ownership consumers must refuse a truncated result rather than infer
+    /// the hidden bindings. A named argument's evaluation position never changes its declaration slot.
+    pub(in crate::typechecker) fn arguments_with_parameter_slots<'a>(
+        params: &[CallableParam],
+        args: &'a [CallArg],
+    ) -> Vec<(&'a Spanned<Expr>, Option<usize>)> {
         let mut positional_params = params
             .iter()
-            .filter(|param| param.kind == ParamKind::Normal && !param.is_partial_preset);
+            .enumerate()
+            .filter(|(_, param)| param.kind == ParamKind::Normal && !param.is_partial_preset)
+            .map(|(slot, _)| slot);
         let mut paired = Vec::new();
         for arg in args {
             match arg {
                 CallArg::Positional(expr) => paired.push((expr, positional_params.next())),
                 CallArg::Named(name, expr) => paired.push((
                     expr,
-                    params.iter().find(|param| param.name() == Some(name.node.as_str())),
+                    params.iter().position(|param| param.name() == Some(name.node.as_str())),
                 )),
                 CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => break,
             }

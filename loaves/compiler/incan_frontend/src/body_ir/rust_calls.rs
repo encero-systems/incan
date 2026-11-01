@@ -304,6 +304,7 @@ impl BodyBuilder<'_, '_> {
                 span,
                 default: bir::CallableParamDefault::Required,
                 mutable: false,
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
                 native_owned: super::runtime_nominals::owned_collection_storage(ty),
             });
             arguments.push(bir::ArgumentElement::One(self.temp_operand(local, ty)));
