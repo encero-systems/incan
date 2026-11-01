@@ -76,7 +76,7 @@ const SLICE_HOOK: &str = "__getslice__";
 /// checked, while the enum's own arguments are what the construction's result type reports afterwards.
 #[derive(Debug, Clone)]
 struct EnumVariantInstantiation {
-    /// The enum's type arguments, taken from the destination type.
+    /// The enum's type arguments, supplied explicitly or taken from a same-declaration destination.
     arguments: Vec<ResolvedType>,
     /// The variant's declared payload types, substituted through those arguments.
     payloads: Vec<ResolvedType>,
@@ -6586,8 +6586,8 @@ impl TypeChecker {
         Some(Self::c_raw_call_type(&slot.binding, &slot.value))
     }
 
-    /// Type-check a method call with an optional expected result type for overload disambiguation. Resolve one
-    /// `Enum.Variant(...)` construction against the destination type it is being built for.
+    /// Resolve a declared enum variant using explicit receiver arguments first, then a same-declaration destination.
+    /// Imported aliases and module-qualified names use retained identities rather than matching display spellings.
     ///
     /// A variant payload is declared in the enum's own vocabulary — `Items(list[Elem])` — and that vocabulary is bound
     /// nowhere at a construction site. A model constructor can recover from this by falling back to the supplied
@@ -6597,19 +6597,22 @@ impl TypeChecker {
     ///
     /// The destination is the *immediate* expected type, never the enclosing function's return type read directly.
     /// That distinction is what keeps this sound: a function returning `Holder[Picked]` may legitimately build a
-    /// `Holder[str]` for a local, and there the local's own annotation is the expectation. Only a same-name,
+    /// `Holder[str]` for a local, and there the local's own annotation is the expectation. Only a same-declaration,
     /// arity-matching instantiation is usable — anything else would substitute one declaration's parameters with
     /// another's arguments — so every other shape yields `None` and leaves the unsubstituted behavior in place.
     ///
     /// See #1516, and #1507 for the model half of the same defect.
     fn enum_variant_construction_instantiation(
-        &self,
+        &mut self,
         base_ty: &ResolvedType,
         method: &str,
         expected_return_ty: Option<&ResolvedType>,
+        span: Span,
     ) -> Option<EnumVariantInstantiation> {
-        let ResolvedType::Named(enum_name) = base_ty else {
-            return None;
+        let (enum_name, explicit_arguments) = match base_ty {
+            ResolvedType::Named(name) => (name, None),
+            ResolvedType::Generic(name, arguments) => (name, Some(arguments)),
+            _ => return None,
         };
         let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {
             return None;
@@ -6619,15 +6622,28 @@ impl TypeChecker {
         {
             return None;
         }
-        if enum_info.type_params.is_empty() {
-            return None;
-        }
-        let ResolvedType::Generic(expected_name, arguments) = expected_return_ty? else {
-            return None;
+        let arguments = if let Some(arguments) = explicit_arguments {
+            if arguments.len() != enum_info.type_params.len() {
+                let written = arguments.iter().map(ToString::to_string).collect::<Vec<_>>();
+                let error = errors::explicit_type_arg_arity(enum_name, &enum_info.type_params, &written, span);
+                self.errors.push(error);
+                return None;
+            }
+            arguments
+        } else {
+            if enum_info.type_params.is_empty() {
+                return None;
+            }
+            let ResolvedType::Generic(expected_name, arguments) = expected_return_ty? else {
+                return None;
+            };
+            if !self.source_type_names_same_declaration(expected_name, enum_name)
+                || arguments.len() != enum_info.type_params.len()
+            {
+                return None;
+            }
+            arguments
         };
-        if expected_name != enum_name || arguments.len() != enum_info.type_params.len() {
-            return None;
-        }
         // An alias shares its target's payload, and `variant_fields` is keyed by the canonical name only.
         let canonical_variant = enum_info
             .variant_aliases
@@ -7017,21 +7033,36 @@ impl TypeChecker {
         };
         let source_list_method = matches!(base_ty, ResolvedType::Generic(name, _)
             if collection_type_id(name) == Some(CollectionTypeId::List) && list_methods::from_str(call.method).is_some());
-        let rust_receiver_path = self.rust_canonical_path_for_receiver_type(base_ty).or_else(|| {
-            let source_builtin_method = (*base_ty == ResolvedType::Str
-                && string_methods::from_str(call.method).is_some())
-                || (*base_ty == ResolvedType::Bytes && bytes_methods::from_str(call.method).is_some())
-                || result_callback.is_some();
-            if source_list_method || source_builtin_method {
-                return None;
+        let source_variant = match base_ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                matches!(self.lookup_semantic_type_info(name), Some(TypeInfo::Enum(info))
+            if info.variants.iter().any(|variant| variant == call.method)
+                || info.variant_aliases.contains_key(call.method))
             }
-            self.rust_value_item_path(call.base)
-                .or_else(|| self.rust_method_receiver_path(call.base))
-        });
+            _ => false,
+        };
+        // A checked source variant owns its constructor even when its admitted name contains namespace segments.
+        let rust_receiver_path = if source_variant {
+            None
+        } else {
+            self.rust_canonical_path_for_receiver_type(base_ty).or_else(|| {
+                let source_builtin_method = (*base_ty == ResolvedType::Str
+                    && string_methods::from_str(call.method).is_some())
+                    || (*base_ty == ResolvedType::Bytes && bytes_methods::from_str(call.method).is_some())
+                    || result_callback.is_some();
+                if source_list_method || source_builtin_method {
+                    return None;
+                }
+                self.rust_value_item_path(call.base)
+                    .or_else(|| self.rust_method_receiver_path(call.base))
+            })
+        };
         let enum_variant_construction =
-            self.enum_variant_construction_instantiation(base_ty, call.method, call.expected_return_ty);
+            self.enum_variant_construction_instantiation(base_ty, call.method, call.expected_return_ty, call.span);
         let enum_variant_parameters = match base_ty {
-            ResolvedType::Named(enum_name) => self.checked_enum_variant_parameters(enum_name, call.method),
+            ResolvedType::Named(enum_name) | ResolvedType::Generic(enum_name, _) => {
+                self.checked_enum_variant_parameters(enum_name, call.method)
+            }
             _ => None,
         };
         MethodArgumentContext {
@@ -7465,10 +7496,10 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Check generated enum members or retain the already checked payload signature of a variant construction.
+    /// Check generated enum members, validate constructor arguments and retain the selected payload signature.
     ///
-    /// A constructor reports the destination's concrete type arguments rather than erasing them to the enum name;
-    /// payload expectations were applied before this result-selection stage (#1516).
+    /// A constructor preserves explicit or expected type arguments instead of erasing them to the enum name. Payload
+    /// expressions are checked once with their context, then ordinary call binding validates their types and arity.
     fn check_enum_method_call(
         &mut self,
         call: &MethodCallSite<'_>,
@@ -7495,13 +7526,32 @@ impl TypeChecker {
             self.record_compiler_generated_member_identity(enum_name, call.method, Some(call.base.span), call.span);
             return Some(result);
         }
-        if let ResolvedType::Named(enum_name) = base_ty
+        if let (ResolvedType::Named(enum_name) | ResolvedType::Generic(enum_name, _)) = base_ty
             && let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name)
             && (info.variants.iter().any(|variant| variant == call.method)
                 || info.variant_aliases.contains_key(call.method))
         {
             let identity = info.variant_identities.get(call.method).cloned();
+            let parameters = construction
+                .as_ref()
+                .map(|value| {
+                    value
+                        .payloads
+                        .iter()
+                        .cloned()
+                        .map(CallableParam::positional)
+                        .collect::<Vec<_>>()
+                })
+                .or(parameters);
             if let Some(parameters) = parameters {
+                self.validate_callable_arg_bindings(
+                    &format!("{enum_name}.{}", call.method),
+                    &parameters,
+                    call.args,
+                    arg_types,
+                    &mut HashMap::new(),
+                    call.span,
+                );
                 self.type_info
                     .record_call_site_callable_params_exact(call.span, &parameters);
             }
@@ -7510,7 +7560,7 @@ impl TypeChecker {
             }
             return Some(match construction {
                 Some(construction) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
-                None => ResolvedType::Named(enum_name.clone()),
+                None => base_ty.clone(),
             });
         }
         None
