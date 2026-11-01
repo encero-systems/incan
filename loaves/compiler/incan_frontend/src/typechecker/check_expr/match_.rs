@@ -151,16 +151,7 @@ impl TypeChecker {
     /// A retained storage key is compared through that same canonical declaration identity, never by parsing its
     /// spelling.
     fn pattern_type_spelling_names_subject(&self, written: &str, subject_name: &str) -> bool {
-        written == subject_name
-            || self.source_nominal_carrier_key(written).as_deref() == Some(subject_name)
-            || self.source_nominal_carrier_key(subject_name).as_deref() == Some(written)
-            || matches!(
-                (
-                    self.public_library_type_identities.get(written),
-                    self.public_library_type_identities.get(subject_name),
-                ),
-                (Some(written_identity), Some(subject_identity)) if written_identity == subject_identity
-            )
+        self.source_type_names_same_declaration(written, subject_name)
     }
 
     /// Whether an explicit pattern qualifier names the same enum-like scrutinee type being matched.
