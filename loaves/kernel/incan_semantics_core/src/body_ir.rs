@@ -1311,6 +1311,10 @@ pub struct Body {
     /// consumers must refuse callable signatures when this is absent rather than assume function-pointer coercion.
     #[serde(default)]
     pub callable_representation: Option<CallableRepresentation>,
+    /// Source-owned admission for explicit inputs, independent of callable ABI classification. Missing legacy
+    /// metadata does not authorize an explicit mode; consumers validate the owner and complete frame-slot inventory.
+    #[serde(default)]
+    pub checked_input_profile: Option<CheckedInputProfile>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
     /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
     ///
@@ -1429,7 +1433,48 @@ impl ExternDelegation {
     }
 }
 
+/// The checked source body admitted by the current direct-input implementation profile. This is not inferred from
+/// a borrowed native ABI: only the source ownership checker and its complete Body IR projection can publish it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedInputProfile {
+    /// Semantic profile version, distinct from the surrounding positional executable representation version.
+    pub version: u32,
+    /// Exact declaration that owns the checked source flow and the resulting native frame.
+    pub owner: CanonicalSymbolId,
+    /// Complete physical parameter-slot inventory, including ordinary slots next to explicit ones.
+    pub parameters: Vec<CheckedInputParameter>,
+}
+
+/// One frame slot's checked input request. The slot is explicit so reordered or duplicated metadata refuses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedInputParameter {
+    /// Zero-based index in the owning Body.params inventory.
+    pub slot: usize,
+    /// Checked input access, independent of mutability and native-owned collection storage.
+    pub access: crate::IncanInputAccess,
+}
+
 impl Body {
+    /// A resolved source callee's explicit inputs require independent caller authority, even when the caller has
+    /// no explicit parameters. Consumers must check this relationship after canonical call resolution: a missing
+    /// persisted caller profile cannot be detected from its ordinary parameter ABI alone.
+    pub fn input_call_profile_gap(&self, callee: &Body) -> Option<&'static str> {
+        if !callee
+            .params
+            .iter()
+            .any(|parameter| !parameter.input_access.is_inferred())
+        {
+            return None;
+        }
+        callee.input_profile_gap().or_else(|| {
+            if self.checked_input_profile.is_none() {
+                Some("explicit source call lacks a checked caller body profile")
+            } else {
+                self.input_profile_gap()
+            }
+        })
+    }
+
     /// Store the exact owner bindings used by Incan nominal specialization, independently of method binders.
     pub fn set_nominal_instantiation(&mut self, arguments: Vec<TraitTypeArgument>) {
         self.nominal_instantiation = arguments;
@@ -1545,12 +1590,61 @@ impl Body {
     /// statements of a deferred default computation, including closures' own parameters. This is the fact a consumer
     /// of Body IR needs before it commits to a body, and it does not depend on what any one consumer can execute.
     pub fn first_representation_gap(&self) -> Option<&str> {
-        params_representation_gap(&self.params).or_else(|| statements_representation_gap(&self.block.stmts))
+        self.input_profile_gap()
+            .or_else(|| params_default_representation_gap(&self.params))
+            .or_else(|| statements_representation_gap(&self.block.stmts))
+    }
+
+    /// Missing or mismatched source authority cannot be replaced by parameter ABI inference. The initial profile
+    /// admits only fixed synchronous source-function frames; deferred, generic and native boundaries remain staged.
+    pub fn input_profile_gap(&self) -> Option<&'static str> {
+        let explicit = self
+            .params
+            .iter()
+            .any(|parameter| !parameter.input_access.is_inferred());
+        let Some(profile) = &self.checked_input_profile else {
+            return explicit.then_some("explicit input access lacks a checked body profile");
+        };
+        if profile.version != 1 || self.canonical.as_ref() != Some(&profile.owner) {
+            return Some("explicit input profile has an unsupported version or different canonical owner");
+        }
+        if profile.owner.kind != crate::SemanticSourceTargetKind::Function
+            || self.is_async
+            || self.is_generator()
+            || !self.type_parameters.is_empty()
+            || self.extern_delegation.is_some()
+            || !self.native_attributes.is_empty()
+        {
+            return Some("explicit input profile does not admit this callable boundary");
+        }
+        if profile.parameters.len() != self.params.len() {
+            return Some("explicit input profile does not cover every parameter");
+        }
+        for (slot, (retained, parameter)) in profile.parameters.iter().zip(&self.params).enumerate() {
+            if retained.slot != slot || retained.access != parameter.input_access {
+                return Some("explicit input profile disagrees with its parameter slot or access");
+            }
+            if parameter.kind != crate::IncanCallableParamKind::Normal
+                || !matches!(parameter.default, CallableParamDefault::Required)
+                || (!parameter.input_access.is_inferred() && parameter.native_owned)
+            {
+                return Some("explicit input profile does not admit packed, deferred or native-owned inputs");
+            }
+        }
+        None
     }
 }
 
-/// The first unrepresentable default among `params`, including inside a sourced default's own statements.
+/// Refuse unimplemented explicit input access and any gap inside a parameter's deferred default computation.
 fn params_representation_gap(params: &[CallableParam]) -> Option<&str> {
+    if params.iter().any(|param| !param.input_access.is_inferred()) {
+        return Some("explicit input access in a nested callable lacks its own checked body profile");
+    }
+    params_default_representation_gap(params)
+}
+
+/// Deferred default computations retain their own representation obligations even in an admitted parent frame.
+fn params_default_representation_gap(params: &[CallableParam]) -> Option<&str> {
     params.iter().find_map(|param| match &param.default {
         CallableParamDefault::Unsupported { description, .. } => Some(description.as_str()),
         CallableParamDefault::Source(computation) => statements_representation_gap(&computation.stmts),
@@ -2692,6 +2786,9 @@ pub struct CallableParam {
     /// The local may still be mutable; that does not turn this by-value ABI into an exclusive caller loan.
     #[serde(default)]
     pub native_owned: bool,
+    /// Checked explicit source input access, separate from binding mutation and native collection ownership.
+    #[serde(default)]
+    pub input_access: crate::IncanInputAccess,
 }
 
 /// Preserve the ordinary passing convention when reading a Body IR parameter published before source roles.
@@ -2706,7 +2803,9 @@ impl CallableParam {
             "{}{}: {} local=_{} span={}..{}{}",
             if self.mutable { "mut " } else { "" },
             self.name,
-            self.ty,
+            self.input_access
+                .source_form()
+                .map_or_else(|| self.ty.to_string(), |form| format!("{form}[{}]", self.ty)),
             self.local.0,
             self.span.start,
             self.span.end,
@@ -5486,6 +5585,7 @@ mod tests {
             name: "add".to_string(),
             span: HirSourceSpan::new(0, 30),
             return_type: IncanType::Primitive(IncanPrimitiveType::Int),
+            checked_input_profile: None,
             callable_representation: None,
             named_type_identities: Default::default(),
             locals: vec![
@@ -5520,6 +5620,7 @@ mod tests {
             params: vec![
                 CallableParam {
                     mutable: false,
+                    input_access: crate::IncanInputAccess::Inferred,
                     native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_x,
@@ -5530,6 +5631,7 @@ mod tests {
                 },
                 CallableParam {
                     mutable: false,
+                    input_access: crate::IncanInputAccess::Inferred,
                     native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_y,
@@ -5615,6 +5717,147 @@ mod tests {
     fn body_snapshot_is_deterministic() {
         let body = sample_body();
         assert_eq!(body.render_snapshot(), body.render_snapshot());
+    }
+
+    /// A parameter mode cannot grant execution by itself; owner, version and complete slot inventory are required.
+    #[test]
+    fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::error::Error>> {
+        let mut body = sample_body();
+        body.canonical = Some(CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "add",
+            SemanticSourceTargetKind::Function,
+            body.span,
+        ));
+        body.params[0].input_access = crate::IncanInputAccess::Shared;
+        assert!(body.first_representation_gap().is_some());
+        let profile = super::CheckedInputProfile {
+            version: 1,
+            owner: body.canonical.clone().ok_or("missing owner")?,
+            parameters: body
+                .params
+                .iter()
+                .enumerate()
+                .map(|(slot, param)| super::CheckedInputParameter {
+                    slot,
+                    access: param.input_access,
+                })
+                .collect(),
+        };
+        body.checked_input_profile = Some(profile.clone());
+        assert!(body.first_representation_gap().is_none());
+        let encoded = postcard::to_allocvec(&body)?;
+        let decoded: Body = postcard::from_bytes(&encoded)?;
+        assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
+        assert!(decoded.first_representation_gap().is_none());
+        let mut named = serde_json::to_value(&body)?;
+        named
+            .as_object_mut()
+            .ok_or("body is not an object")?
+            .remove("checked_input_profile");
+        let legacy: Body = serde_json::from_value(named)?;
+        assert!(legacy.first_representation_gap().is_some());
+        for invalid in [
+            super::CheckedInputProfile {
+                version: 2,
+                ..profile.clone()
+            },
+            super::CheckedInputProfile {
+                parameters: Vec::new(),
+                ..profile.clone()
+            },
+            super::CheckedInputProfile {
+                owner: CanonicalSymbolId::module_declaration(
+                    vec!["other".into()],
+                    "add",
+                    SemanticSourceTargetKind::Function,
+                    body.span,
+                ),
+                ..profile.clone()
+            },
+            super::CheckedInputProfile {
+                parameters: vec![
+                    super::CheckedInputParameter {
+                        slot: 0,
+                        access: crate::IncanInputAccess::Owned,
+                    },
+                    profile.parameters[1].clone(),
+                ],
+                ..profile.clone()
+            },
+        ] {
+            body.checked_input_profile = Some(invalid);
+            assert!(body.first_representation_gap().is_some());
+        }
+        body.checked_input_profile = Some(profile);
+        body.params[0].native_owned = true;
+        assert!(body.first_representation_gap().is_some());
+        Ok(())
+    }
+
+    /// Removing a caller profile from named persisted data must not grant an explicit source call merely because
+    /// all caller parameters use ordinary types. Positional transport preserves the same independent obligation.
+    #[test]
+    fn explicit_calls_require_persisted_caller_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let mut caller = sample_body();
+        let owner = CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "caller",
+            SemanticSourceTargetKind::Function,
+            caller.span,
+        );
+        caller.canonical = Some(owner.clone());
+        caller.checked_input_profile = Some(super::CheckedInputProfile {
+            version: 1,
+            owner,
+            parameters: caller
+                .params
+                .iter()
+                .enumerate()
+                .map(|(slot, parameter)| super::CheckedInputParameter {
+                    slot,
+                    access: parameter.input_access,
+                })
+                .collect(),
+        });
+        let mut callee = caller.clone();
+        let callee_owner = CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            "callee",
+            SemanticSourceTargetKind::Function,
+            callee.span,
+        );
+        callee.canonical = Some(callee_owner.clone());
+        callee.params[0].input_access = crate::IncanInputAccess::Shared;
+        let profile = callee.checked_input_profile.as_mut().ok_or("missing callee profile")?;
+        profile.owner = callee_owner;
+        profile.parameters[0].access = crate::IncanInputAccess::Shared;
+        assert!(caller.input_call_profile_gap(&callee).is_none());
+        let decoded: Body = postcard::from_bytes(&postcard::to_allocvec(&caller)?)?;
+        assert!(decoded.input_call_profile_gap(&callee).is_none());
+
+        let mut named = serde_json::to_value(&caller)?;
+        named
+            .as_object_mut()
+            .ok_or("caller is not an object")?
+            .remove("checked_input_profile");
+        let stripped: Body = serde_json::from_value(named)?;
+        assert!(stripped.input_profile_gap().is_none());
+        assert_eq!(
+            stripped.input_call_profile_gap(&callee),
+            Some("explicit source call lacks a checked caller body profile")
+        );
+        caller
+            .checked_input_profile
+            .as_mut()
+            .ok_or("missing caller profile")?
+            .owner = callee.canonical.clone().ok_or("missing callee identity")?;
+        assert!(caller.input_call_profile_gap(&callee).is_some());
+        callee.checked_input_profile = None;
+        assert!(decoded.input_call_profile_gap(&callee).is_some());
+        callee.params[0].input_access = crate::IncanInputAccess::Inferred;
+        assert!(stripped.input_call_profile_gap(&callee).is_none());
+        Ok(())
     }
 
     #[test]
@@ -5785,6 +6028,7 @@ mod tests {
         assert_eq!(
             CallableParam {
                 mutable: false,
+                input_access: crate::IncanInputAccess::Inferred,
                 native_owned: false,
                 kind: IncanCallableParamKind::Normal,
                 local: LocalId(7),
@@ -5806,6 +6050,7 @@ mod tests {
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(1),
@@ -5826,6 +6071,7 @@ mod tests {
         };
         let preset = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(2),
@@ -5836,6 +6082,7 @@ mod tests {
         };
         let unsupported = CallableParam {
             mutable: false,
+            input_access: crate::IncanInputAccess::Inferred,
             native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(4),
@@ -6077,6 +6324,7 @@ mod tests {
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
                             mutable: false,
+                            input_access: crate::IncanInputAccess::Inferred,
                             native_owned: false,
                             kind: IncanCallableParamKind::Normal,
                             local: param_local,

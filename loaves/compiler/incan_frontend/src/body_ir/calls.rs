@@ -1992,7 +1992,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .type_info
                 .resolved_identity(callee.span)
                 .is_some_and(super::is_loaf_identity);
-        let bound = if sdk_factory {
+        let bound = if let Some(explicit) =
+            self.bind_explicit_input_args(declaration.canonical.as_ref(), args, span, scope, out)
+        {
+            explicit
+        } else if sdk_factory {
             self.bind_sdk_factory_args(&format!("function `{name}`"), declaration.slots, args, scope, out)
         } else if factory {
             self.bind_checked_factory_args(&format!("function `{name}`"), declaration.slots, args, scope, out)

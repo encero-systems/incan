@@ -62,6 +62,7 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place, block as plan_block
+from explicit_arguments import parameter_accesses, argument_access, explicit_place_argument, validate_source_input_call
 from bytes_plan import bytes_literal
 from types import static_method_result_type
 from native_callables import native_callable_storage
@@ -103,6 +104,7 @@ from rust::std::string import String as RustString
 from rust::std::primitive import str as RustStr
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import (
+    IncanInputAccess,
     IncanType as RustType,
     HirSourceSpan as RustSpan,
     generic,
@@ -2662,8 +2664,14 @@ def lift_closure(
                 # A closure checked against a callable type whose input is `mut` takes that input as the borrow too.
                 mutable = parameter.mutable or parameter_storage_type(declared, true) == arguments[position]
                 mut storage = parameter_storage_type(declared, mutable)
-                if parameter.native_owned:
-                    storage = packed_input(declared, parameter.kind, parameter.mutable, true)?
+                if parameter.native_owned or parameter.input_access != IncanInputAccess.Inferred:
+                    storage = packed_input(
+                        declared,
+                        parameter.kind,
+                        parameter.mutable,
+                        parameter.native_owned,
+                        parameter.input_access,
+                    )?
                 bind_closure_input(lifted, destination, position + 1, arguments[position], storage, span)?
                 position += 1
             _ =>
@@ -4226,7 +4234,9 @@ def method_ordinary_operands(
     mut ordinary: list[Operand] = []
     match method_default_arguments(module, builder, target, arguments, body, types, span)?:
         Some(values) => ordinary = values
-        None => ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
+        None =>
+            accesses = parameter_accesses(body.params, 1)?
+            ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1, accesses=accesses)?
     return Ok(ordinary)
 
 
@@ -4277,6 +4287,13 @@ def lower_static_sdk_method(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a checked SDK method under the actual static guard after evaluating its bound ordinary arguments."""
+    match delegation.declaration_frame():
+        Some(frame) =>
+            for parameter in frame.params:
+                if parameter.input_access != IncanInputAccess.Inferred:
+                    return Err("unsupported Body IR explicit input through a computed static SDK method")
+        None => pass
+
     if len(read.place.projection) != 0 or len(arguments) != len(delegation.parameters):
         return Err("standard library static method argument count or projected receiver is unsupported")
     if target.loaf_trait != None or len(target.type_args) != 0 or len(delegation.native_type_arguments) != 0:
@@ -5045,6 +5062,7 @@ def emit_selected_body_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve the selected body's result carrier and unwind cleanup for direct and guarded static calls."""
+    validate_source_input_call(builder, body)?
     declared = native_source_type(
         builder.constructors,
         builder.nominals,
@@ -5427,6 +5445,7 @@ def lower_delegated_call(
         )
     match delegation.declaration_frame():
         Some(frame) =>
+            validate_source_input_call(builder, frame)?
             parameters = []
             for index in range(len(frame.params)):
                 parameters.append(call_parameter_type(builder, frame, frame.params[index])?)
@@ -5545,8 +5564,15 @@ def library_call_operands(
     """
     if has_defaulted_slots(binding):
         return library_default_arguments(module, builder, delegation, binding, arguments[offset:], types, span, offset)
-    if delegation.declaration_frame != None:
-        return ordered_slot_operands(builder, binding, arguments, types, span, offset, false, positional)
+    match delegation.declaration_frame():
+        Some(frame) =>
+            if frame.canonical != Some(delegation.canonical.clone()):
+                return Err("invalid Body IR argument declaration frame identity")
+            accesses = parameter_accesses(frame.params, offset)?
+            if len(accesses) != len(types):
+                return Err("invalid Body IR argument declaration frame length")
+            return ordered_slot_operands(builder, binding, arguments, types, span, offset, false, positional, accesses)
+        None => pass
     return ordered_slot_operands(builder, binding, arguments, types, span, offset, true, positional)
 
 
@@ -5592,7 +5618,15 @@ def ordered_arguments(
         types.append(call_parameter_type(builder, body, parameter)?)
     if has_defaulted_slots(binding):
         return default_arguments(module, builder, binding, elements, body, types, span, 0, false)
-    return ordered_slot_operands(builder, binding, elements, types, span, 0)
+    return ordered_slot_operands(
+        builder,
+        binding,
+        elements,
+        types,
+        span,
+        0,
+        accesses=parameter_accesses(body.params, 0)?,
+    )
 
 
 pub def call_parameter_type(
@@ -5616,7 +5650,7 @@ pub def call_parameter_type(
         builder.intrinsics,
     )?
     ty = parameter_representation(body, int(parameter.local.index()), declared)?
-    if parameter.mutable and lacks_exclusive_parameter(ty):
+    if parameter.input_access == IncanInputAccess.Inferred and parameter.mutable and lacks_exclusive_parameter(ty):
         return Err("unsupported Body IR mutable tuple or iterator parameter")
     return stored_parameter_type(body, parameter, ty)
 
@@ -5626,11 +5660,16 @@ def stored_parameter_type(body: &RustBody, parameter: &RustCallableParam, ty: Pl
     A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 
     Call materialization, frame locals and constructor signatures use this same storage decision so an escaping
-    generator never captures a borrow of a caller's list snapshot. Explicit and mutable borrows remain refused.
+    generator never captures a borrow of a caller's list snapshot. Explicit inputs select their checked access first;
+    deferred producers still refuse that contract until retained dependencies are represented.
     """
+    if parameter.input_access != IncanInputAccess.Inferred:
+        if body.is_generator():
+            return Err("unsupported Body IR explicit input access in a deferred producer")
+        return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
     if body.is_generator() and not parameter.mutable:
         return Ok(ty)
-    return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned)
+    return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
 
 
 def lacks_exclusive_parameter(ty: PlanType) -> bool:
@@ -5660,6 +5699,7 @@ def ordered_slot_operands(
     offset: int = 0,
     owned: bool = false,
     positional: bool = false,
+    accesses: list[IncanInputAccess] = [],
 ) -> Result[list[Operand], str]:
     """
     Place the written arguments into the callee's declared parameter slots.
@@ -5677,14 +5717,36 @@ def ordered_slot_operands(
     if offset < 0 or offset > len(elements):
         return Err("invalid Body IR argument offset")
     count = len(types)
+    if len(accesses) != 0 and len(accesses) != count:
+        return Err("invalid Body IR argument input access count")
     match binding:
         RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
-            return resolved_slot_operands(builder, bindings, len(defaults), elements, types, span, offset, owned)
+            return resolved_slot_operands(
+                builder,
+                bindings,
+                len(defaults),
+                elements,
+                types,
+                span,
+                offset,
+                owned,
+                accesses,
+            )
         RustArgumentBinding.ResolvedDeclarationOrder(arguments=bindings, defaulted_slots=defaults) =>
             for index in range(1, len(bindings)):
                 if int(bindings[index].slot) <= int(bindings[index - 1].slot):
                     return Err("unsupported Body IR binding outside declaration order")
-            return resolved_slot_operands(builder, bindings, len(defaults), elements, types, span, offset, owned)
+            return resolved_slot_operands(
+                builder,
+                bindings,
+                len(defaults),
+                elements,
+                types,
+                span,
+                offset,
+                owned,
+                accesses,
+            )
         RustArgumentBinding.UnresolvedPositional =>
             if not positional or len(elements) - offset != count:
                 return Err("unsupported Body IR unresolved ArgumentBinding")
@@ -5692,7 +5754,8 @@ def ordered_slot_operands(
             for index in range(count):
                 match elements[index + offset]:
                     RustArgumentElement.One(value) =>
-                        operands.append(call_argument_operand(builder, value, types[index], span, owned)?)
+                        access = argument_access(accesses, count, index)?
+                        operands.append(call_argument_operand(builder, value, types[index], span, owned, access)?)
                     _ => return Err("unsupported Body IR named or spread ArgumentElement")
             return Ok(operands)
 
@@ -5706,6 +5769,7 @@ def resolved_slot_operands(
     span: SourceSpan,
     offset: int,
     owned: bool,
+    accesses: list[IncanInputAccess],
 ) -> Result[list[Operand], str]:
     """Pass already evaluated resolved values by slot, preserving the ownership order their binding variant records."""
     count = len(types)
@@ -5721,7 +5785,9 @@ def resolved_slot_operands(
             return Err("invalid Body IR argument slot map")
         occupied.append(slot)
         match elements[index + offset].as_one():
-            Some(value) => operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
+            Some(value) =>
+                access = argument_access(accesses, count, slot)?
+                operands[slot] = call_argument_operand(builder, value, types[slot], span, owned, access)?
             None => return Err("unsupported Body IR named or spread ArgumentElement")
     return Ok(operands)
 
@@ -5732,8 +5798,11 @@ pub def call_argument_operand(
     ty: PlanType,
     span: SourceSpan,
     owned: bool = false,
+    input_access: IncanInputAccess = IncanInputAccess.Inferred,
 ) -> Result[Operand, str]:
-    """Share checked collection borrows, owned strings, callable objects, union injection, and numeric coercion across call slots."""
+    """Honor explicit input authority before ordinary collection borrowing, callable adaptation, or boundary coercion."""
+    if input_access != IncanInputAccess.Inferred:
+        return explicit_argument_operand(builder, value, ty, span, input_access)
     match ty:
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
         PlanType.StringRef => return borrow_text_operand(builder, value, span)
@@ -5794,6 +5863,26 @@ pub def call_argument_operand(
     operand = boundary_operand(builder, value, ty, span)?
     coerced = coerce_numeric_operand(builder, operand, ty, span)?
     return function_argument(builder, ty, coerced, span)
+
+
+def explicit_argument_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    span: SourceSpan,
+    access: IncanInputAccess,
+) -> Result[Operand, str]:
+    """Use only addressable checked storage; indexed copies, globals and literal-owner retention need separate proofs."""
+    match value:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Err("unsupported Body IR explicit argument from static storage")
+                None => pass
+            if is_element_place(builder, read.place)?:
+                return Err("unsupported Body IR explicit argument requires retained indexed storage")
+            source = scalar_place(builder, read.place, span)?
+            return explicit_place_argument(builder, source, read.fact, ty, access, span)
+        _ => return Err("unsupported Body IR explicit argument without retained local storage")
 
 
 def shared_nominal_argument(
@@ -9856,6 +9945,10 @@ def frame_locals(
                 )?
         index = int(local.id.index()) + 1
         ty = local_representation(body, index - 1, ty)
+        for parameter in body.params:
+            if parameter.local == local.id and parameter.input_access != IncanInputAccess.Inferred:
+                if index in taking or index in iterators or index in pairs:
+                    return Err("unsupported Body IR explicit input iteration storage")
         if index in pairs:
             ty = pair_generator_type(ty)
         if index in taking:
@@ -9919,9 +10012,9 @@ pub def frame_parameter_type(
         int(parameter.local.index()),
         body_frame_type(constructors, nominals, enums, body, local, intrinsics, file)?,
     )?
-    if parameter.mutable and lacks_exclusive_parameter(ty):
+    if parameter.input_access == IncanInputAccess.Inferred and parameter.mutable and lacks_exclusive_parameter(ty):
         return Err("unsupported Body IR mutable tuple or iterator parameter")
-    if ty == PlanType.FrozenStr and parameter.mutable:
+    if parameter.input_access == IncanInputAccess.Inferred and ty == PlanType.FrozenStr and parameter.mutable:
         return Err("unsupported Body IR mutable FrozenStr parameter: mutable scalar parameter representation")
     return stored_parameter_type(body, parameter, ty)
 

@@ -1,0 +1,59 @@
+"""Checked input modes survive native representation normalization and distinguish source instance symbols."""
+
+from rust::incan_semantics_core import (
+    IncanCallableParam,
+    IncanCallableParamKind,
+    IncanInputAccess,
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    function_type,
+)
+from rust::incan_semantics_core::body_ir import NominalDeclaration
+from native_type_identity import constructor_index, representation_arguments
+from symbols import type_component
+
+
+def callable_with_access(access: IncanInputAccess) -> RustType:
+    """Vary only the checked access mode, retaining equal value types and ordinary binding flags."""
+    parameters: list[IncanCallableParam] = [
+        IncanCallableParam(
+            name=None,
+            ty=RustType.Primitive(Primitive.Int),
+            kind=IncanCallableParamKind.Normal,
+            has_default=false,
+            is_partial_preset=false,
+            is_mut=false,
+            native_owned=false,
+            input_access=access,
+        ),
+    ]
+    return function_type(parameters, RustType.Primitive(Primitive.Unit))
+
+
+pub def test_callable_symbols_distinguish_input_access() -> None:
+    """All four modes have distinct deterministic keys; no other signature field differs."""
+    modes = [IncanInputAccess.Inferred, IncanInputAccess.Shared, IncanInputAccess.Exclusive, IncanInputAccess.Owned]
+    for left in range(len(modes)):
+        key = type_component(callable_with_access(modes[left]))
+        assert key == type_component(callable_with_access(modes[left]))
+        for right in range(left + 1, len(modes)):
+            assert key != type_component(callable_with_access(modes[right]))
+
+
+pub def test_native_callable_normalization_preserves_input_access() -> None:
+    """Removing source-only binding metadata must retain shared, exclusive and owned access facts."""
+    declarations: list[NominalDeclaration] = []
+    constructors = constructor_index(declarations)
+    modes = [IncanInputAccess.Inferred, IncanInputAccess.Shared, IncanInputAccess.Exclusive, IncanInputAccess.Owned]
+    for mode in modes:
+        arguments = [callable_with_access(mode)]
+        normalized = representation_arguments(declarations, constructors, arguments)
+        assert len(normalized) == 1
+        match normalized[0]:
+            RustType.Function(params=parameters, return_type=_result) =>
+                assert len(parameters) == 1
+                assert parameters[0].input_access == mode
+                assert not parameters[0].is_mut
+                assert not parameters[0].native_owned
+            _ =>
+                assert false

@@ -727,7 +727,15 @@ impl TypeChecker {
         self.record_direct_callee_identity(name, callee.span);
         let declaration = self.type_info.resolved_identity(callee.span).cloned();
         let first_error = self.errors.len();
-        let result = self.validate_function_call(name, func_info, type_args, args, span, expected_return_ty);
+        let result = self.validate_function_call_with_identity(
+            name,
+            func_info,
+            type_args,
+            args,
+            span,
+            expected_return_ty,
+            declaration.clone(),
+        );
         self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
         self.retain_body_ir_async_call_target(func_info.is_async, name, span, callee.span, first_error);
         if let Some(declaration) = declaration {
@@ -2322,8 +2330,16 @@ impl TypeChecker {
             self.type_info = baseline_type_info.clone();
             self.consumed_iterator_bindings = baseline_consumed_iterator_bindings.clone();
 
-            let result =
-                self.validate_function_call(func_name, &overload.info, type_args, args, span, expected_return_ty);
+            let selected_identity = self.checked_overload_identity(overload);
+            let result = self.validate_function_call_with_identity(
+                func_name,
+                &overload.info,
+                type_args,
+                args,
+                span,
+                expected_return_ty,
+                selected_identity.clone(),
+            );
             if let Some(first_error) = self.errors.get(baseline_errors.len()) {
                 rejections.push((
                     self.overload_candidate_signature(func_name, &overload.info),
@@ -2331,13 +2347,6 @@ impl TypeChecker {
                 ));
             }
             if self.errors.len() == baseline_errors.len() {
-                let selected_identity = overload.identity.clone().or_else(|| {
-                    baseline_type_info
-                        .declarations
-                        .function_bindings_by_span
-                        .get(&overload.span)
-                        .and_then(|binding| binding.identity.clone())
-                });
                 matches.push((
                     selected_identity,
                     result,
@@ -2377,7 +2386,16 @@ impl TypeChecker {
                     .iter()
                     .find(|overload| Self::function_call_shape_accepts(&overload.info, type_args, args));
                 if let Some(candidate) = shape_match.or_else(|| overloads.first()) {
-                    self.validate_function_call(func_name, &candidate.info, type_args, args, span, expected_return_ty)
+                    let identity = self.checked_overload_identity(candidate);
+                    self.validate_function_call_with_identity(
+                        func_name,
+                        &candidate.info,
+                        type_args,
+                        args,
+                        span,
+                        expected_return_ty,
+                        identity,
+                    )
                 } else {
                     ResolvedType::Unknown
                 }
@@ -2394,6 +2412,21 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Retain an overload's own provider identity, or the exact checked source declaration when it is local.
+    /// An overload set's spelling never selects one member's ownership or generic contract.
+    fn checked_overload_identity(
+        &self,
+        candidate: &FunctionOverloadInfo,
+    ) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        candidate.identity.clone().or_else(|| {
+            self.type_info
+                .declarations
+                .function_bindings_by_span
+                .get(&candidate.span)
+                .and_then(|binding| binding.identity.clone())
+        })
     }
 
     /// Render one overload candidate as source-shaped signature text for a rejection listing.

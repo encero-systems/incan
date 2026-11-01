@@ -143,7 +143,15 @@ pub def native_source_type(
             mut signature: list[PlanType] = []
             for parameter in parameters:
                 input = native_source_type(constructors, nominals, enums, unions, parameter.ty, intrinsics)?
-                signature.append(semantic_input(input, parameter.kind, parameter.is_mut, parameter.native_owned)?)
+                signature.append(
+                    semantic_input(
+                        input,
+                        parameter.kind,
+                        parameter.is_mut,
+                        parameter.native_owned,
+                        parameter.input_access,
+                    )?,
+                )
             signature.append(native_source_type(constructors, nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>

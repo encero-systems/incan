@@ -71,6 +71,7 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let identity = method_info.identity.clone();
+        let receiver = method_info.receiver;
         let returns_receiver = method_info.receiver.is_some() && method_info.return_type == ResolvedType::SelfType;
         if let Some(identity) = identity.clone() {
             self.type_info.record_resolved_identity(call_site_span, identity);
@@ -87,6 +88,9 @@ impl TypeChecker {
             expected_return_ty,
         );
         let site = call_site_span;
+        if self.errors.len() == first_error {
+            self.record_selected_method_input_call(identity.as_ref(), receiver, call_site_span);
+        }
         self.type_info.calls.body_ir_self_result_methods.remove(&site);
         if returns_receiver
             && self.errors.len() == first_error
@@ -142,29 +146,44 @@ impl TypeChecker {
         call_span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
-        let errors_before_call = self.errors.len();
         let callee_identity = self.called_function_identity(func_name);
-        let mut seeded_type_bindings: std::collections::HashMap<String, ResolvedType> =
-            std::collections::HashMap::new();
-        if !explicit_type_args.is_empty() {
-            if explicit_type_args.len() != info.type_params.len() {
-                self.errors.push(errors::explicit_type_arg_arity(
-                    func_name,
-                    &info.type_params,
-                    &Self::written_type_args(explicit_type_args),
-                    call_span,
-                ));
-            } else {
-                let resolved_explicit: Vec<ResolvedType> = explicit_type_args
-                    .iter()
-                    .map(|ty| self.resolve_type_checked(ty))
-                    .collect();
-                seeded_type_bindings = type_param_subst_map_call_site(&info.type_params, &resolved_explicit);
-            }
-        }
-        if let Some(expected) = expected_return_ty {
-            self.infer_type_param_bindings(&info.return_type, expected, &mut seeded_type_bindings);
-        }
+        self.validate_function_call_with_identity(
+            func_name,
+            info,
+            explicit_type_args,
+            args,
+            call_span,
+            expected_return_ty,
+            callee_identity,
+        )
+    }
+
+    /// Validate against one exact callable identity, including a tentative overload candidate. Explicit ownership
+    /// changes the call's value-type view without changing the declaration's published mode contract.
+    #[allow(clippy::too_many_arguments)] // Call syntax, expected type and selected declaration are independent inputs.
+    pub(in crate::typechecker::check_expr) fn validate_function_call_with_identity(
+        &mut self,
+        func_name: &str,
+        info: &FunctionInfo,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+        callee_identity: Option<CanonicalSymbolId>,
+    ) -> ResolvedType {
+        let projected =
+            match self.ownership_call_value_parameters(callee_identity.as_ref(), &info.params, None, call_span) {
+                Ok(Some(params)) => Some(FunctionInfo { params, ..info.clone() }),
+                Ok(None) => None,
+                Err(error) => {
+                    self.errors.push(error);
+                    return ResolvedType::Unknown;
+                }
+            };
+        let info = projected.as_ref().unwrap_or(info);
+        let errors_before_call = self.errors.len();
+        let seeded_type_bindings =
+            self.seed_function_type_bindings(func_name, info, explicit_type_args, expected_return_ty, call_span);
         let params_with_explicit = Self::substitute_callable_params(&info.params, &seeded_type_bindings);
         let contextual_params = self.contextualize_source_callable_params(
             &params_with_explicit,
@@ -245,6 +264,39 @@ impl TypeChecker {
             instantiation,
             arguments,
         })
+    }
+
+    /// Seed a selected function's binders from written type arguments and the contextual result, before argument
+    /// checking may refine them. Arity errors retain their original call anchor and diagnostic ordering.
+    fn seed_function_type_bindings(
+        &mut self,
+        func_name: &str,
+        info: &FunctionInfo,
+        explicit_type_args: &[Spanned<Type>],
+        expected_return_ty: Option<&ResolvedType>,
+        span: Span,
+    ) -> HashMap<String, ResolvedType> {
+        let mut bindings = HashMap::new();
+        if !explicit_type_args.is_empty() {
+            if explicit_type_args.len() != info.type_params.len() {
+                self.errors.push(errors::explicit_type_arg_arity(
+                    func_name,
+                    &info.type_params,
+                    &Self::written_type_args(explicit_type_args),
+                    span,
+                ));
+            } else {
+                let resolved: Vec<_> = explicit_type_args
+                    .iter()
+                    .map(|ty| self.resolve_type_checked(ty))
+                    .collect();
+                bindings = type_param_subst_map_call_site(&info.type_params, &resolved);
+            }
+        }
+        if let Some(expected) = expected_return_ty {
+            self.infer_type_param_bindings(&info.return_type, expected, &mut bindings);
+        }
+        bindings
     }
 
     /// Publish a checked function call's parameter, bound, constructor and result facts in their established order.
@@ -329,6 +381,7 @@ impl TypeChecker {
                 self.retain_contextual_literal_type(expression, expected, callee_identity.as_ref(), Some(template));
             }
             self.retain_declared_nominal_result(call_span, &info.return_type, &type_bindings, callee_identity.as_ref());
+            self.record_explicit_input_call(callee_identity.as_ref(), &resolved_params, None, call_span);
         }
         self.type_info
             .calls
@@ -1039,7 +1092,20 @@ impl TypeChecker {
         );
 
         // ---- Call-site `Self`, value-arg compatibility ----
-        let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
+        let (mut params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
+        match self.ownership_call_value_parameters(
+            method_info.identity.as_ref(),
+            &params,
+            Some(receiver_ty),
+            call_site_span,
+        ) {
+            Ok(Some(values)) => params = values,
+            Ok(None) => {}
+            Err(error) => {
+                self.errors.push(error);
+                return ResolvedType::Unknown;
+            }
+        }
         if let Some(expected) = expected_return_ty {
             self.infer_type_param_bindings(&return_type, expected, &mut type_bindings);
         }

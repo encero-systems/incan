@@ -7,6 +7,7 @@ use incan_semantics_core::stable_identity::source_signature::SourceSignatureCont
 use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId};
 
 use crate::ast::{Declaration, MethodDecl, Program, Receiver, Spanned, TypeParam};
+use crate::ownership_metadata::{CheckedOwnershipContract, source_input_access};
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, SymbolKind, TypeInfo};
 
 use super::type_info::semantic_callable_param_from_resolved;
@@ -40,7 +41,11 @@ impl TypeChecker {
                 };
                 if let Some(identity) = source_callable_identity(
                     canonical,
-                    &binding.params,
+                    SourceInputs {
+                        parameters: &binding.params,
+                        ownership: self.type_info.declarations.ownership_contracts.get(canonical),
+                        receiver_offset: 0,
+                    },
                     &binding.return_type,
                     binding.is_async,
                     &binders,
@@ -78,10 +83,10 @@ impl TypeChecker {
                     .and_then(|groups| groups.get(&method.node.name))
                     .and_then(|group| {
                         group.iter().find(|candidate| {
-                            candidate.identity.as_ref().is_some_and(|identity| {
-                                identity.declaration_span.start == method.span.start
-                                    && identity.declaration_span.end == method.span.end
-                            })
+                            candidate
+                                .identity
+                                .as_ref()
+                                .is_some_and(|identity| identity.declaration_span == method.span)
                         })
                     })
                     .or_else(|| checked.get(&method.node.name));
@@ -98,7 +103,11 @@ impl TypeChecker {
                 parameters.extend(candidate.type_params.iter().cloned());
                 if let Some(identity) = source_callable_identity(
                     canonical,
-                    &callable_parameters,
+                    SourceInputs {
+                        parameters: &callable_parameters,
+                        ownership: self.type_info.declarations.ownership_contracts.get(canonical),
+                        receiver_offset: usize::from(candidate.receiver.is_some()),
+                    },
                     &candidate.return_type,
                     candidate.is_async,
                     &parameters,
@@ -118,20 +127,45 @@ impl TypeChecker {
     }
 }
 
+/// The checked callable frame and its source slots; method ownership indices exclude the prepended receiver.
+struct SourceInputs<'a> {
+    parameters: &'a [CallableParam],
+    ownership: Option<&'a CheckedOwnershipContract>,
+    receiver_offset: usize,
+}
+
 /// Project one checked callable with explicit binder and owner context; unresolved types publish no portable key.
 fn source_callable_identity(
     canonical: &CanonicalSymbolId,
-    parameters: &[CallableParam],
+    inputs: SourceInputs<'_>,
     return_type: &ResolvedType,
     is_async: bool,
     binders: &[String],
     nominals: &BTreeMap<String, CanonicalSymbolId>,
     owner: Option<StableDeclarationContext>,
 ) -> Option<StableDeclarationId> {
-    let parameters = parameters
+    let mut parameters = inputs
+        .parameters
         .iter()
         .map(semantic_callable_param_from_resolved)
         .collect::<Vec<_>>();
+    if let Some(contract) = inputs.ownership {
+        if contract.schema_version != 1 {
+            return None;
+        }
+        for mode in &contract.modes {
+            let Some(slot) = mode.component.parameter else { continue };
+            if !mode.component.children.is_empty() {
+                continue;
+            }
+            let Some(access) = source_input_access(mode.mode) else {
+                continue;
+            };
+            let parameter = parameters.get_mut(slot.checked_add(inputs.receiver_offset)?)?;
+            parameter.input_access = access;
+            parameter.ty = semantic_type_from_resolved(&mode.underlying);
+        }
+    }
     let signature = SourceSignatureContext { nominals, binders }.callable(
         &parameters,
         &semantic_type_from_resolved(return_type),
@@ -169,4 +203,70 @@ fn checked_methods(
         SymbolKind::Trait(owner) => (&owner.methods, None),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TypeChecker;
+    use std::collections::BTreeMap;
+
+    /// Source identities remain inspectable while the explicit execution diagnostic deliberately refuses these bodies.
+    fn signatures(source: &str) -> Result<BTreeMap<String, String>, Box<dyn std::error::Error>> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        if let Err(errors) = checker.check_program(&program) {
+            checker.errors = errors;
+        }
+        Ok(checker
+            .type_info
+            .declarations
+            .source_identities
+            .values()
+            .filter_map(|identity| {
+                Some((
+                    identity.declaration_name.clone(),
+                    identity.signature.as_ref()?.as_str().to_owned(),
+                ))
+            })
+            .collect())
+    }
+
+    /// Canonical alias resolution preserves one key, while access modes on the same underlying scalar remain distinct.
+    #[test]
+    fn checked_input_modes_determine_source_signature() -> Result<(), Box<dyn std::error::Error>> {
+        let mut keys = std::collections::BTreeSet::new();
+        for mode in ["int", "Borrowed[int]", "BorrowedMut[int]", "Owned[int]"] {
+            let source = format!("def take(value: {mode}) -> int:\n    return 1\n");
+            let signatures = signatures(&source)?;
+            keys.insert(signatures.get("take").ok_or("missing checked source identity")?.clone());
+        }
+        assert_eq!(keys.len(), 4);
+        let direct = signatures("def take(value: Borrowed[int]) -> int:\n    return 1\n")?;
+        let aliased = signatures("type Input = Borrowed[int]\ndef take(value: Input) -> int:\n    return 1\n")?;
+        assert_eq!(direct.get("take"), aliased.get("take"));
+        let parameter = incan_semantics_core::IncanCallableParam {
+            name: Some("value".into()),
+            ty: incan_semantics_core::IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int),
+            kind: incan_semantics_core::IncanCallableParamKind::Normal,
+            has_default: false,
+            is_partial_preset: false,
+            is_mut: false,
+            native_owned: false,
+            input_access: incan_semantics_core::IncanInputAccess::Shared,
+        };
+        let nominals = BTreeMap::new();
+        let expected = super::SourceSignatureContext {
+            nominals: &nominals,
+            binders: &[],
+        }
+        .callable(
+            &[parameter],
+            &incan_semantics_core::IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int),
+            false,
+        )
+        .ok_or("missing expected source signature")?;
+        assert_eq!(direct.get("take").map(String::as_str), Some(expected.as_str()));
+        Ok(())
+    }
 }

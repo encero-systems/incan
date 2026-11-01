@@ -1,13 +1,5 @@
-# behavior: An explicit ownership contract whose loans and transfers cannot be proved is refused rather than copied.
+# behavior: Returned ownership dependencies remain refused until their dedicated executable source relationship exists.
 # expect-diagnostic: INCAN-T0123
 
-def consume(value: Owned[str]) -> None:
-    pass
-
-
-def inspect(value: Borrowed[str]) -> None:
-    pass
-
-
-def update(mut value: BorrowedMut[str]) -> None:
-    pass
+def inspect(value: Borrowed[str]) -> Borrowed[str] from value:
+    return value

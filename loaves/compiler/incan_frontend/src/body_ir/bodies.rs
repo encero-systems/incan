@@ -147,6 +147,10 @@ fn lower_declaration_statements(
     span: HirSourceSpan,
 ) -> (Vec<bir::Statement>, Option<bir::ExternDelegation>) {
     let mut stmts = Vec::new();
+    if let Err(reason) = builder.input_body {
+        builder.push_unsupported_stmt(reason.to_owned(), span, &mut stmts);
+        return (stmts, None);
+    }
     match delegation {
         Some(Ok(delegation)) => return (stmts, Some(delegation)),
         Some(Err(description)) => builder.push_unsupported_stmt(description, span, &mut stmts),
@@ -261,6 +265,7 @@ pub(super) fn finish_static_initializer_body(
         name: canonical.declaration_name.clone(),
         span,
         return_type: ty.clone(),
+        checked_input_profile: None,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -309,6 +314,9 @@ pub(super) fn lower_function_body(
     let owner_return_type = function_return_type(binding, &type_parameters, shared_method_chain, lowering_facts);
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    if let Some(owner) = binding.and_then(|binding| binding.identity.as_ref()) {
+        builder.input_body = lowering_facts.type_info.checked_input_body(owner);
+    }
     builder.shared_method_chain = shared_method_chain;
     builder.type_parameters = type_parameters;
     let root_scope = builder.new_scope(None, hir_span(decl_span));
@@ -330,7 +338,7 @@ pub(super) fn lower_function_body(
         .decorated_function_bindings_by_span
         .contains_key(&decl_span)
         && !decorated_bindings::supports_function(function, decl_span, lowering_facts);
-    let (stmts, extern_delegation) = lower_declaration_statements(
+    let (mut stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
         decorator_rebinding(rebound, &function.name)
             .or_else(|| extern_delegation(&function.decorators, &function.name, lowering_facts)),
@@ -339,6 +347,29 @@ pub(super) fn lower_function_body(
         hir_span(decl_span),
     );
     builder.retain_empty_collection_context(&stmts);
+
+    let checked_input_profile = match binding.and_then(|binding| binding.identity.as_ref()) {
+        Some(owner) => match lowering_facts.type_info.direct_input_admission(owner, function) {
+            Ok(Some(proof)) => Some(bir::CheckedInputProfile {
+                version: 1,
+                owner: proof.canonical_owner().clone(),
+                parameters: params
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, parameter)| bir::CheckedInputParameter {
+                        slot,
+                        access: parameter.input_access,
+                    })
+                    .collect(),
+            }),
+            Ok(None) => None,
+            Err(reason) => {
+                builder.push_unsupported_stmt(reason.to_owned(), hir_span(decl_span), &mut stmts);
+                None
+            }
+        },
+        None => None,
+    };
 
     if builder
         .locals
@@ -360,6 +391,7 @@ pub(super) fn lower_function_body(
         name: function.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
+        checked_input_profile,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -447,6 +479,9 @@ pub(super) fn lower_method_body(
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = method_return_type(binding, &type_parameters, receiver_ty, lowering_facts);
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    if let Some(owner) = binding.and_then(|binding| binding.identity.as_ref()) {
+        builder.input_body = lowering_facts.type_info.checked_input_body(owner);
+    }
     builder.type_parameters = type_parameters;
     builder.retain_newtype_implementation(owner_name);
     let root_scope = builder.new_scope(None, hir_span(decl_span));
@@ -507,6 +542,7 @@ pub(super) fn lower_method_body(
         name: method.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
+        checked_input_profile: None,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -603,7 +639,14 @@ fn declare_function_parameters(
     for (index, param) in function.params.iter().enumerate() {
         let mut ty = binding
             .and_then(|b| b.params.get(index))
-            .map(|p| builder.checked_type(&p.ty))
+            .map(|p| {
+                super::input_access::value_type(
+                    builder,
+                    binding.and_then(|binding| binding.identity.as_ref()),
+                    index,
+                    &p.ty,
+                )
+            })
             .unwrap_or(IncanType::Unknown);
         let shared_replacement = builder
             .type_info
@@ -655,6 +698,7 @@ fn lower_method_parameters(
             span: hir_span(decl_span),
             default: bir::CallableParamDefault::Required,
             mutable,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
             native_owned: false,
         });
     }
@@ -662,7 +706,14 @@ fn lower_method_parameters(
     for (index, param) in method.params.iter().enumerate() {
         let ty = binding
             .and_then(|b| b.params.get(index))
-            .map(|p| builder.checked_type(&p.ty))
+            .map(|p| {
+                super::input_access::value_type(
+                    builder,
+                    binding.and_then(|binding| binding.identity.as_ref()),
+                    index,
+                    &p.ty,
+                )
+            })
             .unwrap_or(IncanType::Unknown);
         let ty = if param.node.kind != ast::ParamKind::Normal {
             builder.checked_rest_parameter_type(param)
@@ -697,7 +748,7 @@ fn lower_callable_parameters(
 ) {
     for (index, (param, local)) in source.iter().zip(locals.iter().copied()).enumerate() {
         let ty = builder.locals[local.index()].ty.clone();
-        out.push(bir::CallableParam {
+        let mut parameter = bir::CallableParam {
             local,
             kind: parameter_types::source_parameter_kind(param.node.kind),
             name: param.node.name.clone(),
@@ -705,12 +756,20 @@ fn lower_callable_parameters(
             span: hir_span(param.span),
             default: builder.lower_callable_default(param.node.default.as_ref(), scope),
             mutable: param.node.is_mut,
+            input_access: incan_semantics_core::IncanInputAccess::Inferred,
             native_owned: binding
                 .and_then(|binding| binding.params.get(index))
                 .is_some_and(|parameter| {
                     parameter_types::native_collection_parameter(&parameter.ty, builder.type_info)
                 }),
-        });
+        };
+        super::input_access::apply(
+            &mut parameter,
+            builder.type_info,
+            binding.and_then(|binding| binding.identity.as_ref()),
+            index,
+        );
+        out.push(parameter);
     }
 }
 
@@ -724,13 +783,25 @@ fn retain_parameter_ownership(
     builder.borrowed_parameters.extend(
         params
             .iter()
-            .filter(|param| param.mutable && !param.native_owned && (!exclude_receiver || param.name != "self"))
+            .filter(|param| {
+                (!exclude_receiver || param.name != "self")
+                    && match param.input_access {
+                        incan_semantics_core::IncanInputAccess::Shared
+                        | incan_semantics_core::IncanInputAccess::Exclusive => true,
+                        incan_semantics_core::IncanInputAccess::Owned => false,
+                        incan_semantics_core::IncanInputAccess::Inferred => param.mutable && !param.native_owned,
+                    }
+            })
             .map(|param| param.local),
     );
     builder.owned_parameters.extend(
         params
             .iter()
-            .filter(|param| param.native_owned || param.kind != IncanCallableParamKind::Normal)
+            .filter(|param| {
+                param.input_access == incan_semantics_core::IncanInputAccess::Owned
+                    || (param.input_access.is_inferred()
+                        && (param.native_owned || param.kind != IncanCallableParamKind::Normal))
+            })
             .map(|param| param.local),
     );
 }

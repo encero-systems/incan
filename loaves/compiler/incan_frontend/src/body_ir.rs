@@ -1189,6 +1189,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
+    /// A source ownership proof is retained only for this exact callable. Nested evaluators start without it;
+    /// invalid or incomplete evidence refuses the body before ordinary lowering can choose repair copies.
+    input_body: Result<Option<crate::typechecker::CheckedInputBody<'type_info>>, &'static str>,
     /// Canonical provider context that requires an explicit refusal for ambiguous bare builtin spellings.
     runtime_type_conflicts: &'source std::collections::BTreeSet<String>,
     /// Project-aware entry points retain selected pattern carriers before source aliases are erased.
@@ -1233,6 +1236,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// write; [`Self::bindings`] remains only as a lexical bookkeeping projection for lowering constructs that
     /// introduce and restore source names.
     identity_bindings: HashMap<CanonicalSymbolId, bir::LocalId>,
+    /// Explicit local loans select existing places; they do not allocate reference-valued owners or drops.
+    input_aliases: HashMap<CanonicalSymbolId, input_locals::LocalInputAlias>,
     /// Canonical storage currently selected by a direct local static binding; reads retain a global place rather than
     /// a snapshot.
     static_aliases: HashMap<bir::LocalId, bir::GlobalPlace>,
@@ -1329,6 +1334,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             published_newtype_returns: lowering_facts.published_newtype_returns,
             published_storage_types: lowering_facts.published_storage_types,
             type_info: lowering_facts.type_info,
+            input_body: Ok(None),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
             retain_nominal_carriers: lowering_facts.retain_nominal_carriers,
             function_default_sources: lowering_facts.function_default_sources,
@@ -1350,6 +1356,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             scopes: Vec::new(),
             bindings: HashMap::new(),
             identity_bindings: HashMap::new(),
+            input_aliases: HashMap::new(),
             static_aliases: HashMap::new(),
             static_binding_locals: HashSet::new(),
             external_locals: HashMap::new(),
@@ -1827,6 +1834,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .or_else(|| self.type_info.calls.body_ir_native_argument_identities.get(&span))
             .cloned()
         {
+            if let Some(alias) = self.input_alias(&identity) {
+                return Some(alias.place.clone());
+            }
             if let Some(&id) = self.identity_bindings.get(&identity) {
                 if let Some(global) = self.static_aliases.get(&id) {
                     return Some(bir::Place::from_global(global.clone()));
@@ -2318,6 +2328,9 @@ mod newtype_sum;
 mod validation_errors;
 
 mod closures;
+mod input_access;
+mod input_arguments;
+mod input_locals;
 mod local_partials;
 mod trait_partials;
 

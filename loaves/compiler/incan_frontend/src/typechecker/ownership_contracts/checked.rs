@@ -1,13 +1,13 @@
 //! Resolve explicit declarations into canonical slots and stored-field identities before refusing execution.
 
 use super::TypeChecker;
-use crate::ast::{FunctionDecl, MethodDecl, Param, ResultSource, Span, Spanned, Type};
+use crate::ast::{Declaration, FunctionDecl, MethodDecl, Param, Program, Receiver, ResultSource, Span, Spanned, Type};
 use crate::diagnostics::CompileError;
 use crate::ownership_metadata::{
     AccessMode, CheckedOwnershipContract, OwnershipContract, ResultDependency, SourceSlot, TypeComponent,
 };
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
-use crate::symbols::{ResolvedType, TypeInfo};
+use crate::symbols::{CallableParam, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::types::ownership;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 use std::collections::BTreeMap;
@@ -22,6 +22,288 @@ struct Signature<'a> {
 }
 
 impl TypeChecker {
+    /// Retain an explicit call's selected declaration and closed parameter view with the statement producer.
+    /// Ordinary callers need this fact too; absence of an ownership annotation on their own signature is not an
+    /// exemption from their callee's contract. Candidate speculation is discarded with its normal call artifacts.
+    pub(in crate::typechecker) fn record_explicit_input_call(
+        &mut self,
+        identity: Option<&CanonicalSymbolId>,
+        parameters: &[CallableParam],
+        receiver: Option<Receiver>,
+        span: Span,
+    ) {
+        if let Some(call) = self.explicit_input_call_fact(identity, parameters, receiver) {
+            self.type_info.protocols.explicit_input_calls.insert(span, call);
+        }
+    }
+
+    /// Retain a method only after dispatch selected it, using the completed parameter inventory. Diagnostic
+    /// fallback validation can inspect a candidate but must not publish it as the source call's ownership target.
+    pub(in crate::typechecker) fn record_selected_method_input_call(
+        &mut self,
+        identity: Option<&CanonicalSymbolId>,
+        receiver: Option<Receiver>,
+        span: Span,
+    ) {
+        let call = self
+            .type_info
+            .call_site_callable_params(span)
+            .and_then(|parameters| self.explicit_input_call_fact(identity, parameters, receiver));
+        if let Some(call) = call {
+            self.type_info.protocols.explicit_input_calls.insert(span, call);
+        }
+    }
+
+    /// Construct one caller-owned fact from a canonical explicit input declaration, without changing declaration
+    /// modes or duplicating parameter inventories for ordinary unannotated calls.
+    fn explicit_input_call_fact(
+        &self,
+        identity: Option<&CanonicalSymbolId>,
+        parameters: &[CallableParam],
+        receiver: Option<Receiver>,
+    ) -> Option<super::InputCall> {
+        let callee = identity?;
+        let contract = self.type_info.declarations.ownership_contracts.get(callee)?;
+        contract
+            .modes
+            .iter()
+            .any(|mode| mode.component.parameter.is_some())
+            .then(|| super::InputCall {
+                owner: self.current_body_identity().cloned(),
+                callee: callee.clone(),
+                parameters: parameters.to_vec(),
+                receiver,
+            })
+    }
+
+    /// Project only the direct input modes owned by the selected declaration into call-local value types.
+    /// Published parameter metadata remains unchanged, and the canonical contract stays available for access
+    /// checking. Wrapper shape disagreement is refused instead of guessing from a type's display spelling.
+    pub(in crate::typechecker) fn ownership_call_value_parameters(
+        &self,
+        identity: Option<&CanonicalSymbolId>,
+        parameters: &[CallableParam],
+        receiver: Option<&ResolvedType>,
+        span: Span,
+    ) -> Result<Option<Vec<CallableParam>>, CompileError> {
+        let Some(contract) =
+            identity.and_then(|identity| self.type_info.declarations.ownership_contracts.get(identity))
+        else {
+            return Ok(None);
+        };
+        // Method parameter checking has already closed Self against this selected receiver. Apply exactly the
+        // same substitution to its ownership payload; Self is never an unconstrained wildcard in validation.
+        let receiver_contract = receiver.map(|receiver| {
+            let mut projected = contract.clone();
+            for mode in &mut projected.modes {
+                mode.underlying = self.substitute_self_in_resolved_type(mode.underlying.clone(), receiver);
+            }
+            projected
+        });
+        let contract = receiver_contract.as_ref().unwrap_or(contract);
+        let mut output = None;
+        for mode in &contract.modes {
+            let Some(slot) = mode.component.parameter else { continue };
+            if !mode.component.children.is_empty() || mode.mode == ownership::OwnershipMode::Reference {
+                continue;
+            }
+            let parameter = parameters.get(slot).ok_or_else(|| {
+                CompileError::type_error(
+                    "Selected ownership parameter slot is outside the signature".into(),
+                    span,
+                )
+                .with_stable_code("INCAN-T0123")
+            })?;
+            let underlying = crate::ownership_metadata::input_value_type(Some(contract), slot, &parameter.ty)
+                .map_err(|reason| CompileError::type_error(reason.into(), span).with_stable_code("INCAN-T0123"))?;
+            let projected = output.get_or_insert_with(|| parameters.to_vec());
+            projected[slot].ty = underlying.clone();
+        }
+        Ok(output)
+    }
+
+    /// Separate a direct input obligation from the value seen by its body. Canonical alias provenance is retained;
+    /// a user type with the same spelling is not stripped. Nested and returned access contracts stay staged.
+    pub(in crate::typechecker) fn explicit_input_contract(
+        &self,
+        annotation: &Type,
+        ty: &ResolvedType,
+    ) -> Option<AccessMode<ResolvedType>> {
+        self.explicit_root_contract(annotation, ty)
+            .filter(|mode| mode.mode != ownership::OwnershipMode::Reference)
+    }
+
+    /// Capture a canonical outer access request before a binding changes lookup. Callers decide which authoring
+    /// roles their current stage supports; an unsupported mode is still a fact and cannot be silently erased.
+    pub(in crate::typechecker) fn explicit_root_contract(
+        &self,
+        annotation: &Type,
+        ty: &ResolvedType,
+    ) -> Option<AccessMode<ResolvedType>> {
+        let ResolvedType::Generic(name, arguments) = ty else {
+            return None;
+        };
+        let [underlying] = arguments.as_slice() else {
+            return None;
+        };
+        let mut aliases = BTreeMap::new();
+        self.ownership_alias_identities(annotation, &mut aliases);
+        let mode = match aliases.get(name) {
+            Some(identity) if identity.origin == SymbolOrigin::Builtin => {
+                ownership::from_str(&identity.declaration_name)
+            }
+            Some(_) => None,
+            None => self.explicit_ownership_mode(name),
+        };
+        let mode = mode?;
+        Some(AccessMode {
+            mode,
+            component: TypeComponent {
+                parameter: Some(0),
+                children: Vec::new(),
+            },
+            underlying: underlying.clone(),
+        })
+    }
+
+    /// Read an exact declaration slot instead of looking up an annotation name again in the parameter scope.
+    /// Earlier parameters may legitimately shadow a prelude spelling after the signature has been resolved.
+    pub(in crate::typechecker) fn checked_input_contract(
+        &self,
+        declaration: &CanonicalSymbolId,
+        slot: usize,
+    ) -> Option<&AccessMode<ResolvedType>> {
+        self.type_info
+            .declarations
+            .ownership_contracts
+            .get(declaration)?
+            .modes
+            .iter()
+            .find(|mode| {
+                mode.component.parameter == Some(slot)
+                    && mode.component.children.is_empty()
+                    && mode.mode != ownership::OwnershipMode::Reference
+            })
+    }
+
+    /// Prepare method contracts and complete valid free-function contracts before any caller body is checked. Failed
+    /// signatures remain unavailable; their declaration-owned check reports the error at its normal source anchor.
+    /// This uses the same canonical inventory as publication, including distinct overload declaration spans.
+    pub(in crate::typechecker) fn collect_function_ownership_headers(&mut self, program: &Program) {
+        self.collect_method_ownership_headers(program);
+        for declaration in &program.declarations {
+            let Declaration::Function(function) = &declaration.node else {
+                continue;
+            };
+            let Some(binding) = self
+                .type_info
+                .declarations
+                .function_bindings_by_span
+                .get(&declaration.span)
+            else {
+                continue;
+            };
+            let Some(identity) = binding.identity.clone() else {
+                continue;
+            };
+            let parameters: Vec<_> = binding.params.iter().map(|parameter| parameter.ty.clone()).collect();
+            let signature = Signature {
+                parameters: &function.params,
+                parameter_types: &parameters,
+                result: &function.return_type,
+                result_type: &binding.return_type,
+                source: function.result_source.as_ref(),
+                receiver: None,
+            };
+            if let Ok(Some(contract)) = self.checked_ownership_signature(&signature) {
+                self.type_info
+                    .declarations
+                    .ownership_contracts
+                    .insert(identity, contract);
+            }
+        }
+    }
+
+    /// Prepare nominal and trait method contracts before checking callers that precede their owner declaration.
+    /// The collected method's canonical identity and full declaration span select the header, including overloads
+    /// and generated expansions. Failed signatures remain owned by the normal declaration diagnostic path.
+    fn collect_method_ownership_headers(&mut self, program: &Program) {
+        for declaration in &program.declarations {
+            let (owner, methods) = match &declaration.node {
+                Declaration::Model(owner) => (&owner.name, &owner.methods),
+                Declaration::Class(owner) => (&owner.name, &owner.methods),
+                Declaration::Enum(owner) => (&owner.name, &owner.methods),
+                Declaration::Newtype(owner) => (&owner.name, &owner.methods),
+                Declaration::Trait(owner) => (&owner.name, &owner.methods),
+                _ => continue,
+            };
+            for method in methods {
+                let Some((header, receiver_type)) = self.collected_ownership_method(owner, method) else {
+                    continue;
+                };
+                let Some(identity) = header.identity else { continue };
+                let parameters: Vec<_> = header.params.iter().map(|parameter| parameter.ty.clone()).collect();
+                let signature = Signature {
+                    parameters: &method.node.params,
+                    parameter_types: &parameters,
+                    result: &method.node.return_type,
+                    result_type: &header.return_type,
+                    source: method.node.result_source.as_ref(),
+                    receiver: method
+                        .node
+                        .receiver_binding
+                        .as_ref()
+                        .map(|binding| (binding.node.as_str(), &receiver_type)),
+                };
+                if let Ok(Some(contract)) = self.checked_ownership_signature(&signature) {
+                    self.type_info
+                        .declarations
+                        .ownership_contracts
+                        .insert(identity, contract);
+                }
+            }
+        }
+    }
+
+    /// Borrow the collected owner's inventories, then copy only the exact source method header needed by the
+    /// signature checker. Inherited, aliased and same-spelled methods cannot replace the authored declaration.
+    fn collected_ownership_method(
+        &self,
+        owner: &str,
+        source: &Spanned<MethodDecl>,
+    ) -> Option<(MethodInfo, ResolvedType)> {
+        let (parameters, methods, overloads) = match self.lookup_semantic_type_info(owner) {
+            Some(TypeInfo::Model(info)) => (&info.type_params, &info.methods, Some(&info.method_overloads)),
+            Some(TypeInfo::Class(info)) => (&info.type_params, &info.methods, Some(&info.method_overloads)),
+            Some(TypeInfo::Enum(info)) => (&info.type_params, &info.methods, Some(&info.method_overloads)),
+            Some(TypeInfo::Newtype(info)) => (&info.type_params, &info.methods, Some(&info.method_overloads)),
+            _ => {
+                let info = self.lookup_semantic_trait_info(owner)?;
+                (&info.type_params, &info.methods, None)
+            }
+        };
+        let exact = |method: &&MethodInfo| {
+            method.identity.as_ref().is_some_and(|identity| {
+                identity.kind == SemanticSourceTargetKind::Method
+                    && identity.declaration_name == source.node.name
+                    && identity.declaration_span == source.span
+            })
+        };
+        let header = overloads
+            .and_then(|inventory| inventory.get(&source.node.name))
+            .and_then(|methods| methods.iter().find(exact))
+            .or_else(|| methods.get(&source.node.name).filter(exact))?;
+        let receiver = if parameters.is_empty() {
+            ResolvedType::Named(owner.into())
+        } else {
+            ResolvedType::Generic(
+                owner.into(),
+                parameters.iter().cloned().map(ResolvedType::TypeVar).collect(),
+            )
+        };
+        Some((header.clone(), receiver))
+    }
+
     /// Capture the function's checked explicit contract under the same identity its callable binding owns.
     pub(in crate::typechecker) fn record_function_ownership(
         &mut self,
@@ -76,6 +358,41 @@ impl TypeChecker {
 
     /// Retain structurally checked metadata even when the body is refused, without inventing a source proof.
     fn record_ownership_signature(&mut self, identity: CanonicalSymbolId, signature: Signature<'_>) {
+        if !self.type_info.declarations.ownership_contracts.contains_key(&identity) {
+            match self.checked_ownership_signature(&signature) {
+                Ok(Some(contract)) => {
+                    self.type_info
+                        .declarations
+                        .ownership_contracts
+                        .insert(identity, contract);
+                }
+                Ok(None) => return,
+                Err(error) => {
+                    self.errors.push(error);
+                    return;
+                }
+            }
+        }
+        if let Some(source) = signature.source {
+            self.errors.push(
+                CompileError::type_error(
+                    "Borrowed result-source contract cannot be proved at this boundary".into(),
+                    source.span,
+                )
+                .with_stable_code("INCAN-T0123")
+                .with_note(
+                    "A resolved source declaration is not proof that the executable body retains only that source",
+                ),
+            );
+        }
+    }
+
+    /// Resolve immutable header obligations without publishing diagnostics or consulting a callee's statements.
+    /// Declaration checking owns refusals; successful contracts can be consumed regardless of source order.
+    fn checked_ownership_signature(
+        &self,
+        signature: &Signature<'_>,
+    ) -> Result<Option<CheckedOwnershipContract>, CompileError> {
         let mut contract = OwnershipContract {
             schema_version: 1,
             modes: Vec::new(),
@@ -124,38 +441,21 @@ impl TypeChecker {
                         .map(|(_, ty)| (SourceSlot::Receiver, ty))
                 });
             let Some((slot, ty)) = selected else {
-                self.ownership_source_error(
+                return Err(Self::ownership_source_error(
                     "Result source must name this declaration's parameter or receiver",
                     source.node.binding.span,
-                );
-                return;
+                ));
             };
-            let Some(fields) = self.resolve_ownership_source_fields(ty, source) else {
-                return;
-            };
+            let fields = self.resolve_ownership_source_fields(ty, source)?;
             contract.result_source = Some(ResultDependency { slot, fields });
-            self.errors.push(
-                CompileError::type_error(
-                    "Borrowed result-source contract cannot be proved at this boundary".into(),
-                    source.span,
-                )
-                .with_stable_code("INCAN-T0123")
-                .with_note(
-                    "A resolved source declaration is not proof that the executable body retains only that source",
-                ),
-            );
         }
         if contract.modes.is_empty() && contract.result_source.is_none() {
-            return;
+            return Ok(None);
         }
         if let Err(reason) = contract.validate(signature.parameters.len(), signature.receiver.is_some()) {
-            self.ownership_source_error(reason, signature.result.span);
-            return;
+            return Err(Self::ownership_source_error(reason, signature.result.span));
         }
-        self.type_info
-            .declarations
-            .ownership_contracts
-            .insert(identity, contract);
+        Ok(Some(contract))
     }
 
     /// Keep alias declaration identities from being reinterpreted after a consumer shadows a prelude spelling.
@@ -240,10 +540,10 @@ impl TypeChecker {
 
     /// Resolve only stored fields through the checked nominal table, substituting the owner's generic arguments.
     fn resolve_ownership_source_fields(
-        &mut self,
+        &self,
         root: &ResolvedType,
         source: &Spanned<ResultSource>,
-    ) -> Option<Vec<CanonicalSymbolId>> {
+    ) -> Result<Vec<CanonicalSymbolId>, CompileError> {
         let mut ty = root.clone();
         let mut fields = Vec::new();
         for field in &source.node.fields {
@@ -259,11 +559,10 @@ impl TypeChecker {
                         Some(TypeInfo::Model(owner)) => (&owner.type_params, &owner.fields),
                         Some(TypeInfo::Class(owner)) => (&owner.type_params, &owner.fields),
                         _ => {
-                            self.ownership_source_error(
+                            return Err(Self::ownership_source_error(
                                 "Result source field requires a checked model or class",
                                 field.span,
-                            );
-                            return None;
+                            ));
                         }
                     };
                     fields.get(&field.node).map(|info| {
@@ -280,21 +579,19 @@ impl TypeChecker {
                 _ => None,
             };
             let Some((Some(identity), next_type)) = selected else {
-                self.ownership_source_error(
+                return Err(Self::ownership_source_error(
                     "Result source path must name an existing stored field with a checked declaration identity",
                     field.span,
-                );
-                return None;
+                ));
             };
             fields.push(identity);
             ty = next_type;
         }
-        Some(fields)
+        Ok(fields)
     }
 
     /// Report malformed source relationships consistently for direct and alias-expanded signatures.
-    fn ownership_source_error(&mut self, message: &str, span: Span) {
-        self.errors
-            .push(CompileError::type_error(message.to_owned(), span).with_stable_code("INCAN-T0124"));
+    fn ownership_source_error(message: &str, span: Span) -> CompileError {
+        CompileError::type_error(message.to_owned(), span).with_stable_code("INCAN-T0124")
     }
 }

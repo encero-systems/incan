@@ -6,10 +6,10 @@ use serde::Serialize;
 
 use super::{DeclarationSignature, StableDeclarationId};
 use crate::facts::CanonicalSymbolId;
-use crate::types::{IncanCallableParam, IncanCallableParamKind, IncanType};
+use crate::types::{IncanCallableParam, IncanCallableParamKind, IncanInputAccess, IncanType};
 
 /// Versioned identity profile shared by declaration producers and codegraph consumers.
-pub const SOURCE_SIGNATURE_PROFILE: &str = "incan.source-signature/1";
+pub const SOURCE_SIGNATURE_PROFILE: &str = "incan.source-signature/2";
 
 /// Checked source types retain nominal declaration authority separately from structural spelling.
 #[derive(Serialize)]
@@ -43,6 +43,8 @@ struct SourceParameter {
     has_default: bool,
     /// Whether the source callable exposes mutation through this parameter.
     is_mut: bool,
+    /// Explicit source access is semantic even when the underlying value type is identical.
+    input_access: IncanInputAccess,
     /// Checked source type, with nominal provenance preserved.
     ty: SourceType,
 }
@@ -85,6 +87,7 @@ impl SourceSignatureContext<'_> {
                     kind: parameter.kind,
                     has_default: parameter.has_default,
                     is_mut: parameter.is_mut,
+                    input_access: parameter.input_access,
                     ty: self.ty(&parameter.ty)?,
                 })
             })

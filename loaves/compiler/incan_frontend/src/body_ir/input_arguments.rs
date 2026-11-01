@@ -1,0 +1,198 @@
+//! Materialize explicit direct-call inputs only from their checked invocation and existing source storage.
+
+use super::args::{DeclaredSlot, plan_declared_args};
+use super::{BodyBuilder, IncanType, ast, bir, hir_span};
+use crate::typechecker::{CheckedInputInvocation, CheckedInputSource};
+use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
+
+#[cfg(test)]
+mod tests;
+
+impl BodyBuilder<'_, '_> {
+    /// Keep ordinary argument lowering unchanged. An explicit obligation with missing owner, target or flow proof
+    /// refuses rather than acquiring inferred passing semantics through a default or indirect evaluation frame.
+    pub(super) fn bind_explicit_input_args(
+        &mut self,
+        target: Option<&CanonicalSymbolId>,
+        arguments: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String>> {
+        if !self.type_info.has_explicit_input_invocation(span, target) {
+            return None;
+        }
+        Some((|| {
+            let target = target.ok_or("explicit input call has no canonical target")?;
+            let proof = self
+                .input_body
+                .as_ref()
+                .map_err(|reason| reason.to_string())?
+                .as_ref()
+                .ok_or("explicit input call has no owning source body proof")?;
+            let invocation = proof.invocation(span, target)?;
+            if invocation.has_receiver {
+                return Err("explicit method inputs require their checked receiver materialization".into());
+            }
+            self.lower_explicit_input_args(invocation, arguments, scope, out)
+        })())
+    }
+
+    /// Evaluate in the graph's authenticated order and retain written positions for the existing binding protocol.
+    /// Closed call-site value types are used here; declaration wrappers are never treated as runtime containers.
+    fn lower_explicit_input_args(
+        &mut self,
+        invocation: CheckedInputInvocation<'_>,
+        arguments: &[ast::CallArg],
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
+        let slots = invocation
+            .parameters
+            .iter()
+            .map(DeclaredSlot::from_checked_param)
+            .collect::<Vec<_>>();
+        let planned = plan_declared_args("explicit input call", &slots, arguments)?;
+        if planned.len() != invocation.arguments.len() {
+            return Err("explicit input call does not retain every supplied argument".into());
+        }
+        let mut lowered = (0..slots.len()).map(|_| None).collect::<Vec<_>>();
+        for argument in invocation.arguments {
+            let (slot, expression) = planned
+                .get(argument.written_position)
+                .ok_or("explicit input lost its written argument")?;
+            if *slot != argument.slot || expression.span != argument.span {
+                return Err("explicit input argument differs from its checked source binding".into());
+            }
+            let parameter = invocation
+                .parameters
+                .get(*slot)
+                .ok_or("explicit input has no selected value parameter")?;
+            let ty = self.checked_type(&parameter.ty);
+            let value = match argument.source {
+                Some(CheckedInputSource::Place { root, fields }) => {
+                    if self.resolve_ty(expression.span) != ty {
+                        return Err("explicit source-place input cannot coerce or copy its owner".into());
+                    }
+                    let place = self.lower_expr_to_place(expression, scope, out);
+                    self.authenticate_input_place(&place, &root, &fields)?;
+                    self.explicit_place_operand(place, &ty, argument.access)?
+                }
+                Some(CheckedInputSource::Temporary) | None => {
+                    let value = self.lower_boundary_value(expression, Some(&ty), scope, out);
+                    self.explicit_temporary_operand(value, ty, argument.access, expression.span, scope, out)?
+                }
+            };
+            let entry = lowered
+                .get_mut(*slot)
+                .ok_or("explicit input parameter slot is missing")?;
+            if entry.replace((value, argument.written_position)).is_some() {
+                return Err("explicit input parameter was materialized twice".into());
+            }
+        }
+        let mut operands = Vec::with_capacity(lowered.len());
+        let mut bindings = Vec::with_capacity(lowered.len());
+        for (slot, argument) in lowered.into_iter().enumerate() {
+            let (operand, written_position) =
+                argument.ok_or("explicit input defaults require a later source dependency proof")?;
+            operands.push(bir::ArgumentElement::One(operand));
+            bindings.push(bir::BoundArgument { slot, written_position });
+        }
+        Ok((
+            operands,
+            bir::ArgumentBinding::ResolvedDeclarationOrder {
+                arguments: bindings,
+                defaulted_slots: Vec::new(),
+            },
+        ))
+    }
+
+    /// The physical local and every stored field must name the checked source place; similar names or layouts do
+    /// not authorize a borrow. Indexed, global and adapted carriers remain refused by this first consumer.
+    pub(super) fn authenticate_input_place(
+        &self,
+        place: &bir::Place,
+        root: &CanonicalSymbolId,
+        fields: &[CanonicalSymbolId],
+    ) -> Result<(), String> {
+        let local = place
+            .local_id()
+            .and_then(|id| self.locals.get(id.index()))
+            .ok_or("explicit input has no local owner storage")?;
+        if local.identity.as_ref() != Some(root) || place.projection.len() != fields.len() {
+            return Err("explicit input storage differs from its checked source owner".into());
+        }
+        for (projection, field) in place.projection.iter().zip(fields) {
+            if !matches!(projection, bir::PlaceElem::Field { canonical: Some(identity), structural: false, .. } if identity == field)
+            {
+                return Err("explicit input storage differs from its checked field projection".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Borrow in place or transfer the actual owner. Conditional and partial moves need drop obligations beyond
+    /// the current static moved-out set; they must not be repaired by cloning or suppressing another path's drop.
+    fn explicit_place_operand(
+        &mut self,
+        place: bir::Place,
+        ty: &IncanType,
+        access: IncanInputAccess,
+    ) -> Result<bir::Operand, String> {
+        let local = place.local_id().ok_or("explicit source input has no local storage")?;
+        let copy = ty.abi_v0_facts().ownership.is_trivially_copy();
+        let (fact, last_use) = match access {
+            IncanInputAccess::Shared => (bir::OwnershipFact::Borrow, false),
+            IncanInputAccess::Exclusive => (bir::OwnershipFact::MutBorrow, false),
+            IncanInputAccess::Owned if copy => (bir::OwnershipFact::Copy, false),
+            IncanInputAccess::Owned => {
+                if !place.projection.is_empty() || !self.conditional_scopes.is_empty() || !self.loop_scopes.is_empty() {
+                    return Err("explicit projected or conditional transfer requires checked drop obligations".into());
+                }
+                if self.is_borrowed_parameter(local) || self.is_receiver_local(local) {
+                    return Err("explicit transfer cannot consume an inferred borrowed parameter or receiver".into());
+                }
+                self.moved_out.insert(local);
+                (bir::OwnershipFact::Move, true)
+            }
+            IncanInputAccess::Inferred if copy => (bir::OwnershipFact::Copy, false),
+            IncanInputAccess::Inferred => {
+                return Err("ordinary non-Copy input requires its inferred access proof".into());
+            }
+        };
+        self.consume_place_read(&place);
+        Ok(bir::Operand::place(place, fact, last_use))
+    }
+
+    /// A fresh value may own temporary storage for the invocation. Existing places must use the authenticated
+    /// source route; a Clone operand never becomes an explicit ownership transfer by changing its tag.
+    fn explicit_temporary_operand(
+        &mut self,
+        mut value: bir::Operand,
+        ty: IncanType,
+        access: IncanInputAccess,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        if let bir::Operand::Place(read) = &value {
+            let local = read.place.local_id().and_then(|id| self.locals.get(id.index()));
+            if !read.place.projection.is_empty()
+                || local.is_none_or(|local| local.origin != bir::LocalOrigin::Temporary)
+                || !matches!(read.fact, bir::OwnershipFact::Copy | bir::OwnershipFact::Move)
+            {
+                return Err("explicit temporary input requires a fresh owned result".into());
+            }
+        }
+        if matches!(access, IncanInputAccess::Shared | IncanInputAccess::Exclusive) {
+            if !matches!(value, bir::Operand::Place(_)) {
+                value = self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(span), out);
+            }
+            let bir::Operand::Place(read) = &mut value else {
+                return Err("explicit temporary could not be materialized".into());
+            };
+            self.retain_argument_borrow(read, access == IncanInputAccess::Exclusive);
+        }
+        Ok(value)
+    }
+}

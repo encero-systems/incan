@@ -1886,6 +1886,14 @@ pub struct IsInstanceTargetInfo {
 /// Custom protocol decisions that lower into explicit runtime calls.
 #[derive(Debug, Default, Clone)]
 pub struct ProtocolArtifacts {
+    /// Exact selected input contracts of successful calls, including calls from otherwise ordinary bodies.
+    pub(in crate::typechecker) explicit_input_calls: BTreeMap<Span, super::ownership_contracts::InputCall>,
+    /// Canonically bound local mode requests, captured before lexical shadowing. Native lowering may consume them
+    /// only together with the owning body's complete flow proof.
+    pub(in crate::typechecker) explicit_local_modes: BTreeMap<CanonicalSymbolId, super::ownership_contracts::LocalMode>,
+    /// Explicit input flow is body-owned. The native executable gate remains closed until the complete projection
+    /// and storage contract agree; record profiles without this payload must refuse rather than discard it.
+    pub(in crate::typechecker) explicit_input_flow: BTreeMap<CanonicalSymbolId, super::ownership_contracts::InputFlow>,
     /// Receiver value identities retained only for Body IR before synthetic truthiness dispatch reuses their spans.
     /// The legacy reference at that span still selects `__bool__`; this separate record never changes that table.
     pub(crate) body_ir_truthiness_receivers: HashMap<crate::ast::Span, CanonicalSymbolId>,
@@ -2003,6 +2011,7 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    explicit_input_call: Option<super::ownership_contracts::InputCall>,
     checked_rust_call: Option<RustCheckedCall>,
     checked_rust_function_value: Option<RustCheckedCall>,
     body_ir_reexport_call: Option<BodyIrReexportCallInfo>,
@@ -3174,6 +3183,7 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = span;
         CallSiteFacts {
+            explicit_input_call: self.protocols.explicit_input_calls.remove(&key),
             checked_rust_call: self.rust.checked_calls.remove(&key),
             checked_rust_function_value: self.rust.checked_function_values.remove(&key),
             body_ir_reexport_call: self.calls.body_ir_reexport_calls.remove(&key),
@@ -3200,6 +3210,7 @@ impl TypeCheckInfo {
     /// Clear only direct-route hook facts between two synthetic resolutions, leaving legacy's probe state unchanged.
     pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
         let key = span;
+        self.protocols.explicit_input_calls.remove(&key);
         self.rust.checked_calls.remove(&key);
         self.rust.checked_function_values.remove(&key);
         self.calls.body_ir_reexport_calls.remove(&key);
@@ -3231,6 +3242,10 @@ impl TypeCheckInfo {
             }
         }
         let key = span;
+        self.protocols.explicit_input_calls.remove(&key);
+        if let Some(call) = facts.explicit_input_call {
+            self.protocols.explicit_input_calls.insert(key, call);
+        }
         put(&mut self.rust.checked_calls, key, facts.checked_rust_call);
         put(
             &mut self.rust.checked_function_values,
@@ -3527,6 +3542,7 @@ pub(super) fn semantic_callable_param_from_resolved(param: &CallableParam) -> In
         has_default: param.has_default,
         is_partial_preset: param.is_partial_preset,
         is_mut: param.is_mut,
+        input_access: incan_semantics_core::IncanInputAccess::Inferred,
         native_owned: false,
     }
 }

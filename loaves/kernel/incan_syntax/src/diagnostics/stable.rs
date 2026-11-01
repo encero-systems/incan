@@ -821,10 +821,34 @@ const PLACE_BINDING_MIGRATION: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: None,
 };
 
+const EXPLICIT_OWNERSHIP_CONFLICT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0126",
+    title: "Explicit ownership access conflicts with a source dependency",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An operation lacks the requested permission, overlaps a live borrow, or uses unavailable storage.",
+    explanation: "Checked control flow retains borrow origins and ownership transfers across branches and loops. The diagnostic identifies the conflicting operation, its source grant or earlier move, and a reachable dependent use when one keeps a loan live. This source check does not itself enable executable ownership annotations.",
+    examples: &[
+        "def update(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    value = 2\n    return view",
+    ],
+    common_causes: &[
+        "Replacing or moving a source while a borrow remains live.",
+        "Writing through a shared or read-only input.",
+        "Using a moved value on one branch or a later loop iteration.",
+    ],
+    fixes: &[
+        "Finish dependent uses before accessing overlapping storage.",
+        "Request the access permission the operation needs at its declaration boundary.",
+        "Reinitialize a moved place before using it again.",
+    ],
+    docs_url: None,
+};
+
 const CATALOG: &[DiagnosticCatalogEntry] = &[
     OWNERSHIP_BOUNDARY_UNPROVABLE,
     RESULT_SOURCE_INVALID,
     PLACE_BINDING_MIGRATION,
+    EXPLICIT_OWNERSHIP_CONFLICT,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

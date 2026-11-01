@@ -142,12 +142,18 @@ pub(super) fn project_compiled_frame(
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    if source.input_profile_gap().is_some() {
+        return Err(CoverageReason::UnsupportedConstruct);
+    }
     let mut frame = source.clone();
     frame.block.stmts.clear();
     frame.panic_facts.clear();
     let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
     let identity = frame.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
     audit.identity(identity, false)?;
+    if let Some(profile) = &mut frame.checked_input_profile {
+        audit.identity(&mut profile.owner, false)?;
+    }
     frame.decl_id = declaration_id(identity)?;
     frame.direct_call_id = frame.decl_id.clone();
     audit.ty(&frame.return_type)?;
@@ -248,6 +254,9 @@ pub(super) fn project_body(
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<ProjectedBody, CoverageReason> {
+    if source.input_profile_gap().is_some() {
+        return Err(CoverageReason::UnsupportedConstruct);
+    }
     let mut body = source.clone();
     let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
     audit.current_callable = source.canonical.clone();
@@ -270,6 +279,9 @@ pub(super) fn project_body(
     }
     let canonical = body.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
     audit.identity(canonical, false)?;
+    if let Some(profile) = &mut body.checked_input_profile {
+        audit.identity(&mut profile.owner, false)?;
+    }
     body.decl_id = declaration_id(canonical)?;
     body.direct_call_id = body.decl_id.clone();
     audit.ty(&body.return_type)?;

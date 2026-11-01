@@ -339,10 +339,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let Some(name) = &param.name else {
                 continue;
             };
-            let ty = checked
-                .get(index)
-                .map(|param| param.ty.clone())
-                .unwrap_or_else(|| self.checked_type(&param.ty));
+            let owner = match &target.callee {
+                bir::Callee::Function(bir::CallableTarget::Named(target)) => target.canonical.as_ref(),
+                bir::Callee::Method(target) => target.canonical.as_ref(),
+                _ => None,
+            };
+            let ty = match super::input_access::selected(self.type_info, owner, index) {
+                Ok(incan_semantics_core::IncanInputAccess::Inferred) => checked
+                    .get(index)
+                    .map(|param| param.ty.clone())
+                    .unwrap_or_else(|| self.checked_type(&param.ty)),
+                Ok(_) => super::input_access::value_type(self, owner, index, &param.ty),
+                Err(reason) => IncanType::Unsupported(reason.into()),
+            };
             let ty = super::variadics::parameter_storage_type(ty, param.kind);
             let previous = self.bindings.get(name).copied();
             let local = self.declare_new_local_with_reads(name.clone(), ty.clone(), frame.scope, span, 1);
@@ -362,7 +371,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     None => bir::CallableParamDefault::Required,
                 },
             };
-            params.push(bir::CallableParam {
+            let mut projected = bir::CallableParam {
                 local,
                 kind: parameter_types::source_parameter_kind(param.kind),
                 name: name.clone(),
@@ -370,8 +379,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: param.is_mut,
+                input_access: checked
+                    .get(index)
+                    .map_or(incan_semantics_core::IncanInputAccess::Inferred, |parameter| {
+                        parameter.input_access
+                    }),
                 native_owned: parameter_types::native_collection_parameter(&param.ty, self.type_info),
-            });
+            };
+            super::input_access::apply(&mut projected, self.type_info, owner, index);
+            params.push(projected);
             if params.last().is_some_and(|parameter| parameter.native_owned) {
                 self.owned_parameters.insert(local);
             } else if param.is_mut {

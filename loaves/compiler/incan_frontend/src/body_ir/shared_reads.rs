@@ -61,7 +61,8 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, program: &ast::Program) {
 
 /// Evaluate the existing private-parameter transfer rule for one body against final input signatures. Eligibility
 /// comes from that declaration's visibility and the selected escape membership. The caller owns group iteration;
-/// this operation never updates another signature or chooses a different fixed point.
+/// this operation never updates another signature or chooses a different fixed point. Explicit source access owns its
+/// storage and is never rewritten by this inferred ABI optimization.
 pub(super) fn retain_parameters(body: &mut bir::Body, signatures: &[Signature], eligible: bool) -> bool {
     if !eligible
         || !matches!(body.return_type, IncanType::Primitive(_))
@@ -73,7 +74,10 @@ pub(super) fn retain_parameters(body: &mut bir::Body, signatures: &[Signature], 
     }
     let mut changed = false;
     for parameter in &mut body.params {
-        if parameter.mutable || !native_owner(&parameter.ty, &body.named_type_identities) {
+        if !parameter.input_access.is_inferred()
+            || parameter.mutable
+            || !native_owner(&parameter.ty, &body.named_type_identities)
+        {
             continue;
         }
         let context = ReadContext {

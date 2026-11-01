@@ -36,9 +36,15 @@ impl TypeChecker {
     /// Return whether a `def` parameter shows its changes to the caller, which is what the `mut` marker on a parameter
     /// of a callable type means.
     ///
-    /// This is [`def_param_is_marked`] plus one check the symbol table allows: a parameter whose type names an
-    /// imported Rust item is handed over whole, so it is not marked.
+    /// Direct explicit inputs are decided from their canonical mode first: BorrowedMut changes caller storage,
+    /// Borrowed is read-only and Owned changes its local slot. Ordinary parameters use [`def_param_is_marked`]
+    /// plus the symbol-table check that an imported Rust item is handed over whole, so it is not marked.
     pub(super) fn def_param_shows_changes_to_caller(&self, param: &Param, resolved: &ResolvedType) -> bool {
+        if let Some(contract) = self.explicit_input_contract(&param.ty.node, resolved) {
+            return param.is_mut
+                && param.kind == ParamKind::Normal
+                && contract.mode == incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut;
+        }
         if !def_param_is_marked(param, &self.expand_type_aliases(resolved.clone())) {
             return false;
         }

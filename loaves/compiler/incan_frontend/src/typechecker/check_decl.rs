@@ -6825,7 +6825,10 @@ impl TypeChecker {
         let previous_annotation_owner = self.prepare_function_generic_context(func);
 
         // ---- Signature defaults and frame bindings ----
-        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
+        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
+            &func.params,
+            super::ownership_contracts::direct_function_boundary(func),
+        );
         let return_type = self.resolve_callable_return_annotation(&func.return_type);
         self.record_function_ownership(func, decl_span, &resolved_param_types, &return_type);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
@@ -6841,8 +6844,8 @@ impl TypeChecker {
             &func.params,
             &resolved_param_types,
         );
-        for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
-            self.bind_checked_callable_parameter(param, resolved_ty);
+        for (slot, (param, resolved_ty)) in func.params.iter().zip(resolved_param_types).enumerate() {
+            self.bind_checked_callable_parameter(param, resolved_ty, slot);
         }
 
         // ---- Yield and native-call contexts ----
@@ -6924,7 +6927,13 @@ impl TypeChecker {
             std::mem::replace(&mut self.current_c_abi_raw_call_owner, prepared.c_abi_raw_call_owner);
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
         self.check_work.function_bodies += 1;
-        self.check_callable_body(&func.body, func.is_async(), span, yield_context);
+        self.check_callable_body(
+            &func.body,
+            func.is_async(),
+            span,
+            yield_context,
+            super::ownership_contracts::CallableSource::Function(func),
+        );
         self.receiver_plan_inputs.current_function = previous_function;
         self.current_c_abi_raw_call_owner = previous_raw_owner;
         self.finish_prepared_callable(restore);
@@ -7056,19 +7065,40 @@ impl TypeChecker {
         fixture_args
     }
 
-    /// Publish one execution-frame parameter after all declaration-owned defaults have checked. Retain its checked
-    /// mutability marker before converting rest carriers, then record the same read/write binding facts for bodies.
-    fn bind_checked_callable_parameter(&mut self, param: &Spanned<Param>, resolved_ty: ResolvedType) {
-        self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
-        let ty = local_type_for_param(param.node.kind, resolved_ty);
+    /// Publish one execution-frame parameter after all declaration-owned defaults have checked. Explicit input
+    /// obligations retain their declaration metadata while the body sees the underlying value. A `mut` binding
+    /// cannot upgrade shared access; executable storage remains separately gated until lowering honors the mode.
+    fn bind_checked_callable_parameter(&mut self, param: &Spanned<Param>, resolved_ty: ResolvedType, slot: usize) {
+        let input = self
+            .current_body_identity()
+            .and_then(|identity| self.checked_input_contract(identity, slot))
+            .cloned();
+        if param.node.is_mut && param.node.kind == ParamKind::Normal {
+            if let Some(contract) = &input {
+                self.type_info.declarations.mut_param_markers.insert(
+                    (param.span, param.node.name.clone()),
+                    contract.mode == incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut,
+                );
+            } else {
+                self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
+            }
+        }
+        let writable = param.node.is_mut
+            && !input
+                .as_ref()
+                .is_some_and(|contract| contract.mode == incan_lang::lang::types::ownership::OwnershipMode::Borrowed);
+        let value_type = input.map_or(resolved_ty, |contract| contract.underlying);
+        let ty = local_type_for_param(param.node.kind, value_type);
         self.validate_protected_builtin_binding(&param.node.name, param.span);
-        self.bind_mut_param_as_mutable(&param.node);
+        if writable {
+            self.bind_mut_param_as_mutable(&param.node);
+        }
         self.symbols.define_with_target_kind(
             Symbol {
                 name: param.node.name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
                     ty,
-                    is_mutable: param.node.is_mut,
+                    is_mutable: writable,
                     is_used: false,
                 }),
                 span: param.span,
@@ -7076,7 +7106,7 @@ impl TypeChecker {
             },
             SemanticSourceTargetKind::Parameter,
         );
-        self.record_read_only_binding(param.node.is_mut, param.span);
+        self.record_read_only_binding(writable, param.span);
         self.record_write_target_identity(param.span, &param.node.name);
     }
 
@@ -7098,11 +7128,15 @@ impl TypeChecker {
     /// compiler-owned consumers without requiring them to reconstruct source typing.
     /// Native inputs keep their checked borrow shape; their erased metadata regions receive independent input
     /// binders at the native signature boundary, without granting an output or field an escaping loan.
-    fn resolve_callable_parameter_types_and_check_defaults(&mut self, params: &[Spanned<Param>]) -> Vec<ResolvedType> {
+    fn resolve_callable_parameter_types_and_check_defaults(
+        &mut self,
+        params: &[Spanned<Param>],
+        defer_inputs: bool,
+    ) -> Vec<ResolvedType> {
         params
             .iter()
             .map(|param| {
-                let param_ty = self.resolve_type_checked(&param.node.ty);
+                let param_ty = self.resolve_type_checked_for_input(&param.node.ty, defer_inputs);
                 self.refuse_unbounded_nominal_type_arguments(&param_ty, param.node.ty.span);
                 self.refuse_trait_type_nested_in_annotation(&param_ty, param.node.ty.span);
                 if param.node.kind != ParamKind::Normal {
@@ -7470,7 +7504,7 @@ impl TypeChecker {
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
-        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params);
+        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params, false);
         let return_type = self.resolve_callable_return_annotation(&method.return_type);
         self.record_method_ownership(method, method_span, &resolved_param_types, &return_type, &self_ty);
 
@@ -7505,14 +7539,14 @@ impl TypeChecker {
             &method.params,
             &resolved_param_types,
         );
-        for (param, resolved_ty) in method.params.iter().zip(resolved_param_types) {
+        for (slot, (param, resolved_ty)) in method.params.iter().zip(resolved_param_types).enumerate() {
             checked_params.push(CallableParam::named_with_default(
                 param.node.name.clone(),
                 resolved_ty.clone(),
                 param.node.kind,
                 param.node.default.is_some(),
             ));
-            self.bind_checked_callable_parameter(param, resolved_ty);
+            self.bind_checked_callable_parameter(param, resolved_ty, slot);
         }
 
         self.type_info.declarations.method_bindings_by_span.insert(
@@ -7560,7 +7594,13 @@ impl TypeChecker {
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
         if let Some(body) = &method.body {
             self.check_work.method_bodies += 1;
-            self.check_callable_body(body, method.is_async(), span, yield_context);
+            self.check_callable_body(
+                body,
+                method.is_async(),
+                span,
+                yield_context,
+                super::ownership_contracts::CallableSource::Method(method),
+            );
         }
         self.current_classmethod_self_ty = previous_classmethod;
         self.current_immutable_self_method = previous_immutable_self;
