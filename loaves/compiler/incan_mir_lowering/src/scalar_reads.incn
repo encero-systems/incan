@@ -12,7 +12,7 @@ pub def scalar_storage_place(locals: &list[Local], reference_values: &list[int],
         if source.local == reference:
             return Ok(source)
     match locals[source.local].ty:
-        PlanType.ScalarRef(elements) =>
+        (PlanType.ScalarRef(elements) | PlanType.ScalarMutRef(elements)) =>
             if len(elements) != 1:
                 return Err("invalid Body IR scalar reference storage arity")
             referent = elements[0]

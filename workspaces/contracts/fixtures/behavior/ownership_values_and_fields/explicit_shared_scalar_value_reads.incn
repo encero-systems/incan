@@ -1,4 +1,4 @@
-# behavior: Explicitly shared scalar inputs read their values without consuming caller storage (#2500).
+# behavior: Scalar borrows read caller values, and exclusive borrows write the same caller storage (#2500).
 # expect-stdout:
 #   scalar value reads passed
 
@@ -33,12 +33,40 @@ def echo(value: Borrowed[int]) -> int:
     return value
 
 
+def replace(mut value: BorrowedMut[int]) -> None:
+    """Replacement writes the scalar behind the exclusive input, not a copied local."""
+    value = 9
+
+
+def increment(mut value: BorrowedMut[int]) -> int:
+    """Compound assignment reads and writes the same borrowed scalar."""
+    value += 1
+    return value
+
+
+def forward_exclusively(mut value: BorrowedMut[int]) -> int:
+    """Forwarding an exclusive input reborrows the caller's original slot."""
+    return increment(value)
+
+
+def flip(mut value: BorrowedMut[bool]) -> bool:
+    """Boolean replacement and its result both use the caller's scalar."""
+    value = not value
+    return value
+
+
+def scale(mut value: BorrowedMut[float]) -> float:
+    """Floating compound assignment preserves the exact exclusive input place."""
+    value *= 2.0
+    return value
+
+
 def main() -> None:
-    """Observe arithmetic, comparison, return and forwarding while retaining every caller value."""
-    enabled = true
+    """Observe shared reads and exclusive writes through the original caller storage."""
+    mut enabled = true
     small = 2
     large = 7
-    amount = 2.5
+    mut amount = 2.5
     assert invert(enabled) == false
     assert enabled == true
     assert less(small, large)
@@ -49,4 +77,15 @@ def main() -> None:
     assert amount == 2.5
     assert forward(large) == 7
     assert large == 7
+    mut count = 4
+    assert increment(count) == 5
+    assert count == 5
+    assert forward_exclusively(count) == 6
+    assert count == 6
+    replace(count)
+    assert count == 9
+    assert flip(enabled) == false
+    assert enabled == false
+    assert scale(amount) == 5.0
+    assert amount == 5.0
     println("scalar value reads passed")
