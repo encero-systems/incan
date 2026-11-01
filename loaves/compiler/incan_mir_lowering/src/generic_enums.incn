@@ -1,0 +1,140 @@
+"""
+Provider-owned generic enum templates and their closed native aliases.
+
+A compiled library publishes each generic enum it keeps once, as a template over its own type parameters. Every closed
+instance the library lowered, such as `Pair[int]`, becomes an alias of that template with exact type arguments, so a
+consumer that names `Pair[int]` reaches the provider's storage rather than a second copy of the type.
+"""
+
+from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration as RustEnumDeclaration
+from rust::incan_semantics_core import IncanType as RustType
+from pub::incan_mir_plan import GenericEnumDeclaration, GenericEnumVariant, GenericLayoutType, EnumDeclaration, PlanType
+from pub::incan_mir_plan import source_span as plan_span
+from native_type_identity import ConstructorIndex
+from generic_layouts import generic_field_type, referenced_templates
+from layout_types import native_source_type
+from symbols import model_symbol
+
+
+pub def generic_enums(
+    constructors: &ConstructorIndex,
+    source: &BodyIrModule,
+    closed: &BodyIrModule,
+    mut layouts: list[EnumDeclaration],
+    intrinsics: list[EnumDeclaration],
+    file: str,
+) -> Result[list[GenericEnumDeclaration], str]:
+    """
+    The generic enum templates a library publishes; each closed instance's entry in `layouts` becomes their alias.
+
+    1. Publish a template only for a generic source enum the library exports, lowers an instance of, or names from
+       another template.
+    2. Describe its variants over its own type parameters.
+    3. Point each closed instance at it, and give the template the derives its declaration and instances carry.
+    """
+    referenced = referenced_templates(source)
+    mut templates: list[GenericEnumDeclaration] = []
+    for declaration in source.enum_declarations:
+        # 1. A private template nothing lowers or names stays in the source.
+        if not published(declaration, closed, referenced):
+            continue
+        # 2. Fields keep their order and name the template's parameters, not an instance's arguments.
+        variants = template_variants(constructors, source, declaration)?
+        # 3. Aliasing changes the instances' layouts in place and reports the derives they had.
+        derives = alias_instances(constructors, declaration, closed, layouts, intrinsics)?
+        templates.append(
+            GenericEnumDeclaration(
+                name=declaration.carrier_name(),
+                parameters=declaration.type_parameters.clone(),
+                variants=variants,
+                derives=derives,
+                span=plan_span(file=file, line=1, column=1),
+            ),
+        )
+    return Ok(templates)
+
+
+def published(declaration: &RustEnumDeclaration, closed: &BodyIrModule, referenced: list[str]) -> bool:
+    """Whether a source enum gets a template: it is generic, defined in Incan, and exported, lowered or referenced."""
+    if len(declaration.type_parameters) == 0 or declaration.native_item != "":
+        return false
+    if declaration.public or declaration.carrier_name() in referenced:
+        return true
+    return len(closed_instances(declaration, closed)) > 0
+
+
+def closed_instances(declaration: &RustEnumDeclaration, closed: &BodyIrModule) -> list[RustEnumDeclaration]:
+    """The closed instances of `declaration` the library lowered, such as `Pair[int]` for `Pair[T]`."""
+    return [instance for instance in closed.enum_declarations if instance.canonical == declaration.canonical]
+
+
+def template_variants(
+    constructors: &ConstructorIndex,
+    source: &BodyIrModule,
+    declaration: &RustEnumDeclaration,
+) -> Result[list[GenericEnumVariant], str]:
+    """Each variant of `declaration`, its fields typed over the declaration's own type parameters."""
+    mut variants: list[GenericEnumVariant] = []
+    for variant in declaration.variants:
+        mut fields: list[GenericLayoutType] = []
+        for field in variant.fields:
+            fields.append(generic_field_type(constructors, source, field, declaration.type_parameters.clone())?)
+        variants.append(GenericEnumVariant(name=str(variant.name), fields=fields))
+    return Ok(variants)
+
+
+def alias_instances(
+    constructors: &ConstructorIndex,
+    declaration: &RustEnumDeclaration,
+    closed: &BodyIrModule,
+    mut layouts: list[EnumDeclaration],
+    intrinsics: list[EnumDeclaration],
+) -> Result[list[str], str]:
+    """
+    Turn each closed instance's layout into an alias of the template, and return the template's derives.
+
+    The template derives what the declaration derives, except `Display`, plus whatever an instance's layout derives.
+    An alias names the template's storage with exact type arguments and has no derives of its own except `Copy`,
+    which it keeps when its own layout is Copy, as a layout naming any library item does.
+    """
+    mut derives = [str(derive) for derive in declaration.derives if derive != "Display"]
+    for instance in closed_instances(declaration, closed):
+        arguments = instance_arguments(constructors, closed, instance, intrinsics)?
+        name = model_symbol(instance.carrier_name())
+        for index in range(len(layouts)):
+            if layouts[index].name != name:
+                continue
+            own = layouts[index].derives.clone()
+            for derive in own:
+                if derive not in derives:
+                    derives.append(derive)
+            layouts[index].library_item = "crate::" + declaration.carrier_name()
+            layouts[index].library_type_arguments = arguments
+            layouts[index].derives = []
+            if "Copy" in own:
+                layouts[index].derives = ["Copy"]
+    return Ok(derives)
+
+
+def instance_arguments(
+    constructors: &ConstructorIndex,
+    closed: &BodyIrModule,
+    instance: &RustEnumDeclaration,
+    intrinsics: list[EnumDeclaration],
+) -> Result[list[PlanType], str]:
+    """The exact native type arguments of one closed instance, which its alias applies to the template."""
+    # An argument is resolved without the closed module's union carriers.
+    unions: list[RustType] = []
+    mut arguments: list[PlanType] = []
+    for argument in instance.native_type_arguments:
+        arguments.append(
+            native_source_type(
+                constructors,
+                closed.nominal_declarations,
+                closed.enum_declarations,
+                unions,
+                argument,
+                intrinsics,
+            )?,
+        )
+    return Ok(arguments)
