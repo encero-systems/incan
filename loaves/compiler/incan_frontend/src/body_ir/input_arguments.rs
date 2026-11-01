@@ -133,7 +133,7 @@ impl BodyBuilder<'_, '_> {
 
     /// Borrow in place or transfer the actual owner. Conditional and partial moves need drop obligations beyond
     /// the current static moved-out set; they must not be repaired by cloning or suppressing another path's drop.
-    fn explicit_place_operand(
+    pub(super) fn explicit_place_operand(
         &mut self,
         place: bir::Place,
         ty: &IncanType,
@@ -166,7 +166,7 @@ impl BodyBuilder<'_, '_> {
 
     /// A fresh value may own temporary storage for the invocation. Existing places must use the authenticated
     /// source route; a Clone operand never becomes an explicit ownership transfer by changing its tag.
-    fn explicit_temporary_operand(
+    pub(super) fn explicit_temporary_operand(
         &mut self,
         mut value: bir::Operand,
         ty: IncanType,

@@ -375,3 +375,115 @@ fn owned_fresh_list_retains_length_observation() -> Result<(), Box<dyn std::erro
     }
     Ok(())
 }
+
+/// An explicit owned local receives the original non-Copy owner instead of an inferred snapshot clone.
+#[test]
+fn owned_local_initialization_retains_transfer_authority() -> Result<(), Box<dyn std::error::Error>> {
+    let module = staged(
+        "def main() -> int:\n    original = \"payload\"\n    let held: Owned[str] = original\n    return len(held)\n",
+        false,
+    )?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("no main body")?;
+    assert!(
+        body.first_representation_gap().is_none(),
+        "{:?}",
+        body.first_representation_gap()
+    );
+    let held = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("held"))
+        .ok_or("no owned local")?;
+    let initializer = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            } if place.local_id() == Some(held.id) => Some(read),
+            _ => None,
+        })
+        .ok_or("no owned transfer initializer")?;
+    assert_eq!(initializer.fact, bir::OwnershipFact::Move);
+    assert!(initializer.place.projection.is_empty());
+    let source = initializer
+        .place
+        .local_id()
+        .and_then(|local| body.locals.get(local.index()))
+        .ok_or("no source owner")?;
+    assert_eq!(source.name.as_deref(), Some("original"));
+    Ok(())
+}
+
+/// Copy initialization keeps the source available, and a fresh owned initializer does not invent a source loan.
+#[test]
+fn owned_local_copy_and_fresh_initializers_remain_distinct() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "def main() -> int:\n    original = 3\n    mut held: Owned[int] = original\n    held = 9\n    assert original == 3\n    return held\n",
+        "def main() -> int:\n    let held: Owned[list[int]] = [1, 2]\n    return len(held)\n",
+        "def read(value: Borrowed[int]) -> int:\n    mut held: Owned[int] = (value)\n    held = 9\n    assert value == 3\n    return held\n",
+    ] {
+        let module = staged(source, false)?;
+        for body in &module.bodies {
+            assert!(
+                body.first_representation_gap().is_none(),
+                "{}: {:?}",
+                body.name,
+                body.first_representation_gap()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A local ownership annotation cannot authorize a missing body proof or partial non-Copy transfer.
+#[test]
+fn owned_locals_keep_missing_proof_and_projected_transfer_refusals() -> Result<(), Box<dyn std::error::Error>> {
+    for (source, missing_proof) in [
+        (
+            "def main() -> int:\n    original = \"payload\"\n    let held: Owned[str] = original\n    return len(held)\n",
+            true,
+        ),
+        (
+            "model Page:\n    title: str\ndef main(page: Owned[Page]) -> int:\n    let held: Owned[str] = page.title\n    return len(held)\n",
+            false,
+        ),
+    ] {
+        let module = staged(source, missing_proof)?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == "main")
+            .ok_or("no main body")?;
+        assert!(body.first_representation_gap().is_some());
+    }
+    Ok(())
+}
+
+/// An owned local transfer makes later source use invalid and cannot consume through a non-Copy shared input.
+#[test]
+fn owned_local_source_conflicts_remain_typed() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "def main() -> int:\n    original = \"payload\"\n    let held: Owned[str] = original\n    return len(original)\n",
+        "def read(original: Borrowed[str]) -> int:\n    let held: Owned[str] = original\n    return len(held)\n",
+    ] {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("owned source conflict was accepted")?;
+        assert!(
+            errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{errors:?}"
+        );
+    }
+    Ok(())
+}
