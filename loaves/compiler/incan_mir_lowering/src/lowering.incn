@@ -5870,7 +5870,7 @@ def explicit_argument_operand(
     span: SourceSpan,
     access: IncanInputAccess,
 ) -> Result[Operand, str]:
-    """Use only addressable checked storage; indexed copies, globals and literal-owner retention need separate proofs."""
+    """Consume checked storage or a fresh owned literal; borrowed constants must already have retained call storage."""
     match value:
         RustOperand.Place(read) =>
             match read.place.global():
@@ -5880,7 +5880,32 @@ def explicit_argument_operand(
                 return Err("unsupported Body IR explicit argument requires retained indexed storage")
             source = scalar_place(builder, read.place, span)?
             return explicit_place_argument(builder, source, read.fact, ty, access, span)
-        _ => return Err("unsupported Body IR explicit argument without retained local storage")
+        RustOperand.Constant(constant) => return explicit_constant_argument(builder, constant, ty, access, span)
+
+
+def explicit_constant_argument(
+    mut builder: Builder,
+    constant: &RustConstant,
+    expected: PlanType,
+    access: IncanInputAccess,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """A fresh owned literal has no earlier owner to retain or clone; shared/exclusive input storage stays mandatory."""
+    if access != IncanInputAccess.Owned:
+        return Err("unsupported Body IR borrowed constant without retained local storage")
+    match constant:
+        RustConstant.Str(text) =>
+            if expected != PlanType.String:
+                return Err("unsupported Body IR owned text literal carrier mismatch")
+            return Ok(read_place(owned_literal(builder, str(text), span), true, span))
+        _ => pass
+    if not numeric_carrier(expected) and expected not in [PlanType.Bool, PlanType.Unit]:
+        return Err("unsupported Body IR explicit owned constant carrier")
+    literal = scalar_constant(constant, span)?
+    converted = coerce_numeric_operand(builder, literal, expected, span)?
+    if operand_type(builder, converted)? != expected:
+        return Err("unsupported Body IR explicit owned constant carrier mismatch")
+    return Ok(converted)
 
 
 def shared_nominal_argument(
