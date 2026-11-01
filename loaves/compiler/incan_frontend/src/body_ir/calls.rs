@@ -3091,7 +3091,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Retain reflection only when the checked canonical member belongs to the compiler-generated owner table.
-    /// Generic-binder ownership selects string results before substitution; concrete ownership selects typed values.
+    /// Generic-binder ownership selects string field values or generic metadata before substitution; concrete
+    /// ownership selects typed values and exact-declaration metadata.
     fn checked_reflection_operation(&self, span: ast::Span) -> Option<bir::ReflectionOperation> {
         let identity = self.type_info.resolved_identity(span)?;
         let owner = self
@@ -3102,6 +3103,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let generic = owner.kind == SemanticSourceTargetKind::GenericBinder;
         match (identity.declaration_name.as_str(), generic) {
             ("__fields__", false) => Some(bir::ReflectionOperation::Metadata),
+            ("__fields__", true) => Some(bir::ReflectionOperation::GenericMetadata(owner.clone())),
             ("__field_value__", false) => Some(bir::ReflectionOperation::TypedValue),
             ("__field_items__", false) => Some(bir::ReflectionOperation::TypedItems),
             ("__field_value__", true) => Some(bir::ReflectionOperation::StringValue),
