@@ -33,6 +33,8 @@ printf 'runtime\n' > "$native/libruntime.rlib"
 printf 'registry\n' > "$entries/libexample.rlib"
 printf 'loaf\n' > "$loaf/libexample.rlib"
 printf 'private unit\n' > "$loaf/libexample.rlib.unit.json"
+# Compiler warnings can include private builder paths; logs are not installed artifacts.
+printf 'warning INCAN-T0125 at %s/private/source.incn:1\n' "$scratch" > "$loaf/build.log"
 cat > "$scratch/closure.json" <<EOF
 {"schema":"incan.oven.closure/1","externs":{"example":{"path":"$entries/libexample.rlib"}},"units":[{"loaf":"crates-io/example","version":"1.0.0","domain":"target","features":[],"entry":"sha256:example"}]}
 EOF
@@ -51,6 +53,7 @@ for suffix in tar tar.gz tar.zst; do
     test ! -e "$target/sysroot"
     test ! -e "$target/bin/unused-driver"
     test ! -e "$target/loaves/example/debug/libexample.rlib.unit.json"
+    test ! -e "$target/loaves/example/debug/build.log"
     test -f "$target/native/runtime-hash/libruntime.rlib"
     test -f "$target/registry/entries/sha256-example/artifacts/libexample.rlib"
     jq -e '.name == "0.6.0-dev.8" and .sysroot == "sysroot" and (.search | length) == 2' "$target/toolchain.json" > /dev/null
@@ -70,6 +73,7 @@ for suffix in tar tar.gz tar.zst; do
 done
 test -f "$toolchain/bin/unused-driver"
 test -f "$loaf/libexample.rlib.unit.json"
+test -f "$loaf/build.log"
 mkdir "$scratch/sysroot"
 destination=$scratch/installed
 INCAN_HOME="$destination" INCAN_SYSROOT="$scratch/sysroot" RUSTC_BOOTSTRAP=1 \
