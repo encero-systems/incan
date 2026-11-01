@@ -210,7 +210,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.settle_open_result_value(body_expr, &return_type);
         }
         let mut body_stmts = Vec::new();
+        // Deferred code needs its own source flow; the enclosing callable's checked loans authorize no capture.
+        let saved_input_body = std::mem::replace(&mut self.input_body, Ok(None));
         let result = self.lower_expr_to_operand(body_expr, closure_scope, &mut body_stmts);
+        self.input_body = saved_input_body;
         self.restore_local_bindings(saved_bindings);
         self.identity_bindings = enclosing_identity_bindings;
         self.materialized_range_locals = saved_materialized_range_locals;

@@ -1189,6 +1189,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
+    /// A source ownership proof is retained only for this exact callable. Nested evaluators start without it;
+    /// invalid or incomplete evidence refuses the body before ordinary lowering can choose repair copies.
+    input_body: Result<Option<crate::typechecker::CheckedInputBody<'type_info>>, &'static str>,
     /// Canonical provider context that requires an explicit refusal for ambiguous bare builtin spellings.
     runtime_type_conflicts: &'source std::collections::BTreeSet<String>,
     /// Project-aware entry points retain selected pattern carriers before source aliases are erased.
@@ -1329,6 +1332,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             published_newtype_returns: lowering_facts.published_newtype_returns,
             published_storage_types: lowering_facts.published_storage_types,
             type_info: lowering_facts.type_info,
+            input_body: Ok(None),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
             retain_nominal_carriers: lowering_facts.retain_nominal_carriers,
             function_default_sources: lowering_facts.function_default_sources,

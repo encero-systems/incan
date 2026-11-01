@@ -133,6 +133,7 @@ pub(super) fn build(
             })
             .collect(),
         graph: Graph {
+            owner: identity.clone(),
             permissions: BTreeMap::new(),
             loans: Vec::new(),
             local_loans: BTreeMap::new(),

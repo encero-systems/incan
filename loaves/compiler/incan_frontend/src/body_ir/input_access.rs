@@ -277,4 +277,40 @@ mod tests {
         assert_eq!(inputs, 3);
         Ok(())
     }
+
+    /// Checking a source alias does not authorize lowering it as an ordinary owned copy or first-class reference.
+    #[test]
+    fn local_source_alias_waits_for_storage_projection() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def read(value: Borrowed[int]) -> int:\n    let view: Borrowed[int] = value\n    return view\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("source execution gate unexpectedly opened")?;
+        assert!(
+            errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{errors:?}"
+        );
+        let facts = checker.into_type_info();
+        let providers = super::super::ProviderOperationCatalog::new();
+        let context = super::super::BodyIrContext {
+            modules: &[],
+            provider_operations: &providers,
+            registry_package: None,
+            library_package: None,
+        };
+        let module = super::super::build_module_seed(&program, &[], &facts, &context);
+        let body = module.bodies.first().ok_or("missing body")?;
+        assert!(body.block.stmts.iter().any(|statement| matches!(&statement.kind,
+            bir::StatementKind::Unsupported { description } if description.contains("source-place storage projection"))));
+        assert!(
+            !body
+                .locals
+                .iter()
+                .any(|local| local.origin == bir::LocalOrigin::UserBinding && local.name.as_deref() == Some("view"))
+        );
+        Ok(())
+    }
 }

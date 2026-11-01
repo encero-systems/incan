@@ -147,6 +147,10 @@ fn lower_declaration_statements(
     span: HirSourceSpan,
 ) -> (Vec<bir::Statement>, Option<bir::ExternDelegation>) {
     let mut stmts = Vec::new();
+    if let Err(reason) = builder.input_body {
+        builder.push_unsupported_stmt(reason.to_owned(), span, &mut stmts);
+        return (stmts, None);
+    }
     match delegation {
         Some(Ok(delegation)) => return (stmts, Some(delegation)),
         Some(Err(description)) => builder.push_unsupported_stmt(description, span, &mut stmts),
@@ -309,6 +313,9 @@ pub(super) fn lower_function_body(
     let owner_return_type = function_return_type(binding, &type_parameters, shared_method_chain, lowering_facts);
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    if let Some(owner) = binding.and_then(|binding| binding.identity.as_ref()) {
+        builder.input_body = lowering_facts.type_info.checked_input_body(owner);
+    }
     builder.shared_method_chain = shared_method_chain;
     builder.type_parameters = type_parameters;
     let root_scope = builder.new_scope(None, hir_span(decl_span));
@@ -447,6 +454,9 @@ pub(super) fn lower_method_body(
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = method_return_type(binding, &type_parameters, receiver_ty, lowering_facts);
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    if let Some(owner) = binding.and_then(|binding| binding.identity.as_ref()) {
+        builder.input_body = lowering_facts.type_info.checked_input_body(owner);
+    }
     builder.type_parameters = type_parameters;
     builder.retain_newtype_implementation(owner_name);
     let root_scope = builder.new_scope(None, hir_span(decl_span));

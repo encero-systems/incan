@@ -256,6 +256,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
+        if let Some(identity) = self
+            .type_info
+            .resolved_write_identity(assignment.name_span, &assignment.name)
+            && identity.declaration_span == assignment.name_span
+            && let Ok(Some(proof)) = &self.input_body
+            && proof.local_mode(identity).is_some()
+        {
+            self.push_unsupported_stmt(
+                "checked explicit local ownership still requires source-place storage projection".to_owned(),
+                span,
+                out,
+            );
+            return;
+        }
         let mut ty = self.assignment_binding_type(assignment, span, out);
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);

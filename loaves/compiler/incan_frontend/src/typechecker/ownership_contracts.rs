@@ -8,6 +8,7 @@ use incan_semantics_core::SymbolOrigin;
 
 mod checked;
 mod flow;
+pub(super) mod projection;
 mod report;
 mod source;
 
@@ -1016,6 +1017,112 @@ mod tests {
                 .values()
                 .all(|permission| !permission.transferable && !permission.exclusive)
         );
+        Ok(())
+    }
+
+    /// A retained map entry alone cannot authenticate an annotation, destination, graph owner or analysis result.
+    #[test]
+    fn body_projection_requires_complete_canonical_local_evidence() -> Result<(), Box<dyn std::error::Error>> {
+        let checker =
+            checked("def read(value: Borrowed[int]) -> int:\n    let view: Borrowed[int] = value\n    return view\n")?;
+        let (local, mode) = checker
+            .type_info
+            .protocols
+            .explicit_local_modes
+            .iter()
+            .next()
+            .ok_or("missing local")?;
+        let owner = &mode.owner;
+        let proof = checker.type_info.checked_input_body(owner)?.ok_or("missing proof")?;
+        assert_eq!(proof.local_mode(local), Some(OwnershipMode::Borrowed));
+        let mut other = local.clone();
+        other.declaration_name = "foreign".into();
+        assert_eq!(proof.local_mode(&other), None);
+        for corruption in 0..8 {
+            let mut facts = checker.type_info.clone();
+            match corruption {
+                0 => {
+                    facts.protocols.explicit_input_flow.remove(owner);
+                }
+                1 => {
+                    facts.protocols.explicit_local_modes.remove(local);
+                }
+                2 => {
+                    facts
+                        .protocols
+                        .explicit_local_modes
+                        .get_mut(local)
+                        .ok_or("missing mode")?
+                        .owner
+                        .declaration_name = "foreign".into();
+                }
+                3 => {
+                    facts
+                        .protocols
+                        .explicit_local_modes
+                        .get_mut(local)
+                        .ok_or("missing mode")?
+                        .value_type = ResolvedType::Str;
+                }
+                4 => {
+                    facts
+                        .references
+                        .resolved_write_identities
+                        .remove(&(local.declaration_span, local.declaration_name.clone()));
+                }
+                _ => {
+                    let InputFlow::Checked { graph, analysis } = facts
+                        .protocols
+                        .explicit_input_flow
+                        .get_mut(owner)
+                        .ok_or("missing flow")?
+                    else {
+                        return Err("expected checked flow".into());
+                    };
+                    match corruption {
+                        5 => graph.local_loans.clear(),
+                        6 => analysis.live_before.clear(),
+                        _ => graph.owner.declaration_name = "foreign".into(),
+                    }
+                }
+            }
+            assert!(
+                facts.checked_input_body(owner).is_err(),
+                "accepted corrupted evidence {corruption}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Ordinary bodies need no ownership proof; source conflicts and unsupported flows cannot produce one.
+    #[test]
+    fn body_projection_distinguishes_absent_and_refused_flows() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, ordinary) in [
+            ("def read(value: int) -> int:\n    return value\n", true),
+            (
+                "def read(mut value: Owned[int]) -> int:\n    let view: Borrowed[int] = value\n    value = 2\n    return view\n",
+                false,
+            ),
+            (
+                "def read(value: Borrowed[int]) -> Borrowed[int] from value:\n    return value\n",
+                false,
+            ),
+        ] {
+            let checker = checked(source)?;
+            let owner = checker
+                .type_info
+                .declarations
+                .function_bindings_by_span
+                .values()
+                .find_map(|binding| binding.identity.as_ref())
+                .ok_or("missing callable")?;
+            let projected = checker.type_info.checked_input_body(owner);
+            if ordinary {
+                assert!(projected?.is_none());
+            } else {
+                assert!(projected.is_err());
+            }
+        }
         Ok(())
     }
 

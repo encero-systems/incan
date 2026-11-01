@@ -76,6 +76,7 @@ mod nominal_identities;
 mod nominal_type_param_bounds;
 mod open_native_owners;
 mod ownership_contracts;
+pub(crate) use ownership_contracts::projection::CheckedInputBody;
 mod reachability;
 mod receiver_change;
 mod reserved_names;

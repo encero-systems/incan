@@ -117,6 +117,8 @@ pub(super) struct Node {
 /// The resolved input of one callable analysis. Unknown identities or malformed edges must refuse validation.
 #[derive(Debug, Clone)]
 pub(super) struct Graph {
+    /// Exact source callable that produced this graph; a map key alone cannot authenticate a borrowed graph.
+    pub owner: CanonicalSymbolId,
     pub permissions: BTreeMap<Root, Permission>,
     pub loans: Vec<Loan>,
     /// Explicit local declarations retain their selected loan independently of display spelling.
@@ -552,6 +554,12 @@ mod tests {
     /// An owned mutable place supplies all three permissions; field checks remain separate checked facts.
     fn graph(events: Vec<Event>, edges: Vec<Vec<usize>>, loans: Vec<Loan>) -> Graph {
         Graph {
+            owner: CanonicalSymbolId::module_declaration(
+                vec!["ownership_test".into()],
+                "run",
+                SemanticSourceTargetKind::Function,
+                HirSourceSpan::new(0, 100),
+            ),
             permissions: [
                 (
                     Root::Binding(identity("value", 1)),

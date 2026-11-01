@@ -270,8 +270,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let saved_bindings = std::mem::take(&mut self.bindings);
         let saved_identity_bindings = std::mem::take(&mut self.identity_bindings);
         let saved_external_locals = std::mem::take(&mut self.external_locals);
+        // Defaults run in their own evaluation frame and cannot inherit the callee body's source ownership proof.
+        let saved_input_body = std::mem::replace(&mut self.input_body, Ok(None));
         let mut stmts = Vec::new();
         let result = self.lower_expr_to_operand(default_expr, scope, &mut stmts);
+        self.input_body = saved_input_body;
         let mut unresolved_names: Vec<String> = self.external_locals.keys().cloned().collect();
         unresolved_names.sort();
         self.bindings = saved_bindings;
