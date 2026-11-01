@@ -13,8 +13,8 @@ from classes import frame_type, function_name, parameter_local_index
 from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
-from native_arguments import uses_native_argument
 from decls import library_item
+from table_views import borrowed_at
 from trait_links import contains
 
 
@@ -22,11 +22,17 @@ pub def callable_methods(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
+    native_names: &list[str],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[str, list[PlanType]], str]:
-    """Require one actual Callable1 adoption, one complete checked slot, and its exact immutable source ABI."""
-    declaration = module.nominal_declarations[owner]
-    if library_item(declaration) != "" or not uses_native_argument(module, str(declaration.name))?:
+    """
+    Require one actual Callable1 adoption, one complete checked slot, and its exact immutable source ABI. Only a
+    carrier named in the module's foreign storage (`native_names`) needs the native ABI.
+    """
+    if str(borrowed_at(module.nominal_declarations, owner).name) not in native_names:
+        return Ok(("", []))
+    declaration = borrowed_at(module.nominal_declarations, owner)
+    if library_item(declaration) != "":
         return Ok(("", []))
     mut selected: Option[CanonicalSymbolId] = None
     mut arguments: list[RustType] = []
