@@ -1192,6 +1192,14 @@ struct BodyBuilder<'type_info, 'source> {
     /// A source ownership proof is retained only for this exact callable. Nested evaluators start without it;
     /// invalid or incomplete evidence refuses the body before ordinary lowering can choose repair copies.
     input_body: Result<Option<crate::typechecker::CheckedInputBody<'type_info>>, &'static str>,
+    /// Canonical whole owners authenticated by complete source-access coverage before branch lowering.
+    input_transfer_subjects: std::collections::BTreeSet<CanonicalSymbolId>,
+    /// Complete source path coverage permits omitting a structurally unreachable statement suffix.
+    input_paths_checked: bool,
+    /// Actual whole non-Copy Owned initializer assignments retained for staged conditional cleanup.
+    input_owned_initializers: Vec<bir::CheckedOwnedInitializer>,
+    /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
+    input_if_scopes: Vec<bir::ScopeId>,
     /// Canonical provider context that requires an explicit refusal for ambiguous bare builtin spellings.
     runtime_type_conflicts: &'source std::collections::BTreeSet<String>,
     /// Project-aware entry points retain selected pattern carriers before source aliases are erased.
@@ -1335,6 +1343,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             published_storage_types: lowering_facts.published_storage_types,
             type_info: lowering_facts.type_info,
             input_body: Ok(None),
+            input_transfer_subjects: std::collections::BTreeSet::new(),
+            input_paths_checked: false,
+            input_owned_initializers: Vec::new(),
+            input_if_scopes: Vec::new(),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
             retain_nominal_carriers: lowering_facts.retain_nominal_carriers,
             function_default_sources: lowering_facts.function_default_sources,
@@ -2328,6 +2340,7 @@ mod newtype_sum;
 mod validation_errors;
 
 mod closures;
+mod conditional_inputs;
 mod input_access;
 mod input_arguments;
 mod input_locals;

@@ -1,9 +1,9 @@
 //! Authenticate the source body's ownership proof before any native projection consumes it.
 
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
-use super::{InputFlow, flow};
+use super::{InputCall, InputCallKind, InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
 
 mod accesses;
@@ -11,6 +11,7 @@ mod call_evaluation;
 mod calls;
 mod locals;
 mod operations;
+mod transfers;
 pub(crate) use calls::{CheckedInputInvocation, CheckedInputSource};
 
 /// A completed source proof belongs to one exact callable. The view never grants authority to a nested closure,
@@ -48,6 +49,60 @@ impl CheckedInputBody<'_> {
 }
 
 impl TypeCheckInfo {
+    /// Authenticate an ordinary header affirmatively, not by absence of explicit metadata. Exact canonical
+    /// identity and unchanged parameters preserve declaration ABI. A generic binder that does not change these
+    /// parameters is not itself an access change; parameter substitution requires separate retained evidence.
+    pub(in crate::typechecker) fn selected_input_contract(
+        &self,
+        call: &InputCall,
+    ) -> Result<Option<&crate::ownership_metadata::CheckedOwnershipContract>, &'static str> {
+        let contract = self.declarations.ownership_contracts.get(&call.callee);
+        match call.kind {
+            InputCallKind::Explicit => {
+                let contract = contract.ok_or("invocation has no canonical ownership contract")?;
+                if !contract.modes.iter().any(|mode| {
+                    mode.component
+                        .parameter
+                        .is_some_and(|slot| slot < call.parameters.len())
+                }) {
+                    return Err("invocation has no canonical explicit input slot");
+                }
+                Ok(Some(contract))
+            }
+            InputCallKind::Ordinary => {
+                if call.callee.kind != SemanticSourceTargetKind::Function
+                    || !matches!(
+                        call.callee.origin,
+                        SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }
+                    )
+                {
+                    return Err("ordinary invocation requires a canonical source function");
+                }
+                if contract.is_some() || call.receiver.is_some() || call.owner.is_none() {
+                    return Err("ordinary invocation cannot replace an explicit or receiver contract");
+                }
+                let mut binding = None;
+                for candidate in self
+                    .declarations
+                    .function_bindings_by_span
+                    .values()
+                    .chain(self.declarations.function_bindings.values())
+                    .filter(|candidate| candidate.identity.as_ref() == Some(&call.callee))
+                {
+                    if binding.is_some_and(|previous| previous != candidate) {
+                        return Err("ordinary invocation has conflicting canonical headers");
+                    }
+                    binding = Some(candidate);
+                }
+                let binding = binding.ok_or("ordinary invocation has no canonical source header")?;
+                if binding.is_async || binding.params.is_empty() || binding.params != call.parameters {
+                    return Err("ordinary invocation differs from its synchronous concrete header");
+                }
+                Ok(None)
+            }
+        }
+    }
+
     /// Require the exact declaration, completed flow and matching canonical local facts before lowering uses an
     /// explicit input body. Ordinary bodies return no proof; a missing proof for an explicit obligation is an error.
     pub(crate) fn checked_input_body(
@@ -197,17 +252,13 @@ impl TypeCheckInfo {
             {
                 return Err("invocation differs from its checked caller or signature");
             }
-            let contract = self
-                .declarations
-                .ownership_contracts
-                .get(&call.callee)
-                .ok_or("invocation has no canonical ownership contract")?;
-            if !contract.modes.iter().any(|mode| {
-                mode.component
-                    .parameter
-                    .is_some_and(|slot| slot < call.parameters.len())
-            }) {
-                return Err("invocation has no canonical explicit input slot");
+            let contract = self.selected_input_contract(call)?;
+            if call.kind == InputCallKind::Ordinary {
+                for parameter in &call.parameters {
+                    if parameter.is_mut || !self.checked_input_copy_value(owner, &parameter.ty)? {
+                        return Err("ordinary invocation needs checked immutable Copy inputs");
+                    }
+                }
             }
             for index in std::iter::once(invocation.completion_node)
                 .chain(
@@ -229,7 +280,7 @@ impl TypeCheckInfo {
             }
             call_evaluation::validate_invocation_events(self, graph, *span, invocation, &call.parameters)?;
             for argument in &invocation.arguments {
-                let access = crate::ownership_metadata::direct_input_access(Some(contract), argument.slot)?;
+                let access = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
                 if argument.access != access {
                     return Err("invocation argument access differs from the selected parameter");
                 }

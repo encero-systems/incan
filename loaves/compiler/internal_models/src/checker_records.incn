@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/7"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/7"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/8"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/8"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -278,9 +278,21 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         end = type_end(values, 0, 0)?
     # A binding's type: the binding, then its type.
     elif field.family == "binding-type":
-        if field.selector != "body" or field.node == "" or len(values) == 0 or values[0] == "":
+        if field.node == "" or len(values) == 0 or values[0] == "":
             return Err(CodecFault.Malformed)
-        end = type_end(values, 1, 0)?
+        if field.selector == "body":
+            end = type_end(values, 1, 0)?
+        elif field.selector == "parameter-requirement":
+            if len(values) < 2:
+                return Err(CodecFault.Malformed)
+            if values[1] == "none":
+                end = 2
+            elif values[1] == "some":
+                end = type_end(values, 2, 0)?
+            else:
+                return Err(CodecFault.Malformed)
+        else:
+            return Err(CodecFault.Unsupported(field.selector))
     # What a node changes: `reassigned` is just `true`; `changed` counts the names it changes, strictly sorted.
     elif field.family == "mutation":
         if field.node == "":
@@ -739,6 +751,7 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
             reader.tag(["true", "false"])?
     # A call contract: the callee's optional owner, the callee, its receiver's access and its parameters.
     elif field.family == "input-call" and field.selector == "contract":
+        reader.tag(["explicit", "ordinary"])?
         if reader.tag(["none", "some"])? == "some":
             reader.handle()?
         reader.handle()?

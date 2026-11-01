@@ -54,11 +54,13 @@ use crate::body_ir::{
 /// Version 38 retains checked generic value metadata; version 39 adds a source-owned explicit-input body profile.
 /// Version 40 combines the input and reflection contracts. Their independently developed positional layouts are
 /// incompatible with this combined representation and require regenerated providers.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 40;
+/// Version 41 retains canonical whole-owner initializer transfers independently of ordinary native assignments.
+/// Every provider must be rebuilt; an older profile cannot silently discard the added positional field.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 41;
 
-/// Only the combined layout is admitted. Missing input authority cannot be reconstructed from a native ABI, and
-/// reflection discriminants from an independent layout cannot be interpreted as this generation's operations.
-const OLDEST_SUPPORTED_VERSION: u32 = 40;
+/// Only the initializer-aware combined layout is admitted. Missing input authority cannot be reconstructed from
+/// a native ABI, and a prior layout cannot silently omit canonical initializer transfers.
+const OLDEST_SUPPORTED_VERSION: u32 = 41;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -1434,6 +1436,7 @@ mod tests {
             version: 1,
             owner: owner.clone(),
             parameters: Vec::new(),
+            owned_initializers: Vec::new(),
         });
         let context = module(vec![source.clone()]);
         let eligible = BTreeSet::from([identity("input", 1)]);
@@ -1459,7 +1462,7 @@ mod tests {
         source.checked_input_profile.as_mut().ok_or("missing profile")?.owner = identity("other", 2);
         assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
         assert!(publication::project_compiled_frame(&source, &context, "probe", &eligible).is_err());
-        for obsolete in [36_u32, 37, 38] {
+        for obsolete in [36_u32, 37, 38, 39, 40] {
             assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
         }
         Ok(())

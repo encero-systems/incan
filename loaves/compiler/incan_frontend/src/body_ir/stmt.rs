@@ -32,6 +32,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let first_temporary = self.locals.len();
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
             self.insert_statement_temporary_drops(out, scope, first_temporary, None, hir_span(stmt.span));
+            if self.input_paths_checked && !super::conditional_inputs::reaches_join(std::slice::from_ref(stmt)) {
+                break;
+            }
         }
         if terminal {
             self.terminal_paths.pop();

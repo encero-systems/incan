@@ -1443,6 +1443,21 @@ pub struct CheckedInputProfile {
     pub owner: CanonicalSymbolId,
     /// Complete physical parameter-slot inventory, including ordinary slots next to explicit ones.
     pub parameters: Vec<CheckedInputParameter>,
+    /// Canonical whole-owner initializer transfers required by the conditional cleanup profile. Version 1 carries
+    /// no entries; a source annotation or an unrelated native Move cannot stand in for this retained authority.
+    pub owned_initializers: Vec<CheckedOwnedInitializer>,
+}
+
+/// An explicit Owned initializer that transferred an existing whole owner. The source checker authenticates this
+/// relationship before lowering; consumers must match one exact whole assignment and both canonical local slots.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedOwnedInitializer {
+    /// Canonical parameter or local whose existing value was transferred, not an alias or a temporary.
+    pub source: CanonicalSymbolId,
+    /// Canonical Owned local receiving the transferred value.
+    pub destination: CanonicalSymbolId,
+    /// Full assignment-statement span, retaining expansion identity independently of the initializer expression.
+    pub assignment: HirSourceSpan,
 }
 
 /// One frame slot's checked input request. The slot is explicit so reordered or duplicated metadata refuses.
@@ -1607,6 +1622,9 @@ impl Body {
         };
         if profile.version != 1 || self.canonical.as_ref() != Some(&profile.owner) {
             return Some("explicit input profile has an unsupported version or different canonical owner");
+        }
+        if !profile.owned_initializers.is_empty() {
+            return Some("straight-line input profile cannot authorize conditional initializer cleanup");
         }
         if profile.owner.kind != crate::SemanticSourceTargetKind::Function
             || self.is_async
@@ -5734,6 +5752,7 @@ mod tests {
         let profile = super::CheckedInputProfile {
             version: 1,
             owner: body.canonical.clone().ok_or("missing owner")?,
+            owned_initializers: Vec::new(),
             parameters: body
                 .params
                 .iter()
@@ -5750,6 +5769,42 @@ mod tests {
         let decoded: Body = postcard::from_bytes(&encoded)?;
         assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
         assert!(decoded.first_representation_gap().is_none());
+        let mut old_profile = serde_json::to_value(&profile)?;
+        old_profile
+            .as_object_mut()
+            .ok_or("profile is not an object")?
+            .remove("owned_initializers");
+        assert!(serde_json::from_value::<super::CheckedInputProfile>(old_profile).is_err());
+        let assignment = HirSourceSpan::new(10, 30).with_expansion(Some([7; 32]));
+        let initializer = super::CheckedOwnedInitializer {
+            source: CanonicalSymbolId::module_declaration(
+                vec!["main".into()],
+                "source",
+                SemanticSourceTargetKind::Parameter,
+                HirSourceSpan::new(1, 8),
+            ),
+            destination: CanonicalSymbolId::module_declaration(
+                vec!["main".into()],
+                "destination",
+                SemanticSourceTargetKind::Local,
+                HirSourceSpan::new(14, 25),
+            ),
+            assignment,
+        };
+        for version in [1, 2] {
+            body.checked_input_profile = Some(super::CheckedInputProfile {
+                version,
+                owned_initializers: vec![initializer.clone()],
+                ..profile.clone()
+            });
+            let decoded: Body = postcard::from_bytes(&postcard::to_allocvec(&body)?)?;
+            assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
+            assert!(
+                decoded.first_representation_gap().is_some(),
+                "initializer transport opened staged cleanup execution"
+            );
+        }
+        body.checked_input_profile = Some(profile.clone());
         let mut named = serde_json::to_value(&body)?;
         named
             .as_object_mut()
@@ -5810,6 +5865,7 @@ mod tests {
         caller.checked_input_profile = Some(super::CheckedInputProfile {
             version: 1,
             owner,
+            owned_initializers: Vec::new(),
             parameters: caller
                 .params
                 .iter()

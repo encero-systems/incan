@@ -131,8 +131,8 @@ impl BodyBuilder<'_, '_> {
         Ok(())
     }
 
-    /// Borrow in place or transfer the actual owner. Conditional and partial moves need drop obligations beyond
-    /// the current static moved-out set; they must not be repaired by cloning or suppressing another path's drop.
+    /// Borrow in place or transfer the actual owner. Conditional whole transfers require authenticated subjects
+    /// and statement-if state joins; other conditional or partial transfers remain refused without repair clones.
     pub(super) fn explicit_place_operand(
         &mut self,
         place: bir::Place,
@@ -158,7 +158,10 @@ impl BodyBuilder<'_, '_> {
             IncanInputAccess::Exclusive => (bir::OwnershipFact::MutBorrow, false),
             IncanInputAccess::Owned if copy => (bir::OwnershipFact::Copy, false),
             IncanInputAccess::Owned => {
-                if !place.projection.is_empty() || !self.conditional_scopes.is_empty() || !self.loop_scopes.is_empty() {
+                if !place.projection.is_empty()
+                    || !self.input_transfer_path_supported(local)
+                    || !self.loop_scopes.is_empty()
+                {
                     return Err("explicit projected or conditional transfer requires checked drop obligations".into());
                 }
                 if self.is_borrowed_parameter(local) || self.is_receiver_local(local) {
