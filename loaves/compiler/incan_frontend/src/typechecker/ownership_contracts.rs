@@ -1448,41 +1448,63 @@ mod tests {
             .find(|owner| owner.declaration_name == "inspect")
             .cloned()
             .ok_or("missing owner")?;
-        let InputFlow::Checked { graph, analysis } = checker
-            .type_info
-            .protocols
-            .explicit_input_flow
-            .get_mut(&owner)
-            .ok_or("missing flow")?
-        else {
-            return Err("missing checked flow".into());
-        };
-        let dependency = graph
-            .operations
-            .values()
-            .flat_map(|operation| &operation.operands)
-            .next()
-            .ok_or("missing operand")?;
-        let origin = graph
-            .nodes
-            .iter()
-            .position(|node| matches!(node.event, flow::Event::Borrow(id) if id == dependency.loan))
-            .ok_or("missing creation")?;
-        let read = origin.checked_sub(1).ok_or("missing evaluated read")?;
-        // This fixture has one read/loan pair followed by one invocation borrow/read pair.
-        assert!(origin + 2 < graph.nodes.len());
-        graph.nodes.swap(read, origin + 1);
-        graph.nodes.swap(origin, origin + 2);
-        let count = graph.nodes.len();
-        for (index, node) in graph.nodes.iter_mut().enumerate() {
-            node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
+        let original = checker.type_info.clone();
+        for corruption in 0..5 {
+            checker.type_info = original.clone();
+            let InputFlow::Checked { graph, analysis } = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .get_mut(&owner)
+                .ok_or("missing flow")?
+            else {
+                return Err("missing checked flow".into());
+            };
+            let dependency = graph
+                .operations
+                .values()
+                .flat_map(|operation| &operation.operands)
+                .next()
+                .ok_or("missing operand")?;
+            let origin = graph
+                .nodes
+                .iter()
+                .position(|node| matches!(node.event, flow::Event::Borrow(id) if id == dependency.loan))
+                .ok_or("missing creation")?;
+            let read = origin.checked_sub(1).ok_or("missing evaluated read")?;
+            // This fixture has one read/loan pair followed by one invocation borrow/read pair.
+            assert!(origin + 2 < graph.nodes.len());
+            if corruption == 0 {
+                let before = read.checked_sub(1).ok_or("missing preceding node")?;
+                graph.nodes[before].successors = vec![origin + 1];
+                graph.nodes[origin + 2].successors = vec![read];
+                graph.nodes[origin].successors = vec![origin + 3];
+            } else if corruption == 1 {
+                graph.nodes.swap(read, origin + 1);
+                graph.nodes.swap(origin, origin + 2);
+                let count = graph.nodes.len();
+                for (index, node) in graph.nodes.iter_mut().enumerate() {
+                    node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
+                }
+            } else if corruption == 2 {
+                graph.nodes[graph.entry].successors.clear();
+            } else if corruption == 3 {
+                let operation = graph.operations.values().next().ok_or("missing operation")?;
+                let last = operation.operands.last().ok_or("missing final operand")?.final_access;
+                let continuation = graph.nodes[last].successors.clone();
+                graph.nodes[origin].successors = vec![operation.completion_node];
+                graph.nodes[last].successors = vec![origin + 1];
+                graph.nodes[origin + 2].successors = continuation;
+            } else {
+                graph.nodes[graph.entry].successors = vec![graph.entry];
+            }
+            *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+            assert!(analysis.conflicts.is_empty(), "{analysis:?}");
+            assert!(
+                checker.type_info.direct_input_admission(&owner, function).is_err(),
+                "accepted invalid operation execution (corruption {corruption})"
+            );
         }
-        *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
-        assert!(analysis.conflicts.is_empty(), "{analysis:?}");
-        assert!(
-            checker.type_info.direct_input_admission(&owner, function).is_err(),
-            "accepted reordered operand evaluation"
-        );
         Ok(())
     }
 
