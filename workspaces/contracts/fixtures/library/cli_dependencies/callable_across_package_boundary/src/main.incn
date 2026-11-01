@@ -14,6 +14,32 @@
 
 from pub::callability import Counter, default_build, grow, hyperquant, keep_refs, map_owned, new_counter, plus_one
 from rust::std::vec import Vec
+from pub::callability import Adder, Unary, apply_custom, apply_unary
+from std.io import BinaryReader
+from std.traits.callable import Callable1 as DirectUnary
+import std.traits.callable as callable_traits
+
+
+def apply_forwarded[F with Unary[int, int]](operation: F, value: int) -> int:
+    """A forwarded alias still selects the standard callable declaration."""
+    return operation(value)
+
+
+def apply_direct[F with DirectUnary[int, int]](operation: F, value: int) -> int:
+    """A direct alias preserves the same contextual closure contract."""
+    return operation(value)
+
+
+def apply_qualified[F with callable_traits.Callable1[int, int]](operation: F, value: int) -> int:
+    """A module alias preserves the same contextual closure contract."""
+    return operation(value)
+
+
+def consume[R with BinaryReader](input: R) -> Result[None, str]:
+    """The published iterator method supplies IoError to its unannotated error-mapping closure."""
+    for chunk in input.chunks(1).map_err((error) => error.detail)?:
+        pass
+    return Ok(None)
 
 
 def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
@@ -47,3 +73,8 @@ def main() -> None:
     show_callable_values()
     show_partial_defaults()
     show_mut_parameters()
+    assert apply_unary((value) => value + 2, 40) == 42
+    assert apply_forwarded((value) => value + 3, 40) == 43
+    assert apply_direct((value) => value + 4, 40) == 44
+    assert apply_qualified((value) => value + 5, 40) == 45
+    assert apply_custom(Adder(amount=7), 40) == 47
