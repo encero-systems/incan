@@ -8,6 +8,7 @@ use crate::typechecker::TypeCheckInfo;
 
 mod calls;
 mod locals;
+mod operations;
 pub(crate) use calls::{CheckedInputInvocation, CheckedInputSource};
 
 /// A completed source proof belongs to one exact callable. The view never grants authority to a nested closure,

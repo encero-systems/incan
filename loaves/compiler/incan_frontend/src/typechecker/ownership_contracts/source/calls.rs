@@ -60,6 +60,7 @@ impl Builder<'_> {
                 reason: "length observer needs one checked argument",
             });
         }
+        let mut operands = Vec::new();
         for argument in arguments {
             let expression = match argument {
                 CallArg::Positional(expression) | CallArg::Named(_, expression) => expression,
@@ -104,13 +105,9 @@ impl Builder<'_> {
                 });
             }
             incoming = self.expression(expression, incoming, false)?;
+            operands.push(expression);
         }
-        for argument in arguments {
-            if let CallArg::Positional(expression) | CallArg::Named(_, expression) = argument {
-                incoming = self.consume_alias_operand(expression, incoming)?;
-            }
-        }
-        Ok(incoming)
+        self.finish_operation(span, &operands, incoming)
     }
 
     /// Apply one canonical call, evaluating its receiver before written arguments. The receiver's declared access

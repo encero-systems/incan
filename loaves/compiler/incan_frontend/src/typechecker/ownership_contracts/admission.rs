@@ -54,6 +54,7 @@ impl TypeCheckInfo {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
         }
         proof.validate_direct_call_storage()?;
+        proof.validate_operation_coverage(function)?;
         Ok(Some(proof))
     }
 }

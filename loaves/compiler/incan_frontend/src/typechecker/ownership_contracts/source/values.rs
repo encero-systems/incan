@@ -132,8 +132,10 @@ impl Builder<'_> {
     pub(super) fn formatted_text(
         &mut self,
         parts: &[FStringPart],
+        span: Span,
         mut incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        let mut operands = Vec::new();
         for part in parts {
             let FStringPart::Expr { expr, format } = part else {
                 continue;
@@ -157,12 +159,8 @@ impl Builder<'_> {
                 });
             }
             incoming = self.expression(expr, incoming, false)?;
+            operands.push(expr);
         }
-        for part in parts {
-            if let FStringPart::Expr { expr, .. } = part {
-                incoming = self.consume_alias_operand(expr, incoming)?;
-            }
-        }
-        Ok(incoming)
+        self.finish_operation(span, &operands, incoming)
     }
 }
