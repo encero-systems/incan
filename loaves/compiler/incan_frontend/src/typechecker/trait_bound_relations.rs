@@ -317,21 +317,25 @@ impl TypeChecker {
         }
     }
 
-    /// Resolve a checked bound to the canonical source callable trait registry.
+    /// Resolve a checked bound to the canonical source callable trait registry. Published package spellings must
+    /// select the same admitted declaration as the standard namespace; an equal name or path suffix grants no
+    /// callable behavior, and missing provider evidence does not fall back to source-name recognition.
     pub(in crate::typechecker) fn callable_trait_for_bound(
         &self,
         bound: &TypeBoundInfo,
     ) -> Option<callables::CallableTraitId> {
-        if let Some(module_path) = &bound.module_path {
-            if !callables::module_path_matches(module_path) {
-                return None;
-            }
-            return callables::from_str(Self::type_bound_source_name(bound));
+        let (module_path, trait_name) = self.type_bound_identity(bound)?;
+        if callables::module_path_matches(&module_path) {
+            return callables::from_str(&trait_name);
         }
-        let (module_path, trait_name) = self.resolve_bound_trait_path(&bound.name)?;
-        callables::module_path_matches(&module_path)
-            .then(|| callables::from_str(&trait_name))
-            .flatten()
+        let selected = self.package_trait_declaration(&module_path, &trait_name)?;
+        let callable = callables::from_str(&selected.declaration_name)?;
+        let standard_path = callables::MODULE_PATH
+            .iter()
+            .map(|part| (*part).to_string())
+            .collect::<Vec<_>>();
+        let standard = self.package_trait_declaration(&standard_path, callables::info_for(callable).name)?;
+        (selected == standard).then_some(callable)
     }
 
     /// Return whether a bound names a capability marker that requires a future (`RuntimeFuture`), under any spelling.

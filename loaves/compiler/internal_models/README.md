@@ -18,4 +18,4 @@
 - **Canonical values.** A checker record is a profile, a checked stable owner, a position-free semantic root and ordered fields. Native objects never enter the codec, and an unsupported capability is refused, never silently omitted.
 - **Compatibility.** `incan_mir_lowering` re-exports the `records` and `record_service` names from its facade.
 
-The cases are in `tests/test_record_scope.incn` and `tests/canonical_record_controls.incn`. The canonical controls compare against the frontend's native adapter, which stays out of this Loaf's manifest, so `scripts/test-checker-records.sh OVEN EVIDENCE_DIRECTORY` runs them in an isolated project that adds it.
+The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls](./tests/canonical_record_controls.incn) cover these contracts. The canonical controls compare against the frontend's native adapter, which stays out of this Loaf's manifest, so `scripts/test-checker-records.sh OVEN EVIDENCE_DIRECTORY` runs them in an isolated project that adds it.
