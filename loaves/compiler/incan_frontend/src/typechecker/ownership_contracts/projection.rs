@@ -6,6 +6,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 use super::{InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
 
+mod accesses;
 mod call_evaluation;
 mod calls;
 mod locals;
@@ -131,10 +132,7 @@ impl TypeCheckInfo {
                 let flow::Event::Access { access, .. } = node.event else {
                     return Err("owned initializer has no read or transfer event");
                 };
-                let copy = super::super::semantic_type_from_resolved(&mode.value_type)
-                    .abi_v0_facts()
-                    .ownership
-                    .is_trivially_copy();
+                let copy = self.checked_input_copy_value(owner, &mode.value_type)?;
                 if (copy && access != flow::Access::Read) || (!copy && access != flow::Access::Move) {
                     return Err("owned initializer access differs from its checked Copy or transfer contract");
                 }

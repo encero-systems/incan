@@ -39,10 +39,7 @@ pub(super) fn validate_invocation_events(
         }
         let parameter = parameters.get(argument.slot).ok_or("input slot is absent")?;
         let expected = if argument.access == IncanInputAccess::Owned
-            && !crate::typechecker::semantic_type_from_resolved(&parameter.ty)
-                .abi_v0_facts()
-                .ownership
-                .is_trivially_copy()
+            && !facts.checked_input_copy_value(&graph.owner, &parameter.ty)?
         {
             flow::Access::Move
         } else {
@@ -67,10 +64,7 @@ pub(super) fn validate_invocation_events(
             let ty = facts
                 .expr_type(argument.span)
                 .ok_or("stored argument has no checked value type")?;
-            let source_copy = crate::typechecker::semantic_type_from_resolved(ty)
-                .abi_v0_facts()
-                .ownership
-                .is_trivially_copy();
+            let source_copy = facts.checked_input_copy_value(&graph.owner, ty)?;
             if (expected == flow::Access::Move) != (argument.access == IncanInputAccess::Owned && !source_copy) {
                 return Err("stored argument Copy semantics differ from its selected parameter");
             }
@@ -233,7 +227,7 @@ impl CheckedInputBody<'_> {
     }
 
     /// Resolve ordinary owners and explicit aliases through existing checked binding and field identities.
-    fn call_place(
+    pub(super) fn call_place(
         &self,
         expression: &Spanned<Expr>,
     ) -> Result<Option<(flow::Place, Option<flow::LoanId>)>, &'static str> {
