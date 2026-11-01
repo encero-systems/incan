@@ -8,6 +8,7 @@ use incan_semantics_core::SymbolOrigin;
 
 mod admission;
 mod checked;
+mod copy;
 pub(super) mod flow;
 pub(super) mod projection;
 mod report;
@@ -91,6 +92,7 @@ impl TypeChecker {
         {
             return;
         }
+        self.retain_input_copy_values(&identity, span);
         let output = match source::build(self, callable, span, &identity) {
             Ok(graph) => match flow::analyze(&graph) {
                 Ok(analysis) => {
@@ -2069,12 +2071,78 @@ mod tests {
                 .any(|conflict| matches!(conflict.kind, flow::ConflictKind::Moved(_)))
         );
         let source = "def consume(value: Owned[str]) -> bool:\n    return value == \"x\"\ndef use() -> None:\n    value = \"x\"\n    result = consume(value)\n    print(value)\n";
+        for erased in [flow::Access::Move, flow::Access::Read] {
+            let mut checker = checked(source)?;
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0126"))
+            );
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let function = program
+                .declarations
+                .iter()
+                .find_map(|declaration| match &declaration.node {
+                    crate::ast::Declaration::Function(function) if function.name == "use" => Some(function),
+                    _ => None,
+                })
+                .ok_or("missing use function")?;
+            let owner = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .keys()
+                .find(|owner| owner.declaration_name == "use")
+                .cloned()
+                .ok_or("missing use owner")?;
+            let InputFlow::Checked { graph, analysis } = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .get_mut(&owner)
+                .ok_or("missing use flow")?
+            else {
+                return Err("missing checked flow".into());
+            };
+            let transfer = graph
+                .nodes
+                .iter_mut()
+                .find(|node| {
+                    matches!(
+                        node.event,
+                        flow::Event::Access {
+                            access,
+                            ..
+                        } if access == erased
+                    )
+                })
+                .ok_or("missing transfer event")?;
+            transfer.event = flow::Event::Nothing;
+            *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+            assert!(analysis.conflicts.is_empty(), "{analysis:?}");
+            assert!(
+                checker.type_info.direct_input_admission(&owner, function).is_err(),
+                "accepted stored owner with erased {erased:?} event"
+            );
+        }
+        Ok(())
+    }
+
+    /// A persisted replacement cannot resurrect a consumed owner when the source only initializes another local.
+    /// Actual reassignment remains valid and resets the moved state after its value has been evaluated.
+    #[test]
+    fn source_access_cannot_invent_reinitialization() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def consume(value: Owned[str]) -> None:\n    pass\ndef use() -> None:\n    mut value = \"old\"\n    consume(value)\n    unrelated = \"safe\"\n    print(value)\n";
         let mut checker = checked(source)?;
         assert!(
             checker
                 .errors
                 .iter()
-                .any(|error| error.stable_code() == Some("INCAN-T0126"))
+                .any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{:?}",
+            checker.errors
         );
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -2086,6 +2154,16 @@ mod tests {
                 _ => None,
             })
             .ok_or("missing use function")?;
+        let replacement_span = function
+            .body
+            .iter()
+            .find_map(|statement| match &statement.node {
+                crate::ast::Statement::Assignment(assignment) if assignment.name == "unrelated" => {
+                    Some(assignment.name_span)
+                }
+                _ => None,
+            })
+            .ok_or("missing unrelated declaration")?;
         let owner = checker
             .type_info
             .protocols
@@ -2093,36 +2171,217 @@ mod tests {
             .keys()
             .find(|owner| owner.declaration_name == "use")
             .cloned()
-            .ok_or("missing use owner")?;
+            .ok_or("missing owner")?;
         let InputFlow::Checked { graph, analysis } = checker
             .type_info
             .protocols
             .explicit_input_flow
             .get_mut(&owner)
-            .ok_or("missing use flow")?
+            .ok_or("missing flow")?
         else {
             return Err("missing checked flow".into());
         };
-        let transfer = graph
+        let (read, place) = graph
             .nodes
-            .iter_mut()
-            .find(|node| {
-                matches!(
-                    node.event,
-                    flow::Event::Access {
-                        access: flow::Access::Move,
-                        ..
-                    }
-                )
+            .iter()
+            .enumerate()
+            .find_map(|(index, node)| match &node.event {
+                flow::Event::Access {
+                    place,
+                    access: flow::Access::Read,
+                    through: None,
+                } => Some((index, place.clone())),
+                _ => None,
             })
-            .ok_or("missing transfer event")?;
-        transfer.event = flow::Event::Nothing;
+            .ok_or("missing later source read")?;
+        graph.nodes.insert(
+            read,
+            flow::Node {
+                event: flow::Event::Access {
+                    place,
+                    access: flow::Access::Replace,
+                    through: None,
+                },
+                span: replacement_span,
+                successors: Vec::new(),
+            },
+        );
+        let count = graph.nodes.len();
+        for (index, node) in graph.nodes.iter_mut().enumerate() {
+            node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
+        }
         *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
-        assert!(analysis.conflicts.is_empty(), "{analysis:?}");
+        assert!(analysis.conflicts.is_empty());
         assert!(
             checker.type_info.direct_input_admission(&owner, function).is_err(),
-            "accepted stored Owned argument without its Move event"
+            "accepted an invented replacement of another source owner"
         );
+        let valid = checked(
+            "def consume(value: Owned[str]) -> None:\n    pass\ndef use() -> None:\n    mut value = \"old\"\n    consume(value)\n    value = \"new\"\n    print(value)\n",
+        )?;
+        assert!(valid.errors.is_empty(), "{:?}", valid.errors);
+        Ok(())
+    }
+
+    /// Ordinary source accesses retain exact multiplicity and producer order even when neither event changes
+    /// liveness. Recomputing an otherwise harmless Copy-only graph cannot authorize those mutations.
+    #[test]
+    fn source_accesses_preserve_multiplicity_and_order() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def read(left: Borrowed[int], right: Borrowed[int]) -> int:\n    return left + right\n";
+        let checker = checked(source)?;
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .ok_or("missing function")?;
+        let owner = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .keys()
+            .next()
+            .ok_or("missing owner")?;
+        for duplicate in [false, true] {
+            let mut facts = checker.type_info.clone();
+            let InputFlow::Checked { graph, analysis } = facts
+                .protocols
+                .explicit_input_flow
+                .get_mut(owner)
+                .ok_or("missing flow")?
+            else {
+                return Err("missing checked flow".into());
+            };
+            let reads = graph
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, node)| {
+                    matches!(
+                        node.event,
+                        flow::Event::Access {
+                            access: flow::Access::Read,
+                            ..
+                        }
+                    )
+                    .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            let [left, right] = reads.as_slice() else {
+                return Err("expected exactly two source reads".into());
+            };
+            if duplicate {
+                graph.nodes.insert(*left + 1, graph.nodes[*left].clone());
+            } else {
+                graph.nodes.swap(*left, *right);
+            }
+            let count = graph.nodes.len();
+            for (index, node) in graph.nodes.iter_mut().enumerate() {
+                node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
+            }
+            *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+            assert!(analysis.conflicts.is_empty());
+            assert!(
+                facts.direct_input_admission(owner, function).is_err(),
+                "accepted corrupted ordinary reads (duplicate: {duplicate})"
+            );
+        }
+        Ok(())
+    }
+
+    /// Access coverage must preserve source Copy evidence for nominal derives instead of treating a valid read
+    /// as a required transfer merely because a legacy ABI projection cannot describe the nominal layout.
+    #[test]
+    fn source_access_retains_checked_copy_derives() -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "def derived(value: Owned[Point]) -> Point:\n    first = value\n    return value\n@derive(Copy)\nmodel Point:\n    x: int\n",
+            "def optional(value: Owned[Option[int]]) -> Option[int]:\n    first = value\n    return value\n",
+            "def use(value: Owned[Point]) -> int:\n    return consume(value)\ndef consume(value: Owned[Point]) -> int:\n    return value.x\n@derive(Copy)\nmodel Point:\n    x: int\n",
+            "def use(value: Owned[Point]) -> Point:\n    let local: Owned[Point] = value\n    return local\n@derive(Copy)\nmodel Point:\n    x: int\n",
+            "def equal(value: Borrowed[Point]) -> bool:\n    return value == value\n@derive(Copy, PartialEq)\nmodel Point:\n    x: int\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
+        }
+        Ok(())
+    }
+
+    /// Exact owner/type decisions survive independently of graph events. Missing legacy facts, another owner's
+    /// facts and a valid recomputed graph that changes a Copy read into a move all remain refused.
+    #[test]
+    fn source_copy_evidence_is_independent_of_access_events() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "def derived(value: Owned[Point]) -> Point:\n    return value\n@derive(Copy)\nmodel Point:\n    x: int\n";
+        let checker = checked(source)?;
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        let program = crate::parser::parse(&crate::lexer::lex(source).map_err(|error| format!("{error:?}"))?)
+            .map_err(|error| format!("{error:?}"))?;
+        let declaration = program.declarations.first().ok_or("missing function")?;
+        let crate::ast::Declaration::Function(function) = &declaration.node else {
+            return Err("expected function".into());
+        };
+        let owner = checker
+            .type_info
+            .declarations
+            .function_bindings_by_span
+            .get(&declaration.span)
+            .and_then(|binding| binding.identity.as_ref())
+            .ok_or("missing function identity")?;
+        for corruption in 0..4 {
+            let mut facts = checker.type_info.clone();
+            match corruption {
+                0 => facts.protocols.explicit_input_copy.clear(),
+                1 => {
+                    let decisions = facts
+                        .protocols
+                        .explicit_input_copy
+                        .remove(owner)
+                        .ok_or("missing decisions")?;
+                    let mut other = owner.clone();
+                    other.declaration_name = "other".into();
+                    facts.protocols.explicit_input_copy.insert(other, decisions);
+                }
+                2 => {
+                    let decisions = facts
+                        .protocols
+                        .explicit_input_copy
+                        .get_mut(owner)
+                        .ok_or("missing decisions")?;
+                    decisions.clear();
+                    decisions.insert(ResolvedType::Str, true);
+                }
+                _ => {
+                    let InputFlow::Checked { graph, analysis } = facts
+                        .protocols
+                        .explicit_input_flow
+                        .get_mut(owner)
+                        .ok_or("missing flow")?
+                    else {
+                        return Err("expected checked flow".into());
+                    };
+                    let access = graph
+                        .nodes
+                        .iter_mut()
+                        .find_map(|node| match &mut node.event {
+                            flow::Event::Access { access, .. } => Some(access),
+                            _ => None,
+                        })
+                        .ok_or("missing value read")?;
+                    *access = flow::Access::Move;
+                    *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+                    assert!(analysis.conflicts.is_empty());
+                }
+            }
+            assert!(
+                facts.direct_input_admission(owner, function).is_err(),
+                "accepted Copy corruption {corruption}"
+            );
+        }
         Ok(())
     }
 

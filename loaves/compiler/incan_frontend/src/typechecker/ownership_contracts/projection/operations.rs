@@ -55,6 +55,7 @@ impl CheckedInputBody<'_> {
         if seen.invocations.len() != self.graph.invocations.len() {
             return Err("invocation dependency has no matching source call");
         }
+        self.validate_source_access_coverage(function)?;
         Ok(())
     }
 
@@ -235,10 +236,7 @@ impl CheckedInputBody<'_> {
                 .facts
                 .expr_type(operand.span)
                 .ok_or("operation operand has no checked type")?;
-            if !crate::typechecker::semantic_type_from_resolved(ty)
-                .abi_v0_facts()
-                .ownership
-                .is_trivially_copy()
+            if !self.facts.checked_input_copy_value(self.canonical_owner(), ty)?
                 && let Some((source, loan)) = self.operation_borrowed_place(operand, parameters)?
             {
                 required.push((operand.span, source, loan));

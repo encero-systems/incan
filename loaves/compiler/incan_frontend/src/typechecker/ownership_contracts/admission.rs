@@ -97,10 +97,9 @@ impl CheckedInputBody<'_> {
                         .parameters
                         .get(argument.slot)
                         .ok_or("assertion input has no checked slot")?;
-                    if !crate::typechecker::semantic_type_from_resolved(&parameter.ty)
-                        .abi_v0_facts()
-                        .ownership
-                        .is_trivially_copy()
+                    if !self
+                        .facts
+                        .checked_input_copy_value(self.canonical_owner(), &parameter.ty)?
                     {
                         return Err("explicit stored transfer in an assertion message requires conditional cleanup");
                     }

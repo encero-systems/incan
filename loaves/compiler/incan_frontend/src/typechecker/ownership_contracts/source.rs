@@ -13,7 +13,6 @@ use crate::ast::{
     MethodDecl, Param, Receiver, Span, Spanned, Statement,
 };
 use crate::symbols::{ResolvedType, SymbolKind};
-use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
@@ -427,15 +426,7 @@ impl Builder<'_> {
     /// Shared references copy their address; exclusive references transfer access. Missing Copy evidence never
     /// authorizes duplication, including inside tuples and native carriers with incomplete trait metadata.
     fn copy_value(&self, ty: &ResolvedType) -> bool {
-        match ty {
-            ResolvedType::Ref(_) => true,
-            ResolvedType::RefMut(_) => false,
-            ResolvedType::Tuple(items) => items.iter().all(|item| self.copy_value(item)),
-            _ => matches!(
-                self.checker.derive_support(ty, DeriveId::Copy),
-                super::super::derive_requirements::DeriveSupport::Supported
-            ),
-        }
+        self.checker.input_copy_value(ty)
     }
 
     /// Patterns need binding-specific dependency transfer and are unavailable until their checked projection exists.
