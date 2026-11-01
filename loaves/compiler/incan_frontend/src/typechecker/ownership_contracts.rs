@@ -401,6 +401,41 @@ mod tests {
     /// acquire the builtin's access contract merely by being named print or len.
     #[test]
     fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "def inspect(value: Borrowed[str], flag: bool) -> None:\n    assert flag, value\n    print(value)\n",
+            "def inspect(value: Borrowed[str]) -> None:\n    assert false, f\"failed: {value}\"\n    print(value)\n",
+            "def inspect(value: Borrowed[str]) -> None:\n    assert true, \"literal\"\n    assert false, value\n",
+            "def inspect(value: Borrowed[str], flag: bool) -> None:\n    assert flag, f\"first: {value}\"\n    assert flag, f\"second: {value}\"\n    return\n    print(value)\n",
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(value: Borrowed[str], mut other: BorrowedMut[str], flag: bool) -> None:\n    assert flag, f\"{value}{replace(other)}\"\n    print(value)\n",
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut other: BorrowedMut[str], flag: bool) -> None:\n    assert flag, replace(other)\n    print(other)\n",
+            "def inspect(flag: bool) -> None:\n    assert flag, consume(\"fresh\")\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n",
+            "def inspect(value: Owned[int], flag: bool) -> None:\n    assert flag, consume(value)\n    print(value)\ndef consume(value: Owned[int]) -> str:\n    return \"failed\"\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
+        }
+        for binding in ["value = \"stored\"", "let value: Owned[str] = \"stored\""] {
+            let source = format!(
+                "def inspect(flag: bool) -> None:\n    {binding}\n    assert flag, consume(value)\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n"
+            );
+            let checker = checked(&source)?;
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0123")),
+                "conditional stored transfer admitted: {source}"
+            );
+        }
+        let source = "def inspect(value: Owned[str], flag: bool) -> None:\n    assert flag, consume(value)\ndef consume(value: Owned[str]) -> str:\n    return \"failed\"\n";
+        let checker = checked(source)?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0123")),
+            "conditional parameter transfer admitted"
+        );
         let source =
             "def inspect(value: Borrowed[str]) -> None:\n    print(value)\n    assert len(value) > 0, \"empty\"\n";
         let graph = source_graph(source)?.map_err(|error| format!("{error:?}"))?;
@@ -513,6 +548,26 @@ mod tests {
             (
                 "def compound(mut value: BorrowedMut[int]) -> int:\n    value += 1\n    return value\n",
                 false,
+            ),
+            (
+                "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def branch(flag: bool) -> None:\n    let value: Owned[str] = \"owned\"\n    if flag:\n        consume(value)\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def branch(value: Owned[str], flag: bool) -> None:\n    if flag:\n        consume(value)\n    else:\n        return\n    print(\"after join\")\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def branch(flag: bool) -> None:\n    mut value = \"owned\"\n    if flag:\n        consume(value)\n    value = \"new\"\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                false,
+            ),
+            (
+                "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
+                true,
             ),
         ] {
             let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
@@ -1422,87 +1477,152 @@ mod tests {
     /// A restored graph cannot move an earlier text read past a later mutation to erase the source-order conflict.
     #[test]
     fn operation_reads_cannot_move_after_later_operands() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    print(value, replace(value))\n";
-        let mut checker = checked(source)?;
-        assert!(
-            checker
-                .errors
+        for source in [
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str]) -> None:\n    print(value, replace(value))\n",
+            "def replace(mut value: BorrowedMut[str]) -> str:\n    value = \"changed\"\n    return \"changed\"\ndef inspect(mut value: BorrowedMut[str], flag: bool) -> None:\n    assert flag, f\"{value}{replace(value)}\"\n    print(value)\n",
+        ] {
+            let mut checker = checked(source)?;
+            assert!(
+                checker
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0126"))
+            );
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let function = program
+                .declarations
                 .iter()
-                .any(|error| error.stable_code() == Some("INCAN-T0126"))
-        );
+                .find_map(|declaration| match &declaration.node {
+                    crate::ast::Declaration::Function(function) if function.name == "inspect" => Some(function),
+                    _ => None,
+                })
+                .ok_or("missing inspect")?;
+            let owner = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .keys()
+                .find(|owner| owner.declaration_name == "inspect")
+                .cloned()
+                .ok_or("missing owner")?;
+            let original = checker.type_info.clone();
+            for corruption in 0..5 {
+                checker.type_info = original.clone();
+                let InputFlow::Checked { graph, analysis } = checker
+                    .type_info
+                    .protocols
+                    .explicit_input_flow
+                    .get_mut(&owner)
+                    .ok_or("missing flow")?
+                else {
+                    return Err("missing checked flow".into());
+                };
+                let dependency = graph
+                    .operations
+                    .values()
+                    .flat_map(|operation| &operation.operands)
+                    .next()
+                    .ok_or("missing operand")?;
+                let origin = graph
+                    .nodes
+                    .iter()
+                    .position(|node| matches!(node.event, flow::Event::Borrow(id) if id == dependency.loan))
+                    .ok_or("missing creation")?;
+                let read = origin.checked_sub(1).ok_or("missing evaluated read")?;
+                // This fixture has one read/loan pair followed by one invocation borrow/read pair.
+                assert!(origin + 2 < graph.nodes.len());
+                if corruption == 0 {
+                    let before = read.checked_sub(1).ok_or("missing preceding node")?;
+                    graph.nodes[before].successors = vec![origin + 1];
+                    graph.nodes[origin + 2].successors = vec![read];
+                    graph.nodes[origin].successors = vec![origin + 3];
+                } else if corruption == 1 {
+                    graph.nodes.swap(read, origin + 1);
+                    graph.nodes.swap(origin, origin + 2);
+                    let count = graph.nodes.len();
+                    for (index, node) in graph.nodes.iter_mut().enumerate() {
+                        node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
+                    }
+                } else if corruption == 2 {
+                    graph.nodes[graph.entry].successors.clear();
+                } else if corruption == 3 {
+                    let operation = graph.operations.values().next().ok_or("missing operation")?;
+                    let last = operation.operands.last().ok_or("missing final operand")?.final_access;
+                    let continuation = graph.nodes[last].successors.clone();
+                    graph.nodes[origin].successors = vec![operation.completion_node];
+                    graph.nodes[last].successors = vec![origin + 1];
+                    graph.nodes[origin + 2].successors = continuation;
+                } else {
+                    graph.nodes[graph.entry].successors = vec![graph.entry];
+                }
+                *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
+                assert!(analysis.conflicts.is_empty(), "{analysis:?}");
+                assert!(
+                    checker.type_info.direct_input_admission(&owner, function).is_err(),
+                    "accepted invalid operation execution (corruption {corruption})"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Failure-only message evaluation cannot become unconditional, skip its dependency, or join the success path.
+    #[test]
+    fn assertion_execution_retains_failure_edges() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def inspect(value: Borrowed[str], flag: bool) -> None:\n    assert flag, f\"failed: {value}\"\n    print(value)\n";
+        let checker = checked(source)?;
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let function = program
-            .declarations
-            .iter()
-            .find_map(|declaration| match &declaration.node {
-                crate::ast::Declaration::Function(function) if function.name == "inspect" => Some(function),
-                _ => None,
-            })
-            .ok_or("missing inspect")?;
+        let declaration = program.declarations.first().ok_or("missing declaration")?;
+        let crate::ast::Declaration::Function(function) = &declaration.node else {
+            return Err("missing function".into());
+        };
         let owner = checker
             .type_info
             .protocols
             .explicit_input_flow
             .keys()
-            .find(|owner| owner.declaration_name == "inspect")
-            .cloned()
+            .next()
             .ok_or("missing owner")?;
-        let original = checker.type_info.clone();
-        for corruption in 0..5 {
-            checker.type_info = original.clone();
-            let InputFlow::Checked { graph, analysis } = checker
-                .type_info
+        for corruption in 0..4 {
+            let mut facts = checker.type_info.clone();
+            let InputFlow::Checked { graph, analysis } = facts
                 .protocols
                 .explicit_input_flow
-                .get_mut(&owner)
+                .get_mut(owner)
                 .ok_or("missing flow")?
             else {
                 return Err("missing checked flow".into());
             };
-            let dependency = graph
-                .operations
-                .values()
-                .flat_map(|operation| &operation.operands)
-                .next()
-                .ok_or("missing operand")?;
-            let origin = graph
+            let condition = graph
                 .nodes
                 .iter()
-                .position(|node| matches!(node.event, flow::Event::Borrow(id) if id == dependency.loan))
-                .ok_or("missing creation")?;
-            let read = origin.checked_sub(1).ok_or("missing evaluated read")?;
-            // This fixture has one read/loan pair followed by one invocation borrow/read pair.
-            assert!(origin + 2 < graph.nodes.len());
-            if corruption == 0 {
-                let before = read.checked_sub(1).ok_or("missing preceding node")?;
-                graph.nodes[before].successors = vec![origin + 1];
-                graph.nodes[origin + 2].successors = vec![read];
-                graph.nodes[origin].successors = vec![origin + 3];
-            } else if corruption == 1 {
-                graph.nodes.swap(read, origin + 1);
-                graph.nodes.swap(origin, origin + 2);
-                let count = graph.nodes.len();
-                for (index, node) in graph.nodes.iter_mut().enumerate() {
-                    node.successors = if index + 1 < count { vec![index + 1] } else { Vec::new() };
+                .position(|node| node.successors.len() == 2)
+                .ok_or("missing assertion split")?;
+            let failure = graph.nodes[condition].successors[0];
+            let success = graph.nodes[condition].successors[1];
+            let message = graph.operations.values().next().ok_or("missing message operation")?;
+            let tail = message
+                .operands
+                .last()
+                .ok_or("missing message dependency")?
+                .final_access;
+            match corruption {
+                0 => graph.nodes[tail].successors = vec![success],
+                1 => {
+                    graph.nodes[condition].successors = vec![failure];
+                    graph.nodes[tail].successors = vec![success];
                 }
-            } else if corruption == 2 {
-                graph.nodes[graph.entry].successors.clear();
-            } else if corruption == 3 {
-                let operation = graph.operations.values().next().ok_or("missing operation")?;
-                let last = operation.operands.last().ok_or("missing final operand")?.final_access;
-                let continuation = graph.nodes[last].successors.clone();
-                graph.nodes[origin].successors = vec![operation.completion_node];
-                graph.nodes[last].successors = vec![origin + 1];
-                graph.nodes[origin + 2].successors = continuation;
-            } else {
-                graph.nodes[graph.entry].successors = vec![graph.entry];
+                2 => graph.nodes[condition].successors = vec![success],
+                _ => graph.nodes[condition].successors.swap(0, 1),
             }
             *analysis = flow::analyze(graph).map_err(|error| format!("{error:?}"))?;
             assert!(analysis.conflicts.is_empty(), "{analysis:?}");
             assert!(
-                checker.type_info.direct_input_admission(&owner, function).is_err(),
-                "accepted invalid operation execution (corruption {corruption})"
+                facts.direct_input_admission(owner, function).is_err(),
+                "accepted assertion edge corruption {corruption}"
             );
         }
         Ok(())
