@@ -198,6 +198,9 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
+    /// The fixture names the physical Rust formatting trait, independently of Incan derive vocabulary.
+    const RUST_STD_FMT_DEBUG_SYMBOL: &str = "Debug";
+
     /// Retain checked aliases with deliberately identical nominal projections but different canonical owners/kinds.
     fn add_alias(
         manifest: &mut LibraryManifest,
@@ -263,7 +266,7 @@ mod tests {
         add_alias(
             &mut manifest,
             "NativeDebug",
-            SymbolOrigin::RustCrate(vec!["std".into(), "fmt".into(), "Debug".into()]),
+            SymbolOrigin::RustCrate(vec!["std".into(), "fmt".into(), RUST_STD_FMT_DEBUG_SYMBOL.into()]),
             SemanticSourceTargetKind::Trait,
         )?;
         assert_eq!(public_names(&manifest), BTreeSet::from(["NativeDebug", "Record"]));
