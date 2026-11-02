@@ -114,8 +114,8 @@ build_runner() {
     [[ -x "$runner" ]] || fail "runner build produced no executable at $runner"
 }
 
-# Test every Oven unit, and every Loaf's Incan test sources from that Loaf, through the installed toolchain; dev.8 test
-# takes one source file per invocation. The expected ids cover both.
+# Test every Oven unit, and every Loaf's Incan test sources from that Loaf, through the installed toolchain, one source
+# per invocation so a source can be excluded on its own. The expected ids cover both.
 run_oven_tests() {
     local file status=0 passed failed
     for file in "$ROOT"/workspaces/oven/src/test_*.incn; do
