@@ -61,7 +61,7 @@ Existing compiler diagnostics, native debugging, engine observations and applica
 - Display authored names in supported stack, debugger, allocation, trace and profile views while preserving exact native identity.
 - Support breakpoints, stepping, call stacks and bounded value inspection against matching Incan source.
 - Let a developer explore a stopped program independently of the editor: namespaces, tabular views of models and collections, explicit evaluation in the selected frame, and where a value came from.
-- Record an execution on request, so that where a value came from can be answered after the fact, on every supported platform.
+- Record an execution on request and replay it exactly, so that where any value came from can be answered after the fact and a fix can be tried against the recorded run, on every supported platform.
 - Change code in a stopped program and continue, within declared limits.
 - Give Incan, Rust and mixed programs built by Oven one debugging experience on Linux, macOS and Windows.
 - Serve agents through the same session contract: bounded, structured answers, stable handles and questions asked by meaning.
@@ -77,8 +77,8 @@ Existing compiler diagnostics, native debugging, engine observations and applica
 - A new language-level exception model, changed panic/unwind behavior, or permission to call unsafe Rust APIs.
 - A replacement native debugger, allocator, operating-system profiler, application telemetry model, test runner or build engine.
 - Guaranteed recovery after memory corruption, complete detection of undefined behavior, or a proof of memory safety from a clean leak report.
-- Identical debugger and memory capabilities on every operating system, target or optimization level.
-- Mandatory instruction recording, deterministic replay, time-travel debugging, automatic repair or autonomous hypothesis management; RFC 126 owns investigation workflows.
+- Identical debugger and memory capabilities at every optimization level.
+- Recording every run by default, instruction-level recording, automatic repair or autonomous hypothesis management; RFC 126 owns investigation workflows.
 - Implicit evaluation of application code to display values, automatic attachment to unrelated processes, or automatic upload of captures.
 - A stable native ABI or unchanged linker spelling across compiler versions merely because names are readable.
 - A second trace store, code graph or source-identity registry, or total-size ceilings on the existing artifact store.
@@ -264,11 +264,13 @@ where> line.quantity
 
 ### Record a run and ask where a value came from
 
-A recorded run answers that question exactly. Recording selects a build in which the compiler records each assignment, construction and return in the selected code, with its source location and value. It works on every supported platform because it relies on the compiler, not on processor or operating-system tracing.
+A recorded run answers that question exactly. A recording keeps only what the program cannot recompute: what entered it from outside, such as file and network reads, the clock, randomness, the environment, its arguments and the results of foreign calls, and the order in which its threads synchronized. After the run, Oven replays the same artifact against the recording once and keeps an index of where each value came from. Recording relies on the compiler and the runtime, not on processor or operating-system tracing, so it works on every supported platform.
 
 ```sh
 incan debug --record main.incn
 ```
+
+The invoice program reads nothing from outside, so its recording holds only its arguments and environment. Every value of the run is still answerable:
 
 ```text
 where> line.quantity
@@ -281,7 +283,9 @@ where> total
   160   total += line_total(line)     main.incn:15   iteration 1, line.product = "Keyboard"
 ```
 
-The recording outlives the process. After it exits, the same questions get the same answers from the capture, without running anything again. Recording costs time and storage, so it is opt-in and bounded to the selected code.
+A provenance answer stays in the project's own code. A value produced by a dependency is reported as returned by that call, with the arguments it received, and the session goes inside the dependency only when asked. A session over a recording can also stop at any recorded point, earlier as well as later than the current one.
+
+The recording outlives the process. After it exits, the same questions get the same answers from the index, without running the program again. A recording can also be replayed against a changed build, for example after a fix to `line_total`, to see what the fix does to the exact recorded run. The result is reported as a replay against changed code, and the replay stops with a report at the first point where the changed code asks for an input the recording does not contain. Recording costs time and storage in proportion to what enters the program, not to how much it computes, and it is opt-in.
 
 ### Change code and continue
 
@@ -356,6 +360,7 @@ Follow-up questions refer to handles instead of repeating earlier answers:
 {"op": "where", "session": "s1", "value": "v3.quantity"}
 {"op": "rows", "session": "s1", "value": "v7", "from": 100, "count": 50}
 {"op": "compare", "captures": ["run-41", "run-42"], "value": "total"}
+{"op": "replay", "capture": "run-41", "against": "current"}
 ```
 
 Each answer names its source locations and identities, states what it left out and why, and fits a declared size. A handle stays valid for the session or capture it belongs to. The terminal client and editors use the same operations; nothing here is agent-only.
@@ -519,7 +524,7 @@ Collections and models must support bounded tabular views: rows for list and map
 
 An evaluation must be an explicit request. Its expression language is the selected frame's language. It must be checked against the selected frame's scope and types, as source written at that location would be, and must be refused with an ordinary diagnostic when it does not check. An evaluation that only reads values must run no code in the stopped process. An evaluation that calls program code must be requested as such; it runs in the stopped process, using code produced by the same compiler identity that built the artifact, and its result must say that code ran. A result must identify the frame and execution it was evaluated in. Evaluation must never rerun the program or reconstruct a value from current source.
 
-The session must be able to report a value's provenance and must label each answer as static or observed. A static answer lists the declarations, assignments and constructions that can reach the use, from checked bodies. An observed answer reports what produced the value in this execution: the binding visible at the stop, and, in a recorded execution, the recorded chain of assignments and constructions. Provenance that is neither statically known nor observed must be reported as unavailable, not inferred from current source.
+The session must be able to report a value's provenance and must label each answer as static or observed. A static answer lists the declarations, assignments and constructions that can reach the use, from checked bodies. An observed answer reports what produced the value in this execution: the binding visible at the stop, and, in a recorded execution, the chain of assignments, constructions and calls that produced it, from the recording's provenance index. Provenance that is neither statically known nor observed must be reported as unavailable, not inferred from current source.
 
 The terminal client, editor clients and agents must use the same session contract. Editor integration should use the Debug Adapter Protocol, so that an editor needs no Incan-specific debugger.
 
@@ -531,9 +536,15 @@ The language server must offer evaluation of pure expressions with constant inpu
 
 ### Recorded executions
 
-A recorded execution must use an artifact built for recording, in which compiled code records assignments, constructions and returns in the selected code with their source locations, values and ordering. Recording must not change the program's semantics. It must be available on every supported platform and must not depend on processor or operating-system tracing facilities.
+A recorded execution must use an artifact built for recording. The recording must keep every input the execution cannot recompute: the results of operations that reach the host, including those receipted under RFC 104, the clock, randomness, the environment, arguments, the results of calls into foreign code, and the order of synchronization between threads. Recording must not change the program's semantics. It must be available on every supported platform and must not depend on processor or operating-system tracing facilities. Recorded content must be stored by content identity, so that content already in the store is not stored again.
 
-A recording must state its scope, its bounds and what it omitted. Values of secret types (RFC 103) must be redacted when recorded, never stored in plaintext. Queries against a completed recording must run nothing and must return the same answer to the same question. Recording overhead must be measured and disclosed with the recording.
+Values must be recomputed by replaying the same artifact against the recording. Replay must perform no operation on the host; every recorded operation's result must come from the recording. Replay must reproduce the recorded execution exactly. Where it cannot, for example because memory shared with another process changed or unsafe or foreign code raced, it must report the first point of divergence and must not present anything after it as observed.
+
+A recording must state its scope, what it omitted and the overhead measured while recording. Values of secret types (RFC 103) must be redacted when recorded, never stored in plaintext. Replay past a redacted input requires the secret to be supplied again; otherwise replay stops at that input and later values are reported as unavailable.
+
+The provenance index must be built once, by a replay after the run, and kept with the recording. Queries against a completed recording must read that index, run nothing and return the same answer to the same question. A provenance answer must stay in the project's own code: a value produced by a dependency is reported as returned by that call, with its arguments, and the answer goes inside the dependency only on request. A session over a recording may stop at any recorded point, earlier or later than the current one.
+
+A recording may be replayed against a different build of the same program. The result must be reported as a replay against changed code, and replay must stop with a divergence report at the first input the changed code requests that the recording does not contain.
 
 ### Changing values and code
 
@@ -613,7 +624,10 @@ A claimed support profile must provide conformance evidence for the following ca
 | Constant that can never satisfy its constraint; outside value that fails one | Diagnostic before running; construction-time failure naming field, value and construction site. |
 | Edit-time evaluation: pure call, effectful expression | Result naming the interpreted functions; effectful expression refused as needing a run. |
 | Provenance without and with a recording | Static candidates labeled static; recorded chain labeled observed; same answer after the process exits. |
-| Recording with a secret value | Secret redacted at record time; recording states scope, bounds, omissions and overhead. |
+| Recording with a secret value | Secret redacted at record time; replay without the secret stops at that input; recording states scope, omissions and overhead. |
+| Recorded run that reads a file, the clock and randomness; replay; stop at an earlier point | Replay performs no host operation and reproduces every value; the file's content stored once by content; values at the earlier point as recorded. |
+| Replay after shared memory changed, or after a race in unsafe code | Divergence reported at its first point; nothing after it presented as observed. |
+| Replay against a fixed build | Reported as a replay against changed code; stops at the first input the recording does not contain. |
 | Code change: function body, then a model field | Later calls use the new body while the running call keeps the old one; the layout change refused with a restart diagnostic. |
 | Agent request with an oversized answer | Bounded response with continuation handles; follow-up through a handle without repeating the answer. |
 | Linux, macOS and Windows | The same contract and reports on each; capability report names the engine. |
@@ -656,7 +670,8 @@ Explicit capture retains selected observations and references to the artifacts n
 - **evcxr**, Rust's interactive shell and Jupyter kernel, compiles each snippet into a small library, loads it into a running process and keeps variables between snippets. It shows that compile-and-load evaluation works, at the cost of a compilation per snippet.
 - **rust-analyzer** interprets Rust's intermediate representation to evaluate constants in the editor, and **Miri** interprets it to detect undefined behavior: interpretation over checked code is a working alternative to compiling each expression.
 - **Dioxus's subsecond** replaces functions in a running Rust process: calls go through a jump table, and only changed code is compiled and linked against the running program. It does not migrate state when a type's layout changes.
-- **Pernosco**, built on rr recordings, lets a developer click a value and see where it came from. It requires a recording made through processor facilities on one operating system and processor family.
+- **rr and Pernosco.** rr records only what enters a process and the order of its threads, and replays the rest exactly; it relies on processor facilities on one operating system. Pernosco replays an rr recording once to build a database, so that a developer can click a value and see where it came from.
+- **Replay.io** records a browser's inputs and replays them, so that a print statement added after the run shows its output for every iteration. **Elm's and Redux's time-travel debuggers** record only the messages a program received and recompute its state from them.
 - **PyCharm's scientific mode** combines a variables view, tabular data viewers and evaluation in the stopped frame. It sets the experience bar for exploring a stopped program.
 
 ## Alternatives considered
@@ -670,13 +685,16 @@ Explicit capture retains selected observations and references to the artifacts n
 - **Show no values in ordinary failures.** Keeps default output smallest, but hides the single most useful fact about a failed comparison, which the program has already computed. Showing them needs no stack capture and no second evaluation.
 - **Show the stack and frame values by default.** Contradicts RFC 131's off-by-default stack policy, costs every failing run, and exposes values that only a debugger session or an explicit capture should reveal.
 - **Keep Rust and Incan debugging separate.** Simpler to build, but a mixed program would get two stacks, two failure formats and two sessions for one execution, with no stepping across the boundary.
-- **Record executions through processor tracing, as record-and-replay debuggers do.** Gives complete recordings, but the established tools need specific processors and one operating system. Compiler-emitted recording works everywhere and records in source terms.
+- **Record through processor and operating-system facilities, as rr does.** Records any code completely, but needs specific processors and one operating system. Recording at the boundaries the compiler and runtime own works everywhere.
+- **Record every value at every step, as Chronon for Java and GDB's record mode do.** Answers everything, but slows the program many times over, and storage grows with the computation rather than with its inputs.
+- **Record only events and call arguments chosen in advance, as .NET IntelliTrace does.** Cheap, but a question nobody anticipated needs a second run, which may not reproduce the failure.
+- **Keep only a snapshot of each frame at the failure, as post-mortem debuggers and error reporters do.** Shows the final state, but cannot say where a value came from.
 - **Write a debugger engine.** Would remove a dependency, but means separate process-control, debug-information and unwinding layers for each operating system. The suite's value is above the engine.
 - **Give agents a separate interface.** Would let the human interface stay unstructured, but splits one debugging fact into two presentations that can drift. Bounded, structured answers serve people's tools as well.
 
 ## Drawbacks
 
-Source debugging and observer integration require a maintained platform and toolchain support matrix. Retaining matching source and debug artifacts consumes storage and can expose implementation details. Memory instrumentation and sampling change execution costs, and some faults prevent complete capture. Recording and patchable artifacts are further artifact kinds to build, identify and qualify. Versioned symbol formats and typed observation outcomes impose compatibility work. The suite also adds command concepts; the benefit depends on keeping ordinary workflows small and unsupported cases explicit.
+Source debugging and observer integration require a maintained platform and toolchain support matrix. Retaining matching source and debug artifacts consumes storage and can expose implementation details. Memory instrumentation and sampling change execution costs, and some faults prevent complete capture. Recording and patchable artifacts are further artifact kinds to build, identify and qualify. Building a recording's provenance index costs one replay of the run, and effects outside the recorded boundaries, such as memory shared with another process or races in unsafe code, can only be reported as divergence. Versioned symbol formats and typed observation outcomes impose compatibility work. The suite also adds command concepts; the benefit depends on keeping ordinary workflows small and unsupported cases explicit.
 
 ## Implementation architecture (non-normative)
 
@@ -685,17 +703,17 @@ Source debugging and observer integration require a maintained platform and tool
 - **Values.** Oven reads values from the process through the engine and presents Incan and Rust values from the layout and type facts the compiler writes, not from the engine's own type formatting or per-debugger scripts, so values look the same on every platform.
 - **Debug artifacts.** A build stores debug information, source maps and layout facts in the Loaf's entry of the local store; the session reads them from there by artifact identity.
 - **Evaluation.** Read-only expressions are interpreted over checked bodies against values read from the stopped process; the same interpreter evaluates pure expressions in the language server. Expressions that call program code are compiled as a small function against the frame's types, by the compiler identity that built the artifact, then loaded into the process and called.
-- **Recording.** A recording artifact is compiled with instrumentation that writes assignments, constructions and returns, with locations, to a bounded buffer. Static provenance comes from checked bodies and the code graph.
+- **Recording and replay.** A recording artifact records at the boundaries where inputs enter: the runtime's host operations, which already carry RFC 104 receipts, calls into foreign code, and thread synchronization. Safe Incan and Rust code has no data races, so the synchronization order is enough to replay threads exactly. After the run, Oven replays the artifact with the recorded results supplied and writes the provenance index to std.db. Static provenance comes from checked bodies and the code graph.
 - **Patching.** A patchable artifact routes calls to patchable functions through an indirection table. Applying a change compiles only the changed functions, links them against the running program's symbols and updates the table.
 - **Storage.** Captures and recordings are typed records stored through std.db (RFC 165) within the established artifact lifecycle.
 
 ## Layers affected
 
 - **Compiler diagnostics and semantic identity:** stable codes, source-anchor projection, declaration provenance, constants that can never satisfy their constraints, and shared rendering contracts.
-- **Checked bodies and native lowering:** source scopes, local names, assertion operands, static value provenance, recording instrumentation, patchable call indirection and generated-frame relationships.
+- **Checked bodies and native lowering:** source scopes, local names, assertion operands, static value provenance, recording at foreign-call and synchronization boundaries, replay, patchable call indirection and generated-frame relationships.
 - **Native backend and artifact distribution:** target debug information carrying Incan source lines and scopes, symbol identity, recording and patchable artifacts, matching source/debug artifacts stored with the Loaf, and relocation.
 - **Language server:** static provenance, edit-time evaluation of pure expressions and the shared read-only interpreter.
-- **Runtime and standard library:** panic/assertion observations, safe value representations, telemetry correlation and checked foreign boundaries.
+- **Runtime and standard library:** panic/assertion observations, safe value representations, recorded host-operation results and their replay, telemetry correlation and checked foreign boundaries.
 - **Platform and Oven tooling:** the debugging session on Linux, macOS and Windows, observer capability discovery, process scope, capture lifecycle and storage, code patching, memory/profiling operations, report projections and the structured agent contract over MCP.
 - **Debugger and editor integration:** source-level control across Rust and Incan frames, bounded value inspection, namespace and tabular views, frame evaluation, exact-source validation, the Debug Adapter Protocol adapter and diagnostic parity.
 - **Tests and contract tooling:** structured failure observations and support-profile conformance.
@@ -704,8 +722,4 @@ Source debugging and observer integration require a maintained platform and tool
 
 - Linux, macOS and Windows are supported with one contract. LLDB is the proposed engine on every platform; platform-specific limitations are dealt with during implementation and do not change the contract.
 - Debug information, source maps and layout facts live with the Loaf in the local store. The session asks the Loaf for them and makes no network request at debug time; a Loaf published without source still carries its debug information.
-
-## Unresolved questions
-
-- What does a recording record by default: all code in the project, the selected modules, or only functions named in the request? The default sets the overhead and storage of `--record`, and what provenance can answer without a second run.
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- A recording keeps what the execution cannot recompute: host-operation results, the clock, randomness, the environment, arguments, foreign-call results and the order of thread synchronization. Values are recomputed by replay, which builds the provenance index once. Answers stay in the project's own code and go into a dependency only on request.

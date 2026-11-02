@@ -81,7 +81,7 @@ Generated Rust is not the source authority, public debugging contract, or requir
 ## Non-Goals
 
 - Replacing existing native debugger engines, editor interfaces, compiler services, or the test runner.
-- Universal deterministic replay, arbitrary reverse execution, or recovery of information that was never captured.
+- Universal deterministic replay, arbitrary reverse execution, or recovery of information that was never captured. RFC 167 defines recorded executions of Oven-built programs and their replay within declared boundaries; investigations reference those recordings.
 - Making an effect receipt a full execution trace, a telemetry span a proof, or a passing reproduction proof of general correctness.
 - Implementing RFC 111's verifier, RFC 105's rules, or RFC 106's graph extraction inside Oven.
 - Making basic debugging depend on the complete RFC 121 type substrate or every optional integration.
