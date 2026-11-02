@@ -96,7 +96,8 @@ def package_template(declaration: &NominalDeclaration) -> bool:
 
 def retains_declaration(declarations: &list[NominalDeclaration], declaration: &NominalDeclaration) -> bool:
     """Reuse only an identical canonical declaration with the same closed specialization key."""
-    for retained in declarations:
+    for position in range(len(declarations)):
+        retained = borrowed_at(declarations, position)
         if retained.name == declaration.name and retained.canonical == declaration.canonical:
             return true
     return false

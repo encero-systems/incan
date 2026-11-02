@@ -598,6 +598,41 @@ def location(span: &RustSpan, source: &str, file: str) -> SourceSpan:
     return plan_span(file=file, line=number, column=1)
 
 
+pub def line_starts(source: &str) -> list[int]:
+    """Each line's starting byte offset, then the offset just past the last line, as `location` counts them."""
+    mut starts: list[int] = [0]
+    mut start = 0
+    separator = "\n"
+    for line in RustStr.split(RustString.as_str(source), RustString.as_str(separator)):
+        start += int(RustStr.len(line)) + 1
+        starts.append(start)
+    return starts
+
+
+def indexed_location(starts: &list[int], span: &RustSpan, file: str) -> SourceSpan:
+    """Map a byte offset as `location` does, by binary search over the frame's line starts."""
+    offset = int(span.start)
+    mut low = 0
+    mut high = len(starts) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if starts[middle] <= offset:
+            low = middle
+        else:
+            high = middle - 1
+    # An offset past the last line takes the line after it, at its first column.
+    if low == len(starts) - 1:
+        return plan_span(file=file, line=low + 1, column=1)
+    return plan_span(file=file, line=low + 1, column=offset - starts[low] + 1)
+
+
+def builder_location(builder: &Builder, span: &RustSpan) -> SourceSpan:
+    """Map a span in the frame's source through its line starts; a frame without them scans its source."""
+    if len(builder.line_starts) == 0:
+        return location(span, builder.source, builder.file)
+    return indexed_location(builder.line_starts, span, builder.file)
+
+
 pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map a local or proven model field into the native frame, which reserves local zero for return."""
     validate_callback_place(builder, value)?
@@ -1713,10 +1748,12 @@ def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) 
     # Receipts are minted by the frame's own source module, which for an imported body is not the entry module.
     if not block.unsafe_acknowledgments_valid(builder.module_identity):
         return Err("unsupported Body IR invalid unsafe acknowledgment receipt or enclosing scope")
-    for statement in block.stmts:
+    # Borrow each statement: a copied statement would copy every block nested inside it.
+    for position in range(len(block.stmts)):
+        statement = borrowed_at(block.stmts, position)
         match lower_statement(module, builder, statement):
             Err(reason) =>
-                site = location(statement.span, builder.source, builder.file)
+                site = builder_location(builder, statement.span)
                 return Err(f"{reason} at {site.file}:{site.line}:{site.column}")
             Ok(_) => pass
         if builder.closed[builder.current]:
@@ -1726,7 +1763,7 @@ def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) 
 
 pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &RustStatement) -> Result[None, str]:
     """Preserve statement order and refuse constructs outside the supported slice."""
-    mut span = location(statement.span, builder.source, builder.file)
+    mut span = builder_location(builder, statement.span)
     match builder.anchor:
         Some(site) => span = site
         None => pass
@@ -2765,6 +2802,7 @@ def lifted_frame(
         current=0,
         source=builder.source,
         file=builder.file,
+        line_starts=builder.line_starts,
         module_identity=builder.module_identity,
         callable_identity=None,
         loops=[],
@@ -9800,6 +9838,7 @@ def body_builder(
             current=0,
             source=source,
             file=file,
+            line_starts=line_starts(source),
             module_identity=body_module_identity(body)?,
             callable_identity=body.canonical.clone(),
             loops=[],
@@ -9894,7 +9933,7 @@ def lower_entrypoint_effect(effect: &RustEntrypointEffect, mut builder: Builder)
     """Lower one retained effect; its explicit interop type also preserves the enum import in legacy bake emission."""
     match effect:
         RustEntrypointEffect.PrintText(text=text, span=source_span) =>
-            span = location(source_span, builder.source, builder.file)
+            span = builder_location(builder, source_span)
             value = owned_literal(builder, str(text), span)
             output = temporary(builder, PlanType.Unit, span)
             external_call(
@@ -9984,8 +10023,11 @@ def frame_locals(
     iterators = list_iterator_locals(body.block)
     taking = taking_iterator_locals(body.block)
     pairs = pair_generator_locals(body)
+    starts = line_starts(source)
     mut locals = [Local(ty=return_type, span=span)]
-    for local in body.locals:
+    # Borrow each local and parameter: every frame types every local, so copied declarations cost per frame.
+    for local_position in range(len(body.locals)):
+        local = borrowed_at(body.locals, local_position)
         if int(local.id.index()) + 1 != len(locals):
             return Err("Body IR local order disagrees with LocalId")
         mut ty = PlanType.Unit
@@ -10003,7 +10045,8 @@ def frame_locals(
                 )?
         index = int(local.id.index()) + 1
         ty = local_representation(body, index - 1, ty)
-        for parameter in body.params:
+        for parameter_position in range(len(body.params)):
+            parameter = borrowed_at(body.params, parameter_position)
             if parameter.local == local.id and parameter.input_access != IncanInputAccess.Inferred:
                 if index in taking or index in iterators or index in pairs:
                     return Err("unsupported Body IR explicit input iteration storage")
@@ -10027,10 +10070,11 @@ def frame_locals(
             match generator_shape(ty):
                 Some((leaf, depth)) => ty = PlanType.GeneratorMutRef(leaf, depth)
                 None => ty = list_parameter_type(ty, false)
-        for parameter in body.params:
+        for parameter_position in range(len(body.params)):
+            parameter = borrowed_at(body.params, parameter_position)
             if parameter.local == local.id:
                 ty = stored_parameter_type(body, parameter, parameter_representation(body, index - 1, ty)?)?
-        locals.append(Local(ty=ty, span=location(local.span, source, file)))
+        locals.append(Local(ty=ty, span=indexed_location(starts, local.span, file)))
     return Ok(locals)
 
 
@@ -10087,7 +10131,9 @@ def frame_parameters(
 ) -> Result[list[Parameter], str]:
     """Build declaration-ordered parameters from their checked frame storage and source locations."""
     mut parameters: list[Parameter] = []
-    for parameter in body.params:
+    starts = line_starts(source)
+    for parameter_position in range(len(body.params)):
+        parameter = borrowed_at(body.params, parameter_position)
         ty = frame_parameter_type(
             constructors,
             module.nominal_declarations,
@@ -10102,7 +10148,7 @@ def frame_parameters(
         match parameter.default:
             CallableParamDefault.Required => pass
             _ =>
-                local = body.locals[int(parameter.local.index())]
+                local = borrowed_at(body.locals, int(parameter.local.index()))
                 declared = body_frame_type(
                     constructors,
                     module.nominal_declarations,
@@ -10116,7 +10162,7 @@ def frame_parameters(
         mut name = str(parameter.name)
         if name == "self":
             name = "__incan_self"
-        parameters.append(Parameter(name=name, ty=ty, span=location(parameter.span, source, file)))
+        parameters.append(Parameter(name=name, ty=ty, span=indexed_location(starts, parameter.span, file)))
     return Ok(parameters)
 
 

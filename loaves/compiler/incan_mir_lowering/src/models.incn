@@ -418,7 +418,7 @@ def field_projection(
                 PlanType.Enum(owner, _name) =>
                     if owner < len(enums) or owner >= len(enums) + len(intrinsics):
                         return Err("invalid Body IR optional projection carrier")
-                    carrier = intrinsics[owner - len(enums)]
+                    carrier = borrowed_at(intrinsics, owner - len(enums))
                     ty = retained_type(constructors, declarations, enums, unions, payload, intrinsics)?
                     if (
                         carrier.carrier != "Option"
@@ -439,7 +439,8 @@ def field_projection(
         _ => pass
     match root:
         PlanType.Model(owner, _name) =>
-            declaration = declarations[owner]
+            # Borrow the layout: each field step of every place reaches here, so a copied declaration dominates.
+            declaration = borrowed_at(declarations, owner)
             slot = field_slot(projection, declaration)?
             ty = stored_field_type(constructors, declarations, enums, unions, declaration, slot, intrinsics)?
             return Ok(FieldProjection(slot=slot, ty=ty))

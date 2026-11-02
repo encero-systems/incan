@@ -69,6 +69,8 @@ pub model Builder:
     pub current: int
     pub source: str
     pub file: str
+    # Each line's starting byte offset in `source`, read once per frame so that each span maps by binary search.
+    pub line_starts: list[int] = []
     pub module_identity: str
     # The enclosing checked callable authenticates per-invocation original reads; lifted anonymous frames have none.
     pub callable_identity: Option[RustCanonicalSymbolId]
