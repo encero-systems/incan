@@ -1,0 +1,12 @@
+# behavior: a loop shares its explicit iterable until the loop ends, so replacing that input inside the loop is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+def reset(mut values: BorrowedMut[list[int]]) -> None:
+    for value in values:
+        values = [value]
+
+
+def main() -> None:
+    mut values = [1, 2, 3]
+    reset(values)
+    println(values)

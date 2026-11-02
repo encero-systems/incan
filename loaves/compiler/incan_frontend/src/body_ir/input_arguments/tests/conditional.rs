@@ -86,9 +86,9 @@ fn conditional_transfers_keep_path_correct_outer_drops() -> Result<(), Box<dyn s
             body.checked_input_profile
                 .as_ref()
                 .is_some_and(|profile| profile.version == 2),
-            "conditional runtime admission remains closed"
+            "a conditional body publishes profile 2"
         );
-        assert!(body.first_representation_gap().is_some());
+        assert!(body.first_representation_gap().is_none());
     }
     Ok(())
 }
@@ -116,13 +116,17 @@ fn conditional_reinitialization_requires_every_continuing_path() -> Result<(), B
         let errors = crate::typechecker::TypeChecker::new()
             .check_program(&program)
             .err()
-            .ok_or("expected staged refusal")?;
+            .unwrap_or_default();
         assert_eq!(
             errors.iter().any(|error| error.stable_code() == Some("INCAN-T0126")),
             conflict,
             "{branches}\n{errors:?}"
         );
-        assert!(errors.iter().any(|error| error.stable_code() == Some("INCAN-T0123")));
+        // A body whose every continuing path is initialized executes; a conflicting body is refused.
+        assert!(
+            conflict || !errors.iter().any(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{branches}\n{errors:?}"
+        );
     }
     Ok(())
 }
@@ -254,8 +258,8 @@ fn conditional_profiles_retain_exact_owned_initializer_authority() -> Result<(),
         assert_eq!(profile.version, 2);
         assert_eq!(profile.owned_initializers.len(), expected);
         assert!(
-            body.first_representation_gap().is_some(),
-            "runtime admission remains closed"
+            body.first_representation_gap().is_none(),
+            "a complete conditional profile executes"
         );
         if let [initializer] = profile.owned_initializers.as_slice() {
             let source = body

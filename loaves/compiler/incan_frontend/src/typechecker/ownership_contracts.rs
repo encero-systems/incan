@@ -131,8 +131,8 @@ impl TypeChecker {
             .explicit_input_flow
             .insert(identity.clone(), output);
         let admission = match callable {
-            CallableSource::Function(function) => self.type_info.direct_input_admission(&identity, function),
-            CallableSource::Method(method) => self.type_info.method_input_admission(&identity, method),
+            CallableSource::Function(function) => self.type_info.executable_function_input(&identity, function),
+            CallableSource::Method(method) => self.type_info.executable_method_input(&identity, method),
         };
         // A refused returned view already names the offending return; admission would only repeat it.
         if let Err(reason) = admission

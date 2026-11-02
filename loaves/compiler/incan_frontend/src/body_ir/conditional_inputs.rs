@@ -94,9 +94,8 @@ impl BodyBuilder<'_, '_> {
 }
 
 impl BodyBuilder<'_, '_> {
-    /// Preserve profile1 execution authority or a separately authenticated, still gated profile2 projection.
-    /// Version2 carries initializer identities for native inspection; source T0123 and kernel/publication refusal
-    /// remain independent prerequisites, including for conditional bodies without any initializer transfers.
+    /// Retain the profile the checker admitted: profile 1 for a straight-line body, profile 2 for a body with
+    /// statement-ifs, which also carries its owned initializer identities for native authentication.
     pub(super) fn checked_function_input_profile(
         &mut self,
         owner: &incan_semantics_core::CanonicalSymbolId,
@@ -105,43 +104,12 @@ impl BodyBuilder<'_, '_> {
         span: incan_semantics_core::HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::CheckedInputProfile> {
-        let projected = match self.type_info.direct_input_admission(owner, function) {
-            Ok(proof) => proof.map(|proof| (1, proof)),
-            Err(reason) => {
-                let conditional = function
-                    .body
-                    .iter()
-                    .any(|statement| matches!(statement.node, ast::Statement::If(_)));
-                match conditional.then(|| self.type_info.conditional_input_projection(owner, function)) {
-                    Some(Ok(Some(proof))) => Some((2, proof)),
-                    _ => {
-                        self.push_unsupported_stmt(reason.to_owned(), span, out);
-                        None
-                    }
-                }
-            }
-        };
-        projected.map(|(version, proof)| bir::CheckedInputProfile {
-            version,
-            owner: proof.canonical_owner().clone(),
-            owned_initializers: if version == 2 {
-                std::mem::take(&mut self.input_owned_initializers)
-            } else {
-                Vec::new()
-            },
-            parameters: params
-                .iter()
-                .enumerate()
-                .map(|(slot, parameter)| bir::CheckedInputParameter {
-                    slot,
-                    access: parameter.input_access,
-                })
-                .collect(),
-        })
+        let admitted = self.type_info.executable_function_input(owner, function);
+        self.checked_input_profile(admitted, params, span, out)
     }
 
-    /// Method frames use the straight-line profile. The receiver occupies slot 0 with its ordinary borrowed ABI;
-    /// the checker proved its access from the receiver mode.
+    /// Method frames select their profile as functions do. The receiver occupies slot 0 with its ordinary borrowed
+    /// ABI; the checker proved its access from the receiver mode.
     pub(super) fn checked_method_input_profile(
         &mut self,
         owner: &incan_semantics_core::CanonicalSymbolId,
@@ -150,7 +118,19 @@ impl BodyBuilder<'_, '_> {
         span: incan_semantics_core::HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::CheckedInputProfile> {
-        let proof = match self.type_info.method_input_admission(owner, method) {
+        let admitted = self.type_info.executable_method_input(owner, method);
+        self.checked_input_profile(admitted, params, span, out)
+    }
+
+    /// Publish an admitted profile over the frame's parameters, or report the checker's refusal in the body.
+    fn checked_input_profile(
+        &mut self,
+        admitted: Result<Option<(u32, crate::typechecker::CheckedInputBody<'_>)>, &'static str>,
+        params: &[bir::CallableParam],
+        span: incan_semantics_core::HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::CheckedInputProfile> {
+        let (version, proof) = match admitted {
             Ok(proof) => proof?,
             Err(reason) => {
                 self.push_unsupported_stmt(reason.to_owned(), span, out);
@@ -158,9 +138,13 @@ impl BodyBuilder<'_, '_> {
             }
         };
         Some(bir::CheckedInputProfile {
-            version: 1,
+            version,
             owner: proof.canonical_owner().clone(),
-            owned_initializers: Vec::new(),
+            owned_initializers: if version == 2 {
+                std::mem::take(&mut self.input_owned_initializers)
+            } else {
+                Vec::new()
+            },
             parameters: params
                 .iter()
                 .enumerate()

@@ -136,20 +136,15 @@ fn project_generic_decorated_body(
 /// Publish only a compiled export's governed signature, independently of whether its implementation is portable.
 /// Parameter passing and default computations retain their real locals; unused implementation slots are inert unit
 /// placeholders so declaration-local addresses remain stable without publishing private implementation types.
-/// Conditional cleanup profiles remain unavailable because this projection does not retain their canonical local
-/// storage and initializer assignments; a valid source execution profile alone cannot authorize publication.
+/// A conditional profile publishes like a straight-line one: the frame's signature is published, not its statements,
+/// so the initializer transfers its compiled body performed are not published either.
 pub(super) fn project_compiled_frame(
     source: &Body,
     module: &BodyIrModule,
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
-    if source.input_profile_gap().is_some()
-        || source
-            .checked_input_profile
-            .as_ref()
-            .is_some_and(|profile| profile.version != 1)
-    {
+    if source.input_profile_gap().is_some() {
         return Err(CoverageReason::UnsupportedConstruct);
     }
     let mut frame = source.clone();
@@ -160,6 +155,7 @@ pub(super) fn project_compiled_frame(
     audit.identity(identity, false)?;
     if let Some(profile) = &mut frame.checked_input_profile {
         audit.identity(&mut profile.owner, false)?;
+        profile.owned_initializers.clear();
     }
     frame.decl_id = declaration_id(identity)?;
     frame.direct_call_id = frame.decl_id.clone();
