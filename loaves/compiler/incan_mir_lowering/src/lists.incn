@@ -11,6 +11,7 @@ from rust::incan_semantics_core::body_ir import (
     Rvalue as RustRvalue,
     OwnershipFact,
 )
+from table_views import borrowed_at
 
 
 pub def list_shape(ty: PlanType) -> Option[tuple[ListLeaf, int]]:
@@ -39,8 +40,9 @@ pub def list_element(leaf: ListLeaf, depth: int) -> PlanType:
 pub def list_iterator_locals(block: &RustBlock) -> list[int]:
     """Select all builtin cursor storage; the checked initializer separately chooses borrowed or consuming storage."""
     mut result: list[int] = []
-    for statement in block.stmts:
-        result.extend(statement_iterator_locals(statement.kind))
+    # Borrow each statement: a copied statement would copy every block nested inside it.
+    for position in range(len(block.stmts)):
+        result.extend(statement_iterator_locals(borrowed_at(block.stmts, position).kind))
     return result
 
 
@@ -179,8 +181,8 @@ pub def taking_iterator_locals(block: &RustBlock) -> list[int]:
 def taking_block_locals(block: &RustBlock, iterators: list[int]) -> list[int]:
     """Keep the enclosing frame's poll set when an initializer and its poll occupy different nested blocks."""
     mut result: list[int] = []
-    for statement in block.stmts:
-        result.extend(taking_statement_locals(statement.kind, iterators))
+    for position in range(len(block.stmts)):
+        result.extend(taking_statement_locals(borrowed_at(block.stmts, position).kind, iterators))
     return result
 
 

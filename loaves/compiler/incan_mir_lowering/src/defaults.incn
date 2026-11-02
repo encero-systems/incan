@@ -300,8 +300,8 @@ pub def evaluate_default(
             # The computation runs for this construction or call, so its statements report that site.
             anchor = builder.anchor
             builder.anchor = Some(span)
-            for statement in computation.stmts:
-                lower_statement(module, builder, statement)?
+            for position in range(len(computation.stmts)):
+                lower_statement(module, builder, borrowed_at(computation.stmts, position))?
             builder.anchor = anchor
             before = builder.owned
             result = call_argument_operand(builder, computation.result, ty, span, owned, access)?

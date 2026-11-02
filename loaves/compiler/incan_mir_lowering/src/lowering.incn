@@ -3328,7 +3328,8 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
         builder.owned = join_branch_owners(builder, after, ends, owners, span)?
     builder.current = after
     # Exhaustion and break share this exit; drop the iterator once, including any unvisited items.
-    for statement in body.stmts:
+    for position in range(len(body.stmts)):
+        statement = borrowed_at(body.stmts, position)
         match statement.kind:
             RustStatementKind.IterNext(destination=_item, iterator=RustOperand.Place(read), protocol=_protocol) =>
                 receiver = scalar_place(builder, read.place, span)?

@@ -41,8 +41,8 @@ pub def pair_generator_type(ty: PlanType) -> PlanType:
 
 def collect_pairs(body: &RustBody, block: &RustBlock, mut pairs: list[int]) -> None:
     """Visit the statements in order, so a loop iterator follows the pair slot its source call filled before it."""
-    for statement in block.stmts:
-        visit_statement(body, statement.kind, pairs)
+    for position in range(len(block.stmts)):
+        visit_statement(body, borrowed_at(block.stmts, position).kind, pairs)
 
 
 def visit_statement(body: &RustBody, kind: &RustStatementKind, mut pairs: list[int]) -> None:

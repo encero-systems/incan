@@ -261,7 +261,8 @@ def retain_iteration_poll_carriers(
     file: str,
 ) -> Result[None, str]:
     """Retain Iterator::next's Option output from a checked consuming loop's concrete item type before frame lowering."""
-    for statement in block.stmts:
+    for position in range(len(block.stmts)):
+        statement = borrowed_at(block.stmts, position)
         retain_iteration_poll_statement(constructors, module, declarations, body, statement.kind, taking, file)?
     return Ok(None)
 
