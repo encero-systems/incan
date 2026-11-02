@@ -176,7 +176,8 @@ impl BodyBuilder<'_, '_> {
     }
 
     /// Borrow in place or transfer the actual owner. Conditional whole transfers require authenticated subjects
-    /// and statement-if state joins; other conditional or partial transfers remain refused without repair clones.
+    /// and statement-if or statement-loop state joins; other conditional or partial transfers remain refused without
+    /// repair clones.
     pub(super) fn explicit_place_operand(
         &mut self,
         place: bir::Place,
@@ -202,10 +203,7 @@ impl BodyBuilder<'_, '_> {
             IncanInputAccess::Exclusive => (bir::OwnershipFact::MutBorrow, false),
             IncanInputAccess::Owned if copy => (bir::OwnershipFact::Copy, false),
             IncanInputAccess::Owned => {
-                if !place.projection.is_empty()
-                    || !self.input_transfer_path_supported(local)
-                    || !self.loop_scopes.is_empty()
-                {
+                if !place.projection.is_empty() || !self.input_transfer_path_supported(local) {
                     return Err("explicit projected or conditional transfer requires checked drop obligations".into());
                 }
                 if self.is_borrowed_parameter(local) || self.is_receiver_local(local) {

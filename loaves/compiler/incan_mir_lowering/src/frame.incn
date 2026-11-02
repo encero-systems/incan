@@ -238,6 +238,18 @@ pub def drop_all_owned(mut builder: Builder, span: SourceSpan) -> None:
         drop_owned(builder, builder.owned[-1], span)
 
 
+pub def exhaust_loop(mut builder: Builder, span: SourceSpan) -> None:
+    """
+    Leave the innermost loop once its iteration is exhausted, as a `break` leaves it.
+
+    The loop's exit joins what this path still owns with what each `break` owns: an owner a later iteration would have
+    moved is still held here and drops at the join, not with the iteration that never ran.
+    """
+    builder.loop_exit_blocks[-1].append(builder.current)
+    builder.loop_exit_owners[-1].append(builder.owned)
+    builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+
+
 pub def bind_read_value(mut builder: Builder, local: int, value: Operand, span: SourceSpan) -> None:
     """
     Initialize a pattern binding with the value its read produced, and give the binding exactly what that read owns.

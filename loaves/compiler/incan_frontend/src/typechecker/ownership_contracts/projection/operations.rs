@@ -118,6 +118,26 @@ impl CheckedInputBody<'_> {
                         return Ok(false);
                     }
                 }
+                // A `while` or `for` loop can always leave through its condition or exhausted poll; a `loop` only
+                // through a `break` of its own.
+                Statement::While(loop_) => {
+                    let Condition::Expr(condition) = &loop_.condition else {
+                        return Err("operation coverage requires a checked expression condition");
+                    };
+                    self.visit_operation_expression(condition, parameters, execution, seen)?;
+                    self.visit_operation_statements(&loop_.body, parameters, execution, seen)?;
+                }
+                Statement::For(loop_) => {
+                    self.visit_operation_expression(&loop_.iter, parameters, execution, seen)?;
+                    self.visit_operation_statements(&loop_.body, parameters, execution, seen)?;
+                }
+                Statement::Loop(loop_) => {
+                    self.visit_operation_statements(&loop_.body, parameters, execution, seen)?;
+                    if !breaks_out(&loop_.body) {
+                        return Ok(false);
+                    }
+                }
+                Statement::Break(None) | Statement::Continue => return Ok(false),
                 _ => return Err("operation coverage requires the supported statement profile"),
             }
         }
@@ -404,4 +424,18 @@ impl CheckedInputBody<'_> {
             _ => Ok(None),
         }
     }
+}
+
+/// Whether a `loop` body can leave the loop: a `break` of its own, directly or in a branch. A nested loop's `break`
+/// leaves only that inner loop.
+pub(super) fn breaks_out(body: &[Spanned<Statement>]) -> bool {
+    body.iter().any(|statement| match &statement.node {
+        Statement::Break(_) => true,
+        Statement::If(branch) => {
+            breaks_out(&branch.then_body)
+                || branch.elif_branches.iter().any(|(_, body)| breaks_out(body))
+                || branch.else_body.as_deref().is_some_and(breaks_out)
+        }
+        _ => false,
+    })
 }

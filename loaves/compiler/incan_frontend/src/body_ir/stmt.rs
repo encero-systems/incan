@@ -142,9 +142,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 });
             }
             ast::Statement::If(if_stmt) => self.lower_if(if_stmt, scope, span, out),
-            ast::Statement::Loop(loop_stmt) => self.lower_loop_stmt(loop_stmt, scope, span, out),
-            ast::Statement::While(while_stmt) => self.lower_while(while_stmt, scope, span, out),
-            ast::Statement::For(for_stmt) => self.lower_for(for_stmt, scope, span, out),
+            ast::Statement::Loop(loop_stmt) => {
+                self.lower_input_loop(false, |builder| builder.lower_loop_stmt(loop_stmt, scope, span, out))
+            }
+            ast::Statement::While(while_stmt) => {
+                // A literal `true` condition never fails, so only a `break` leaves the loop.
+                let endless = matches!(&while_stmt.condition,
+                    ast::Condition::Expr(condition) if matches!(condition.node, ast::Expr::Literal(ast::Literal::Bool(true))));
+                self.lower_input_loop(!endless, |builder| builder.lower_while(while_stmt, scope, span, out))
+            }
+            ast::Statement::For(for_stmt) => {
+                self.lower_input_loop(true, |builder| builder.lower_for(for_stmt, scope, span, out))
+            }
             ast::Statement::Unsafe(region) => self.lower_unsafe_region(region, remaining, scope, span, out),
             ast::Statement::Expr(expr) => {
                 // `yield value` parses as an ordinary expression statement wrapping `ast::Expr::Yield(Some(_))`
@@ -1226,6 +1235,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let exited_loop = self.loop_scopes.pop();
         let operand = value.map(|expr| self.lower_boundary_value(expr, destination.as_ref(), scope, out));
         self.loop_scopes.extend(exited_loop);
+        self.retain_input_break();
         match (operand, target) {
             (Some(operand), Some(result_local)) => {
                 out.push(bir::Statement {

@@ -389,6 +389,7 @@ from frame import (
     forget_owned,
     drop_owned,
     drop_all_owned,
+    exhaust_loop,
     bind_read_value,
     track_rvalue_moves,
     forget_moved_arguments,
@@ -10775,6 +10776,14 @@ def list_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Construct list literals or transfer checked list values, dropping an initialized destination first."""
+    if destination.projection == Projection.Whole:
+        match borrowed_at(builder.locals, destination.local).ty:
+            PlanType.ListMutRef(leaf, depth) =>
+                # A whole exclusive list input writes through its borrow: the caller's old list drops, then the new
+                # value takes its place.
+                referent = dereferenced_place(destination, PlanType.List(leaf, depth), span)?
+                return list_assignment(builder, referent, value, span)
+            _ => pass
     if destination.projection != Projection.Whole:
         replacement = temporary(builder, place_type(builder.locals, destination), span)
         _ = list_assignment(builder, replacement, value, span)?
@@ -12301,7 +12310,7 @@ def list_next(
     builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), exhausted, next_block), span)
     builder.current = exhausted
     drop_loop_owners(builder, span)?
-    builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+    exhaust_loop(builder, span)
     builder.current = next_block
     builder.owned = owners
     target = list_root_place(builder, destination, span)?

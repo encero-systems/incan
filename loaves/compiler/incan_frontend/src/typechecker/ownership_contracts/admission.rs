@@ -63,7 +63,24 @@ fn input_statements_supported(body: &[Spanned<Statement>], conditionals: bool) -
                     .as_ref()
                     .is_none_or(|body| input_statements_supported(body, true))
         }
+        // Loops share the conditional profile: each exit and back edge is a path of the same flow graph.
+        Statement::While(loop_) if conditionals => {
+            matches!(loop_.condition, Condition::Expr(_)) && input_statements_supported(&loop_.body, true)
+        }
+        Statement::Loop(loop_) if conditionals => input_statements_supported(&loop_.body, true),
+        Statement::For(loop_) if conditionals => input_statements_supported(&loop_.body, true),
+        Statement::Break(None) | Statement::Continue if conditionals => true,
         _ => false,
+    })
+}
+
+/// Whether a body has control flow of its own, which only the conditional profile can execute.
+fn has_control_flow(body: &[Spanned<Statement>]) -> bool {
+    body.iter().any(|statement| {
+        matches!(
+            statement.node,
+            Statement::If(_) | Statement::While(_) | Statement::Loop(_) | Statement::For(_)
+        )
     })
 }
 
@@ -107,8 +124,9 @@ impl TypeCheckInfo {
         self.executable_input(owner, CallableSource::Method(method))
     }
 
-    /// A body whose straight-line projection is refused executes under profile 2 only if it has a statement-if and
-    /// its conditional projection is complete; the straight-line refusal is reported otherwise.
+    /// A body whose straight-line projection is refused executes under profile 2 only if it has control flow of its
+    /// own (statement-ifs or loops) and its conditional projection is complete. A body without control flow reports
+    /// the straight-line refusal; one with control flow reports why its conditional projection is refused.
     fn executable_input<'a>(
         &'a self,
         owner: &CanonicalSymbolId,
@@ -118,16 +136,13 @@ impl TypeCheckInfo {
             Ok(proof) => return Ok(proof.map(|proof| (1, proof))),
             Err(reason) => reason,
         };
-        if !callable
-            .body()
-            .iter()
-            .any(|statement| matches!(statement.node, Statement::If(_)))
-        {
+        if !has_control_flow(callable.body()) {
             return Err(reason);
         }
         match self.input_projection(owner, callable, true) {
             Ok(Some(proof)) => Ok(Some((2, proof))),
-            _ => Err(reason),
+            Ok(None) => Err(reason),
+            Err(conditional) => Err(conditional),
         }
     }
 

@@ -2,14 +2,16 @@
 
 use std::collections::HashSet;
 
+use super::control_flow::intersect_local_states;
 use super::{BodyBuilder, ast, bir};
 
 /// Only structural fallthrough is needed here. Ownership and exact branch topology have already been checked by
-/// the source graph; this result excludes returning arms from the lexical cleanup join without evaluating a condition.
+/// the source graph; this result excludes arms that return, break or continue from the lexical cleanup join without
+/// evaluating a condition.
 pub(super) fn reaches_join(body: &[ast::Spanned<ast::Statement>]) -> bool {
     for statement in body {
         match &statement.node {
-            ast::Statement::Return(_) => return false,
+            ast::Statement::Return(_) | ast::Statement::Break(_) | ast::Statement::Continue => return false,
             ast::Statement::If(branch) => {
                 let reaches = reaches_join(&branch.then_body)
                     || branch.elif_branches.iter().any(|(_, body)| reaches_join(body))
@@ -77,10 +79,11 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// Only statement-if scopes with explicit branch joins may transfer a canonical whole subject conditionally.
-    /// Assertion failure messages, expression conditionals and loops keep their existing deliberate refusal.
+    /// Only statement-if scopes and statement loops with explicit joins may transfer a canonical whole subject
+    /// conditionally. Assertion failure messages, expression conditionals and comprehension loops keep their
+    /// existing deliberate refusal.
     pub(super) fn input_transfer_path_supported(&self, local: bir::LocalId) -> bool {
-        self.conditional_scopes.is_empty()
+        (self.conditional_scopes.is_empty() && self.loop_scopes.is_empty())
             || (self
                 .locals
                 .get(local.index())
@@ -89,7 +92,55 @@ impl BodyBuilder<'_, '_> {
                 && self
                     .conditional_scopes
                     .iter()
-                    .all(|scope| self.input_if_scopes.contains(scope)))
+                    .all(|scope| self.input_if_scopes.contains(scope))
+                && (0..self.loop_scopes.len())
+                    .all(|depth| self.input_loops.iter().any(|tracked| tracked.depth == depth)))
+    }
+}
+
+/// One statement loop under explicit transfer tracking: the loop depth its own scope occupies, the subject state on
+/// entry and the states its `break`s leave with.
+pub(super) struct InputLoop {
+    depth: usize,
+    entry: HashSet<bir::LocalId>,
+    exits: Vec<HashSet<bir::LocalId>>,
+}
+
+impl BodyBuilder<'_, '_> {
+    /// Lower one statement loop between its entry and exit joins. The source graph has proved that no transfer
+    /// reaches the loop's back edge, so every iteration starts from the entry state; the loop leaves with the state
+    /// its exits share: each `break`'s and, when the loop can end on its own through a failed condition or an
+    /// exhausted iterable, the entry state that exit test sees.
+    pub(super) fn lower_input_loop(&mut self, natural_exit: bool, lower: impl FnOnce(&mut Self)) {
+        let entry = self.input_move_state(&self.input_subject_locals());
+        self.input_loops.push(InputLoop {
+            depth: self.loop_scopes.len(),
+            entry,
+            exits: Vec::new(),
+        });
+        lower(self);
+        let Some(tracked) = self.input_loops.pop() else {
+            return;
+        };
+        let mut exits = tracked.exits;
+        if natural_exit || exits.is_empty() {
+            exits.push(tracked.entry);
+        }
+        let subjects = self.input_subject_locals();
+        self.restore_input_move_state(&subjects, &intersect_local_states(exits));
+    }
+
+    /// A `break` leaves its innermost loop with the current path's subject state.
+    pub(super) fn retain_input_break(&mut self) {
+        let depth = self.loop_scopes.len().checked_sub(1);
+        let state = self.input_move_state(&self.input_subject_locals());
+        if let Some(tracked) = self
+            .input_loops
+            .last_mut()
+            .filter(|tracked| Some(tracked.depth) == depth)
+        {
+            tracked.exits.push(state);
+        }
     }
 }
 

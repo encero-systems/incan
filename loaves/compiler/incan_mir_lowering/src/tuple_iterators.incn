@@ -15,7 +15,7 @@ from pub::incan_mir_plan import (
     CalleeKind,
 )
 from pub::incan_mir_plan import assign as plan_assign, tuple_element_type
-from frame import Builder, temporary, terminate_call, read_place, drop_owned
+from frame import Builder, temporary, terminate_call, read_place, drop_owned, exhaust_loop
 from builtins import list_call
 from tuples import tuple_element
 from table_views import borrowed_at
@@ -140,7 +140,7 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
             builder.current = exhausted
             drop_owned(builder, storage.local, span)
-            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            exhaust_loop(builder, span)
             builder.current = selected
             builder.owned = owners
             drop_owned(builder, output.local, span)
