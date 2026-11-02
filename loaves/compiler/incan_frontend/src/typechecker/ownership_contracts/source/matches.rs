@@ -1,7 +1,9 @@
 //! Access projection for builtin carriers: `Ok`, `Err` and `Some` construction and statement `match` arms on a fresh
-//! carrier. Place scrutinees, guards and other patterns need their own checked binding access.
+//! carrier or on a local still holding a carried view. Other place scrutinees, guards and other patterns need their
+//! own checked binding access.
 
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_semantics_core::CanonicalSymbolId;
 
 use super::{Builder, Event, Path, Place, Unavailable};
 use crate::ast::{CallArg, Expr, Literal, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned};
@@ -50,19 +52,46 @@ impl Builder<'_> {
         arms: &[Spanned<MatchArm>],
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
-        let (evaluated, view) = match self.call_relation(scrutinee)?.filter(|relation| relation.carried) {
-            Some(relation) => {
+        let (evaluated, view) =
+            if let Some(relation) = self.call_relation(scrutinee)?.filter(|relation| relation.carried) {
                 let (evaluated, path) = self.evaluate_view_call(scrutinee, relation, incoming)?;
                 (evaluated, Some(path))
-            }
-            None if fresh_scrutinee(scrutinee) => (self.expression(scrutinee, incoming, false)?, None),
-            None => {
+            } else if let Some(identity) = self.bound_carrier(scrutinee) {
+                // A bound carrier's read through its loan keeps the loan live until here; the match consumes it. The
+                // arm's view reborrows that loan, keyed to the same call, so each loan keeps one local destination.
+                self.carriers.remove(&identity);
+                let path = self.aliases.get(&identity).cloned().ok_or(Unavailable {
+                    span: scrutinee.span,
+                    reason: "bound carried view has no source place".into(),
+                })?;
+                let carried = path
+                    .through
+                    .and_then(|loan| self.graph.loans.get(loan.0))
+                    .cloned()
+                    .ok_or(Unavailable {
+                        span: scrutinee.span,
+                        reason: "bound carried view has no result loan".into(),
+                    })?;
+                let evaluated = self.expression(scrutinee, incoming, false)?;
+                self.aliases.remove(&identity);
+                let exclusive = carried.kind == super::LoanKind::Exclusive;
+                let view = self.call_loan(path.clone(), exclusive, carried.writable, carried.span);
+                let evaluated = self.event(evaluated, Event::Borrow(view), scrutinee.span);
+                (
+                    evaluated,
+                    Some(Path {
+                        place: path.place,
+                        through: Some(view),
+                    }),
+                )
+            } else if fresh_scrutinee(scrutinee) {
+                (self.expression(scrutinee, incoming, false)?, None)
+            } else {
                 return Err(Unavailable {
                     span: scrutinee.span,
                     reason: "match on a stored place needs checked binding access".into(),
                 });
-            }
-        };
+            };
         let mut outgoing = Vec::new();
         for arm in arms {
             if let Some(guard) = &arm.node.guard {
@@ -132,6 +161,20 @@ impl Builder<'_> {
         ));
         self.expression(value, incoming, true)?;
         Ok(())
+    }
+
+    /// The identity of a local still holding a carried view, through parentheses.
+    fn bound_carrier(&self, expression: &Spanned<Expr>) -> Option<CanonicalSymbolId> {
+        match &expression.node {
+            Expr::Paren(inner) => self.bound_carrier(inner),
+            Expr::Ident(_) => self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .filter(|identity| self.carriers.contains(*identity))
+                .cloned(),
+            _ => None,
+        }
     }
 
     /// Bind an `Ok` or `Some` payload of a carried view's call as a view local of the caller's place under the call's

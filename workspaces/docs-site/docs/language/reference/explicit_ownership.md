@@ -177,7 +177,9 @@ Every `Ok(...)` return must carry exactly the source place, an alias of it, or a
 
 At a call site, `?` takes the view out of the carrier. On success, the expression is a returned view of the caller's substituted place: it can be bound to a new local, used as a receiver or returned as a view, as described above. On an error, the body leaves with the error, and the loan ends there; the caller's source is usable again after the call. The call borrows its source argument as a returned-view call does.
 
-A statement `match` on a carried call also takes the view out. In an `Ok(name)` or `Some(name)` arm, `name` is a view of the caller's substituted place for the arm, and the call's loan lasts while the arm uses it; like any pattern binding it follows the place it binds, so a `Reference[T]` view writes through it. An `Err` or `None` arm holds no view, so it can use or change the source. Binding the carrier itself to a local, or any other use of a carried call, is refused with `INCAN-T0123`.
+A statement `match` on a carried call also takes the view out. In an `Ok(name)` or `Some(name)` arm, `name` is a view of the caller's substituted place for the arm, and the call's loan lasts while the arm uses it; like any pattern binding it follows the place it binds, so a `Reference[T]` view writes through it. An `Err` or `None` arm holds no view, so it can use or change the source. Any other use of a carried call is refused with `INCAN-T0123`.
+
+A carried call can also be bound to a new local first. The local holds the call's loan, so the source stays borrowed until a statement `match` on the local takes the view out, exactly as a match on the call does; that match consumes the local. Applying `?` to the local, using it any other way, or matching it again is refused with `INCAN-T0123`.
 
 An `Option[Borrowed[T]]` or `Option[Reference[T]]` result with a source clause is checked the same way, with `Some(...)` in place of `Ok(...)` and `None` carrying nothing. `?` does not apply to `Option`, so its callers take the view out with `match`.
 

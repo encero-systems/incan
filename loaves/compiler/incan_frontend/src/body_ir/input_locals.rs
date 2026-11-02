@@ -42,7 +42,7 @@ impl BodyBuilder<'_, '_> {
             return None;
         }
         if !self.type_info.has_local_input_annotation(&identity) {
-            return self.lower_view_local(assignment, &identity, scope, out);
+            return self.lower_view_local(assignment, &identity, remaining, scope, span, out);
         }
         Some((|| {
             let proof = self
@@ -93,7 +93,9 @@ impl BodyBuilder<'_, '_> {
         &mut self,
         assignment: &ast::AssignmentStmt,
         identity: &CanonicalSymbolId,
+        remaining: &[ast::Spanned<ast::Statement>],
         scope: bir::ScopeId,
+        span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> Option<Result<(), String>> {
         let access = self
@@ -107,6 +109,20 @@ impl BodyBuilder<'_, '_> {
             Err(reason) => return Some(Err(reason.into())),
         };
         self.retain_input_local_binding(assignment, identity, access);
+        // A local bound to a call that carries a view stores the carrier itself, typed as the call's own result; a
+        // later match takes the view out of it at the call's substituted place.
+        if let Some(call) = self.carried_view_call(&assignment.value) {
+            self.carried_view_locals.insert(identity.clone(), call);
+            return Some((|| {
+                let ty = super::returned_views::reference_carrier(self.resolve_ty(call), access);
+                let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+                let place = self
+                    .assignment_target_place(assignment, ty, remaining, scope, span, out)
+                    .ok_or("carried view local has no checked storage")?;
+                self.finish_assignment(assignment, place, value, false, span, out);
+                Ok(())
+            })());
+        }
         Some((|| {
             let bir::Operand::Place(read) = self.lower_expr_to_operand(&assignment.value, scope, out) else {
                 return Err("returned view local has no substituted place".into());

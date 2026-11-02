@@ -91,6 +91,9 @@ struct Builder<'a> {
     graph: Graph,
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
+    /// Locals bound to a call that carries a view, not yet consumed. Each aliases the view's place under the call's
+    /// result loan, which it holds until a `match` takes the view out; any other use of it is refused.
+    carriers: BTreeSet<CanonicalSymbolId>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
@@ -222,6 +225,7 @@ fn build_graph(
         constrained: BTreeSet::new(),
         borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
+        carriers: BTreeSet::new(),
         loops: Vec::new(),
         view: None,
         view_carried: false,
@@ -382,6 +386,12 @@ impl Builder<'_> {
                         reason: "missing checked place identity".into(),
                     })?
                     .clone();
+                if self.carriers.contains(&identity) {
+                    return Err(Unavailable {
+                        span: expression.span,
+                        reason: "a bound carried view needs a match to take the view out".into(),
+                    });
+                }
                 match self.aliases.get(&identity) {
                     Some(path) => Ok(path.clone()),
                     None => Ok(Path {
@@ -673,6 +683,30 @@ impl Builder<'_> {
                 });
             }
             self.aliases.insert(root, path);
+            return Ok(incoming);
+        }
+        // A new local bound to a call that carries a view holds the call's result loan as the view's alias until a
+        // match consumes it.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && root.kind == SemanticSourceTargetKind::Local
+            && let Some(relation) = self
+                .call_relation(&assignment.value)?
+                .filter(|relation| relation.carried)
+        {
+            let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
+            let loan = path.through.ok_or(Unavailable {
+                span: assignment.value.span,
+                reason: "carried view has no result loan".into(),
+            })?;
+            if self.graph.local_loans.insert(root.clone(), loan).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "local declaration has more than one ownership destination".into(),
+                });
+            }
+            self.aliases.insert(root.clone(), path);
+            self.carriers.insert(root);
             return Ok(incoming);
         }
         let source = self.optional_place(&assignment.value)?;

@@ -209,9 +209,26 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// The substituted place and access of an already lowered call carrying a view, through parentheses.
+    /// The substituted place and access of an already lowered call carrying a view, or of the call a local bound to
+    /// one still holds, through parentheses.
     pub(super) fn carried_view_of(&self, call: &ast::Spanned<ast::Expr>) -> Option<(bir::Place, IncanInputAccess)> {
-        self.carried_view_places.get(&unparenthesized(call).span).cloned()
+        let expression = unparenthesized(call);
+        let span = match &expression.node {
+            ast::Expr::Ident(_) => *self
+                .type_info
+                .resolved_identity(expression.span)
+                .and_then(|identity| self.carried_view_locals.get(identity))?,
+            _ => expression.span,
+        };
+        self.carried_view_places.get(&span).cloned()
+    }
+
+    /// The span of a call that carries a view in its result, written without `?`, through parentheses.
+    pub(super) fn carried_view_call(&self, expression: &ast::Spanned<ast::Expr>) -> Option<ast::Span> {
+        let expression = unparenthesized(expression);
+        matches!(expression.node, ast::Expr::Call(..) | ast::Expr::MethodCall(..))
+            .then_some(expression.span)
+            .filter(|span| self.type_info.selected_carried_view(*span).is_some())
     }
 
     /// For a call whose selected callee carries a view in its `Result` or `Option`, the same substituted place a
