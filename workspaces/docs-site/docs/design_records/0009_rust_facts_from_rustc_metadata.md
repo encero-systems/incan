@@ -20,7 +20,7 @@ sources:
 
 ## Context
 
-The checker needs Rust facts for `rust::` imports: types, generics, methods, fields, variants, function signatures, constants, traits, and module children. Generated Cargo workspace inspection by rust-analyzer disappeared with dev.8; rustc metadata describes the compiled crates the native driver actually links (DD-0004).
+The checker needs Rust facts for `rust::` imports: types, generics, methods, fields, variants, function signatures, constants, traits, and module children. Inspection of generated Cargo workspaces by rust-analyzer ended when Incan 0.6 removed those workspaces; rustc metadata describes the compiled crates the native driver actually links (DD-0004).
 
 ## Decision
 
@@ -56,7 +56,7 @@ Revisit when the cache layout changes or checking needs additional facts; reader
 
 ## Provenance
 
-Derives from DD-0004 (the compiler is a rustc driver), DD-0006 (Rust interop on the direct route), DD-0007 (Loaf artifacts) and RFC 041 (Rust interop metadata). It replaces the rust-analyzer inspection removed in 0.6.0-dev.8.
+Derives from DD-0004 (the compiler is a rustc driver), DD-0006 (Rust interop on the direct route), DD-0007 (Loaf artifacts) and RFC 041 (Rust interop metadata). It replaces the rust-analyzer inspection that Incan 0.6 removed.
 
 ## References
 

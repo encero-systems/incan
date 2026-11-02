@@ -147,7 +147,7 @@
 <text x="760" y="508" fill="#e4ebf2" font-size="12" font-weight="600" font-family="'Exo 2', Roboto, 'Noto Sans', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Bakery</text>
 <text x="760" y="524" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">content-named · each fact once</text>
 <text x="760" y="540" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">records + unit artifacts</text>
-<text x="760" y="556" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">IncQL-DB · mmap segments</text>
+<text x="760" y="556" fill="#98a2ad" font-size="9" font-family="'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace" text-anchor="middle">platform store · mmap segments</text>
 
 <rect x="344" y="484" width="200" height="64" rx="6" fill="#030304"/>
 <rect x="344" y="484" width="200" height="64" rx="6" fill="rgba(228,235,242,0.09)" stroke="#e4ebf2" stroke-width="1"/>

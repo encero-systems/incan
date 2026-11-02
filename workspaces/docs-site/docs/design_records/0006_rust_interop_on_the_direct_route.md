@@ -20,7 +20,7 @@ sources:
 
 ## Context
 
-0.6.0-dev.8 removes the Rust source generator, so the direct route (DD-0004) is the only route from checked Incan to an executable. The generator compiled RFC 005 interop by spelling Rust tokens and letting rustc infer the rest. The direct route instead hands rustc a plan of exact types and exact callees. Before this record, that plan held a Rust value only for a few allowlisted native items, had no callee for a call into a Rust crate, and had no path to a Rust value's own trait implementations. The checker represented a Rust type as a display string.
+Incan 0.6 removes the Rust source generator, so the direct route (DD-0004) is the only route from checked Incan to an executable. The generator compiled RFC 005 interop by spelling Rust tokens and letting rustc infer the rest. The direct route instead hands rustc a plan of exact types and exact callees. Before this record, that plan held a Rust value only for a few allowlisted native items, had no callee for a call into a Rust crate, and had no path to a Rust value's own trait implementations. The checker represented a Rust type as a display string.
 
 ## Decision
 

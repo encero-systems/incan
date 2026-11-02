@@ -19,7 +19,7 @@ sources:
 
 ## Context
 
-dev.8 removes generated Rust crates and Cargo artifact coordinates. The library-manifest index, provider plan, and SDK inventory previously split dependency authority, while standard packages also reached the checker as source modules; their replacement needs one artifact contract for every Loaf.
+Incan 0.6 removes generated Rust crates and Cargo artifact coordinates. The library-manifest index, provider plan, and SDK inventory previously split dependency authority, while standard packages also reached the checker as source modules; their replacement needs one artifact contract for every Loaf.
 
 ## Decision
 
@@ -67,7 +67,7 @@ Every package identity takes this one route. No Body IR record, lowering branch 
 
 ### The standard library
 
-The standard packages are Loaves like any other. A project depends on the standard packages whose namespaces it imports, at the versions the compiler pins. Their artifacts come from the toolchain: built from `loaves/stdlib/*` by the dev.8 compiler in a checkout, and shipped in the local incan.pub cache by an installation. No source module of the standard library is collected into a consumer.
+The standard packages are Loaves like any other. A project depends on the standard packages whose namespaces it imports, at the versions the compiler pins. Their artifacts come from the toolchain: built from `loaves/stdlib/*` in a checkout, and shipped in the local incan.pub cache by an installation. No source module of the standard library is collected into a consumer.
 
 ## Consequences
 
