@@ -58,11 +58,13 @@ use crate::body_ir::{
 /// Every provider must be rebuilt; an older profile cannot silently discard the added positional field.
 /// Version 42 retains each explicit local binding on its body, so a body that loses its checked profile still
 /// exposes the explicit-input obligation.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 42;
+/// Version 43 retains a body's returned view: the parameter slot its result borrows and the view's access.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 43;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
-/// native ABI, and a prior layout cannot silently omit initializer transfers or explicit local obligations.
-const OLDEST_SUPPORTED_VERSION: u32 = 42;
+/// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations or returned
+/// views.
+const OLDEST_SUPPORTED_VERSION: u32 = 43;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -1373,6 +1375,7 @@ mod tests {
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
             checked_input_profile: None,
             explicit_input_bindings: Vec::new(),
+            returned_view: None,
             callable_representation: None,
             named_type_identities: Default::default(),
             locals: Vec::new(),
@@ -1481,7 +1484,7 @@ mod tests {
         source.checked_input_profile.as_mut().ok_or("missing profile")?.owner = identity("other", 2);
         assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
         assert!(publication::project_compiled_frame(&source, &context, "probe", &eligible).is_err());
-        for obsolete in [36_u32, 37, 38, 39, 40, 41] {
+        for obsolete in [36_u32, 37, 38, 39, 40, 41, 42] {
             assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
         }
         Ok(())

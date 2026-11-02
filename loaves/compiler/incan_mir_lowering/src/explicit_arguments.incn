@@ -11,7 +11,8 @@ from program_context import body_at
 
 pub def validate_source_input_call(builder: &Builder, callee: &RustBody) -> Result[None, str]:
     """Authenticate the caller independently of the selected source callee; lifted frames inherit no permission."""
-    mut explicit = false
+    # A returned view obliges its caller to alias the substituted place under a checked profile.
+    mut explicit = callee.returned_view.is_some()
     for parameter in callee.params:
         if parameter.input_access != IncanInputAccess.Inferred:
             explicit = true

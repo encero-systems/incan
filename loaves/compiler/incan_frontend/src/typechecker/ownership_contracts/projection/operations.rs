@@ -6,7 +6,8 @@ use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
-use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, FunctionDecl, ListEntry, Spanned, Statement};
+use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, ListEntry, Spanned, Statement};
+use crate::typechecker::ownership_contracts::CallableSource;
 
 mod paths;
 
@@ -43,12 +44,12 @@ impl CheckedInputBody<'_> {
     /// facts. Recomputed liveness over a graph with removed consumption reads cannot substitute for this coverage.
     pub(in crate::typechecker::ownership_contracts) fn validate_operation_coverage(
         &self,
-        function: &FunctionDecl,
+        function: CallableSource<'_>,
     ) -> Result<(), &'static str> {
         let mut seen = SourceCoverage::default();
         let parameters = self.borrowed_operation_parameters(function)?;
         let execution = paths::execution_order(self.graph, function)?;
-        self.visit_operation_statements(&function.body, &parameters, &execution, &mut seen)?;
+        self.visit_operation_statements(function.body(), &parameters, &execution, &mut seen)?;
         if seen.operations.len() != self.graph.operations.len() {
             return Err("operation dependency has no matching source operation");
         }
@@ -127,11 +128,11 @@ impl CheckedInputBody<'_> {
     /// parameter's display name alone cannot authorize removing an owned snapshot.
     fn borrowed_operation_parameters(
         &self,
-        function: &FunctionDecl,
+        function: CallableSource<'_>,
     ) -> Result<BTreeSet<CanonicalSymbolId>, &'static str> {
         let contract = self.facts.declarations.ownership_contracts.get(self.canonical_owner());
         let mut parameters = BTreeSet::new();
-        for (slot, parameter) in function.params.iter().enumerate() {
+        for (slot, parameter) in function.params().iter().enumerate() {
             if matches!(
                 crate::ownership_metadata::direct_input_access(contract, slot)?,
                 IncanInputAccess::Shared | IncanInputAccess::Exclusive
@@ -205,6 +206,42 @@ impl CheckedInputBody<'_> {
                     if !seen.invocations.insert(expression.span) {
                         return Err("source call has duplicate retained evaluation");
                     }
+                }
+            }
+            Expr::MethodCall(receiver, _, _, arguments) => {
+                self.visit_operation_expression(receiver, parameters, execution, seen)?;
+                for argument in arguments {
+                    let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                        return Err("operation coverage needs checked fixed call arguments");
+                    };
+                    self.visit_operation_expression(value, parameters, execution, seen)?;
+                }
+                // Only checked invocations reach this profile; the receiver loan must name the written receiver.
+                let loan = self
+                    .graph
+                    .invocations
+                    .get(&expression.span)
+                    .and_then(|invocation| invocation.receiver)
+                    .and_then(|loan| self.graph.loans.get(loan.0))
+                    .ok_or("method call has no checked receiver loan")?;
+                // A chained receiver reborrows its inner call's result loan on the same substituted place.
+                let authenticated = match self.call_place(receiver)? {
+                    Some((source, _)) => source == loan.source,
+                    None => loan
+                        .parent
+                        .and_then(|parent| self.graph.loans.get(parent.0))
+                        .is_some_and(|parent| {
+                            parent.span == receiver.span
+                                && parent.source == loan.source
+                                && self.graph.invocations.contains_key(&receiver.span)
+                        }),
+                };
+                if !authenticated {
+                    return Err("method receiver differs from its checked source loan");
+                }
+                self.validate_call_expression(expression.span, arguments)?;
+                if !seen.invocations.insert(expression.span) {
+                    return Err("source call has duplicate retained evaluation");
                 }
             }
             Expr::List(entries) => {

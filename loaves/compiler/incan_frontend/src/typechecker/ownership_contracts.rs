@@ -14,7 +14,7 @@ pub(super) mod projection;
 mod report;
 mod source;
 
-pub(super) use admission::direct_function_boundary;
+pub(super) use admission::{direct_function_boundary, direct_method_boundary};
 pub(super) use source::{CallableSource, Unavailable};
 
 use super::TypeChecker;
@@ -108,7 +108,15 @@ impl TypeChecker {
             return;
         }
         self.retain_input_copy_values(&identity, span);
-        let output = match source::build(self, callable, span, &identity) {
+        let (graph, view_errors) = source::build_reporting_views(self, callable, span, &identity);
+        let view_refused = !view_errors.is_empty();
+        self.errors.extend(view_errors);
+        let output = match graph {
+            // A return that does not borrow the declared view source leaves the body without a proof.
+            Ok(_) if view_refused => InputFlow::Unavailable(Unavailable {
+                span,
+                reason: "returned view does not borrow its declared source".into(),
+            }),
             Ok(graph) => match flow::analyze(&graph) {
                 Ok(analysis) => {
                     self.errors.extend(report::conflicts(&graph, &analysis));
@@ -122,8 +130,13 @@ impl TypeChecker {
             .protocols
             .explicit_input_flow
             .insert(identity.clone(), output);
-        if let CallableSource::Function(function) = callable
-            && let Err(reason) = self.type_info.direct_input_admission(&identity, function)
+        let admission = match callable {
+            CallableSource::Function(function) => self.type_info.direct_input_admission(&identity, function),
+            CallableSource::Method(method) => self.type_info.method_input_admission(&identity, method),
+        };
+        // A refused returned view already names the offending return; admission would only repeat it.
+        if let Err(reason) = admission
+            && !view_refused
         {
             self.errors.push(CompileError::type_error(
                 format!("Ownership contract cannot be proved: {reason}"), span,

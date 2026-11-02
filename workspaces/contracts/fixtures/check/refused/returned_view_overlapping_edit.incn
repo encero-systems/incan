@@ -1,0 +1,24 @@
+# behavior: editing a field through its owner while a returned exclusive view of that field is still used is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+class Address:
+    pub city: str
+
+    def set_city(mut self, city: str) -> Reference[Self] from self:
+        self.city = city
+        return self
+
+
+class Customer:
+    pub name: str
+    pub address: Address
+
+    def edit_address(mut self) -> Reference[Address] from self.address:
+        return self.address
+
+
+def main() -> None:
+    mut customer = Customer(name="Sam", address=Address(city="Utrecht"))
+    mut address = customer.edit_address()
+    customer.address.city = "Amsterdam"
+    address.set_city("Rotterdam")

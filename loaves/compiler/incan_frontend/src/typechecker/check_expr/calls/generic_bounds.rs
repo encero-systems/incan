@@ -72,6 +72,7 @@ impl TypeChecker {
     ) -> ResolvedType {
         let identity = method_info.identity.clone();
         let receiver = method_info.receiver;
+        let declared_params = method_info.params.clone();
         let returns_receiver = method_info.receiver.is_some() && method_info.return_type == ResolvedType::SelfType;
         if let Some(identity) = identity.clone() {
             self.type_info.record_resolved_identity(call_site_span, identity);
@@ -89,7 +90,7 @@ impl TypeChecker {
         );
         let site = call_site_span;
         if self.errors.len() == first_error {
-            self.record_selected_method_input_call(identity.as_ref(), receiver, call_site_span);
+            self.record_selected_method_input_call(identity.as_ref(), receiver, &declared_params, call_site_span);
         }
         self.type_info.calls.body_ir_self_result_methods.remove(&site);
         if returns_receiver
@@ -171,15 +172,21 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
         callee_identity: Option<CanonicalSymbolId>,
     ) -> ResolvedType {
-        let projected =
-            match self.ownership_call_value_parameters(callee_identity.as_ref(), &info.params, None, call_span) {
-                Ok(Some(params)) => Some(FunctionInfo { params, ..info.clone() }),
-                Ok(None) => None,
-                Err(error) => {
-                    self.errors.push(error);
-                    return ResolvedType::Unknown;
-                }
-            };
+        let projected = match (
+            self.ownership_call_value_parameters(callee_identity.as_ref(), &info.params, None, call_span),
+            self.ownership_call_value_result(callee_identity.as_ref(), &info.return_type, call_span),
+        ) {
+            (Ok(None), Ok(None)) => None,
+            (Ok(params), Ok(return_type)) => Some(FunctionInfo {
+                params: params.unwrap_or_else(|| info.params.clone()),
+                return_type: return_type.unwrap_or_else(|| info.return_type.clone()),
+                ..info.clone()
+            }),
+            (Err(error), _) | (_, Err(error)) => {
+                self.errors.push(error);
+                return ResolvedType::Unknown;
+            }
+        };
         let info = projected.as_ref().unwrap_or(info);
         let errors_before_call = self.errors.len();
         let seeded_type_bindings =
@@ -1092,7 +1099,15 @@ impl TypeChecker {
         );
 
         // ---- Call-site `Self`, value-arg compatibility ----
-        let (mut params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
+        let (mut params, mut return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
+        match self.ownership_call_value_result(method_info.identity.as_ref(), &return_type, call_site_span) {
+            Ok(Some(value)) => return_type = value,
+            Ok(None) => {}
+            Err(error) => {
+                self.errors.push(error);
+                return ResolvedType::Unknown;
+            }
+        }
         match self.ownership_call_value_parameters(
             method_info.identity.as_ref(),
             &params,

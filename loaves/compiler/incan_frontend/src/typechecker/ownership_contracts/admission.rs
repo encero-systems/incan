@@ -1,7 +1,8 @@
 //! Source-profile eligibility is separate from a successfully constructed ownership graph. A complete graph may
 //! describe a source shape whose native storage or cleanup is still deliberately unavailable.
 
-use crate::ast::{BinaryOp, Condition, Expr, FunctionDecl, ParamKind, Spanned, Statement};
+use super::CallableSource;
+use crate::ast::{BinaryOp, Condition, Expr, FunctionDecl, MethodDecl, Param, ParamKind, Spanned, Statement};
 use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
@@ -12,11 +13,32 @@ pub(in crate::typechecker) fn direct_function_boundary(function: &FunctionDecl) 
     !function.is_async()
         && function.type_params.is_empty()
         && function.decorators.is_empty()
-        && function.result_source.is_none()
-        && function
-            .params
-            .iter()
-            .all(|parameter| parameter.node.kind == ParamKind::Normal && parameter.node.default.is_none())
+        && fixed_parameters(&function.params)
+}
+
+/// Concrete methods share the function frame boundary; the receiver is a borrowed slot of its own, checked with
+/// the method's receiver mode.
+pub(in crate::typechecker) fn direct_method_boundary(method: &MethodDecl) -> bool {
+    method.body.is_some()
+        && !method.is_async()
+        && method.type_params.is_empty()
+        && method.decorators.is_empty()
+        && fixed_parameters(&method.params)
+}
+
+/// Every parameter is a required positional-or-named slot.
+fn fixed_parameters(parameters: &[Spanned<Param>]) -> bool {
+    parameters
+        .iter()
+        .all(|parameter| parameter.node.kind == ParamKind::Normal && parameter.node.default.is_none())
+}
+
+/// The frame boundary of either callable form.
+fn callable_boundary(callable: CallableSource<'_>) -> bool {
+    match callable {
+        CallableSource::Function(function) => direct_function_boundary(function),
+        CallableSource::Method(method) => direct_method_boundary(method),
+    }
 }
 
 /// Recursive source shape only: full CFG/event coverage remains the authority for every retained operation.
@@ -53,7 +75,17 @@ impl TypeCheckInfo {
         owner: &CanonicalSymbolId,
         function: &FunctionDecl,
     ) -> Result<Option<CheckedInputBody<'a>>, &'static str> {
-        self.input_projection(owner, function, false)
+        self.input_projection(owner, CallableSource::Function(function), false)
+    }
+
+    /// Admit a concrete method body under the same straight-line profile; its receiver is checked as a borrowed
+    /// slot with the method's receiver mode.
+    pub(crate) fn method_input_admission<'a>(
+        &'a self,
+        owner: &CanonicalSymbolId,
+        method: &MethodDecl,
+    ) -> Result<Option<CheckedInputBody<'a>>, &'static str> {
+        self.input_projection(owner, CallableSource::Method(method), false)
     }
 
     /// Retain a fully authenticated conditional source projection for the staged version2 representation. This
@@ -63,36 +95,37 @@ impl TypeCheckInfo {
         owner: &CanonicalSymbolId,
         function: &FunctionDecl,
     ) -> Result<Option<CheckedInputBody<'a>>, &'static str> {
-        self.input_projection(owner, function, true)
+        self.input_projection(owner, CallableSource::Function(function), true)
     }
 
     /// Both representations require the same source/storage authority; only statement-if structure differs.
+    /// Method calls are admitted only as checked invocations: a complete source graph carries one for each.
     fn input_projection<'a>(
         &'a self,
         owner: &CanonicalSymbolId,
-        function: &FunctionDecl,
+        callable: CallableSource<'_>,
         conditionals: bool,
     ) -> Result<Option<CheckedInputBody<'a>>, &'static str> {
         let Some(proof) = self.checked_input_body(owner)? else {
             return Ok(None);
         };
-        if !direct_function_boundary(function) {
-            return Err("explicit inputs require a synchronous fixed source-function boundary");
+        if !callable_boundary(callable) {
+            return Err("explicit inputs require a synchronous fixed source-callable boundary");
         }
         proof.validate_local_storage()?;
-        if !input_statements_supported(&function.body, conditionals)
-            || any_expr_in_body(&function.body, |expression| {
+        if !input_statements_supported(callable.body(), conditionals)
+            || any_expr_in_body(callable.body(), |expression| {
                 matches!(
                     expression,
-                    Expr::MethodCall(..) | Expr::Index(..) | Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _)
+                    Expr::Index(..) | Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _)
                 )
             })
         {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
         }
         proof.validate_direct_call_storage()?;
-        proof.validate_assertion_transfers(&function.body)?;
-        proof.validate_operation_coverage(function)?;
+        proof.validate_assertion_transfers(callable.body())?;
+        proof.validate_operation_coverage(callable)?;
         Ok(Some(proof))
     }
 }
@@ -213,11 +246,19 @@ impl CheckedInputBody<'_> {
     }
 
     /// Require the exact carriers consumed by the first direct-call materializer. A richer source graph is useful
-    /// for diagnostics but does not authorize an indexed adaptation, method frame or implicit non-Copy repair.
+    /// for diagnostics but does not authorize an indexed adaptation or implicit non-Copy repair. A method receiver
+    /// is borrowed from existing owner storage; a temporary receiver needs its own bounded owner.
     fn validate_direct_call_storage(&self) -> Result<(), &'static str> {
         for (span, invocation) in &self.graph.invocations {
-            if invocation.receiver.is_some() {
-                return Err("explicit method inputs require their checked receiver materialization");
+            if let Some(receiver) = invocation.receiver {
+                let loan = self
+                    .graph
+                    .loans
+                    .get(receiver.0)
+                    .ok_or("explicit method receiver has no checked loan")?;
+                if !matches!(loan.source.root, super::flow::Root::Binding(_)) {
+                    return Err("explicit method receiver requires existing owner storage");
+                }
             }
             let call = self
                 .facts

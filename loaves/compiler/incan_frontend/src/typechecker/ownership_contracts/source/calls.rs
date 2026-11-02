@@ -4,8 +4,8 @@
 
 use super::super::flow::{InputEvaluation, Invocation, InvocationArgument};
 use super::{
-    Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Permission, Place, ResolvedType, Root,
-    Unavailable,
+    Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Permission, Place, Projection, ResolvedType,
+    Root, SourceSlot, Unavailable,
 };
 use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
@@ -152,13 +152,16 @@ impl Builder<'_> {
                 reason: "selected receiver contract does not match call syntax".into(),
             });
         }
+        // A direct returned view is resolved by `view_relation`; aggregate dependencies refuse here.
+        let view = crate::ownership_metadata::returned_view(contract).map_err(|reason| Unavailable {
+            span,
+            reason: reason.into(),
+        })?;
         if contract.is_some_and(|contract| {
-            contract.result_source.is_some()
-                || contract.modes.iter().any(|mode| {
-                    mode.component.parameter.is_none()
-                        || !mode.component.children.is_empty()
-                        || mode.mode == OwnershipMode::Reference
-                })
+            contract.modes.iter().any(|mode| {
+                mode.component.parameter.is_some()
+                    && (!mode.component.children.is_empty() || mode.mode == OwnershipMode::Reference)
+            })
         }) || call
             .parameters
             .iter()
@@ -174,7 +177,7 @@ impl Builder<'_> {
             span,
             reason: "missing call result type".into(),
         })?;
-        if !plain_result(result) {
+        if view.is_none() && !plain_result(result) {
             return Err(Unavailable {
                 span,
                 reason: "call result needs retained dependency facts".into(),
@@ -208,8 +211,19 @@ impl Builder<'_> {
         if let Some(receiver) = receiver {
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, receiver.span);
-            let source = self.place(receiver)?;
-            incoming = self.evaluate_place(receiver, incoming)?;
+            // A chained receiver continues on the place its inner call's returned view substituted.
+            let source = match self.view_relation(receiver)? {
+                Some(relation) => {
+                    let (evaluated, path) = self.evaluate_view_call(receiver, relation, incoming)?;
+                    incoming = evaluated;
+                    path
+                }
+                None => {
+                    let source = self.place(receiver)?;
+                    incoming = self.evaluate_place(receiver, incoming)?;
+                    source
+                }
+            };
             let mutable = call.receiver == Some(Receiver::Mutable);
             let loan = self.call_loan(source, mutable, mutable, receiver.span);
             let source_node = self.graph.nodes.len();
@@ -240,7 +254,9 @@ impl Builder<'_> {
             let source = self.optional_place(expression)?.map(|path| path.place);
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
-            let (outgoing, loan) = self.call_argument(expression, &call.parameters[slot], mode, span, incoming)?;
+            let explicit = call.kind == super::super::InputCallKind::Explicit;
+            let (outgoing, loan) =
+                self.call_argument(expression, &call.parameters[slot], mode, explicit, span, incoming)?;
             incoming = outgoing;
             let source_node = if source.is_some() || loan.is_some() {
                 Some(*incoming.first().filter(|_| incoming.len() == 1).ok_or(Unavailable {
@@ -313,6 +329,7 @@ impl Builder<'_> {
         expression: &Spanned<Expr>,
         parameter: &CallableParam,
         mode: Option<OwnershipMode>,
+        explicit_callee: bool,
         invocation: Span,
         incoming: Vec<usize>,
     ) -> Result<(Vec<usize>, Option<LoanId>), Unavailable> {
@@ -337,6 +354,20 @@ impl Builder<'_> {
             None if self.copy_value(&parameter.ty) && !parameter.is_mut => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
+            // A fresh closed value given to an explicit callee has no source to conflict with, so the parameter's
+            // inferred passing applies. Ordinary helpers keep the Copy-only profile.
+            None if explicit_callee
+                && !parameter.is_mut
+                && self.optional_place(expression)?.is_none()
+                && self
+                    .checker
+                    .type_info
+                    .expr_type(expression.span)
+                    .is_some_and(plain_result) =>
+            {
+                self.expression(expression, incoming, true)
+                    .map(|outgoing| (outgoing, None))
+            }
             _ => Err(Unavailable {
                 span: expression.span,
                 reason: "ordinary argument requires inferred access or mutable binding facts".into(),
@@ -393,7 +424,7 @@ impl Builder<'_> {
 
     /// A borrowed argument derives its permissions from the evaluated source. Exclusive access and permission to
     /// write remain separate, and reborrowing preserves the parent's dependency rather than upgrading the owner.
-    fn call_loan(&mut self, source: Path, exclusive: bool, writable: bool, span: Span) -> LoanId {
+    pub(super) fn call_loan(&mut self, source: Path, exclusive: bool, writable: bool, span: Span) -> LoanId {
         let id = LoanId(self.graph.loans.len());
         self.graph.loans.push(Loan {
             source: source.place,
@@ -408,6 +439,110 @@ impl Builder<'_> {
         });
         id
     }
+
+    /// The returned view a selected call produces, read from its callee's contract without its body.
+    pub(super) fn view_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
+        match &expression.node {
+            Expr::Paren(inner) => return self.view_relation(inner),
+            Expr::Call(..) | Expr::MethodCall(..) => {}
+            _ => return Ok(None),
+        }
+        let span = expression.span;
+        let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&span) else {
+            return Ok(None);
+        };
+        let refusal = |reason: &'static str| Unavailable {
+            span,
+            reason: reason.into(),
+        };
+        let contract = self.checker.type_info.selected_input_contract(call).map_err(refusal)?;
+        Ok(crate::ownership_metadata::returned_view(contract)
+            .map_err(refusal)?
+            .map(|view| ViewRelation {
+                exclusive: view.access == IncanInputAccess::Exclusive,
+                slot: view.source.slot.clone(),
+                fields: view.source.fields.clone(),
+            }))
+    }
+
+    /// Evaluate a call that returns a view, then borrow the substituted place: the invocation's receiver or
+    /// argument source with the declared fields. The invocation's own loans cover the whole input during the call
+    /// and end with it; afterwards only the narrower result loan stays live, under the source's parent loan.
+    pub(super) fn evaluate_view_call(
+        &mut self,
+        expression: &Spanned<Expr>,
+        relation: ViewRelation,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, Path), Unavailable> {
+        let span = expression.span;
+        let incoming = match &expression.node {
+            Expr::Paren(inner) => return self.evaluate_view_call(inner, relation, incoming),
+            Expr::MethodCall(receiver, _, _, arguments) => {
+                self.apply_call(Some(receiver), arguments, span, incoming)?
+            }
+            Expr::Call(callee, _, arguments) if matches!(callee.node, Expr::Ident(_)) => {
+                self.apply_call(None, arguments, span, incoming)?
+            }
+            _ => {
+                return Err(Unavailable {
+                    span,
+                    reason: "returned view call needs a checked callee".into(),
+                });
+            }
+        };
+        let invocation = self.graph.invocations.get(&span).ok_or(Unavailable {
+            span,
+            reason: "returned view call has no checked invocation".into(),
+        })?;
+        let base = match relation.slot {
+            SourceSlot::Receiver => invocation.receiver,
+            SourceSlot::Parameter(slot) => invocation
+                .arguments
+                .iter()
+                .find(|argument| argument.slot == slot)
+                .and_then(|argument| argument.loan),
+        }
+        .and_then(|loan| self.graph.loans.get(loan.0))
+        .cloned()
+        .ok_or(Unavailable {
+            span,
+            reason: "returned view source was not borrowed by its invocation".into(),
+        })?;
+        if !matches!(base.source.root, Root::Binding(_)) {
+            return Err(Unavailable {
+                span,
+                reason: "a returned view of a temporary cannot outlive its invocation".into(),
+            });
+        }
+        let mut place = base.source;
+        place
+            .projection
+            .extend(relation.fields.into_iter().map(Projection::Field));
+        let loan = self.call_loan(
+            Path {
+                place: place.clone(),
+                through: base.parent,
+            },
+            relation.exclusive,
+            relation.exclusive,
+            span,
+        );
+        let incoming = self.event(incoming, Event::Borrow(loan), span);
+        Ok((
+            incoming,
+            Path {
+                place,
+                through: Some(loan),
+            },
+        ))
+    }
+}
+
+/// A selected callee's returned view: its access, the source slot and the declared stored-field path.
+pub(super) struct ViewRelation {
+    exclusive: bool,
+    slot: SourceSlot,
+    fields: Vec<incan_semantics_core::CanonicalSymbolId>,
 }
 
 /// This initial call profile admits only closed scalar/owned byte-string results, with no possible retained source

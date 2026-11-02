@@ -139,4 +139,36 @@ impl BodyBuilder<'_, '_> {
                 .collect(),
         })
     }
+
+    /// Method frames use the straight-line profile. The receiver occupies slot 0 with its ordinary borrowed ABI;
+    /// the checker proved its access from the receiver mode.
+    pub(super) fn checked_method_input_profile(
+        &mut self,
+        owner: &incan_semantics_core::CanonicalSymbolId,
+        method: &ast::MethodDecl,
+        params: &[bir::CallableParam],
+        span: incan_semantics_core::HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::CheckedInputProfile> {
+        let proof = match self.type_info.method_input_admission(owner, method) {
+            Ok(proof) => proof?,
+            Err(reason) => {
+                self.push_unsupported_stmt(reason.to_owned(), span, out);
+                return None;
+            }
+        };
+        Some(bir::CheckedInputProfile {
+            version: 1,
+            owner: proof.canonical_owner().clone(),
+            owned_initializers: Vec::new(),
+            parameters: params
+                .iter()
+                .enumerate()
+                .map(|(slot, parameter)| bir::CheckedInputParameter {
+                    slot,
+                    access: parameter.input_access,
+                })
+                .collect(),
+        })
+    }
 }

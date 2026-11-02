@@ -27,7 +27,7 @@ from pub::incan_mir_plan import tuple_element_type
 from type_parameters import Instance
 from program_context import ProgramContext
 from native_type_identity import ConstructorIndex
-from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId, IncanInputAccess
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
@@ -132,6 +132,8 @@ pub model Builder:
     pub callable_name_dynamic_profile: bool = false
     # Slots whose checked value is itself a reference, rather than an owned source value stored behind a receiver borrow.
     pub reference_values: list[int] = []
+    # A returned view's access: its return borrows the declared source place. Inferred for every other frame.
+    pub returned_view: IncanInputAccess = IncanInputAccess.Inferred
 
     property nominals -> &list[RustNominalDeclaration]:
         """Borrow the module's specialized nominal table without retaining a frame-local copy."""

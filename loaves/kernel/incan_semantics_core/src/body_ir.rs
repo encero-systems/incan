@@ -1319,6 +1319,10 @@ pub struct Body {
     /// of the parameter inventory, so a body whose profile is lost still exposes its explicit-input obligation.
     #[serde(default)]
     pub explicit_input_bindings: Vec<ExplicitInputBinding>,
+    /// The result is a view of one source place, returned as a reference that borrows a parameter slot. Callers
+    /// alias the substituted place rather than holding the reference; the field path is in the ownership contract.
+    #[serde(default)]
+    pub returned_view: Option<ReturnedView>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
     /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
     ///
@@ -1464,6 +1468,16 @@ pub struct CheckedOwnedInitializer {
     pub assignment: HirSourceSpan,
 }
 
+/// A body's result borrows one slot of `Body::params` (a method's receiver is slot 0) with shared or exclusive
+/// access. The body requires a checked profile, and so does every caller.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReturnedView {
+    /// Zero-based index in the owning `Body::params` inventory.
+    pub slot: usize,
+    /// `Shared` for a `Borrowed[T]` result, `Exclusive` for a `Reference[T]` result.
+    pub access: crate::IncanInputAccess,
+}
+
 /// An explicit local binding's checked input access, retained on its body independently of the checked profile.
 ///
 /// A loan names existing storage rather than a frame slot, so the obligation is keyed by the binding's declaration
@@ -1493,10 +1507,11 @@ impl Body {
     /// ordinary. Consumers must check this relationship after canonical call resolution: a missing persisted caller
     /// profile cannot be detected from its ordinary parameter ABI alone.
     pub fn input_call_profile_gap(&self, callee: &Body) -> Option<&'static str> {
-        if callee
-            .params
-            .iter()
-            .any(|parameter| !parameter.input_access.is_inferred())
+        if callee.returned_view.is_some()
+            || callee
+                .params
+                .iter()
+                .any(|parameter| !parameter.input_access.is_inferred())
         {
             if let Some(gap) = callee.input_profile_gap() {
                 return Some(gap);
@@ -1632,7 +1647,8 @@ impl Body {
     }
 
     /// Missing or mismatched source authority cannot be replaced by parameter ABI inference. The initial profile
-    /// admits only fixed synchronous source-function frames; deferred, generic and native boundaries remain staged.
+    /// admits fixed synchronous source-function and method frames, a method's receiver keeping its ordinary borrowed
+    /// slot; deferred, generic and native boundaries remain staged.
     pub fn input_profile_gap(&self) -> Option<&'static str> {
         let explicit = self
             .params
@@ -1642,17 +1658,32 @@ impl Body {
             if explicit {
                 return Some("explicit input access lacks a checked body profile");
             }
+            if self.returned_view.is_some() {
+                return Some("returned view lacks a checked body profile");
+            }
             return (!self.explicit_input_bindings.is_empty())
                 .then_some("explicit local binding lacks a checked body profile");
         };
         if profile.version != 1 || self.canonical.as_ref() != Some(&profile.owner) {
             return Some("explicit input profile has an unsupported version or different canonical owner");
         }
+        if let Some(view) = &self.returned_view {
+            let source = self.params.get(view.slot);
+            if !matches!(
+                view.access,
+                crate::IncanInputAccess::Shared | crate::IncanInputAccess::Exclusive
+            ) || source.is_none_or(|source| source.input_access == crate::IncanInputAccess::Owned)
+            {
+                return Some("returned view must borrow an existing parameter slot with shared or exclusive access");
+            }
+        }
         if !profile.owned_initializers.is_empty() {
             return Some("straight-line input profile cannot authorize conditional initializer cleanup");
         }
-        if profile.owner.kind != crate::SemanticSourceTargetKind::Function
-            || self.is_async
+        if !matches!(
+            profile.owner.kind,
+            crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::Method
+        ) || self.is_async
             || self.is_generator()
             || !self.type_parameters.is_empty()
             || self.extern_delegation.is_some()
@@ -5630,6 +5661,7 @@ mod tests {
             return_type: IncanType::Primitive(IncanPrimitiveType::Int),
             checked_input_profile: None,
             explicit_input_bindings: Vec::new(),
+            returned_view: None,
             callable_representation: None,
             named_type_identities: Default::default(),
             locals: vec![

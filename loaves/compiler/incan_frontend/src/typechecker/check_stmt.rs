@@ -930,9 +930,13 @@ impl TypeChecker {
             || (self.lookup_variable_info_in_scope_chain(&assign.name).is_none()
                 && self.lookup_static_info(&assign.name).is_none());
         let defer_local = new_local
-            && self
-                .current_body_identity()
-                .is_some_and(|owner| owner.kind == incan_semantics_core::SemanticSourceTargetKind::Function);
+            && self.current_body_identity().is_some_and(|owner| {
+                matches!(
+                    owner.kind,
+                    incan_semantics_core::SemanticSourceTargetKind::Function
+                        | incan_semantics_core::SemanticSourceTargetKind::Method
+                )
+            });
         let annotated_ty = assign
             .ty
             .as_ref()

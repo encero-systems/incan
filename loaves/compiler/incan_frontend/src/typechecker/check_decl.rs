@@ -6829,7 +6829,7 @@ impl TypeChecker {
             &func.params,
             super::ownership_contracts::direct_function_boundary(func),
         );
-        let return_type = self.resolve_callable_return_annotation(&func.return_type);
+        let return_type = self.resolve_callable_return_annotation(&func.return_type, func.result_source.is_some());
         self.record_function_ownership(func, decl_span, &resolved_param_types, &return_type);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
@@ -6869,7 +6869,11 @@ impl TypeChecker {
         } else {
             YieldContext::Disallowed
         };
-        self.symbols.set_return_type(return_type.clone());
+        let function_identity =
+            self.symbols
+                .module_declaration_identity(&func.name, SemanticSourceTargetKind::Function, decl_span);
+        self.symbols
+            .set_return_type(self.returned_value_type(&function_identity, &return_type));
 
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();
@@ -7112,8 +7116,9 @@ impl TypeChecker {
 
     /// Resolve a callable return annotation and apply its nominal, nested-trait and Rust lifetime restrictions in
     /// order. Signature owners retain responsibility for route-specific checks and recording their final binding.
-    fn resolve_callable_return_annotation(&mut self, annotation: &Spanned<Type>) -> ResolvedType {
-        let ty = self.resolve_type_checked(annotation);
+    /// A result with a `from` source defers its outer ownership mode to the declaration's returned-view check.
+    fn resolve_callable_return_annotation(&mut self, annotation: &Spanned<Type>, has_source: bool) -> ResolvedType {
+        let ty = self.resolve_type_checked_deferring(annotation, |_| has_source);
         self.refuse_unbounded_nominal_type_arguments(&ty, annotation.span);
         self.refuse_trait_type_nested_in_annotation(&ty, annotation.span);
         self.refuse_lifetime_bearing_rust_type(&ty, annotation.span);
@@ -7504,8 +7509,11 @@ impl TypeChecker {
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
-        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params, false);
-        let return_type = self.resolve_callable_return_annotation(&method.return_type);
+        let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(
+            &method.params,
+            super::ownership_contracts::direct_method_boundary(method),
+        );
+        let return_type = self.resolve_callable_return_annotation(&method.return_type, method.result_source.is_some());
         self.record_method_ownership(method, method_span, &resolved_param_types, &return_type, &self_ty);
 
         // Define the source receiver with its exact declaration token. Classmethod `cls` remains absent from the
@@ -7562,7 +7570,11 @@ impl TypeChecker {
                 )),
             },
         );
-        let yield_context = self.set_method_return_context(method, &return_type, &self_ty);
+        let method_identity =
+            self.symbols
+                .member_declaration_identity(&method.name, SemanticSourceTargetKind::Method, method_span);
+        let body_return_type = self.returned_value_type(&method_identity, &return_type);
+        let yield_context = self.set_method_return_context(method, &body_return_type, &self_ty);
 
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();

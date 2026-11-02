@@ -267,6 +267,7 @@ pub(super) fn finish_static_initializer_body(
         return_type: ty.clone(),
         checked_input_profile: None,
         explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
+        returned_view: None,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -334,6 +335,7 @@ pub(super) fn lower_function_body(
         &mut params,
     );
     retain_parameter_ownership(&mut builder, &params, false);
+    builder.prepare_returned_view(binding.and_then(|binding| binding.identity.as_ref()), &params, false);
     let rebound = lowering_facts
         .type_info
         .declarations
@@ -376,6 +378,7 @@ pub(super) fn lower_function_body(
         return_type: owner_return_type,
         checked_input_profile,
         explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
+        returned_view: builder.returned_view.as_ref().map(|source| source.view.clone()),
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -480,13 +483,18 @@ pub(super) fn lower_method_body(
         root_scope,
     );
     retain_parameter_ownership(&mut builder, &params, true);
+    builder.prepare_returned_view(
+        binding.and_then(|binding| binding.identity.as_ref()),
+        &params,
+        method.receiver.is_some(),
+    );
     let rebound = lowering_facts
         .type_info
         .declarations
         .decorated_method_bindings
         .contains_key(&(owner_name.to_string(), method.name.clone()))
         && !decorated_bindings::supports_method(method, owner_name, lowering_facts.type_info);
-    let (stmts, extern_delegation) = lower_declaration_statements(
+    let (mut stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
         decorator_rebinding(rebound, &method.name)
             .or_else(|| extern_delegation(&method.decorators, &method.name, lowering_facts)),
@@ -495,6 +503,9 @@ pub(super) fn lower_method_body(
         hir_span(decl_span),
     );
     builder.retain_empty_collection_context(&stmts);
+    let checked_input_profile = binding.and_then(|binding| binding.identity.as_ref()).and_then(|owner| {
+        builder.checked_method_input_profile(owner, method, &params, hir_span(decl_span), &mut stmts)
+    });
 
     if builder
         .locals
@@ -526,8 +537,9 @@ pub(super) fn lower_method_body(
         name: method.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
-        checked_input_profile: None,
+        checked_input_profile,
         explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
+        returned_view: builder.returned_view.as_ref().map(|source| source.view.clone()),
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -569,7 +581,7 @@ fn function_return_type(
     binding
         .map(|binding| {
             parameter_types::checked_context_type(
-                &binding.return_type,
+                returned_value(binding, facts),
                 facts.type_info,
                 type_parameters,
                 facts.runtime_type_conflicts,
@@ -596,7 +608,7 @@ fn method_return_type(
     let ty = binding
         .map(|binding| {
             parameter_types::checked_context_type(
-                &binding.return_type,
+                returned_value(binding, facts),
                 facts.type_info,
                 type_parameters,
                 facts.runtime_type_conflicts,
@@ -609,6 +621,16 @@ fn method_return_type(
     } else {
         ty
     }
+}
+
+/// A returned view's body returns its source's value type; the view's access travels as the body's returned view.
+/// The binding keeps the written mode for callers, as the checker's own body context does.
+fn returned_value<'a>(binding: &'a FunctionBindingInfo, facts: &BodyIrLoweringFacts<'_, '_>) -> &'a ResolvedType {
+    let contract = binding
+        .identity
+        .as_ref()
+        .and_then(|identity| facts.type_info.declarations.ownership_contracts.get(identity));
+    crate::ownership_metadata::result_value_type(contract, &binding.return_type).unwrap_or(&binding.return_type)
 }
 
 /// Declare every free-function parameter before lowering defaults, preserving the shared replacement receiver

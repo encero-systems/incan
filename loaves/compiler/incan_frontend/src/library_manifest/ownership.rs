@@ -354,18 +354,16 @@ mod tests {
     use crate::library_manifest::{CheckedExportReplay, LibraryManifest};
     use crate::{lexer, parser, typechecker::TypeChecker};
 
-    /// Real checked source feeds provider metadata even though its executable ownership behavior remains refused.
+    /// Real checked source feeds provider metadata; the provider's returned view executes in its own package.
     fn source_export() -> Result<crate::library_exports::CheckedNamedExport, Box<dyn std::error::Error>> {
         let source = "pub def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
         let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
         checker.set_current_package_identity(Some("provider".to_owned()));
-        let errors = checker
+        checker
             .check_program(&program)
-            .err()
-            .ok_or("execution unexpectedly accepted")?;
-        assert!(errors.iter().any(|error| error.stable_code() == Some("INCAN-T0123")));
+            .map_err(|errors| format!("{errors:?}"))?;
         collect_checked_public_exports(&program, &checker)
             .into_iter()
             .next()
@@ -408,7 +406,9 @@ mod tests {
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
         checker.set_current_package_identity(Some("provider".into()));
-        assert!(checker.check_program(&program).is_err());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
         let api = crate::api_metadata::collect_checked_api_metadata(&program, &checker, Vec::new());
         assert_eq!(api.declarations.len(), 2);
         for (index, declaration) in api.declarations.iter().enumerate() {
@@ -468,7 +468,9 @@ mod tests {
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
         checker.set_current_package_identity(Some("provider".into()));
-        assert!(checker.check_program(&program).is_err());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
         let mut api = CheckedApiMetadataPackage {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
             package: None,

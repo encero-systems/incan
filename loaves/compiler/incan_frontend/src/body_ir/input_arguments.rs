@@ -31,10 +31,54 @@ impl BodyBuilder<'_, '_> {
                 .as_ref()
                 .ok_or("explicit input call has no owning source body proof")?;
             let invocation = proof.invocation(span, target)?;
-            if invocation.has_receiver {
+            if invocation.receiver.is_some() {
                 return Err("explicit method inputs require their checked receiver materialization".into());
             }
             self.lower_explicit_input_args(invocation, arguments, scope, out)
+        })())
+    }
+
+    /// Borrow a checked method receiver in its existing owner storage, then bind the explicit arguments in the
+    /// graph's authenticated order. The receiver is evaluated before the arguments, as the source graph records.
+    pub(super) fn bind_explicit_method_input(
+        &mut self,
+        target: Option<&CanonicalSymbolId>,
+        receiver: &ast::Spanned<ast::Expr>,
+        arguments: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<Result<(bir::Operand, Vec<bir::ArgumentElement>, bir::ArgumentBinding), String>> {
+        if !self.type_info.has_explicit_input_invocation(span, target) {
+            return None;
+        }
+        Some((|| {
+            let target = target.ok_or("explicit method call has no canonical target")?;
+            let proof = self
+                .input_body
+                .as_ref()
+                .map_err(|reason| reason.to_string())?
+                .as_ref()
+                .ok_or("explicit method call has no owning source body proof")?;
+            let mut invocation = proof.invocation(span, target)?;
+            let checked = invocation
+                .receiver
+                .take()
+                .ok_or("explicit method call has no checked receiver")?;
+            let CheckedInputSource::Place { root, fields } = checked.source else {
+                return Err("explicit method receiver requires existing owner storage".into());
+            };
+            let place = self.lower_expr_to_place(receiver, scope, out);
+            self.authenticate_input_place(&place, &root, &fields)?;
+            self.consume_input_source_read(receiver, &place);
+            let fact = if checked.exclusive {
+                bir::OwnershipFact::MutBorrow
+            } else {
+                bir::OwnershipFact::Borrow
+            };
+            let receiver = bir::Operand::place(place, fact, false);
+            let (operands, binding) = self.lower_explicit_input_args(invocation, arguments, scope, out)?;
+            Ok((receiver, operands, binding))
         })())
     }
 
