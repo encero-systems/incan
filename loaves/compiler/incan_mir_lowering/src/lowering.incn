@@ -8512,14 +8512,30 @@ def lower_ordinary_bodies(
     unions: list[RustType],
     trace: bool,
 ) -> Result[None, str]:
-    """Lower selected source frames in module order, retaining synthesized callees and checked instance requests."""
+    """
+    Lower selected source frames in module order, retaining synthesized callees and checked instance requests.
+
+    Bodies are grouped by declaring module once, frame names are checked by key, and native signatures merge through
+    a keyed index, so no step rescans every body, frame or signature per frame.
+    """
+    mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
+    for position in range(len(context.bodies)):
+        owner = body_module_identity(body_at(context.bodies, position))?
+        module_bodies.entry(owner).or_insert([]).push(position)
+    mut names: BTreeMap[str, bool] = BTreeMap.new()
+    mut named = 0
+    mut signatures = external_index()
     for index in range(len(checked)):
         checked_module = borrowed_at(checked, index)
         checked_owner = str(checked_module.module_id.path())
-        for position in range(len(context.bodies)):
+        mut positions: list[int] = []
+        match module_bodies.get(checked_owner):
+            Some(selected) =>
+                for selected_position in selected:
+                    positions.append(int(selected_position.clone()))
+            None => pass
+        for position in positions:
             body = body_at(context.bodies, position)
-            if body_module_identity(body)? != checked_owner:
-                continue
             if not ordinary_body(context, body, emitted_frames):
                 continue
             if trace:
@@ -8537,10 +8553,13 @@ def lower_ordinary_bodies(
                 DecoratorFrame.Normal,
             ).map_err((reason) => reason + diagnostic_owner)?
             merge_instance_requests(instances, pending)
-            for retained_position in range(len(functions)):
-                retained = borrowed_at(functions, retained_position)
-                if retained.name == function.name:
-                    return Err(f"unsupported Body IR overloaded function {body.name}")
+            # Frames any helper appended since the last check are named first, so the check covers every frame.
+            while named < len(functions):
+                names.insert(str(borrowed_at(functions, named).name), true)
+                named += 1
+            match names.get(function.name):
+                Some(_retained) => return Err(f"unsupported Body IR overloaded function {body.name}")
+                None => pass
             functions.append(function)
             if kind == "library" and body.is_async:
                 mut captures: list[PlanType] = []
@@ -8567,7 +8586,7 @@ def lower_ordinary_bodies(
                 files[index],
                 intrinsics,
             )?
-            _ = merge_externals(externals, runtime)?
+            merge_indexed(externals, signatures, runtime)?
     return Ok(None)
 
 
@@ -9600,6 +9619,49 @@ pub def merge_externals(mut externals: list[ExternalFunction], additions: list[E
                 if retained.parameters != external.parameters or retained.return_type != external.return_type:
                     return Err(conflicting_external_signatures(retained, external))
                 found = true
+        if not found:
+            externals.append(external)
+    return Ok(None)
+
+
+pub model ExternalIndex:
+    """Positions of each native path's signatures in an externals list that only grows while the index is in use."""
+
+    pub positions: BTreeMap[str, list[int]]
+    pub indexed: int
+
+
+pub def external_index() -> ExternalIndex:
+    """Start an empty index; `merge_indexed` indexes the list's existing entries before its first merge."""
+    positions: BTreeMap[str, list[int]] = BTreeMap.new()
+    return ExternalIndex(positions=positions, indexed=0)
+
+
+pub def merge_indexed(
+    mut externals: list[ExternalFunction],
+    mut index: ExternalIndex,
+    additions: list[ExternalFunction],
+) -> Result[None, str]:
+    """
+    Merge as `merge_externals` does, finding a path's retained signatures by key instead of scanning every entry.
+    Entries another helper appended since the last merge are indexed first, so the index stays exact while the list
+    only grows.
+    """
+    for external in additions:
+        while index.indexed < len(externals):
+            appended = borrowed_at(externals, index.indexed)
+            index.positions.entry(str(appended.path)).or_insert([]).push(index.indexed)
+            index.indexed += 1
+        mut found = false
+        match index.positions.get(external.path):
+            Some(positions) =>
+                for position in positions:
+                    retained = borrowed_at(externals, int(position.clone()))
+                    if retained.type_arguments == external.type_arguments:
+                        if retained.parameters != external.parameters or retained.return_type != external.return_type:
+                            return Err(conflicting_external_signatures(retained, external))
+                        found = true
+            None => pass
         if not found:
             externals.append(external)
     return Ok(None)

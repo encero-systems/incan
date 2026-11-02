@@ -20,7 +20,6 @@ from rust::incan_semantics_core::body_ir import (
 from lists import taking_iterator_locals
 from table_views import borrowed_at
 from pub::incan_mir_plan import (
-    semantic_type_matches,
     BinaryOp,
     CalleeKind,
     ExternalFunction,
@@ -474,8 +473,10 @@ pub def retain_carrier(
                 retain_carrier(constructors, module, declarations, argument, file)?
             if base != "Option" and base != "Result" and base != "Union":
                 return Ok(None)
-            for retained in declarations:
-                if semantic_type_matches(retained, ty):
+            # Wrap the checked type once and compare each borrowed carrier's key in place, copying neither.
+            key = Some(ty.clone())
+            for retained_position in range(len(declarations)):
+                if borrowed_at(declarations, retained_position).semantic_key == key:
                     return Ok(None)
             if base == "Union":
                 declaration = lower_union_declaration(constructors, module, ty, file, declarations)?

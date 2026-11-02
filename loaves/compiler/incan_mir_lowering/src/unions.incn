@@ -218,9 +218,10 @@ pub def publish_unions(
     """Publish the emitted wrapper and payload order, preserving the checker's semantic carrier and nominal owners."""
     unions: list[RustType] = []
     for ty in collect_unions(module):
+        key = Some(ty.clone())
         for index in range(len(intrinsics)):
-            declaration = intrinsics[index]
-            if not semantic_type_matches(declaration, ty) or declaration.carrier != "" or declaration.library_item != "":
+            declaration = borrowed_at(intrinsics, index)
+            if declaration.semantic_key != key or declaration.carrier != "" or declaration.library_item != "":
                 continue
             mut members: list[RustType] = []
             match ty:
@@ -280,9 +281,10 @@ pub def require_native_union_signature(
                 _ = require_native_union_signature(argument, intrinsics, source_carriers)?
             if str(base) != "Union":
                 return Ok(None)
+            key = Some(ty.clone())
             for declaration_position in range(len(intrinsics)):
                 declaration = borrowed_at(intrinsics, declaration_position)
-                if semantic_type_matches(declaration, ty) and (source_carriers or declaration.library_item != ""):
+                if declaration.semantic_key == key and (source_carriers or declaration.library_item != ""):
                     return Ok(None)
             return Err("unsupported Body IR Loaf union without admitted native representation")
         RustType.Tuple(elements) =>
@@ -424,8 +426,9 @@ def retained_union(
     index = owner - len(enums)
     if index < 0 or index >= len(intrinsics) or intrinsics[index].carrier != "":
         return Err("unsupported Body IR nonunion enum isinstance")
+    carrier = borrowed_at(intrinsics, index)
     for ty in unions:
-        if semantic_type_matches(intrinsics[index], ty):
+        if semantic_type_matches(carrier, ty):
             return Ok(ty)
     return Err("invalid Body IR unretained union layout")
 
