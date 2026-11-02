@@ -1,4 +1,4 @@
-# behavior: a carried view stays in its `Result` until `?` takes it out; matching on the carrier directly is refused (#2500).
+# behavior: a carried view stays in its `Result` until `?` or a `match` takes it out; binding the carrier itself to a local is refused (#2500).
 # expect-diagnostic: INCAN-T0123
 
 class Counter:
@@ -10,6 +10,7 @@ class Counter:
 
 
 def bump_once(mut counter: BorrowedMut[Counter]) -> None:
-    match counter.bump():
+    result = counter.bump()
+    match result:
         Ok(_) => pass
         Err(_) => pass

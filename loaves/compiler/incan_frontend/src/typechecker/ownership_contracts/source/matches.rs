@@ -3,7 +3,7 @@
 
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
-use super::{Builder, Event, Place, Unavailable};
+use super::{Builder, Event, Path, Place, Unavailable};
 use crate::ast::{CallArg, Expr, Literal, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned};
 
 impl Builder<'_> {
@@ -41,20 +41,28 @@ impl Builder<'_> {
     }
 
     /// A statement `match` evaluates its fresh scrutinee once. Every arm starts from that evaluation and binds its
-    /// payload as a fresh owner, and the arms that continue join after the match.
+    /// payload as a fresh owner, and the arms that continue join after the match. On a call carrying a view, the
+    /// call's result loan covers the arms: an `Ok` or `Some` binding aliases the caller's place under it, while an
+    /// error or `None` arm holds no view, so the loan ends there unless a later use keeps it.
     pub(super) fn match_statement(
         &mut self,
         scrutinee: &Spanned<Expr>,
         arms: &[Spanned<MatchArm>],
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
-        if !fresh_scrutinee(scrutinee) {
-            return Err(Unavailable {
-                span: scrutinee.span,
-                reason: "match on a stored place needs checked binding access".into(),
-            });
-        }
-        let evaluated = self.expression(scrutinee, incoming, false)?;
+        let (evaluated, view) = match self.call_relation(scrutinee)?.filter(|relation| relation.carried) {
+            Some(relation) => {
+                let (evaluated, path) = self.evaluate_view_call(scrutinee, relation, incoming)?;
+                (evaluated, Some(path))
+            }
+            None if fresh_scrutinee(scrutinee) => (self.expression(scrutinee, incoming, false)?, None),
+            None => {
+                return Err(Unavailable {
+                    span: scrutinee.span,
+                    reason: "match on a stored place needs checked binding access".into(),
+                });
+            }
+        };
         let mut outgoing = Vec::new();
         for arm in arms {
             if let Some(guard) = &arm.node.guard {
@@ -63,7 +71,10 @@ impl Builder<'_> {
                     reason: "match guard needs checked binding access".into(),
                 });
             }
-            self.arm_binding(&arm.node.pattern)?;
+            match (&view, super::super::builtins::carried_view_binding(&arm.node.pattern)) {
+                (Some(path), Some((name, span))) => self.view_arm_binding(name, span, path)?,
+                _ => self.arm_binding(&arm.node.pattern)?,
+            }
             outgoing.extend(match &arm.node.body {
                 MatchBody::Expr(value) => self.expression(value, evaluated.clone(), false)?,
                 MatchBody::Block(body) => self.block(body, evaluated.clone())?,
@@ -120,6 +131,32 @@ impl Builder<'_> {
             value.span,
         ));
         self.expression(value, incoming, true)?;
+        Ok(())
+    }
+
+    /// Bind an `Ok` or `Some` payload of a carried view's call as a view local of the caller's place under the call's
+    /// result loan, as `view = call()?` binds it.
+    fn view_arm_binding(&mut self, name: &str, span: Span, path: &Path) -> Result<(), Unavailable> {
+        let identity = self
+            .checker
+            .type_info
+            .resolved_write_identity(span, name)
+            .cloned()
+            .ok_or(Unavailable {
+                span,
+                reason: "missing checked match binding".into(),
+            })?;
+        let loan = path.through.ok_or(Unavailable {
+            span,
+            reason: "carried view has no result loan".into(),
+        })?;
+        if self.graph.local_loans.insert(identity.clone(), loan).is_some() {
+            return Err(Unavailable {
+                span,
+                reason: "match binding has more than one ownership destination".into(),
+            });
+        }
+        self.aliases.insert(identity, path.clone());
         Ok(())
     }
 

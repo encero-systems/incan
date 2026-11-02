@@ -126,6 +126,28 @@ impl BodyBuilder<'_, '_> {
         })())
     }
 
+    /// Bind an `Ok` or `Some` arm of a match on a carried view's call to the call's substituted place, as
+    /// `view = call()?` binds it. A pattern binding follows the place it binds, so an exclusive view writes through
+    /// it. Returns the identity to unbind after the arm, or `None` when the arm binds an ordinary payload.
+    pub(super) fn bind_carried_arm_view(
+        &mut self,
+        pattern: &ast::Spanned<ast::Pattern>,
+        view: &(bir::Place, IncanInputAccess),
+    ) -> Option<CanonicalSymbolId> {
+        let (name, span) = crate::typechecker::carried_view_binding(pattern)?;
+        let identity = self.type_info.resolved_write_identity(span, name)?.clone();
+        let (place, access) = view.clone();
+        self.input_local_bindings.push(bir::ExplicitInputBinding {
+            declaration: hir_span(span),
+            identity: Some(identity.clone()),
+            access,
+        });
+        let writable = access == IncanInputAccess::Exclusive;
+        self.input_aliases
+            .insert(identity.clone(), LocalInputAlias { place, writable });
+        Some(identity)
+    }
+
     /// Record the binding's obligation before lowering it, so a body that later refuses still names every explicit
     /// local it declared.
     fn retain_input_local_binding(

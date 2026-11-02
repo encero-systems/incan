@@ -6,7 +6,7 @@ use incan_lang::lang::surface::list_methods::{self, ListMethodId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::SymbolOrigin;
 
-use crate::ast::{CallArg, Expr, Span, Spanned};
+use crate::ast::{CallArg, Expr, Pattern, PatternArg, Span, Spanned};
 use crate::symbols::ResolvedType;
 use crate::typechecker::TypeCheckInfo;
 
@@ -41,6 +41,27 @@ pub(super) fn view_call(expression: &Spanned<Expr>) -> &Spanned<Expr> {
     match &expression.node {
         Expr::Paren(inner) | Expr::Try(inner) => view_call(inner),
         _ => expression,
+    }
+}
+
+/// The name an `Ok(name)` or `Some(name)` arm binds, with its span. In a match on a carried view's call, that arm
+/// receives the view; the checker's source flow and Body IR both select it here.
+pub(crate) fn carried_view_binding(pattern: &Spanned<Pattern>) -> Option<(&str, Span)> {
+    let Pattern::Constructor(name, arguments) = &pattern.node else {
+        return None;
+    };
+    if !matches!(
+        constructors::from_str(&name.node),
+        Some(ConstructorId::Ok | ConstructorId::Some)
+    ) {
+        return None;
+    }
+    let [PatternArg::Positional(payload)] = arguments.as_slice() else {
+        return None;
+    };
+    match &payload.node {
+        Pattern::Binding(binding) => Some((binding.as_str(), payload.span)),
+        _ => None,
     }
 }
 

@@ -175,15 +175,25 @@ class SampleBuffer:
 
 Every `Ok(...)` return must carry exactly the source place, an alias of it, or a view of that place taken out of a carried call with `?`. A value created in the body produces `INCAN-T0124`. `Err(...)` builds its error value under the carrier construction rules above. Returning a call that carries a view of the same place passes its carrier on.
 
-At a call site, `?` takes the view out of the carrier. On success, the expression is a returned view of the caller's substituted place: it can be bound to a new local, used as a receiver or returned as a view, as described above. On an error, the body leaves with the error, and the loan ends there; the caller's source is usable again after the call. The call borrows its source argument as a returned-view call does. Any other use of a carried call, such as matching on it or binding its carrier, is refused with `INCAN-T0123`.
+At a call site, `?` takes the view out of the carrier. On success, the expression is a returned view of the caller's substituted place: it can be bound to a new local, used as a receiver or returned as a view, as described above. On an error, the body leaves with the error, and the loan ends there; the caller's source is usable again after the call. The call borrows its source argument as a returned-view call does.
 
-An `Option[Borrowed[T]]` or `Option[Reference[T]]` result with a source clause is checked the same way, with `Some(...)` in place of `Ok(...)` and `None` carrying nothing. `?` does not apply to `Option`, so a caller cannot take that view out: matching on the carrier is refused with `INCAN-T0123`.
+A statement `match` on a carried call also takes the view out. In an `Ok(name)` or `Some(name)` arm, `name` is a view of the caller's substituted place for the arm, and the call's loan lasts while the arm uses it; like any pattern binding it follows the place it binds, so a `Reference[T]` view writes through it. An `Err` or `None` arm holds no view, so it can use or change the source. Binding the carrier itself to a local, or any other use of a carried call, is refused with `INCAN-T0123`.
+
+An `Option[Borrowed[T]]` or `Option[Reference[T]]` result with a source clause is checked the same way, with `Some(...)` in place of `Ok(...)` and `None` carrying nothing. `?` does not apply to `Option`, so its callers take the view out with `match`.
 
 ```incan
 # accepted by source checking
 def fill(mut buffer: BorrowedMut[SampleBuffer]) -> Result[None, str]:
     (buffer.append(10)?).append_all([20, 30])?
     return Ok(None)
+
+
+def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
+    match buffer.append(sample):
+        Ok(view) => return len(view.samples)
+        Err(_) =>
+            buffer.capacity += 1  # the error arm holds no view
+            return 0
 ```
 
 ## Source conflict diagnostics

@@ -16,6 +16,7 @@ mod report;
 mod source;
 
 pub(super) use admission::{direct_function_boundary, direct_method_boundary};
+pub(crate) use builtins::carried_view_binding;
 pub(super) use source::{CallableSource, Unavailable};
 
 use super::TypeChecker;
