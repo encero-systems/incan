@@ -6125,17 +6125,21 @@ impl TypeChecker {
     /// body is checked. Every other annotation role, nested mode, malformed wrapper and returned dependency stays
     /// refused.
     fn resolve_type_checked_for_input(&mut self, ty: &Spanned<Type>, defer_input: bool) -> ResolvedType {
-        self.resolve_type_checked_deferring(ty, |mode| {
-            defer_input && mode != incan_lang::lang::types::ownership::OwnershipMode::Reference
-        })
+        self.resolve_type_checked_deferring(
+            ty,
+            |mode| defer_input && mode != incan_lang::lang::types::ownership::OwnershipMode::Reference,
+            false,
+        )
     }
 
     /// Resolve an annotation whose outer ownership mode, when `defer` selects it, is checked by its declaration's
-    /// contract instead of being refused here. Nested modes are always refused.
+    /// contract instead of being refused here. With `carried`, the mode of a `Result` or `Option` first payload is
+    /// deferred the same way, for a view carried in the result. Other nested modes are always refused.
     fn resolve_type_checked_deferring(
         &mut self,
         ty: &Spanned<Type>,
         defer: impl Fn(incan_lang::lang::types::ownership::OwnershipMode) -> bool,
+        carried: bool,
     ) -> ResolvedType {
         self.resolve_qualified_type_annotations(ty);
         if self.validate_source_type_names {
@@ -6144,6 +6148,23 @@ impl TypeChecker {
                 && self.explicit_ownership_mode(name).is_some_and(&defer)
             {
                 self.refuse_unimplemented_ownership_annotation(&arguments[0]);
+            } else if carried
+                && let Type::Generic(carrier, arguments) = &ty.node
+                && matches!(
+                    incan_lang::lang::types::collections::from_str(carrier),
+                    Some(CollectionTypeId::Result | CollectionTypeId::Option)
+                )
+                && let Some(Spanned {
+                    node: Type::Generic(name, payload),
+                    ..
+                }) = arguments.first()
+                && payload.len() == 1
+                && self.explicit_ownership_mode(name).is_some_and(&defer)
+            {
+                self.refuse_unimplemented_ownership_annotation(&payload[0]);
+                for argument in &arguments[1..] {
+                    self.refuse_unimplemented_ownership_annotation(argument);
+                }
             } else {
                 self.refuse_unimplemented_ownership_annotation(ty);
             }

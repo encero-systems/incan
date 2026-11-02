@@ -1,9 +1,10 @@
 //! Returned views: a view body returns a borrow of its declared source place, and a caller aliases the
-//! substituted place of a view call rather than holding the returned reference.
+//! substituted place of a view call rather than holding the returned reference. A carried view travels as the first
+//! payload of a `Result` or `Option`; `?` continues on the substituted place without reading the carrier's reference.
 
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, IncanType};
 
-use super::{BodyBuilder, ast, bir};
+use super::{BodyBuilder, ast, bir, hir_span};
 use crate::ownership_metadata::SourceSlot;
 
 /// The declared view of the body being lowered: the borrowed parameter local and its stored-field path.
@@ -36,6 +37,7 @@ impl BodyBuilder<'_, '_> {
             view: bir::ReturnedView {
                 slot,
                 access: view.access,
+                carried: view.carried,
             },
             local: parameter.local,
             fields: view.source.fields.clone(),
@@ -51,6 +53,128 @@ impl BodyBuilder<'_, '_> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(), String> {
+        let (place, access) = self.authenticated_view_place(value, scope, out)?;
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Return {
+                value: Some(bir::Operand::place(place, view_fact(access), false)),
+            },
+            span,
+        });
+        Ok(())
+    }
+
+    /// A carried view's body returns its carrier: `Ok` or `Some` holds a borrow of exactly the declared source
+    /// place, an error holds its owned payload, and a carried view call or `None` is returned as lowered.
+    pub(super) fn lower_carried_return(
+        &mut self,
+        value: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(), String> {
+        let carrier = self.owner_return_type.clone();
+        // The same constructor authentication every other Body IR construction uses.
+        let constructed = match &value.node {
+            ast::Expr::Call(callee, type_args, arguments) if type_args.is_empty() => match arguments.as_slice() {
+                [ast::CallArg::Positional(payload)] => {
+                    if let Some(kind) = self.intrinsic_result_constructor(callee, value.span) {
+                        Some((Some(kind), payload))
+                    } else if self.intrinsic_option_constructor(callee) {
+                        Some((None, payload))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let operand = match (constructed, &carrier) {
+            (Some((Some(bir::ResultVariantKind::Ok), payload)), IncanType::Generic { base, args })
+                if base == "Result" && args.len() == 2 =>
+            {
+                let (place, access) = self.authenticated_view_place(payload, scope, out)?;
+                self.carried_variant(
+                    bir::ResultVariantKind::Ok,
+                    bir::Operand::place(place, view_fact(access), false),
+                    value.span,
+                    &carrier,
+                    scope,
+                    out,
+                )
+            }
+            (Some((None, payload)), IncanType::Generic { base, args }) if base == "Option" && args.len() == 1 => {
+                let (place, access) = self.authenticated_view_place(payload, scope, out)?;
+                self.push_assign_temp(
+                    bir::Rvalue::Aggregate(
+                        bir::AggregateKind::OptionSome,
+                        super::args::fixed_elements(vec![bir::Operand::place(place, view_fact(access), false)]),
+                    ),
+                    carrier.clone(),
+                    scope,
+                    hir_span(value.span),
+                    out,
+                )
+            }
+            (Some((Some(bir::ResultVariantKind::Err), payload)), IncanType::Generic { base, args })
+                if base == "Result" && args.len() == 2 =>
+            {
+                let error = self.lower_expr_to_operand(payload, scope, out);
+                let error = self.owned_parameter_operand(payload, error);
+                self.carried_variant(bir::ResultVariantKind::Err, error, value.span, &carrier, scope, out)
+            }
+            _ => self.lower_return_operand(value, scope, out),
+        };
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Return { value: Some(operand) },
+            span,
+        });
+        Ok(())
+    }
+
+    /// Construct one variant of the body's reference-carrying `Result`, whose success type is the view's reference.
+    fn carried_variant(
+        &mut self,
+        kind: bir::ResultVariantKind,
+        payload: bir::Operand,
+        span: ast::Span,
+        carrier: &IncanType,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let IncanType::Generic { args, .. } = carrier else {
+            return bir::Operand::Constant(bir::Constant::Unit);
+        };
+        let canonical_types = reference_carrier_identities(
+            self.type_info
+                .expressions
+                .expression_type_identities
+                .get(&span)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        self.push_assign_temp(
+            bir::Rvalue::ResultVariant(bir::ResultVariant {
+                kind,
+                payload,
+                ok_type: args[0].clone(),
+                error_type: args[1].clone(),
+                canonical_types,
+            }),
+            carrier.clone(),
+            scope,
+            hir_span(span),
+            out,
+        )
+    }
+
+    /// Lower a returned view's place and authenticate it against the declared local and field identities.
+    fn authenticated_view_place(
+        &mut self,
+        value: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(bir::Place, IncanInputAccess), String> {
         let source = self.returned_view.clone().ok_or("view return has no declared source")?;
         let place = self.lower_expr_to_place(value, scope, out);
         let authenticated = place.local_id() == Some(source.local)
@@ -62,14 +186,7 @@ impl BodyBuilder<'_, '_> {
         if !authenticated {
             return Err("returned view differs from its declared source place".into());
         }
-        let fact = view_fact(source.view.access);
-        out.push(bir::Statement {
-            kind: bir::StatementKind::Return {
-                value: Some(bir::Operand::place(place, fact, false)),
-            },
-            span,
-        });
-        Ok(())
+        Ok((place, source.view.access))
     }
 
     /// For a call whose selected callee returns a view, the substituted place: the receiver's or the slot
@@ -81,25 +198,32 @@ impl BodyBuilder<'_, '_> {
         arguments: &[bir::ArgumentElement],
     ) -> Option<Result<(bir::Place, IncanInputAccess), String>> {
         let (access, slot, fields) = self.type_info.selected_call_view(span)?;
-        Some((|| {
-            let base = match slot {
-                SourceSlot::Receiver => receiver,
-                SourceSlot::Parameter(slot) => match arguments.get(slot) {
-                    Some(bir::ArgumentElement::One(operand)) => Some(operand),
-                    _ => None,
-                },
-            };
-            let Some(bir::Operand::Place(read)) = base else {
-                return Err("returned view source is not borrowed from existing storage".to_string());
-            };
-            let mut place = read.place.clone();
-            place.projection.extend(
-                fields
-                    .into_iter()
-                    .map(|field| bir::PlaceElem::field(field.declaration_name.clone(), Some(field))),
-            );
-            Ok((place, access))
-        })())
+        Some(substituted_place(access, slot, fields, receiver, arguments))
+    }
+
+    /// Whether an expression is `?` on an already lowered call carrying a view, through parentheses.
+    pub(super) fn carried_view_try(&self, expression: &ast::Spanned<ast::Expr>) -> bool {
+        match &unparenthesized(expression).node {
+            ast::Expr::Try(inner) => self.carried_view_places.contains_key(&unparenthesized(inner).span),
+            _ => false,
+        }
+    }
+
+    /// The substituted place and access of an already lowered call carrying a view, through parentheses.
+    pub(super) fn carried_view_of(&self, call: &ast::Spanned<ast::Expr>) -> Option<(bir::Place, IncanInputAccess)> {
+        self.carried_view_places.get(&unparenthesized(call).span).cloned()
+    }
+
+    /// For a call whose selected callee carries a view in its `Result` or `Option`, the same substituted place a
+    /// direct view would give. `?` continues on it; the carrier's own reference is never read.
+    pub(super) fn carried_view_place(
+        &self,
+        span: ast::Span,
+        receiver: Option<&bir::Operand>,
+        arguments: &[bir::ArgumentElement],
+    ) -> Option<Result<(bir::Place, IncanInputAccess), String>> {
+        let (access, slot, fields) = self.type_info.selected_carried_view(span)?;
+        Some(substituted_place(access, slot, fields, receiver, arguments))
     }
 
     /// Emit a view call for its effects only. The returned reference is not retained: the caller uses the
@@ -126,8 +250,76 @@ impl BodyBuilder<'_, '_> {
     }
 }
 
+/// An expression without its redundant parentheses: the call whose span keys a carried view.
+fn unparenthesized(expression: &ast::Spanned<ast::Expr>) -> &ast::Spanned<ast::Expr> {
+    match &expression.node {
+        ast::Expr::Paren(inner) => unparenthesized(inner),
+        _ => expression,
+    }
+}
+
+/// The receiver's or the slot argument's place followed by the declared fields, with the view's access.
+fn substituted_place(
+    access: IncanInputAccess,
+    slot: SourceSlot,
+    fields: Vec<CanonicalSymbolId>,
+    receiver: Option<&bir::Operand>,
+    arguments: &[bir::ArgumentElement],
+) -> Result<(bir::Place, IncanInputAccess), String> {
+    let base = match slot {
+        SourceSlot::Receiver => receiver,
+        SourceSlot::Parameter(slot) => match arguments.get(slot) {
+            Some(bir::ArgumentElement::One(operand)) => Some(operand),
+            _ => None,
+        },
+    };
+    let Some(bir::Operand::Place(read)) = base else {
+        return Err("returned view source is not borrowed from existing storage".to_string());
+    };
+    let mut place = read.place.clone();
+    place.projection.extend(
+        fields
+            .into_iter()
+            .map(|field| bir::PlaceElem::field(field.declaration_name.clone(), Some(field))),
+    );
+    Ok((place, access))
+}
+
+/// A carrier type whose first argument is the view's reference: `Result[&mut T, E]` for `Result[T, E]` with an
+/// exclusive view. Other types are returned unchanged.
+pub(super) fn reference_carrier(carrier: IncanType, access: IncanInputAccess) -> IncanType {
+    match carrier {
+        IncanType::Generic { base, mut args } if !args.is_empty() => {
+            let value = Box::new(args[0].clone());
+            args[0] = if access == IncanInputAccess::Exclusive {
+                IncanType::RefMut(value)
+            } else {
+                IncanType::Ref(value)
+            };
+            IncanType::Generic { base, args }
+        }
+        other => other,
+    }
+}
+
+/// The checked leaf identities of a value-typed carrier, moved under the reference `reference_carrier` places at the
+/// first payload: a leaf at `[0, ...]` sits at `[0, 0, ...]` once that payload is a reference to it.
+fn reference_carrier_identities(
+    identities: std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
+) -> std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId> {
+    identities
+        .into_iter()
+        .map(|(mut path, identity)| {
+            if path.first() == Some(&0) {
+                path.insert(1, 0);
+            }
+            (path, identity)
+        })
+        .collect()
+}
+
 /// The ownership fact of a borrow with the view's access.
-fn view_fact(access: IncanInputAccess) -> bir::OwnershipFact {
+pub(super) fn view_fact(access: IncanInputAccess) -> bir::OwnershipFact {
     if access == IncanInputAccess::Exclusive {
         bir::OwnershipFact::MutBorrow
     } else {

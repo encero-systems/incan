@@ -94,8 +94,9 @@ impl<'a> CheckedInputBody<'a> {
 }
 
 impl TypeCheckInfo {
-    /// The returned view a selected call produces, read from its callee's contract: the access, the source slot
-    /// and the declared stored-field path. Calls without a returned view, or without selected facts, give `None`.
+    /// The direct returned view a selected call produces, read from its callee's contract: the access, the source
+    /// slot and the declared stored-field path. Calls without a direct returned view, including calls whose view is
+    /// carried in a `Result` or `Option`, or without selected facts, give `None`.
     pub(crate) fn selected_call_view(
         &self,
         span: HirSourceSpan,
@@ -104,9 +105,36 @@ impl TypeCheckInfo {
         crate::ownership_metadata::SourceSlot,
         Vec<CanonicalSymbolId>,
     )> {
+        self.selected_view_of_kind(span, false)
+    }
+
+    /// The returned view a selected call carries as the first payload of its `Result` or `Option` result, with the
+    /// same access, source slot and stored-field path as a direct view.
+    pub(crate) fn selected_carried_view(
+        &self,
+        span: HirSourceSpan,
+    ) -> Option<(
+        IncanInputAccess,
+        crate::ownership_metadata::SourceSlot,
+        Vec<CanonicalSymbolId>,
+    )> {
+        self.selected_view_of_kind(span, true)
+    }
+
+    fn selected_view_of_kind(
+        &self,
+        span: HirSourceSpan,
+        carried: bool,
+    ) -> Option<(
+        IncanInputAccess,
+        crate::ownership_metadata::SourceSlot,
+        Vec<CanonicalSymbolId>,
+    )> {
         let call = self.protocols.explicit_input_calls.get(&span)?;
         let contract = self.selected_input_contract(call).ok()?;
-        let view = crate::ownership_metadata::returned_view(contract).ok()??;
+        let view = crate::ownership_metadata::returned_view(contract)
+            .ok()?
+            .filter(|view| view.carried == carried)?;
         Some((view.access, view.source.slot.clone(), view.source.fields.clone()))
     }
 

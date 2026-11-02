@@ -1,0 +1,15 @@
+# behavior: a carried view stays in its `Result` until `?` takes it out; matching on the carrier directly is refused (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+    def bump(mut self) -> Result[Reference[Self], str] from self:
+        self.value += 1
+        return Ok(self)
+
+
+def bump_once(mut counter: BorrowedMut[Counter]) -> None:
+    match counter.bump():
+        Ok(_) => pass
+        Err(_) => pass

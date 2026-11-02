@@ -101,7 +101,7 @@ impl BodyBuilder<'_, '_> {
             .as_ref()
             .ok()?
             .as_ref()?
-            .view_local(identity, hir_span(assignment.value.span));
+            .view_local(identity, &assignment.value);
         let access = match access {
             Ok(access) => access?,
             Err(reason) => return Some(Err(reason.into())),

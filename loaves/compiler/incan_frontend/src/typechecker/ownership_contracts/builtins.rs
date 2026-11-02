@@ -1,0 +1,73 @@
+//! Builtin collection methods an explicit body may call on a checked place, with the receiver access each needs, and
+//! the builtin carrier forms that hold or reveal a carried view.
+
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::surface::list_methods::{self, ListMethodId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_semantics_core::SymbolOrigin;
+
+use crate::ast::{CallArg, Expr, Span, Spanned};
+use crate::symbols::ResolvedType;
+use crate::typechecker::TypeCheckInfo;
+
+/// The builtin `Ok`, `Err` or `Some` constructor a callee names. A same-spelled source callable is never a builtin
+/// carrier. This is the one definition the source flow and both admission walkers share.
+pub(super) fn carrier_constructor(facts: &TypeCheckInfo, callee: &Spanned<Expr>) -> Option<ConstructorId> {
+    let Expr::Ident(name) = &callee.node else {
+        return None;
+    };
+    let id = constructors::from_str(name)
+        .filter(|id| matches!(id, ConstructorId::Ok | ConstructorId::Err | ConstructorId::Some))?;
+    facts
+        .resolved_identity(callee.span)
+        .is_none_or(|identity| identity.origin == SymbolOrigin::Builtin && identity.declaration_name == *name)
+        .then_some(id)
+}
+
+/// The builtin carrier construction a call applies, with its arguments.
+pub(super) fn carrier_construction<'a>(
+    facts: &TypeCheckInfo,
+    value: &'a Spanned<Expr>,
+) -> Option<(ConstructorId, &'a [CallArg])> {
+    let Expr::Call(callee, _, arguments) = &value.node else {
+        return None;
+    };
+    carrier_constructor(facts, callee).map(|id| (id, arguments.as_slice()))
+}
+
+/// The call whose returned view an expression produces: the expression itself, or the call `?` takes a carried view
+/// out of, through parentheses.
+pub(super) fn view_call(expression: &Spanned<Expr>) -> &Spanned<Expr> {
+    match &expression.node {
+        Expr::Paren(inner) | Expr::Try(inner) => view_call(inner),
+        _ => expression,
+    }
+}
+
+/// Whether a method call is a builtin `list` method, and whether it changes its receiver in place: `Some(true)` for a
+/// write, `Some(false)` for a read. A trait or source method selected for the call is never a builtin.
+pub(super) fn list_method_writes(
+    facts: &TypeCheckInfo,
+    receiver: &Spanned<Expr>,
+    method: &str,
+    span: Span,
+) -> Option<bool> {
+    let list = matches!(
+        facts.expr_type(receiver.span),
+        Some(ResolvedType::Generic(name, arguments))
+            if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1
+    );
+    if !list || facts.resolved_method_call(span).is_some() {
+        return None;
+    }
+    match list_methods::from_str(method)? {
+        ListMethodId::Append
+        | ListMethodId::Extend
+        | ListMethodId::Pop
+        | ListMethodId::Swap
+        | ListMethodId::Reserve
+        | ListMethodId::ReserveExact
+        | ListMethodId::Remove => Some(true),
+        ListMethodId::Contains | ListMethodId::Count | ListMethodId::Index | ListMethodId::Clone => Some(false),
+    }
+}

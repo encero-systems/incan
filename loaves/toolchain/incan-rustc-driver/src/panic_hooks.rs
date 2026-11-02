@@ -51,7 +51,7 @@ fn declaration(plan: &Plan, signature: Vec<PlanType>, span: Span) -> Result<Box<
         generic_loans: Vec::new(),
         attributes: Vec::new(),
     };
-    let mut item = crate::declarations::function(&function, span)?;
+    let mut item = crate::declarations::function(plan, &function, span)?;
     item.vis = inherited(span);
     let ast::ItemKind::Fn(declaration) = &mut item.kind else {
         return Err(PlanError::Invalid {

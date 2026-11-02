@@ -7116,9 +7116,10 @@ impl TypeChecker {
 
     /// Resolve a callable return annotation and apply its nominal, nested-trait and Rust lifetime restrictions in
     /// order. Signature owners retain responsibility for route-specific checks and recording their final binding.
-    /// A result with a `from` source defers its outer ownership mode to the declaration's returned-view check.
+    /// A result with a `from` source defers its outer ownership mode, or the mode of a carrier's first payload, to the
+    /// declaration's returned-view check.
     fn resolve_callable_return_annotation(&mut self, annotation: &Spanned<Type>, has_source: bool) -> ResolvedType {
-        let ty = self.resolve_type_checked_deferring(annotation, |_| has_source);
+        let ty = self.resolve_type_checked_deferring(annotation, |_| has_source, has_source);
         self.refuse_unbounded_nominal_type_arguments(&ty, annotation.span);
         self.refuse_trait_type_nested_in_annotation(&ty, annotation.span);
         self.refuse_lifetime_bearing_rust_type(&ty, annotation.span);

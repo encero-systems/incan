@@ -48,6 +48,45 @@ impl Builder<'_> {
         self.apply_call(None, arguments, span, incoming)
     }
 
+    /// A builtin list method reads or changes its receiver place in place, after evaluating its arguments. An element
+    /// is fresh or Copy until values moved into a collection gain checked transfer materialization.
+    pub(super) fn list_method(
+        &mut self,
+        receiver: &Spanned<Expr>,
+        writes: bool,
+        arguments: &[CallArg],
+        span: Span,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let place = self.place(receiver)?;
+        let mut incoming = self.evaluate_place(receiver, incoming)?;
+        for argument in arguments {
+            let CallArg::Positional(value) = argument else {
+                return Err(Unavailable {
+                    span,
+                    reason: "list method needs positional arguments".into(),
+                });
+            };
+            if !self.fresh_or_copy_field(value) && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "a non-Copy list element needs checked ownership transfer materialization".into(),
+                });
+            }
+            incoming = self.expression(value, incoming, false)?;
+        }
+        let access = if writes { Access::Write } else { Access::Read };
+        Ok(self.event(
+            incoming,
+            Event::Access {
+                place: place.place,
+                access,
+                through: place.through,
+            },
+            span,
+        ))
+    }
+
     /// Primitive observers read their arguments through a checker-selected builtin identity. Nominal display and
     /// length hooks, native adapters and source functions with the same name require their own callable facts.
     fn observer_call(
@@ -368,8 +407,9 @@ impl Builder<'_> {
         }
     }
 
-    /// A fresh scalar or owned byte-string expression may be borrowed for this call. Existing places keep their
-    /// original permissions even through parentheses; evaluating a temporary preserves nested moves and loans.
+    /// A fresh scalar or owned byte-string expression, or a list literal of Copy scalars, may be borrowed for this
+    /// call. Existing places keep their original permissions even through parentheses; evaluating a temporary
+    /// preserves nested moves and loans.
     fn borrowed_argument_source(
         &mut self,
         expression: &Spanned<Expr>,
@@ -383,7 +423,8 @@ impl Builder<'_> {
             span: expression.span,
             reason: "temporary argument has no checked type".into(),
         })?;
-        if !plain_result(ty) {
+        // A list literal's own evaluation admits only Copy scalar elements, so it retains no dependency either.
+        if !plain_result(ty) && !matches!(expression.node, Expr::List(_)) {
             return Err(Unavailable {
                 span: expression.span,
                 reason: "temporary argument needs retained dependency facts".into(),
@@ -433,10 +474,27 @@ impl Builder<'_> {
         id
     }
 
-    /// The returned view a selected call produces, read from its callee's contract without its body.
+    /// The place view an expression produces: a selected call returning a direct view, or `?` taking a carried view
+    /// out of its `Result` or `Option`. A call returning a carried view is itself a carrier value, not a place.
     pub(super) fn view_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
         match &expression.node {
-            Expr::Paren(inner) => return self.view_relation(inner),
+            Expr::Paren(inner) => self.view_relation(inner),
+            Expr::Try(inner) => Ok(self
+                .call_relation(inner)?
+                .filter(|relation| relation.carried)
+                .map(|relation| ViewRelation {
+                    carried: false,
+                    ..relation
+                })),
+            _ => Ok(self.call_relation(expression)?.filter(|relation| !relation.carried)),
+        }
+    }
+
+    /// The returned view relation of a selected call itself, direct or carried, read from its callee's contract
+    /// without its body.
+    pub(super) fn call_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
+        match &expression.node {
+            Expr::Paren(inner) => return self.call_relation(inner),
             Expr::Call(..) | Expr::MethodCall(..) => {}
             _ => return Ok(None),
         }
@@ -455,6 +513,7 @@ impl Builder<'_> {
                 exclusive: view.access == IncanInputAccess::Exclusive,
                 slot: view.source.slot.clone(),
                 fields: view.source.fields.clone(),
+                carried: view.carried,
             }))
     }
 
@@ -469,7 +528,8 @@ impl Builder<'_> {
     ) -> Result<(Vec<usize>, Path), Unavailable> {
         let span = expression.span;
         let incoming = match &expression.node {
-            Expr::Paren(inner) => return self.evaluate_view_call(inner, relation, incoming),
+            // `?` continues on the carried view's place; its error path leaves the body carrying no loan.
+            Expr::Paren(inner) | Expr::Try(inner) => return self.evaluate_view_call(inner, relation, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, span, incoming)?
             }
@@ -531,11 +591,13 @@ impl Builder<'_> {
     }
 }
 
-/// A selected callee's returned view: its access, the source slot and the declared stored-field path.
+/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and whether the
+/// view is carried as a `Result` or `Option` payload.
 pub(super) struct ViewRelation {
     exclusive: bool,
     slot: SourceSlot,
     fields: Vec<incan_semantics_core::CanonicalSymbolId>,
+    pub(super) carried: bool,
 }
 
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`

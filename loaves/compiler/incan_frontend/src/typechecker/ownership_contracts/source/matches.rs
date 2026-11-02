@@ -2,25 +2,19 @@
 //! carrier. Place scrutinees, guards and other patterns need their own checked binding access.
 
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
-use incan_semantics_core::SymbolOrigin;
 
-use super::{Builder, Unavailable};
+use super::{Builder, Event, Place, Unavailable};
 use crate::ast::{CallArg, Expr, Literal, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned};
 
 impl Builder<'_> {
-    /// A bare `Ok`, `Err` or `Some` that resolves to the builtin constructor, never a same-spelled source callable.
+    /// A bare `Ok`, `Err` or `Some` that resolves to the builtin constructor, through the shared admission definition.
     pub(super) fn carrier_constructor(&self, callee: &Spanned<Expr>) -> bool {
-        let Expr::Ident(name) = &callee.node else {
-            return false;
-        };
-        matches!(
-            constructors::from_str(name),
-            Some(ConstructorId::Ok | ConstructorId::Err | ConstructorId::Some)
-        ) && self
-            .checker
-            .type_info
-            .resolved_identity(callee.span)
-            .is_none_or(|identity| identity.origin == SymbolOrigin::Builtin && identity.declaration_name == *name)
+        super::super::builtins::carrier_constructor(&self.checker.type_info, callee).is_some()
+    }
+
+    /// The builtin carrier construction a value applies, through the shared admission definition.
+    fn carrier_value<'a>(&self, value: &'a Spanned<Expr>) -> Option<(ConstructorId, &'a [CallArg])> {
+        super::super::builtins::carrier_construction(&self.checker.type_info, value)
     }
 
     /// A builtin carrier wraps one payload in fresh storage. Like a model field, the payload is fresh or Copy until
@@ -76,6 +70,57 @@ impl Builder<'_> {
             });
         }
         Ok(outgoing)
+    }
+
+    /// A carried view's body returns `Ok` or `Some` of its declared source place, a carried view of the same source
+    /// from another call, or an error or `None`, which carries no view. Any other value is a program error.
+    pub(super) fn carried_return(
+        &mut self,
+        value: &Spanned<Expr>,
+        exclusive: bool,
+        source: &Place,
+        incoming: Vec<usize>,
+    ) -> Result<(), Unavailable> {
+        match self.carrier_value(value) {
+            Some((ConstructorId::Ok | ConstructorId::Some, arguments)) => {
+                let [CallArg::Positional(payload)] = arguments else {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: "carrier construction needs one positional payload".into(),
+                    });
+                };
+                return self.view_return(payload, exclusive, source, incoming);
+            }
+            Some((ConstructorId::Err, _)) => {
+                self.expression(value, incoming, true)?;
+                return Ok(());
+            }
+            _ => {}
+        }
+        if matches!(value.node, Expr::Literal(Literal::None)) {
+            return Ok(());
+        }
+        if let Some(relation) = self.call_relation(value)?.filter(|relation| relation.carried) {
+            let (incoming, path) = self.evaluate_view_call(value, relation, incoming)?;
+            if path.place == *source {
+                let loan = self.call_loan(path, exclusive, exclusive, value.span);
+                self.event(incoming, Event::Borrow(loan), value.span);
+            } else {
+                self.view_errors.push(super::view_error(
+                    "A returned carried view must carry its declared source place; this call carries a view of a \
+                     different place",
+                    value.span,
+                ));
+            }
+            return Ok(());
+        }
+        self.view_errors.push(super::view_error(
+            "A returned carried view must return Ok of its declared source place, an error, or a carried view of the \
+             same source",
+            value.span,
+        ));
+        self.expression(value, incoming, true)?;
+        Ok(())
     }
 
     /// Register the one fresh owner a carrier pattern binds, as a loop item is registered: a root, no write event.

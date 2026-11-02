@@ -96,6 +96,8 @@ struct Builder<'a> {
     loops: Vec<LoopEdges>,
     /// The declared returned view: whether it is exclusive, and the exact source place every return borrows.
     view: Option<(bool, Place)>,
+    /// Whether the returned view is carried as a `Result` or `Option` payload rather than returned whole.
+    view_carried: bool,
     /// Returns that do not borrow the declared view source. These are program errors, reported by the caller.
     view_errors: Vec<crate::diagnostics::CompileError>,
 }
@@ -222,6 +224,7 @@ fn build_graph(
         aliases: BTreeMap::new(),
         loops: Vec::new(),
         view: None,
+        view_carried: false,
         view_errors: Vec::new(),
     };
     builder.inputs(parameters, identity)?;
@@ -262,6 +265,7 @@ fn build_graph(
             projection: view.source.fields.iter().cloned().map(Projection::Field).collect(),
         };
         builder.view = Some((view.access == incan_semantics_core::IncanInputAccess::Exclusive, place));
+        builder.view_carried = view.carried;
     }
     let result = builder.block(body, vec![0]);
     view_errors.append(&mut builder.view_errors);
@@ -490,19 +494,35 @@ impl Builder<'_> {
             Expr::Literal(_) => Ok(incoming),
             Expr::List(entries) => self.scalar_list(entries, incoming),
             Expr::FString(parts) => self.formatted_text(parts, expression.span, incoming),
-            // A returned view is a place, not a value: it may be bound, used as a receiver or returned as a view.
-            Expr::Call(..) | Expr::MethodCall(..) if self.view_relation(expression)?.is_some() => Err(Unavailable {
-                span: expression.span,
-                reason: "a returned view needs a local binding, a receiver or a returned view position".into(),
-            }),
+            // A returned view, including one `?` takes out of its carrier, is a place, not a value: it may be bound,
+            // used as a receiver or returned as a view.
+            Expr::Call(..) | Expr::MethodCall(..) | Expr::Try(..) if self.view_relation(expression)?.is_some() => {
+                Err(Unavailable {
+                    span: expression.span,
+                    reason: "a returned view needs a local binding, a receiver or a returned view position".into(),
+                })
+            }
+            // A carried view stays in its carrier until `?` or a match takes it out; the carrier holds a loan.
+            Expr::Call(..) | Expr::MethodCall(..)
+                if self.call_relation(expression)?.is_some_and(|relation| relation.carried) =>
+            {
+                Err(Unavailable {
+                    span: expression.span,
+                    reason: "a carried view needs `?` or a returned carried view position".into(),
+                })
+            }
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
-            Expr::MethodCall(receiver, _, _, arguments) => {
-                self.apply_call(Some(receiver), arguments, expression.span, incoming)
+            Expr::MethodCall(receiver, method, _, arguments) => {
+                match super::builtins::list_method_writes(&self.checker.type_info, receiver, method, expression.span) {
+                    Some(writes) => self.list_method(receiver, writes, arguments, expression.span, incoming),
+                    None => self.apply_call(Some(receiver), arguments, expression.span, incoming),
+                }
             }
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
             // `?` consumes its carrier and continues with the success payload; the error path leaves the body as a
-            // `return` does, carrying only the carrier's own error value. A returned view's body has no such exit yet.
-            Expr::Try(inner) if self.view.is_none() => self.expression(inner, incoming, true),
+            // `return` does, carrying only the carrier's own error value. Only a body without a returned view, or one
+            // whose view is itself carried, has that exit.
+            Expr::Try(inner) if self.view.is_none() || self.view_carried => self.expression(inner, incoming, true),
             Expr::Binary(left, operation, right) => {
                 let incoming = self.expression(left, incoming, false)?;
                 let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
@@ -1000,6 +1020,9 @@ impl Builder<'_> {
             }
             Statement::Return(value) => {
                 match (value, self.view.clone()) {
+                    (Some(value), Some((exclusive, source))) if self.view_carried => {
+                        self.carried_return(value, exclusive, &source, incoming)?
+                    }
                     (Some(value), Some((exclusive, source))) => {
                         self.view_return(value, exclusive, &source, incoming)?
                     }

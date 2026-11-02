@@ -1,5 +1,5 @@
-# behavior: A returned view nested inside another result type remains refused until aggregate dependencies are represented.
+# behavior: A borrowed result nested in a tuple is refused for execution; only a `Result` success payload carries a view (#2500).
 # expect-diagnostic: INCAN-T0123
 
-def inspect(value: Borrowed[str]) -> Result[Borrowed[str], str] from value:
-    return Ok(value)
+def inspect(value: Borrowed[str]) -> tuple[Borrowed[str], int] from value:
+    return (value, 1)

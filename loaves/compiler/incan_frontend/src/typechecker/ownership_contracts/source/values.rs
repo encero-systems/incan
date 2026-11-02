@@ -111,8 +111,9 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
-    /// Copy values need no transfer; literal, formatted and nested constructed values own their fresh storage.
-    /// A source place with a non-Copy type is never reclassified as fresh merely because its last use is here.
+    /// Copy values need no transfer; literal, formatted, list-literal and nested constructed values own their fresh
+    /// storage (a list literal's elements are Copy scalars, which its own evaluation checks). A source place with a
+    /// non-Copy type is never reclassified as fresh merely because its last use is here.
     pub(super) fn fresh_or_copy_field(&self, value: &Spanned<Expr>) -> bool {
         if self
             .checker
@@ -123,7 +124,7 @@ impl Builder<'_> {
             return true;
         }
         match &value.node {
-            Expr::Literal(_) | Expr::FString(_) => true,
+            Expr::Literal(_) | Expr::FString(_) | Expr::List(_) => true,
             Expr::Paren(inner) => self.fresh_or_copy_field(inner),
             Expr::Call(_, _, _) => self.checker.type_info.constructor_field_binding(value.span).is_some(),
             _ => false,

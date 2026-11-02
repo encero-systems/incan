@@ -1202,6 +1202,8 @@ struct BodyBuilder<'type_info, 'source> {
     input_local_bindings: Vec<bir::ExplicitInputBinding>,
     /// The declared view this body returns, once its parameter locals exist.
     returned_view: Option<returned_views::ReturnedViewSource>,
+    /// Each lowered call carrying a view in its `Result` or `Option`, by call span: its substituted place and access.
+    carried_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess)>,
     /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
     input_if_scopes: Vec<bir::ScopeId>,
     /// Statement loops whose exit states are joined for authenticated whole owners, innermost last.
@@ -1354,6 +1356,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             input_owned_initializers: Vec::new(),
             input_local_bindings: Vec::new(),
             returned_view: None,
+            carried_view_places: HashMap::new(),
             input_if_scopes: Vec::new(),
             input_loops: Vec::new(),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,

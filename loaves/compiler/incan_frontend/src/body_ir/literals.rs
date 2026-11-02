@@ -481,6 +481,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         let operand_result_type = self.resolve_ty(inner.span);
         let operand = self.lower_expr_to_operand(inner, scope, out);
+        // A carried view's `?` propagates the carrier's error and continues on the call's substituted place; the
+        // carrier's own reference is moved out and never read.
+        if let Some((place, access)) = self.carried_view_of(inner) {
+            let carrier = super::returned_views::reference_carrier(operand_result_type, access);
+            self.emit_try(operand, carrier, outer_span, scope, out);
+            return bir::Operand::place(place, super::returned_views::view_fact(access), false);
+        }
         self.emit_try(operand, operand_result_type, outer_span, scope, out)
     }
 

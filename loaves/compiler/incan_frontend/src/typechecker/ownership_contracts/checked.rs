@@ -421,6 +421,13 @@ impl TypeChecker {
                     source.span,
                 )
             })?;
+        // A carried view is the first payload of a `Result` or `Option` result; no other type carries one.
+        if view.carried && !(signature.result_type.is_result() || signature.result_type.is_option()) {
+            return Err(Self::ownership_source_error(
+                "A view inside a result must be the first payload of a Result or Option",
+                signature.result.span,
+            ));
+        }
         let exclusive = view.access == IncanInputAccess::Exclusive;
         let source_type = match view.source.slot {
             SourceSlot::Receiver => {
@@ -484,9 +491,7 @@ impl TypeChecker {
         result: &ResolvedType,
     ) -> ResolvedType {
         let contract = self.type_info.declarations.ownership_contracts.get(identity);
-        crate::ownership_metadata::result_value_type(contract, result)
-            .cloned()
-            .unwrap_or_else(|_| result.clone())
+        crate::ownership_metadata::result_value_type(contract, result).unwrap_or_else(|_| result.clone())
     }
 
     /// Project a selected declaration's returned view into the call's value type, as for its inputs. The published
@@ -510,7 +515,7 @@ impl TypeChecker {
             return Ok(None);
         }
         crate::ownership_metadata::result_value_type(Some(contract), result)
-            .map(|value| Some(value.clone()))
+            .map(Some)
             .map_err(refusal)
     }
 

@@ -118,7 +118,7 @@ The grammar is `from parameter` followed by zero or more `.field` projections. M
 
 An explicit borrowed result requires a source even if there is only one parameter. This also applies to an explicit borrowed component inside an outcome or tuple. Missing sources and roots outside the callable's parameters or receiver produce `INCAN-T0124`. Every projected field must be a stored model or class field; generic fields use their declared type arguments. Computed properties are not valid source fields.
 
-An `Owned` result can declare a source relationship. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage. An `Owned` result with a source, and a borrowed result nested in an outcome, tuple or other type, are refused for execution with `INCAN-T0123`.
+An `Owned` result can declare a source relationship. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage. An `Owned` result with a source, and a borrowed result nested in a tuple or another type, are refused for execution with `INCAN-T0123`. A borrowed success payload of a `Result` or `Option` is a [carried view](#carried-views).
 
 ## Returned views
 
@@ -150,6 +150,41 @@ def main() -> None:
 ```
 
 Other uses of a returned view, such as passing it as an argument or storing it in a field, are refused with `INCAN-T0123`.
+
+### Carried views
+
+A `Result[Borrowed[T], E]` or `Result[Reference[T], E]` result with a source clause carries a returned view in its success payload. The source rules of returned views apply to that payload.
+
+```incan
+# accepted by source checking
+class SampleBuffer:
+    pub capacity: int
+    pub samples: list[int]
+
+    def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
+        if len(self.samples) >= self.capacity:
+            return Err("full")
+        self.samples.append(sample)
+        return Ok(self)
+
+    def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:
+        for sample in samples:
+            self.append(sample)?
+        return Ok(self)
+```
+
+Every `Ok(...)` return must carry exactly the source place, an alias of it, or a view of that place taken out of a carried call with `?`. A value created in the body produces `INCAN-T0124`. `Err(...)` builds its error value under the carrier construction rules above. Returning a call that carries a view of the same place passes its carrier on.
+
+At a call site, `?` takes the view out of the carrier. On success, the expression is a returned view of the caller's substituted place: it can be bound to a new local, used as a receiver or returned as a view, as described above. On an error, the body leaves with the error, and the loan ends there; the caller's source is usable again after the call. The call borrows its source argument as a returned-view call does. Any other use of a carried call, such as matching on it or binding its carrier, is refused with `INCAN-T0123`.
+
+An `Option[Borrowed[T]]` or `Option[Reference[T]]` result with a source clause is checked the same way, with `Some(...)` in place of `Ok(...)` and `None` carrying nothing. `?` does not apply to `Option`, so a caller cannot take that view out: matching on the carrier is refused with `INCAN-T0123`.
+
+```incan
+# accepted by source checking
+def fill(mut buffer: BorrowedMut[SampleBuffer]) -> Result[None, str]:
+    (buffer.append(10)?).append_all([20, 30])?
+    return Ok(None)
+```
 
 ## Source conflict diagnostics
 

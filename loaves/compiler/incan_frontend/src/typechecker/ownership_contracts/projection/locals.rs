@@ -4,6 +4,7 @@ use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
 use super::{CheckedInputBody, CheckedInputSource, calls};
+use crate::ast::{Expr, Spanned};
 use crate::symbols::ResolvedType;
 
 /// A local alias retains its declared value type and permissions while referring to another checked source place.
@@ -59,11 +60,12 @@ impl<'a> CheckedInputBody<'a> {
     }
 
     /// The access of an unannotated local bound to a returned view, when its loan is exactly its initializer
-    /// call's result loan. Annotated locals and ordinary bindings return `None`.
+    /// call's result loan: the initializer itself, or the call `?` takes a carried view out of. Annotated locals and
+    /// ordinary bindings return `None`.
     pub(crate) fn view_local(
         &self,
         destination: &CanonicalSymbolId,
-        initializer: HirSourceSpan,
+        initializer: &Spanned<Expr>,
     ) -> Result<Option<IncanInputAccess>, &'static str> {
         if self.facts.protocols.explicit_local_modes.contains_key(destination) {
             return Ok(None);
@@ -76,7 +78,7 @@ impl<'a> CheckedInputBody<'a> {
             .loans
             .get(id.0)
             .ok_or("returned view local has no result loan")?;
-        if loan.span != initializer {
+        if loan.span != super::super::builtins::view_call(initializer).span {
             return Err("returned view local differs from its initializer call");
         }
         Ok(Some(match loan.kind {

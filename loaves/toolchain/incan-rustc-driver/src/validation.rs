@@ -519,7 +519,12 @@ fn span(source: &SourceSpan) -> Result<(), PlanError> {
 /// admit the exact native inputs whose loans their constructor lifetime retains.
 fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
     span(&function.span)?;
-    if std::iter::once(&function.return_type)
+    let outputs = match carried_output(plan, function) {
+        Some(carrier) => crate::declarations::standard_carrier(carrier).1,
+        None => vec![function.return_type.clone()],
+    };
+    if outputs
+        .iter()
         .chain(function.parameters.iter().map(|parameter| &parameter.ty))
         .any(|ty| borrowed_alias_in_source_type(plan, ty, &mut BTreeSet::new()))
     {
@@ -3655,6 +3660,32 @@ fn library_argument_models(
         _ => {}
     }
     Ok(())
+}
+
+/// The Option/Result carrier a function returns when the result carries a returned view's loan.
+///
+/// The declaration spells it as the standard enum over its payloads, so the retained lifetime contract binds each
+/// payload reference; validation then checks the payloads instead of the alias. Without a retained contract the
+/// carrier stays an alias whose erased loan has no binder, and is refused.
+pub(crate) fn carried_output<'plan>(
+    plan: &'plan Plan,
+    function: &Function,
+) -> Option<&'plan crate::plan::EnumDeclaration> {
+    if function.signature_lifetimes.is_empty() {
+        return None;
+    }
+    let PlanType::Enum(index, _) = &function.return_type else {
+        return None;
+    };
+    let carrier = enum_declaration(plan, *index)?;
+    if carrier.carrier.is_empty() {
+        return None;
+    }
+    crate::declarations::standard_carrier(carrier)
+        .1
+        .iter()
+        .any(library_argument_is_borrowed)
+        .then_some(carrier)
 }
 
 /// Find erased loans inside native aliases before a source signature or field could expose them without lifetime

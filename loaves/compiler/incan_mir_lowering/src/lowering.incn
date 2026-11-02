@@ -62,7 +62,14 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place, block as plan_block
-from explicit_arguments import parameter_accesses, argument_access, explicit_place_argument, validate_source_input_call
+from explicit_arguments import (
+    parameter_accesses,
+    argument_access,
+    direct_view_access,
+    explicit_place_argument,
+    reference_contract,
+    validate_source_input_call,
+)
 from bytes_plan import bytes_literal
 from types import static_method_result_type
 from native_callables import native_callable_storage
@@ -2022,12 +2029,51 @@ def view_return_operand(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Borrow a returned view's source place with the view's access; the checker proved the place is the declared one."""
+    access = builder.returned_view
+    return view_operand(builder, operand, return_type, access, span)
+
+
+def view_operand(
+    mut builder: Builder,
+    operand: &RustOperand,
+    expected: PlanType,
+    access: IncanInputAccess,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """The one loan of a view's source place, for a direct view's return and a carried view's payload alike."""
     match operand:
         RustOperand.Place(read) =>
             source = scalar_place(builder, read.place, span)?
-            access = builder.returned_view
-            return explicit_place_argument(builder, source, read.fact, return_type, access, span)
+            return explicit_place_argument(builder, source, read.fact, expected, access, span)
         _ => return Err("unsupported Body IR returned view without a source place")
+
+
+def carrier_payload(
+    mut builder: Builder,
+    payload: &RustOperand,
+    field: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    In a body that carries a view, a reference payload Body IR borrows from a source place is that view's loan; any
+    other payload, such as an already borrowed parameter wrapped for a call, crosses the ordinary value boundary.
+    """
+    if builder.carries_view and borrowed_payload(payload):
+        match reference_contract(field):
+            Ok((_referent, writable)) =>
+                mut access = IncanInputAccess.Shared
+                if writable:
+                    access = IncanInputAccess.Exclusive
+                return view_operand(builder, payload, field, access, span)
+            Err(_reason) => pass
+    return boundary_operand(builder, payload, field, span)
+
+
+def borrowed_payload(payload: &RustOperand) -> bool:
+    """Whether Body IR reads the payload's place under a shared or exclusive borrow."""
+    match payload:
+        RustOperand.Place(read) => return read.fact == OwnershipFact.Borrow or read.fact == OwnershipFact.MutBorrow
+        _ => return false
 
 
 def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:
@@ -9462,7 +9508,7 @@ def lower_instances(
         original_callable = request.original_callable
         body = instantiate(request.body, arguments, owned_callable_slots)?
         storage_arguments = callable_storage_arguments(request.body, arguments, owned_callable_slots)?
-        lifetimes = signature_lifetimes(request.body, arguments)
+        lifetimes = signature_lifetimes(request.body, arguments)?
         declarations = retain_frame_nominals(template_constructors, context, templates, body, nominal_instances)?
         for declaration in declarations:
             context.nominal_declarations.push(declaration.clone())
@@ -9802,11 +9848,14 @@ def lower_function(
         initializing_decorator,
         span,
     )?
+    if body.returned_view.is_some() and (body.is_async or body.is_generator()):
+        return Err("unsupported Body IR returned view in an async or generator frame")
+    # A carried view's carrier is an ordinary owned result whose success payload already holds the borrow.
+    match direct_view_access(body):
+        Some(access) => builder.returned_view = access
+        None => pass
     match body.returned_view:
-        Some(view) =>
-            if body.is_async or body.is_generator():
-                return Err("unsupported Body IR returned view in an async or generator frame")
-            builder.returned_view = view.access
+        Some(view) => builder.carries_view = view.carried
         None => pass
     initialize_body_frame(module, body, builder, parameters, declared_type, span)?
     lower_block(module, builder, body.block)?
@@ -9829,7 +9878,7 @@ def lower_function(
     )
     # A returned view's result shares its source parameter's loan; instances recompute the same relation.
     match body.returned_view:
-        Some(_view) => function.signature_lifetimes = signature_lifetimes(body, type_arguments)
+        Some(_view) => function.signature_lifetimes = signature_lifetimes(body, type_arguments)?
         None => pass
     if body.is_generator():
         match generator_shape(declared_type):
@@ -15179,7 +15228,7 @@ def lower_result_construction(
     mut slot = 0
     if variant.kind == ResultVariantKind.Err:
         slot = 1
-    operand = boundary_operand(builder, variant.payload, declaration.variants[slot].fields[0], span)?
+    operand = carrier_payload(builder, variant.payload, declaration.variants[slot].fields[0], span)?
     assign_carrier(builder, target, owner, slot, [operand], span)
     return Ok(None)
 
@@ -15201,7 +15250,7 @@ def lower_option_construction(
     match elements[0].as_one():
         Some(payload) =>
             ty = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
-            value = boundary_operand(builder, payload, ty, span)?
+            value = carrier_payload(builder, payload, ty, span)?
             assign_carrier(builder, target, owner, 1, [value], span)
             return Ok(None)
         _ => return Err("unsupported Body IR Some spread payload")
