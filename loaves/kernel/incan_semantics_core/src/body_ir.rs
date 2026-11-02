@@ -1664,7 +1664,9 @@ impl Body {
             return (!self.explicit_input_bindings.is_empty())
                 .then_some("explicit local binding lacks a checked body profile");
         };
-        if profile.version != 1 || self.canonical.as_ref() != Some(&profile.owner) {
+        // Profile 1 is a straight-line body; profile 2 a body with statement-ifs, whose owned initializers record the
+        // whole-owner transfers its branches may perform.
+        if !matches!(profile.version, 1 | 2) || self.canonical.as_ref() != Some(&profile.owner) {
             return Some("explicit input profile has an unsupported version or different canonical owner");
         }
         if let Some(view) = &self.returned_view {
@@ -1677,7 +1679,7 @@ impl Body {
                 return Some("returned view must borrow an existing parameter slot with shared or exclusive access");
             }
         }
-        if !profile.owned_initializers.is_empty() {
+        if profile.version == 1 && !profile.owned_initializers.is_empty() {
             return Some("straight-line input profile cannot authorize conditional initializer cleanup");
         }
         if !matches!(
@@ -5849,6 +5851,7 @@ mod tests {
             ),
             assignment,
         };
+        // Initializer transfers travel with both profiles; only the conditional profile may execute them.
         for version in [1, 2] {
             body.checked_input_profile = Some(super::CheckedInputProfile {
                 version,
@@ -5857,9 +5860,10 @@ mod tests {
             });
             let decoded: Body = postcard::from_bytes(&postcard::to_allocvec(&body)?)?;
             assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
-            assert!(
+            assert_eq!(
                 decoded.first_representation_gap().is_some(),
-                "initializer transport opened staged cleanup execution"
+                version == 1,
+                "profile {version} with an initializer transfer"
             );
         }
         body.checked_input_profile = Some(profile.clone());
@@ -5872,7 +5876,7 @@ mod tests {
         assert!(legacy.first_representation_gap().is_some());
         for invalid in [
             super::CheckedInputProfile {
-                version: 2,
+                version: 3,
                 ..profile.clone()
             },
             super::CheckedInputProfile {

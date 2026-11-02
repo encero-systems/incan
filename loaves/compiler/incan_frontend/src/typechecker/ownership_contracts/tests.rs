@@ -361,6 +361,20 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
             "def branch(flag: bool) -> None:\n    value = \"owned\"\n    if flag:\n        consume(value)\n    print(value)\ndef consume(value: Owned[str]) -> None:\n    pass\n",
             true,
         ),
+        // A loop shares its stored iterable for every poll: items are read freely, the iterable is not edited
+        // until the loop ends.
+        (
+            "def total(values: Borrowed[list[int]]) -> int:\n    mut sum = 0\n    for value in values:\n        sum += value\n    return sum\n",
+            false,
+        ),
+        (
+            "def reset(mut values: BorrowedMut[list[int]]) -> None:\n    for value in values:\n        values = [value]\n",
+            true,
+        ),
+        (
+            "def after(mut values: BorrowedMut[list[int]]) -> None:\n    mut sum = 0\n    for value in values:\n        sum += value\n    values = [sum]\n",
+            false,
+        ),
     ] {
         let graph = source_graph(source)?.map_err(|error| format!("{source}\n{error:?}"))?;
         let analysis = flow::analyze(&graph).map_err(|error| format!("{source}\n{error:?}"))?;
@@ -1508,7 +1522,8 @@ fn operation_reads_cannot_move_after_later_operands() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// Conditional path evidence can be checked independently while executable conditional cleanup stays gated.
+/// Conditional path evidence is checked independently, and a body whose conditional paths project completely
+/// executes under the conditional profile.
 #[test]
 fn conditional_paths_require_their_source_edges() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
@@ -1520,10 +1535,12 @@ fn conditional_paths_require_their_source_edges() -> Result<(), Box<dyn std::err
     ] {
         let checker = checked(source)?;
         assert!(
-            checker
+            !checker
                 .errors
                 .iter()
-                .any(|error| error.stable_code() == Some("INCAN-T0123"))
+                .any(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{source}: {:?}",
+            checker.errors
         );
         assert!(
             !checker
@@ -2496,21 +2513,19 @@ fn checked(source: &str) -> Result<TypeChecker, Box<dyn std::error::Error>> {
     Ok(checker)
 }
 
-/// Reannotation and conditional owned locals remain outside direct admission. A method body's alias and an
-/// alias returned as the declared view source are admitted.
+/// Reannotation remains outside admission. A method body's alias, an alias returned as the declared view source
+/// and a conditional owned local (under the conditional profile) are admitted.
 #[test]
 fn local_alias_admission_preserves_other_boundaries() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
         "class Counter:\n    value: int\n    def read(self) -> int:\n        let local: Borrowed[int] = self.value\n        return local\n",
         "def read(value: Borrowed[str]) -> Borrowed[str] from value:\n    let local: Borrowed[str] = value\n    return local\n",
+        "def read(value: Owned[int], choose: bool) -> int:\n    if choose:\n        let local: Owned[int] = value\n        return local\n    return value\n",
     ] {
         let checker = checked(source)?;
         assert!(checker.errors.is_empty(), "{source}: {:?}", checker.errors);
     }
-    for source in [
-        "def wrong() -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n",
-        "def read(value: Owned[int], choose: bool) -> int:\n    if choose:\n        let local: Owned[int] = value\n        return local\n    return value\n",
-    ] {
+    for source in ["def wrong() -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n"] {
         let checker = checked(source)?;
         assert!(
             checker
