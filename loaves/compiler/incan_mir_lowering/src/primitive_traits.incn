@@ -240,7 +240,10 @@ def normalized_primitive_static(
     mut implementation: Option[CanonicalSymbolId] = None
     for implementation_position in range(len(module.trait_implementations)):
         record = borrowed_at(module.trait_implementations, implementation_position)
-        if record.owner != borrowed_at(module.nominal_declarations, owner).canonical or Some(record.method.clone()) != identity:
+        if (
+            record.owner != borrowed_at(module.nominal_declarations, owner).canonical
+            or Some(record.method.clone()) != identity
+        ):
             continue
         if len(record.slot_arguments) != 0 or len(record.type_arguments) != 0:
             return Err("unsupported Body IR generic primitive adapter associated implementation")

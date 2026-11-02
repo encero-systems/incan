@@ -914,7 +914,8 @@ def owned_target_read(
     match fact:
         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
         OwnershipFact.Move =>
-            transferred_tuple_field = is_tuple_type(borrowed_at(builder.locals, target.local).ty) and is_direct_tuple_field(target)
+            holder = borrowed_at(builder.locals, target.local)
+            transferred_tuple_field = is_tuple_type(holder.ty) and is_direct_tuple_field(target)
             if (
                 target.projection != Projection.Whole
                 and not transferred_tuple_field
@@ -961,7 +962,10 @@ def owned_target_read(
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
             # A list held by a tuple element is materialized by cloning it, leaving the owning tuple whole.
-            if is_list(place_type(builder.locals, target)) and is_tuple_type(borrowed_at(builder.locals, target.local).ty):
+            if (
+                is_list(place_type(builder.locals, target))
+                and is_tuple_type(borrowed_at(builder.locals, target.local).ty)
+            ):
                 return carrier_payload_value(builder, target, span)
             # A checked projected read borrows its parent. Materialize only the selected enum or model through its
             # real Clone implementation; copying or moving that field would invalidate the still-owned parent. A model
@@ -9706,9 +9710,13 @@ def entry_error(module: &BodyIrModule, ty: PlanType) -> bool:
     match ty:
         PlanType.String => return true
         PlanType.Model(index, _name) =>
-            return index < len(module.nominal_declarations) and library_item(borrowed_at(module.nominal_declarations, index)) != ""
+            if index >= len(module.nominal_declarations):
+                return false
+            return library_item(borrowed_at(module.nominal_declarations, index)) != ""
         PlanType.Enum(index, _name) =>
-            return index < len(module.enum_declarations) and library_enum_item(borrowed_at(module.enum_declarations, index)) != ""
+            if index >= len(module.enum_declarations):
+                return false
+            return library_enum_item(borrowed_at(module.enum_declarations, index)) != ""
         _ => return false
 
 
@@ -10772,7 +10780,10 @@ def list_assignment(
         _ = list_assignment(builder, replacement, value, span)?
         replace_owned_destination(builder, destination, RvalueKind.Use(read_place(replacement, true, span)), span)
         return Ok(None)
-    leaf, depth = require_list_shape(borrowed_at(builder.locals, destination.local).ty, "unsupported Body IR non-list assignment")?
+    leaf, depth = require_list_shape(
+        borrowed_at(builder.locals, destination.local).ty,
+        "unsupported Body IR non-list assignment",
+    )?
     ty = PlanType.List(leaf, depth)
     if borrowed_at(builder.locals, destination.local).ty != ty:
         return Err("unsupported Body IR whole borrowed list assignment")

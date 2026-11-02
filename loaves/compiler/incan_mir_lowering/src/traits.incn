@@ -453,7 +453,9 @@ def source_owner(module: &BodyIrModule, owner: PlanType) -> bool:
     match owner:
         PlanType.Model(index, _name) => return library_item(borrowed_at(module.nominal_declarations, index)) == ""
         PlanType.Enum(index, _name) =>
-            return index < len(module.enum_declarations) and library_enum_item(borrowed_at(module.enum_declarations, index)) == ""
+            if index >= len(module.enum_declarations):
+                return false
+            return library_enum_item(borrowed_at(module.enum_declarations, index)) == ""
         _ => return false
 
 

@@ -90,7 +90,10 @@ def comparison_body(
     match selected:
         None => return Err(f"unsupported Body IR unavailable native comparison slot {name}")
         Some(identity) =>
-            if name == "__eq__" and borrowed_at(module.nominal_declarations, owner).comparison_equality != Some(identity.clone()):
+            if (
+                name == "__eq__"
+                and borrowed_at(module.nominal_declarations, owner).comparison_equality != Some(identity.clone())
+            ):
                 return Err("unsupported Body IR mismatched native equality witness")
             for body_position in range(len(module.bodies)):
                 body = borrowed_at(module.bodies, body_position)
