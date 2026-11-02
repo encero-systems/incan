@@ -214,12 +214,8 @@ fn whole_local(place: &bir::Place) -> Option<usize> {
 
 /// Recognize only compiler collection shapes whose arity is part of the existing collection registry.
 fn collection_shape(ty: &IncanType) -> Option<(CollectionTypeId, &[IncanType])> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    let kind = collections::from_str(base)?;
-    match (kind, args.len()) {
-        (CollectionTypeId::Set, 1) | (CollectionTypeId::Dict, 2) => Some((kind, args)),
+    match ty.collection()? {
+        shape @ ((CollectionTypeId::Set, [_]) | (CollectionTypeId::Dict, [_, _])) => Some(shape),
         _ => None,
     }
 }

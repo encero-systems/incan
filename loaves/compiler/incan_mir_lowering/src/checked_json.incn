@@ -7,6 +7,7 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
     generic,
 )
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from pub::incan_mir_plan import (
     Function,
     Parameter,
@@ -101,7 +102,7 @@ def checked_success(hook: &Body) -> Result[RustType, str]:
     """Read the already validated standard Result success without reconstructing a nominal identity by spelling."""
     match hook.return_type:
         RustType.Generic(base=base, args=arguments) =>
-            if base == "Result" and len(arguments) == 2:
+            if collection_type(str(base)) == Some(CollectionTypeId.Result) and len(arguments) == 2:
                 return Ok(arguments[0].clone())
         _ => pass
     return Err("unsupported Body IR checked Deserialize hook Result")

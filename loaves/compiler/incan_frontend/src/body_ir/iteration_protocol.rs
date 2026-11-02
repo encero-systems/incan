@@ -1,7 +1,7 @@
 //! Normalize checked structural hooks into ordinary calls and intrinsic option/result control flow.
 
 use super::args::DeclaredSlot;
-use super::primitives::{collection_member_types, result_error_type};
+use super::primitives::result_error_type;
 use super::{BodyBuilder, HirSourceSpan, IncanType, SemanticSourceTargetKind, ast, bir};
 use crate::symbols::canonical_builtin_constructor_identity;
 use crate::typechecker::BodyIrProtocolCallInfo;
@@ -217,14 +217,17 @@ impl BodyBuilder<'_, '_> {
             (returned, polled)
         };
         let option_type = if fallible {
-            match &returned {
-                IncanType::Generic { base, args } if base == "Result" && args.len() == 2 => &args[0],
+            match returned.collection_arguments(CollectionTypeId::Result) {
+                Some([option_type, _]) => option_type,
                 _ => return Err("fallible iteration poll without a checked Result".into()),
             }
         } else {
             &returned
         };
-        if !collection_member_types(option_type, CollectionTypeId::Option).is_some_and(|members| members.len() == 1) {
+        if !option_type
+            .collection_arguments(CollectionTypeId::Option)
+            .is_some_and(|members| members.len() == 1)
+        {
             return Err("iteration poll without a checked Option item".into());
         }
 
@@ -292,12 +295,9 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Result<bir::Operand, String> {
         // ---- Exact checked channels ----
-        let IncanType::Generic { base, args } = returned else {
+        let Some(args @ [_, _]) = returned.collection_arguments(CollectionTypeId::Result) else {
             return Err("fallible poll without a checked Result".into());
         };
-        if base != "Result" || args.len() != 2 {
-            return Err("fallible poll without a checked Result".into());
-        }
         let error_routing = match result_error_type(&self.owner_return_type) {
             Some(error) if error == &args[1] => bir::TryErrorRouting::SameType {
                 error_type: error.clone(),

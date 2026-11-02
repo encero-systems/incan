@@ -7,6 +7,7 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
     CanonicalSymbolId,
 )
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -129,7 +130,7 @@ def require_closed_hook(body: &Body) -> Result[None, str]:
     match body.return_type:
         RustType.Generic(base=base, args=arguments) =>
             if (
-                base == "Result"
+                collection_type(str(base)) == Some(CollectionTypeId.Result)
                 and len(arguments) == 2
                 and arguments[1] == RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError)
             ):

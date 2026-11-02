@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use incan_lang::lang::stdlib::facets;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeCategory, SurfaceTypeKind};
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
 use incan_semantics_core::{IncanPrimitiveType, SymbolNamespace};
 
@@ -126,10 +127,10 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
     let id = surface_types::from_runtime_rust_path(&path.join("::"))?;
     let result = match (id, name) {
         (surface_types::SurfaceTypeId::TaskJoinError, "message") => IncanType::Primitive(IncanPrimitiveType::Str),
-        (surface_types::SurfaceTypeId::TaskJoinError, "source") => IncanType::Generic {
-            base: "Option".into(),
-            args: vec![IncanType::Primitive(IncanPrimitiveType::Str)],
-        },
+        (surface_types::SurfaceTypeId::TaskJoinError, "source") => IncanType::builtin_collection(
+            CollectionTypeId::Option,
+            vec![IncanType::Primitive(IncanPrimitiveType::Str)],
+        ),
         (surface_types::SurfaceTypeId::TaskJoinError, "is_cancelled" | "is_panic") => {
             IncanType::Primitive(IncanPrimitiveType::Bool)
         }
@@ -281,16 +282,12 @@ pub(super) fn native_collection_parameter(ty: &IncanType, facts: &TypeCheckInfo)
 
 /// Recognize an owned builtin collection carrier after the accepting checker has projected native storage.
 pub(super) fn owned_collection_storage(ty: &IncanType) -> bool {
-    let IncanType::Generic { base, .. } = ty else {
-        return false;
-    };
     matches!(
-        incan_lang::lang::types::collections::from_str(base),
-        Some(
-            incan_lang::lang::types::collections::CollectionTypeId::List
-                | incan_lang::lang::types::collections::CollectionTypeId::Dict
-                | incan_lang::lang::types::collections::CollectionTypeId::Set
-        )
+        ty.collection(),
+        Some((
+            CollectionTypeId::List | CollectionTypeId::Dict | CollectionTypeId::Set,
+            _
+        ))
     )
 }
 

@@ -694,7 +694,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// requires local materialization provenance before field projection.
     pub(super) fn for_item_type(&self, pattern: &ast::Spanned<ast::Pattern>, iter_ty: &IncanType) -> IncanType {
         let checked = self.resolve_ty(pattern.span);
-        if let Some([element]) = collection_member_types(iter_ty, CollectionTypeId::List) {
+        if let Some([element]) = iter_ty.collection_arguments(CollectionTypeId::List) {
             if !self.leaves_type_open(element) {
                 return element.clone();
             }
@@ -1612,7 +1612,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A materialized list expression owns its items, as legacy iterates a call result, literal, or comprehension
     /// directly by value. Named places and projections require the checker's explicit consumption decision.
     pub(super) fn temporary_list_iterable(&self, place: &bir::Place, ty: &IncanType) -> bool {
-        collection_member_types(ty, CollectionTypeId::List).is_some()
+        ty.collection_arguments(CollectionTypeId::List).is_some()
             && place.projection.is_empty()
             && place
                 .local_id()
@@ -1650,7 +1650,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         };
         if !self.type_info.rust.iteration_hooks.contains_key(&source.span) {
-            collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+            self.resolve_ty(source.span)
+                .collection_arguments(CollectionTypeId::List)?;
         }
         Some(source)
     }
@@ -1889,7 +1890,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             if self.checked_range_source(source) {
                 continue;
             }
-            collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+            self.resolve_ty(source.span)
+                .collection_arguments(CollectionTypeId::List)?;
         }
         Some([left, right])
     }
@@ -2105,7 +2107,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return None;
         }
-        collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::Dict)?;
+        self.resolve_ty(source.span)
+            .collection_arguments(CollectionTypeId::Dict)?;
         Some(source)
     }
 
@@ -2123,7 +2126,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) {
         // ---- Original map storage and its polled key ----
         let source_ty = self.resolve_ty(source.span);
-        let key_ty = collection_member_types(&source_ty, CollectionTypeId::Dict)
+        let key_ty = source_ty
+            .collection_arguments(CollectionTypeId::Dict)
             .map(|types| types[0].clone())
             .unwrap_or(IncanType::Unknown);
         let (iterator, initializer) = self.initialize_iteration_source(source, outer_scope, span, out);

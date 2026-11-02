@@ -151,7 +151,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
         let ty = self.resolve_ty(span);
-        let Some([element_ty]) = collection_member_types(&ty, CollectionTypeId::List) else {
+        let Some([element_ty]) = ty.collection_arguments(CollectionTypeId::List) else {
             return self.unsupported_operand(
                 "list constructor without a checked element type".to_string(),
                 scope,
@@ -218,7 +218,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        if collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::Dict).is_none() {
+        if self
+            .resolve_ty(source.span)
+            .collection_arguments(CollectionTypeId::Dict)
+            .is_none()
+        {
             return self.unsupported_operand(
                 "dict constructor from a non-dict source".to_string(),
                 scope,
@@ -424,10 +428,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let option_int = IncanType::Generic {
-            base: "Option".into(),
-            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
-        };
+        let option_int = IncanType::builtin_collection(
+            CollectionTypeId::Option,
+            vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        );
         let mut parts = Vec::new();
         for part in [&slice.start, &slice.end, &slice.step] {
             let value = match part {
@@ -527,9 +531,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         // The checked Result already fixes the success type, including when the outer expression has no separate type
         // entry.
-        let ty = match &operand_result_type {
-            IncanType::Generic { base, args } if base == "Result" && args.len() == 2 => args[0].clone(),
-            _ => self.resolve_ty(outer_span),
+        let ty = match result_type_parts(&operand_result_type) {
+            Some((ok_type, _)) => ok_type.clone(),
+            None => self.resolve_ty(outer_span),
         };
         let destination = self.new_temp(ty.clone(), scope, hir_span_value);
         out.push(bir::Statement {

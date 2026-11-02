@@ -1557,13 +1557,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     && args.len() == 1
                     && (self.intrinsic_result_constructor(callee, value.span).is_some()
                         || (self.intrinsic_option_constructor(callee)
-                            && primitives::collection_member_types(destination, CollectionTypeId::Option)
-                                .is_some())) =>
+                            && destination.collection_arguments(CollectionTypeId::Option).is_some())) =>
             {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::List(entries) => {
-                let Some([member]) = primitives::collection_member_types(destination, CollectionTypeId::List) else {
+                let Some([member]) = destination.collection_arguments(CollectionTypeId::List) else {
                     return;
                 };
                 for entry in entries {
@@ -1574,7 +1573,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::Set(elements) => {
-                let Some([member]) = primitives::collection_member_types(destination, CollectionTypeId::Set) else {
+                let Some([member]) = destination.collection_arguments(CollectionTypeId::Set) else {
                     return;
                 };
                 for element in elements {
@@ -1583,8 +1582,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::Dict(entries) => {
-                let Some([key_ty, value_ty]) = primitives::collection_member_types(destination, CollectionTypeId::Dict)
-                else {
+                let Some([key_ty, value_ty]) = destination.collection_arguments(CollectionTypeId::Dict) else {
                     return;
                 };
                 for entry in entries {
@@ -1682,8 +1680,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             (IncanType::Unknown | IncanType::Infer, _) => settled.clone(),
             (IncanType::TypeVar(name), _) if !self.type_parameters.contains(name) => settled.clone(),
-            (_, IncanType::Generic { base, args })
-                if base == "Union" && recorded != settled && args.iter().any(|member| member == recorded) =>
+            (_, _)
+                if recorded != settled
+                    && settled
+                        .union_members()
+                        .is_some_and(|members| members.contains(recorded)) =>
             {
                 settled.clone()
             }
@@ -2162,7 +2163,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.borrowed_parameters.contains(&local)
             || self.locals.get(local.index()).is_some_and(|decl| {
                 matches!(decl.origin, bir::LocalOrigin::Parameter)
-                    && matches!(&decl.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict)))
+                    && matches!(
+                        decl.ty.collection(),
+                        Some((
+                            CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict,
+                            _
+                        ))
+                    )
             })
     }
 

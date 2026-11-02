@@ -355,8 +355,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// binds (#1561); legacy then matches through `&mut` so the change lands in the place. A union-typed scrutinee
     /// keeps the ordinary match, because its arms bind narrowed members rather than parts of the place.
     pub(super) fn matches_in_place(&self, span: ast::Span, scrutinee_ty: &IncanType) -> bool {
-        !matches!(scrutinee_ty, IncanType::Generic { base, .. } if base == "Union")
-            && self.type_info.match_scrutinee_is_changed_in_place(span)
+        scrutinee_ty.union_members().is_none() && self.type_info.match_scrutinee_is_changed_in_place(span)
     }
 
     /// Lower one pattern arm whose body is a statement block, restoring the enclosing bindings afterwards.
@@ -569,7 +568,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .and_then(|id| self.locals.get(id.index()))
                 .is_some_and(|local| {
                     local.origin == bir::LocalOrigin::Temporary
-                        && matches!(&local.ty, IncanType::Generic { base, .. } if base == "Option" || base == "Result")
+                        && matches!(
+                            local.ty.collection(),
+                            Some((CollectionTypeId::Option | CollectionTypeId::Result, _))
+                        )
                 })
     }
 
@@ -697,7 +699,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // A member pattern over an optional union (`int | str | None`) selects `Some` first, then the member
         // of its union payload.
         let optional_union = is_optional_union(&subject_ty);
-        if (matches!(&subject_ty, IncanType::Generic { base, .. } if base == "Union") || optional_union)
+        if (subject_ty.union_members().is_some() || optional_union)
             && !matches!(target_ty, IncanType::Unknown)
             && args.iter().all(|arg| matches!(arg, ast::PatternArg::Positional(_)))
         {
@@ -1003,7 +1005,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if constructors::from_str(&name.node) != Some(ConstructorId::Some) {
             return None;
         }
-        let [payload_type] = collection_member_types(expected_ty, CollectionTypeId::Option)? else {
+        let [payload_type] = expected_ty.collection_arguments(CollectionTypeId::Option)? else {
             return None;
         };
         let [ast::PatternArg::Positional(payload)] = args else {

@@ -45,6 +45,7 @@ use incan_lang::errors::ErrorKind;
 pub use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::errors;
 use incan_lang::lang::surface::string_methods::StringMethodId;
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics::NumericTypeId;
 use serde::{Deserialize, Serialize};
 
@@ -1684,9 +1685,11 @@ impl Body {
             }
             // A `Result` carries a view in either payload; an `Option` only in its one payload.
             if let Some(payload) = view.carried
-                && !matches!(&self.return_type, crate::IncanType::Generic { base, args }
-                    if (base == "Result" && args.len() == 2 && payload < 2)
-                        || (base == "Option" && args.len() == 1 && payload == 0))
+                && !match self.return_type.collection() {
+                    Some((CollectionTypeId::Result, [_, _])) => payload < 2,
+                    Some((CollectionTypeId::Option, [_])) => payload == 0,
+                    _ => false,
+                }
             {
                 return Some("carried returned view requires a payload of a Result or Option result");
             }

@@ -3,6 +3,7 @@
 //! of a `Result` or `Option`; `?` on a success-carried view continues on the substituted place without reading the
 //! carrier's reference.
 
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, IncanType};
 
 use super::{BodyBuilder, ast, bir, hir_span};
@@ -92,8 +93,8 @@ impl BodyBuilder<'_, '_> {
             },
             _ => None,
         };
-        let operand = match (constructed, &carrier) {
-            (Some((Some(kind), payload)), IncanType::Generic { base, args }) if base == "Result" && args.len() == 2 => {
+        let operand = match (constructed, carrier.collection()) {
+            (Some((Some(kind), payload)), Some((CollectionTypeId::Result, [_, _]))) => {
                 let payload = if (kind == bir::ResultVariantKind::Ok) == (carried == 0) {
                     let (place, access) = self.authenticated_view_place(payload, scope, out)?;
                     bir::Operand::place(place, view_fact(access), false)
@@ -103,9 +104,7 @@ impl BodyBuilder<'_, '_> {
                 };
                 self.carried_variant(kind, payload, carried, value.span, &carrier, scope, out)
             }
-            (Some((None, payload)), IncanType::Generic { base, args })
-                if base == "Option" && args.len() == 1 && carried == 0 =>
-            {
+            (Some((None, payload)), Some((CollectionTypeId::Option, [_]))) if carried == 0 => {
                 let (place, access) = self.authenticated_view_place(payload, scope, out)?;
                 self.push_assign_temp(
                     bir::Rvalue::Aggregate(

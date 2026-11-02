@@ -187,10 +187,8 @@ pub(super) fn frozen_literal_constant(value: &ast::Expr, ty: &IncanType) -> Opti
             .collect::<Option<Vec<_>>>()?;
         return Some(bir::Constant::FrozenAggregate(ty.clone(), elements));
     }
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    let elements = match (collections::from_str(base)?, value, args.as_slice()) {
+    let (collection, args) = ty.collection()?;
+    let elements = match (collection, value, args) {
         (CollectionTypeId::FrozenList, ast::Expr::List(entries), [element]) => entries
             .iter()
             .map(|entry| match entry {
@@ -332,10 +330,12 @@ fn static_initializer(
         _ => false,
     };
     if empty_call && type_info.resolved_collection_constructor(value.span) == Some(CollectionTypeId::Set) {
-        let [element] = static_collection_arguments(ty, CollectionTypeId::Set)? else {
+        let [element] = ty.collection_arguments(CollectionTypeId::Set)? else {
             return None;
         };
-        return hashed_static_carrier(element).then(|| bir::StaticInitializer::Set(Vec::new()));
+        return element
+            .hashed_static_literal_carrier()
+            .then(|| bir::StaticInitializer::Set(Vec::new()));
     }
     static_literal_initializer(&value.node, ty)
 }
@@ -343,14 +343,14 @@ fn static_initializer(
 /// Preserve literal values only in their exact checked primitive carrier or primitive collection element carriers.
 fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::StaticInitializer> {
     match value {
-        ast::Expr::Literal(literal) if primitive_static_carrier(ty) => Some(bir::StaticInitializer::Literal(
+        ast::Expr::Literal(literal) if ty.static_literal_carrier() => Some(bir::StaticInitializer::Literal(
             primitives::lower_checked_literal(literal, ty),
         )),
         ast::Expr::List(entries) => {
-            let [element] = static_collection_arguments(ty, CollectionTypeId::List)? else {
+            let [element] = ty.collection_arguments(CollectionTypeId::List)? else {
                 return None;
             };
-            if !primitive_static_carrier(element) {
+            if !element.static_literal_carrier() {
                 return None;
             }
             let values = entries
@@ -363,10 +363,10 @@ fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::
             Some(bir::StaticInitializer::List(values))
         }
         ast::Expr::Dict(entries) => {
-            let [key, value] = static_collection_arguments(ty, CollectionTypeId::Dict)? else {
+            let [key, value] = ty.collection_arguments(CollectionTypeId::Dict)? else {
                 return None;
             };
-            if !hashed_static_carrier(key) || !primitive_static_carrier(value) {
+            if !key.hashed_static_literal_carrier() || !value.static_literal_carrier() {
                 return None;
             }
             let pairs = entries
@@ -382,10 +382,10 @@ fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::
             Some(bir::StaticInitializer::Dict(pairs))
         }
         ast::Expr::Set(members) => {
-            let [element] = static_collection_arguments(ty, CollectionTypeId::Set)? else {
+            let [element] = ty.collection_arguments(CollectionTypeId::Set)? else {
                 return None;
             };
-            if !hashed_static_carrier(element) {
+            if !element.hashed_static_literal_carrier() {
                 return None;
             }
             let values = members
@@ -404,29 +404,6 @@ fn static_literal_constant(value: &ast::Expr, ty: &IncanType) -> Option<bir::Con
         bir::StaticInitializer::Literal(constant) => Some(constant),
         _ => None,
     }
-}
-
-/// The type arguments of a checked builtin collection carrier of the expected kind.
-fn static_collection_arguments(ty: &IncanType, expected: CollectionTypeId) -> Option<&[IncanType]> {
-    match ty {
-        IncanType::Generic { base, args } if collections::from_str(base) == Some(expected) => Some(args.as_slice()),
-        _ => None,
-    }
-}
-
-/// A primitive carrier a static literal may hold.
-fn primitive_static_carrier(ty: &IncanType) -> bool {
-    matches!(
-        ty,
-        IncanType::Primitive(
-            IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool | IncanPrimitiveType::Str
-        )
-    )
-}
-
-/// A primitive hash key or set member: floating point lacks Eq and Hash.
-fn hashed_static_carrier(ty: &IncanType) -> bool {
-    primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
 }
 
 /// Retain canonical normal-enum layouts from checked annotation and derive facts, never syntax-based type guesses.

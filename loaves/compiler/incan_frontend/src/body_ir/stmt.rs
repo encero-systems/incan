@@ -1328,11 +1328,17 @@ fn chained_integer_literal_types(
 /// Return whether two types are the same kind of container: both `Option`, `List`, `Set` or `Dict`, or tuples of one
 /// length, the only nodes a chained value's per-target evaluation retypes wholesale.
 fn same_container_kind(left: &IncanType, right: &IncanType) -> bool {
-    match (left, right) {
-        (IncanType::Generic { base: left, .. }, IncanType::Generic { base: right, .. }) => {
-            left == right && matches!(left.as_str(), "Option" | "List" | "Set" | "Dict")
+    if let (IncanType::Tuple(left), IncanType::Tuple(right)) = (left, right) {
+        return left.len() == right.len();
+    }
+    match (left.collection(), right.collection()) {
+        (Some((left, _)), Some((right, _))) => {
+            left == right
+                && matches!(
+                    left,
+                    CollectionTypeId::Option | CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict
+                )
         }
-        (IncanType::Tuple(left), IncanType::Tuple(right)) => left.len() == right.len(),
         _ => false,
     }
 }

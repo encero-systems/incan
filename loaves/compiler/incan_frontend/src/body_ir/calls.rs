@@ -1768,7 +1768,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         if self.intrinsic_option_constructor(callee)
             && type_args.is_empty()
-            && matches!(self.resolve_ty(span), IncanType::Generic { ref base, ref args } if base == "Option" && args.len() == 1)
+            && matches!(
+                self.resolve_ty(span).collection_arguments(CollectionTypeId::Option),
+                Some([_])
+            )
             && let [ast::CallArg::Positional(payload)] = args
         {
             let payload = self.lower_expr_to_operand(payload, scope, out);
@@ -1881,7 +1884,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let (args, span, scope, hir_span_value) = (call.args, call.span, call.scope, call.hir_span);
         let checked = self.resolve_ty(callee.span);
         let storage = &self.locals[local.index()].ty;
-        let local_ty = if matches!(storage, IncanType::Generic { base, .. } if base == "Union") {
+        let local_ty = if storage.union_members().is_some() {
             checked.clone()
         } else {
             storage.clone()
@@ -2912,12 +2915,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Retain the existing checked standard-carrier method profile once for both receiver evaluation and dispatch.
     /// User-defined methods and other carriers keep their canonical source method path.
     fn checked_intrinsic_carrier(&self, receiver: &ast::Spanned<ast::Expr>, name: &str) -> Option<String> {
-        match self.resolve_ty(receiver.span) {
-            IncanType::Generic { base, .. }
-                if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or"))
-                    || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or")) =>
-            {
-                Some(base)
+        match self.resolve_ty(receiver.span).collection()?.0 {
+            carrier @ CollectionTypeId::Option if matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or") => {
+                Some(collections::as_str(carrier).to_string())
+            }
+            carrier @ CollectionTypeId::Result if matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or") => {
+                Some(collections::as_str(carrier).to_string())
             }
             _ => None,
         }
@@ -3195,7 +3198,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return elements;
         }
         let receiver_type = self.resolve_ty(receiver.span);
-        let Some([element_type]) = collection_member_types(&receiver_type, CollectionTypeId::List) else {
+        let Some([element_type]) = receiver_type.collection_arguments(CollectionTypeId::List) else {
             return elements;
         };
         match elements.pop() {

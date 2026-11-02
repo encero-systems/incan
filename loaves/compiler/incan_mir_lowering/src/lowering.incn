@@ -178,6 +178,7 @@ from rust::incan_semantics_core import (
     canonical_module_identity,
 )
 from rust::incan_semantics_core::body_ir import EntrypointEffect as RustEntrypointEffect
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from classes import (
     parameter_local_index,
     frame_type,
@@ -14614,7 +14615,7 @@ def isinstance_source_type(
     """Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing."""
     match checked:
         RustType.Generic(base=base, args=_arguments) =>
-            if base == "Union" or base == "Option":
+            if base == "Union" or collection_type(str(base)) == Some(CollectionTypeId.Option):
                 source = isinstance_place(builder, value, span)?
                 return Ok(place_type(builder.locals, source))
         _ => pass
