@@ -375,19 +375,26 @@ def test(arguments: list[str]) -> None:
 def tested(options: Options) -> Result[i32, str]:
     """Make a test unit's executable, through its owner or in this process, and report each test's fresh outcome."""
     if Path(options.path).is_dir():
-        declared = rust_facet(options.path, false)?
-        if declared.kind != "" or len(declared.binaries) > 0:
-            return tested_project(options)
+        return tested_project(options)
     return tested_incan(options)
 
 
 def tested_project(options: Options) -> Result[i32, str]:
-    """Run Rust harnesses and Incan test modules, retaining failure from either language."""
+    """
+    Run a Loaf's Rust harnesses, when it declares a Rust facet, and its Incan test modules, retaining failure from
+    either language. A Loaf with neither is refused rather than reported as passing.
+    """
+    declared = rust_facet(options.path, false)?
+    facet = declared.kind != "" or len(declared.binaries) > 0
+    sources = test_sources(Path(options.path))?
+    if not facet and len(sources) == 0:
+        return Err(f"{options.path}: the Loaf has no test_*.incn modules and no Rust facet tests")
     mut failed = false
-    for binary in build_rust_tests(rust_request(options)?)?:
-        if run_rust_harness(Path(binary), Path(options.path))? != 0:
-            failed = true
-    for source in test_sources(Path(options.path))?:
+    if facet:
+        for binary in build_rust_tests(rust_request(options)?)?:
+            if run_rust_harness(Path(binary), Path(options.path))? != 0:
+                failed = true
+    for source in sources:
         mut selected = options
         selected.path = source.0
         if tested_incan(selected)? != 0:
