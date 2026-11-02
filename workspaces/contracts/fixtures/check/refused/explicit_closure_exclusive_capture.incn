@@ -1,0 +1,10 @@
+# behavior: a closure in an explicit body cannot yet capture an exclusive input (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+
+def total(mut counter: BorrowedMut[Counter]) -> int:
+    read: () -> int = () => counter.value
+    return read()

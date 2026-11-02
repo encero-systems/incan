@@ -1,0 +1,10 @@
+# behavior: a closure in an explicit body holds at most one captured borrow; capturing two inputs is refused for now (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+
+def total(left: Borrowed[Counter], right: Borrowed[Counter]) -> int:
+    both: () -> int = () => left.value + right.value
+    return both()

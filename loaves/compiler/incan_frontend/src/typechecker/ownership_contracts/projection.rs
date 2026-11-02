@@ -185,6 +185,14 @@ impl TypeCheckInfo {
 
         // ---- Loan destinations and their source annotations ----
         for (local, loan) in &graph.local_loans {
+            // A closure's captured borrow; the graph validation already tied it to the closure's captures.
+            if graph
+                .closures
+                .values()
+                .any(|closure| &closure.local == local && closure.loan == Some(*loan))
+            {
+                continue;
+            }
             let Some(mode) = self.protocols.explicit_local_modes.get(local) else {
                 self.validate_view_local(graph, local, *loan)?;
                 continue;

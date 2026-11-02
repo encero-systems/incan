@@ -40,6 +40,12 @@ impl CheckedInputBody<'_> {
                     .values()
                     .flat_map(|operation| operation.operands.iter().map(|operand| operand.final_access)),
             )
+            .chain(
+                self.graph
+                    .closures
+                    .values()
+                    .flat_map(|closure| closure.reads.iter().copied()),
+            )
         {
             if !coverage.claimed.insert(index) {
                 return Err("synthetic input access fulfills more than one source role");
@@ -133,6 +139,21 @@ impl SourceAccesses<'_, '_> {
             self.known.insert(place.root.clone());
         }
         Ok(place)
+    }
+
+    /// The loan a closure local holds, when the callee names a closure local: `Some(None)` for one that borrows
+    /// nothing.
+    fn closure_callee(&self, callee: &Spanned<Expr>) -> Option<Option<flow::LoanId>> {
+        if !matches!(callee.node, Expr::Ident(_)) {
+            return None;
+        }
+        let identity = self.proof.facts.resolved_identity(callee.span)?;
+        self.proof
+            .graph
+            .closures
+            .values()
+            .find(|closure| &closure.local == identity)
+            .map(|closure| closure.loan)
     }
 
     /// Copy semantics use the same checked value projection as explicit argument and initializer validation.
@@ -263,6 +284,25 @@ impl SourceAccesses<'_, '_> {
                 }
                 self.invocation_arguments(invocation, arguments)?;
             }
+            // A closure local's call evaluates its arguments, then uses the borrow the closure holds.
+            Expr::Call(callee, _, arguments) if self.closure_callee(callee).is_some() => {
+                for argument in arguments {
+                    let CallArg::Positional(value) = argument else {
+                        return Err("source access closure call needs positional arguments");
+                    };
+                    self.expression(value, false)?;
+                }
+                if let Some(Some(id)) = self.closure_callee(callee) {
+                    let loan = self
+                        .proof
+                        .graph
+                        .loans
+                        .get(id.0)
+                        .ok_or("closure local has no captured loan")?;
+                    let source = loan.source.clone();
+                    self.access(expression.span, &source, Some(id), flow::Access::Read)?;
+                }
+            }
             Expr::Call(_, _, arguments) => {
                 if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
                     self.invocation_arguments(invocation, arguments)?;
@@ -293,6 +333,27 @@ impl SourceAccesses<'_, '_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.proof.facts.protocols.explicit_local_modes.get(&root))
             .flatten();
+        // A closure binding reads or borrows its captures where it is built; those events are its retained record's.
+        if let Expr::Closure(params, body) = &assignment.value.node {
+            let closure = self
+                .proof
+                .graph
+                .closures
+                .get(&assignment.value.span)
+                .ok_or("source closure binding has no checked captures")?;
+            if closure.local != root {
+                return Err("source closure binding differs from its checked local");
+            }
+            let free = crate::body_ir::free_vars::free_vars_in_closure_body(params, body);
+            if closure
+                .captures
+                .iter()
+                .any(|capture| !free.contains(&capture.declaration_name))
+            {
+                return Err("source closure capture is not read by its closure");
+            }
+            return Ok(());
+        }
         // A new unannotated local whose loan is its initializer call's result aliases a returned view: the call is
         // evaluated, and the binding takes a borrow rather than a value. `?` takes a carried view out of its call.
         if mode.is_none()

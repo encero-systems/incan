@@ -317,6 +317,9 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(value, parameters, execution, seen)?;
                 }
             }
+            // A bound closure's body runs in its own frame when the closure is called; building it reads or borrows
+            // only its captures, which its retained closure record covers.
+            Expr::Closure(..) if self.graph.closures.contains_key(&expression.span) => {}
             _ => return Err("operation coverage requires an admitted expression"),
         }
         Ok(())

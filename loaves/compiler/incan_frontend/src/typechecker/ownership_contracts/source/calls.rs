@@ -45,6 +45,9 @@ impl Builder<'_> {
                 reason: "callee evaluation needs checked access facts".into(),
             });
         }
+        if let Some(closure) = self.closure_callee(callee) {
+            return self.closure_call(&closure, arguments, span, incoming);
+        }
         self.apply_call(None, arguments, span, incoming)
     }
 

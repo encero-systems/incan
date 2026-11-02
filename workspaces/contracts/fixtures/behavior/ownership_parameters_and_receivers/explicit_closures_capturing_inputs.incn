@@ -1,0 +1,42 @@
+# behavior: an explicit body can bind a closure that captures a shared input and Copy values, then call it, including in a loop; the closure holds the input's borrow for as long as it is called (#2500).
+# expect-stdout:
+#   31
+#   6
+#   18
+#   3
+
+"""Closures that capture a shared input and Copy values in explicit bodies."""
+
+
+class Counter:
+    pub value: int
+
+
+def total(counter: Borrowed[Counter], extra: int) -> int:
+    base = 10
+    add: (int) -> int = (amount) => counter.value + amount + base
+    first = add(extra)
+    return first + add(1)
+
+
+def doubled(counter: Borrowed[Counter]) -> int:
+    double: () -> int = () => counter.value * 2
+    return double()
+
+
+def looped(counter: Borrowed[Counter], times: int) -> int:
+    scale: (int) -> int = (step) => counter.value * step
+    mut sum = 0
+    mut step = 0
+    while step < times:
+        sum += scale(step)
+        step += 1
+    return sum
+
+
+def main() -> None:
+    counter = Counter(value=3)
+    println(total(counter, 4))
+    println(doubled(counter))
+    println(looped(counter, 4))
+    println(counter.value)

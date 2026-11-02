@@ -3,8 +3,8 @@
 from std.encoding.hex import hexlify
 from std.hash import sha256
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/8"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/8"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/9"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 
@@ -595,6 +595,25 @@ class InputFields:
             return Err(CodecFault.Malformed)
         return Ok(key)
 
+    def closures(mut self, loans: int) -> Result[list[int], CodecFault]:
+        """Each closure bound to a local: its local, captures, loan and the nodes reading its Copy captures."""
+        mut closure_nodes: list[int] = []
+        closures = self.count()?
+        mut previous = ""
+        for _ in range(closures):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.handle()?
+            captures = self.count()?
+            for _ in range(captures):
+                self.handle()?
+            self.optional_index(loans)?
+            reads = self.count()?
+            for _ in range(reads):
+                closure_nodes.append(self.number()?)
+        return Ok(closure_nodes)
+
     def graph(mut self, strict_indices: bool) -> Result[None, CodecFault]:
         """Retain every permission, dependency, invocation and edge; indices address this graph's own inventories."""
         self.strict_indices = strict_indices
@@ -677,6 +696,7 @@ class InputFields:
             final_accesses = self.count()?
             for _ in range(final_accesses):
                 invocation_nodes.append(self.number()?)
+        closure_nodes = self.closures(loans)?
         nodes = self.count()?
         if entry >= nodes and self.strict_indices:
             return Err(CodecFault.Malformed)
@@ -687,6 +707,9 @@ class InputFields:
             if index >= nodes and self.strict_indices:
                 return Err(CodecFault.Malformed)
         for index in invocation_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for index in closure_nodes:
             if index >= nodes and self.strict_indices:
                 return Err(CodecFault.Malformed)
         for _ in range(nodes):
