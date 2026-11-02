@@ -12,6 +12,7 @@ use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, FunctionDecl,
     MethodDecl, Param, Receiver, Span, Spanned, Statement,
 };
+use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
@@ -33,6 +34,40 @@ pub(in crate::typechecker) struct Unavailable {
 pub(in crate::typechecker) enum CallableSource<'a> {
     Function(&'a FunctionDecl),
     Method(&'a MethodDecl),
+}
+
+impl<'a> CallableSource<'a> {
+    /// Source declaration spelling; the canonical owner identity, not this name, selects the callable.
+    pub(in crate::typechecker) fn name(self) -> &'a str {
+        match self {
+            Self::Function(function) => &function.name,
+            Self::Method(method) => &method.name,
+        }
+    }
+
+    /// Declared source parameters in slot order, excluding a method's receiver.
+    pub(in crate::typechecker) fn params(self) -> &'a [Spanned<Param>] {
+        match self {
+            Self::Function(function) => &function.params,
+            Self::Method(method) => &method.params,
+        }
+    }
+
+    /// Statements of the body; an abstract method has none.
+    pub(in crate::typechecker) fn body(self) -> &'a [Spanned<Statement>] {
+        match self {
+            Self::Function(function) => &function.body,
+            Self::Method(method) => method.body.as_deref().unwrap_or_default(),
+        }
+    }
+
+    /// A method's receiver binding token with its mode; functions have no receiver.
+    pub(in crate::typechecker) fn receiver(self) -> Option<(&'a Spanned<crate::ast::Ident>, Receiver)> {
+        match self {
+            Self::Function(_) => None,
+            Self::Method(method) => method.receiver_binding.as_ref().zip(method.receiver),
+        }
+    }
 }
 
 /// One enclosing loop owns its back-edge and the paths that leave it; nested loops cannot steal each other's exits.
@@ -58,6 +93,10 @@ struct Builder<'a> {
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
+    /// The declared returned view: whether it is exclusive, and the exact source place every return borrows.
+    view: Option<(bool, Place)>,
+    /// Returns that do not borrow the declared view source. These are program errors, reported by the caller.
+    view_errors: Vec<crate::diagnostics::CompileError>,
 }
 
 /// Project a checked callable body against its declaration and local contracts. Calls without selected access
@@ -68,6 +107,28 @@ pub(super) fn build(
     callable: CallableSource<'_>,
     span: Span,
     identity: &CanonicalSymbolId,
+) -> Result<Graph, Unavailable> {
+    build_reporting_views(checker, callable, span, identity).0
+}
+
+/// Build the body's graph and also return the diagnostics for returns that do not borrow the declared view.
+pub(super) fn build_reporting_views(
+    checker: &TypeChecker,
+    callable: CallableSource<'_>,
+    span: Span,
+    identity: &CanonicalSymbolId,
+) -> (Result<Graph, Unavailable>, Vec<crate::diagnostics::CompileError>) {
+    let mut view_errors = Vec::new();
+    let graph = build_graph(checker, callable, span, identity, &mut view_errors);
+    (graph, view_errors)
+}
+
+fn build_graph(
+    checker: &TypeChecker,
+    callable: CallableSource<'_>,
+    span: Span,
+    identity: &CanonicalSymbolId,
+    view_errors: &mut Vec<crate::diagnostics::CompileError>,
 ) -> Result<Graph, Unavailable> {
     let (parameters, body, is_async, receiver, name, kind) = match callable {
         CallableSource::Function(function) => (
@@ -97,14 +158,17 @@ pub(super) fn build(
         });
     }
     let contract = checker.type_info.declarations.ownership_contracts.get(identity);
+    // A direct returned view is checked below; aggregate dependencies and nested modes stay unavailable.
+    let view = crate::ownership_metadata::returned_view(contract).map_err(|reason| Unavailable {
+        span,
+        reason: reason.into(),
+    })?;
     if is_async
         || contract.is_some_and(|contract| {
-            contract.result_source.is_some()
-                || contract.modes.iter().any(|mode| {
-                    mode.component.parameter.is_none()
-                        || !mode.component.children.is_empty()
-                        || mode.mode == OwnershipMode::Reference
-                })
+            contract.modes.iter().any(|mode| {
+                mode.component.parameter.is_some()
+                    && (!mode.component.children.is_empty() || mode.mode == OwnershipMode::Reference)
+            })
         })
     {
         return Err(Unavailable {
@@ -156,21 +220,51 @@ pub(super) fn build(
         borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
         loops: Vec::new(),
+        view: None,
+        view_errors: Vec::new(),
     };
     builder.inputs(parameters, identity)?;
+    let mut receiver_root = None;
     if let Some((binding, receiver)) = receiver {
         let root = builder.binding_root(&binding.node, binding.span, SemanticSourceTargetKind::Receiver)?;
         let writable = receiver == Receiver::Mutable;
         builder.graph.permissions.insert(
-            Root::Binding(root),
+            Root::Binding(root.clone()),
             Permission {
                 exclusive: writable,
                 writable,
                 transferable: false,
             },
         );
+        receiver_root = Some(root);
     }
-    builder.block(body, vec![0])?;
+    if let Some(view) = view {
+        let root = match view.source.slot {
+            SourceSlot::Receiver => receiver_root.ok_or(Unavailable {
+                span,
+                reason: "returned view names an absent receiver".into(),
+            })?,
+            SourceSlot::Parameter(slot) => {
+                let parameter = parameters.get(slot).ok_or(Unavailable {
+                    span,
+                    reason: "returned view names an absent parameter".into(),
+                })?;
+                builder.binding_root(
+                    &parameter.node.name,
+                    parameter.span,
+                    SemanticSourceTargetKind::Parameter,
+                )?
+            }
+        };
+        let place = Place {
+            root: Root::Binding(root),
+            projection: view.source.fields.iter().cloned().map(Projection::Field).collect(),
+        };
+        builder.view = Some((view.access == incan_semantics_core::IncanInputAccess::Exclusive, place));
+    }
+    let result = builder.block(body, vec![0]);
+    view_errors.append(&mut builder.view_errors);
+    result?;
     Ok(builder.graph)
 }
 
@@ -395,6 +489,11 @@ impl Builder<'_> {
             Expr::Literal(_) => Ok(incoming),
             Expr::List(entries) => self.scalar_list(entries, incoming),
             Expr::FString(parts) => self.formatted_text(parts, expression.span, incoming),
+            // A returned view is a place, not a value: it may be bound, used as a receiver or returned as a view.
+            Expr::Call(..) | Expr::MethodCall(..) if self.view_relation(expression)?.is_some() => Err(Unavailable {
+                span: expression.span,
+                reason: "a returned view needs a local binding, a receiver or a returned view position".into(),
+            }),
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, expression.span, incoming)
@@ -455,6 +554,54 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
+    /// A returned view borrows exactly its declared source place, with the view's access; the borrow checks the
+    /// source permission, so a shared input cannot back an exclusive view. Any other value is a program error.
+    fn view_return(
+        &mut self,
+        value: &Spanned<Expr>,
+        exclusive: bool,
+        source: &Place,
+        incoming: Vec<usize>,
+    ) -> Result<(), Unavailable> {
+        // A call returning a view of exactly the declared source satisfies the relation through its result loan.
+        if let Some(relation) = self.view_relation(value)? {
+            let (incoming, path) = self.evaluate_view_call(value, relation, incoming)?;
+            if path.place == *source {
+                let loan = self.call_loan(path, exclusive, exclusive, value.span);
+                self.event(incoming, Event::Borrow(loan), value.span);
+            } else {
+                self.view_errors.push(view_error(
+                    "A returned view must return its declared source place; this call returns a view of a \
+                     different place",
+                    value.span,
+                ));
+            }
+            return Ok(());
+        }
+        match self.optional_place(value)? {
+            Some(path) if path.place == *source => {
+                let incoming = self.evaluate_place(value, incoming)?;
+                let loan = self.call_loan(path, exclusive, exclusive, value.span);
+                self.event(incoming, Event::Borrow(loan), value.span);
+            }
+            Some(_) => {
+                self.view_errors.push(view_error(
+                    "A returned view must return its declared source place; this returns a different place",
+                    value.span,
+                ));
+                self.expression(value, incoming, true)?;
+            }
+            None => {
+                self.view_errors.push(view_error(
+                    "A returned view cannot borrow a value created in this body; return its declared source place",
+                    value.span,
+                ));
+                self.expression(value, incoming, true)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
     fn optional_place(&mut self, expression: &Spanned<Expr>) -> Result<Option<Path>, Unavailable> {
         match &expression.node {
@@ -484,6 +631,26 @@ impl Builder<'_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.checker.type_info.protocols.explicit_local_modes.get(&root))
             .flatten();
+        // A new local initialized by a returned view aliases its substituted place under the call's result loan.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && root.kind == SemanticSourceTargetKind::Local
+            && let Some(relation) = self.view_relation(&assignment.value)?
+        {
+            let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
+            let loan = path.through.ok_or(Unavailable {
+                span: assignment.value.span,
+                reason: "returned view has no result loan".into(),
+            })?;
+            if self.graph.local_loans.insert(root.clone(), loan).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "local declaration has more than one ownership destination".into(),
+                });
+            }
+            self.aliases.insert(root, path);
+            return Ok(incoming);
+        }
         let source = self.optional_place(&assignment.value)?;
         if let Some(mode) = mode {
             if root.kind != SemanticSourceTargetKind::Local || mode.owner != self.owner {
@@ -710,7 +877,11 @@ impl Builder<'_> {
     fn statement(&mut self, statement: &Spanned<Statement>, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
         match &statement.node {
             Statement::Pass => Ok(incoming),
-            Statement::Expr(value) => self.expression(value, incoming, false),
+            // A discarded returned view still borrows its source for the call; its result loan is never used.
+            Statement::Expr(value) => match self.view_relation(value)? {
+                Some(relation) => Ok(self.evaluate_view_call(value, relation, incoming)?.0),
+                None => self.expression(value, incoming, false),
+            },
             Statement::Assert(assertion) => {
                 let crate::ast::AssertKind::Condition(condition) = &assertion.kind else {
                     return Err(Unavailable {
@@ -742,8 +913,18 @@ impl Builder<'_> {
                 Ok(incoming)
             }
             Statement::Return(value) => {
-                if let Some(value) = value {
-                    self.expression(value, incoming, true)?;
+                match (value, self.view.clone()) {
+                    (Some(value), Some((exclusive, source))) => {
+                        self.view_return(value, exclusive, &source, incoming)?
+                    }
+                    (None, Some(_)) => self.view_errors.push(view_error(
+                        "A returned view must return its declared source place",
+                        statement.span,
+                    )),
+                    (Some(value), None) => {
+                        self.expression(value, incoming, true)?;
+                    }
+                    (None, None) => {}
                 }
                 Ok(Vec::new())
             }
@@ -824,4 +1005,9 @@ impl Builder<'_> {
             }),
         }
     }
+}
+
+/// A returned-view relationship error, reported at the offending return.
+fn view_error(message: &str, span: Span) -> crate::diagnostics::CompileError {
+    crate::diagnostics::CompileError::type_error(message.to_owned(), span).with_stable_code("INCAN-T0124")
 }

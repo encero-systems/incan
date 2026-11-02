@@ -1961,6 +1961,8 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
 def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
     """Materialize a returned value for the return slot's type, taking ownership of an owned result."""
     return_type = builder.locals[0].ty
+    if builder.returned_view != IncanInputAccess.Inferred:
+        return view_return_operand(builder, operand, return_type, span)
     if return_type == PlanType.String:
         text = display_operand(builder, operand, span)?
         forget_owned(builder, text.local)
@@ -1968,6 +1970,21 @@ def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan
     result = boundary_operand(builder, operand, return_type, span)?
     track_rvalue_moves(builder, RvalueKind.Use(result))
     return Ok(result)
+
+
+def view_return_operand(
+    mut builder: Builder,
+    operand: &RustOperand,
+    return_type: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow a returned view's source place with the view's access; the checker proved the place is the declared one."""
+    match operand:
+        RustOperand.Place(read) =>
+            source = scalar_place(builder, read.place, span)?
+            access = builder.returned_view
+            return explicit_place_argument(builder, source, read.fact, return_type, access, span)
+        _ => return Err("unsupported Body IR returned view without a source place")
 
 
 def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:
@@ -9673,6 +9690,12 @@ def lower_function(
         initializing_decorator,
         span,
     )?
+    match body.returned_view:
+        Some(view) =>
+            if body.is_async or body.is_generator():
+                return Err("unsupported Body IR returned view in an async or generator frame")
+            builder.returned_view = view.access
+        None => pass
     initialize_body_frame(module, body, builder, parameters, declared_type, span)?
     lower_block(module, builder, body.block)?
     if not builder.closed[builder.current]:
@@ -9692,6 +9715,10 @@ def lower_function(
         is_async=body.is_async,
         attributes=native_attributes(body),
     )
+    # A returned view's result shares its source parameter's loan; instances recompute the same relation.
+    match body.returned_view:
+        Some(_view) => function.signature_lifetimes = signature_lifetimes(body, type_arguments)
+        None => pass
     if body.is_generator():
         match generator_shape(declared_type):
             Some((leaf, depth)) =>

@@ -20,7 +20,9 @@ impl CheckedInputBody<'_> {
         {
             return Err("transfer inventory belongs to another source callable");
         }
-        self.validate_operation_coverage(function)?;
+        self.validate_operation_coverage(crate::typechecker::ownership_contracts::CallableSource::Function(
+            function,
+        ))?;
         let mut subjects = BTreeSet::new();
         for invocation in self.graph.invocations.values() {
             for argument in &invocation.arguments {

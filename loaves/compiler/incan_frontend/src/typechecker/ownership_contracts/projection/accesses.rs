@@ -7,14 +7,14 @@ use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{
-    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, FunctionDecl, ListEntry, Spanned,
-    Statement,
+    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ListEntry, Spanned, Statement,
 };
+use crate::typechecker::ownership_contracts::CallableSource;
 
 impl CheckedInputBody<'_> {
     /// Every stored source read and write must exist with its canonical place, access kind and loan route. The
     /// index below accelerates validation only: it never invents an event or supplies missing lowering authority.
-    pub(super) fn validate_source_access_coverage(&self, function: &FunctionDecl) -> Result<(), &'static str> {
+    pub(super) fn validate_source_access_coverage(&self, function: CallableSource<'_>) -> Result<(), &'static str> {
         let mut coverage = SourceAccesses {
             proof: self,
             by_span: BTreeMap::new(),
@@ -45,7 +45,7 @@ impl CheckedInputBody<'_> {
             }
         }
         let contract = self.facts.declarations.ownership_contracts.get(self.canonical_owner());
-        for (slot, parameter) in function.params.iter().enumerate() {
+        for (slot, parameter) in function.params().iter().enumerate() {
             let identity = self
                 .facts
                 .resolved_write_identity(parameter.span, &parameter.node.name)
@@ -56,7 +56,21 @@ impl CheckedInputBody<'_> {
                 coverage.constrained.insert(root);
             }
         }
-        coverage.block(&function.body)?;
+        // The receiver's scope has closed; its root is the graph's receiver permission at the binding token.
+        if let Some((binding, _)) = function.receiver() {
+            let root = self
+                .graph
+                .permissions
+                .keys()
+                .find(|root| {
+                    matches!(root, flow::Root::Binding(identity)
+                        if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Receiver
+                            && identity.declaration_span == binding.span)
+                })
+                .ok_or("source access receiver has no canonical declaration")?;
+            coverage.known.insert(root.clone());
+        }
+        coverage.block(function.body())?;
         if self
             .graph
             .nodes
@@ -132,6 +146,34 @@ impl SourceAccesses<'_, '_> {
             .checked_input_copy_value(self.proof.canonical_owner(), ty)
     }
 
+    /// Visit a checked invocation's arguments in its retained order. A borrowed stored place evaluates its address;
+    /// an owned argument constrains its root and is consumed.
+    fn invocation_arguments(
+        &mut self,
+        invocation: &flow::Invocation,
+        arguments: &[CallArg],
+    ) -> Result<(), &'static str> {
+        for argument in &invocation.arguments {
+            let value = match arguments.get(argument.written_position) {
+                Some(CallArg::Positional(value) | CallArg::Named(_, value)) => value,
+                _ => return Err("source access call has no fixed written argument"),
+            };
+            let source = self.place(value)?;
+            match argument.access {
+                IncanInputAccess::Owned => {
+                    if let Some((place, _)) = source {
+                        self.constrained.insert(place.root);
+                    }
+                    self.expression(value, true)?;
+                }
+                IncanInputAccess::Shared | IncanInputAccess::Exclusive if source.is_some() => {}
+                IncanInputAccess::Shared | IncanInputAccess::Exclusive => self.expression(value, true)?,
+                IncanInputAccess::Inferred => self.expression(value, false)?,
+            }
+        }
+        Ok(())
+    }
+
     /// Visit source expressions according to the producer's actual evaluation policy. Borrowing a stored place
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
@@ -169,26 +211,29 @@ impl SourceAccesses<'_, '_> {
                     self.expression(value, false)?;
                 }
             }
+            Expr::MethodCall(receiver, _, _, arguments) => {
+                // A checked receiver is borrowed in place: evaluating it reads its address, not its value.
+                let invocation = self
+                    .proof
+                    .graph
+                    .invocations
+                    .get(&expression.span)
+                    .ok_or("source access method call has no checked invocation")?;
+                if invocation.receiver.is_none() {
+                    return Err("source access method receiver has no stored place");
+                }
+                // A chained receiver is an inner checked view call; its own arguments are evaluated first.
+                if self.place(receiver)?.is_none() {
+                    if !self.proof.graph.invocations.contains_key(&receiver.span) {
+                        return Err("source access method receiver has no stored place");
+                    }
+                    self.expression(receiver, false)?;
+                }
+                self.invocation_arguments(invocation, arguments)?;
+            }
             Expr::Call(_, _, arguments) => {
                 if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
-                    for argument in &invocation.arguments {
-                        let value = match arguments.get(argument.written_position) {
-                            Some(CallArg::Positional(value) | CallArg::Named(_, value)) => value,
-                            _ => return Err("source access call has no fixed written argument"),
-                        };
-                        let source = self.place(value)?;
-                        match argument.access {
-                            IncanInputAccess::Owned => {
-                                if let Some((place, _)) = source {
-                                    self.constrained.insert(place.root);
-                                }
-                                self.expression(value, true)?;
-                            }
-                            IncanInputAccess::Shared | IncanInputAccess::Exclusive if source.is_some() => {}
-                            IncanInputAccess::Shared | IncanInputAccess::Exclusive => self.expression(value, true)?,
-                            IncanInputAccess::Inferred => self.expression(value, false)?,
-                        }
-                    }
+                    self.invocation_arguments(invocation, arguments)?;
                 } else {
                     // The preceding operation/call coverage accepts only checked builtin observers and complete
                     // constructors on this route; neither evaluates its callee identifier as a stored value.
@@ -216,6 +261,23 @@ impl SourceAccesses<'_, '_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.proof.facts.protocols.explicit_local_modes.get(&root))
             .flatten();
+        // A new unannotated local whose loan is its initializer call's result aliases a returned view: the call is
+        // evaluated, and the binding takes a borrow rather than a value.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && let Some(id) = self.proof.graph.local_loans.get(&root)
+        {
+            let loan = self
+                .proof
+                .graph
+                .loans
+                .get(id.0)
+                .ok_or("returned view local has no result loan")?;
+            if loan.span != assignment.value.span {
+                return Err("returned view local differs from its initializer call");
+            }
+            return self.expression(&assignment.value, false);
+        }
         let source = self.place(&assignment.value)?;
         if mode.is_some_and(|mode| matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut)) {
             let id = self
@@ -277,8 +339,26 @@ impl SourceAccesses<'_, '_> {
                 Statement::Pass => {}
                 Statement::Expr(value) => self.expression(value, false)?,
                 Statement::Return(value) => {
-                    if let Some(value) = value {
-                        self.expression(value, true)?;
+                    let view = crate::ownership_metadata::returned_view(
+                        self.proof
+                            .facts
+                            .declarations
+                            .ownership_contracts
+                            .get(self.proof.canonical_owner()),
+                    )?;
+                    match (value, view) {
+                        // A returned view borrows its source place: the graph holds a borrow, not a value access.
+                        (Some(value), Some(_)) => {
+                            if self.place(value)?.is_none() {
+                                // A chained view return evaluates its checked inner call.
+                                if !self.proof.graph.invocations.contains_key(&value.span) {
+                                    return Err("returned view has no stored source place");
+                                }
+                                self.expression(value, false)?;
+                            }
+                        }
+                        (Some(value), None) => self.expression(value, true)?,
+                        (None, _) => {}
                     }
                     return Ok(false);
                 }

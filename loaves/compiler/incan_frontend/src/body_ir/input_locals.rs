@@ -42,7 +42,7 @@ impl BodyBuilder<'_, '_> {
             return None;
         }
         if !self.type_info.has_local_input_annotation(&identity) {
-            return None;
+            return self.lower_view_local(assignment, &identity, scope, out);
         }
         Some((|| {
             let proof = self
@@ -83,6 +83,45 @@ impl BodyBuilder<'_, '_> {
             }
             self.input_aliases
                 .insert(destination, LocalInputAlias { place, writable });
+            Ok(())
+        })())
+    }
+
+    /// A new unannotated local initialized by a returned view aliases the call's substituted place: the call runs
+    /// for its effects, and the local names existing storage rather than a reference-valued slot or a copy.
+    fn lower_view_local(
+        &mut self,
+        assignment: &ast::AssignmentStmt,
+        identity: &CanonicalSymbolId,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<Result<(), String>> {
+        let access = self
+            .input_body
+            .as_ref()
+            .ok()?
+            .as_ref()?
+            .view_local(identity, hir_span(assignment.value.span));
+        let access = match access {
+            Ok(access) => access?,
+            Err(reason) => return Some(Err(reason.into())),
+        };
+        self.retain_input_local_binding(assignment, identity, access);
+        Some((|| {
+            let bir::Operand::Place(read) = self.lower_expr_to_operand(&assignment.value, scope, out) else {
+                return Err("returned view local has no substituted place".into());
+            };
+            if self.identity_bindings.contains_key(identity) || self.input_aliases.contains_key(identity) {
+                return Err("returned view local already has an owner or another source place".into());
+            }
+            let writable = access == IncanInputAccess::Exclusive && assignment.binding == ast::BindingKind::Mutable;
+            self.input_aliases.insert(
+                identity.clone(),
+                LocalInputAlias {
+                    place: read.place,
+                    writable,
+                },
+            );
             Ok(())
         })())
     }

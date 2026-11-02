@@ -235,21 +235,16 @@ mod tests {
         assert_eq!(body_keys.len(), 4);
         Ok(())
     }
-    /// Source refusal stays active while the staged lowering inspection proves frame locals use the payload type.
+    /// Function and method inputs are admitted, and their frame locals use the payload type.
     #[test]
     fn source_parameters_and_locals_share_projected_value_types() -> Result<(), Box<dyn std::error::Error>> {
         let source = "def read(value: Borrowed[int]) -> int:\n    return value\ndef take(value: Owned[int]) -> int:\n    return value\nclass Reader:\n    def read(self, value: Borrowed[int]) -> int:\n        return value\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = crate::typechecker::TypeChecker::new();
-        let errors = checker
+        checker
             .check_program(&program)
-            .err()
-            .ok_or("explicit execution gate unexpectedly opened")?;
-        assert!(
-            errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
-            "{errors:?}"
-        );
+            .map_err(|errors| format!("{errors:?}"))?;
         let facts = checker.into_type_info();
         let providers = super::super::ProviderOperationCatalog::new();
         let context = super::super::BodyIrContext {

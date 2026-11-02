@@ -58,6 +58,33 @@ impl<'a> CheckedInputBody<'a> {
         })
     }
 
+    /// The access of an unannotated local bound to a returned view, when its loan is exactly its initializer
+    /// call's result loan. Annotated locals and ordinary bindings return `None`.
+    pub(crate) fn view_local(
+        &self,
+        destination: &CanonicalSymbolId,
+        initializer: HirSourceSpan,
+    ) -> Result<Option<IncanInputAccess>, &'static str> {
+        if self.facts.protocols.explicit_local_modes.contains_key(destination) {
+            return Ok(None);
+        }
+        let Some(id) = self.graph.local_loans.get(destination) else {
+            return Ok(None);
+        };
+        let loan = self
+            .graph
+            .loans
+            .get(id.0)
+            .ok_or("returned view local has no result loan")?;
+        if loan.span != initializer {
+            return Err("returned view local differs from its initializer call");
+        }
+        Ok(Some(match loan.kind {
+            super::flow::LoanKind::Exclusive => IncanInputAccess::Exclusive,
+            super::flow::LoanKind::Shared => IncanInputAccess::Shared,
+        }))
+    }
+
     /// Select the exact declaration and initializer whose loan this body already authenticated. A matching name,
     /// another initializer span or an index lacking evaluated-storage identity cannot authorize an alias.
     pub(crate) fn local_loan(

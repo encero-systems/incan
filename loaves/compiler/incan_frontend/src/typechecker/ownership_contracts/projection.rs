@@ -60,11 +60,14 @@ impl TypeCheckInfo {
         match call.kind {
             InputCallKind::Explicit => {
                 let contract = contract.ok_or("invocation has no canonical ownership contract")?;
-                if !contract.modes.iter().any(|mode| {
-                    mode.component
-                        .parameter
-                        .is_some_and(|slot| slot < call.parameters.len())
-                }) {
+                // A returned view is an explicit obligation even when every input slot is ordinary.
+                if contract.result_source.is_none()
+                    && !contract.modes.iter().any(|mode| {
+                        mode.component
+                            .parameter
+                            .is_some_and(|slot| slot < call.parameters.len())
+                    })
+                {
                     return Err("invocation has no canonical explicit input slot");
                 }
                 Ok(Some(contract))
@@ -101,6 +104,37 @@ impl TypeCheckInfo {
                 Ok(None)
             }
         }
+    }
+
+    /// A local without an ownership annotation may alias only a returned-view call's result: its loan is that call's
+    /// result loan, keyed by the retained invocation, with the callee's declared access over existing storage.
+    fn validate_view_local(
+        &self,
+        graph: &flow::Graph,
+        local: &CanonicalSymbolId,
+        id: flow::LoanId,
+    ) -> Result<(), &'static str> {
+        if local.kind != SemanticSourceTargetKind::Local {
+            return Err("local loan has no checked ownership annotation");
+        }
+        let loan = graph.loans.get(id.0).ok_or("returned view local has no result loan")?;
+        let call = self
+            .protocols
+            .explicit_input_calls
+            .get(&loan.span)
+            .filter(|_| graph.invocations.contains_key(&loan.span))
+            .ok_or("local loan has no checked ownership annotation")?;
+        let view = crate::ownership_metadata::returned_view(self.selected_input_contract(call)?)?
+            .ok_or("returned view local names a call without a returned view")?;
+        let expected = if view.access == incan_semantics_core::IncanInputAccess::Exclusive {
+            flow::LoanKind::Exclusive
+        } else {
+            flow::LoanKind::Shared
+        };
+        if loan.kind != expected || !matches!(loan.source.root, flow::Root::Binding(_)) {
+            return Err("returned view local differs from its callee's declared view");
+        }
+        Ok(())
     }
 
     /// Require the exact declaration, completed flow and matching canonical local facts before lowering uses an
@@ -151,11 +185,10 @@ impl TypeCheckInfo {
 
         // ---- Loan destinations and their source annotations ----
         for (local, loan) in &graph.local_loans {
-            let mode = self
-                .protocols
-                .explicit_local_modes
-                .get(local)
-                .ok_or("local loan has no checked ownership annotation")?;
+            let Some(mode) = self.protocols.explicit_local_modes.get(local) else {
+                self.validate_view_local(graph, local, *loan)?;
+                continue;
+            };
             if &mode.owner != owner || local.kind != SemanticSourceTargetKind::Local {
                 return Err("local loan annotation belongs to another declaration");
             }
