@@ -25,7 +25,7 @@ from options import none_operand
 from builtins import list_call
 from lists import list_element
 from collections import is_collection, collection_call
-from lowering import scalar_place
+from checked_values import scalar_place
 from numerics import numeric_carrier, numeric_zero
 
 

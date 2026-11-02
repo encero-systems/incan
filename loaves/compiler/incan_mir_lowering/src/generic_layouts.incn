@@ -26,7 +26,7 @@ from decls import library_item, library_enum_item
 from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from closures import callable_component, packed_input
-from table_views import borrowed_table
+from table_views import borrowed_table, borrowed_at
 from pub::incan_mir_plan import source_span as plan_span
 
 
@@ -47,7 +47,8 @@ pub def generic_models(
     referenced = referenced_templates(module)
     mut models: list[GenericModelDeclaration] = []
     # 2. Keep private templates that a retained source frame or field can instantiate later.
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         if len(declaration.type_parameters) == 0 or library_item(declaration) != "":
             continue
         mut instantiated = false
@@ -120,14 +121,17 @@ pub def generic_models(
 pub def referenced_templates(module: &BodyIrModule) -> list[str]:
     """Inventory checked template heads without selecting implementations or inferring bindings from source names."""
     mut referenced: list[str] = []
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         retain_frame_templates(body, referenced)
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         for field in declaration.field_types:
             retain_type_templates(field, referenced)
     for declaration in module.type_alias_declarations:
         retain_type_templates(declaration.ty, referenced)
-    for declaration in module.enum_declarations:
+    for declaration_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, declaration_position)
         for variant in declaration.variants:
             for field in variant.fields:
                 retain_type_templates(field, referenced)
@@ -239,14 +243,16 @@ def generic_layout_path(module: &BodyIrModule, base: str) -> Result[str, str]:
         return Ok("std::option::Option")
     if base == "Result":
         return Ok("std::result::Result")
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         if str(declaration.name) != base:
             continue
         item = library_item(declaration)
         if item != "":
             return Ok(item)
         return Ok("crate::" + base)
-    for declaration in module.enum_declarations:
+    for declaration_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, declaration_position)
         if declaration.carrier_name() != base:
             continue
         item = library_enum_item(declaration)

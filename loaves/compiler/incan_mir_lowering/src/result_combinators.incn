@@ -32,7 +32,10 @@ from classes import frame_type, function_name, parameter_local_index
 from table_views import borrowed_at
 from closures import callable_signature
 from layout_types import native_source_type
-from lowering import scalar_place, lower_callable_result, call_closure, boundary_plan_operand, list_borrow
+from checked_values import scalar_place
+from callable_calls import lower_callable_result, call_closure
+from carrier_operands import boundary_plan_operand
+from list_values import list_borrow
 from collections import is_collection, collection_owned, collection_reference
 from trait_links import contains
 

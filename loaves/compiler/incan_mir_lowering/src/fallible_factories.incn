@@ -31,6 +31,7 @@ from decls import library_item
 from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
+from table_views import borrowed_at, borrowed_table
 
 
 pub model NativeFactory:
@@ -58,7 +59,7 @@ pub def fallible_factory(
                 return Ok(None)
             match result:
                 PlanType.Model(owner, _name) =>
-                    declaration = module.nominal_declarations[owner]
+                    declaration = borrowed_at(module.nominal_declarations, owner)
                     if (
                         library_item(declaration) == ""
                         or declaration.canonical.origin != slot.origin
@@ -71,8 +72,8 @@ pub def fallible_factory(
                     for argument in instance_arguments(declaration)?:
                         match native_source_type(
                             constructors,
-                            list(module.nominal_declarations),
-                            list(module.enum_declarations),
+                            borrowed_table(module.nominal_declarations),
+                            borrowed_table(module.enum_declarations),
                             collect_unions(module),
                             argument,
                             intrinsics,
@@ -99,7 +100,8 @@ def published_factory(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
     """A spelling grants no factory: the actual standard trait must enclose the checked member identity."""
     if slot.kind != SemanticSourceTargetKind.Method or slot.namespace != SymbolNamespace.Member:
         return false
-    for root in module.trait_declarations:
+    for root_position in range(len(module.trait_declarations)):
+        root = borrowed_at(module.trait_declarations, root_position)
         if root.origin == slot.origin and standard_protocol(root) and contains(root, slot):
             return true
     return false
@@ -107,7 +109,8 @@ def published_factory(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
 
 def concrete_return(module: &BodyIrModule, slot: &CanonicalSymbolId, declaration: &NominalDeclaration) -> bool:
     """Require the exact published body and its return binding's canonical owner before substituting a runtime ABI."""
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         if body.canonical != Some(slot.clone()) or body.first_representation_gap() != None:
             continue
         match body.return_type:
@@ -238,11 +241,12 @@ def retain_shared_factory_poll(
     mut externals: list[ExternalFunction],
 ) -> Result[None, str]:
     """Forward the exact published error-map poll to its linked SDK implementation with the proven callback storage."""
-    declaration = module.nominal_declarations[owner]
+    declaration = borrowed_at(module.nominal_declarations, owner)
     if library_item(declaration) != "incan_stdlib_core::derives::collection::MapErrFallibleIterator":
         return Err("unsupported Body IR shared factory poll owner")
     mut found = false
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         match body.canonical:
             Some(identity) =>
                 if (

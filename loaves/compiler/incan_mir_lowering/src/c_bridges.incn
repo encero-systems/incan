@@ -23,16 +23,11 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, literal, read_place, external_call, place_type, drop_owned
 from layout_types import native_source_type
-from lowering import (
-    scalar_operand,
-    scalar_place,
-    text_argument,
-    borrow_slice_operand,
-    list_borrow,
-    append_list_value,
-    coerce_numeric_operand,
-    value_operand,
-)
+from checked_values import scalar_operand, scalar_place
+from sequence_builtins import text_argument
+from operand_borrows import borrow_slice_operand
+from list_values import list_borrow, append_list_value, value_operand
+from builtin_calls import coerce_numeric_operand
 from lists import require_list_shape, list_element
 from text_plan import owned_literal
 from builtins import list_call

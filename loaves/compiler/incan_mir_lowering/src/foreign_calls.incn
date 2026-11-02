@@ -5,7 +5,9 @@ from rust::incan_semantics_core::body_ir import CheckedForeignCall, ArgumentElem
 from pub::incan_mir_plan import ForeignFunction, CalleeKind, PlanType, Operand, SourceSpan
 from frame import Builder, temporary
 from layout_types import native_source_type
-from lowering import scalar_operand, scalar_place, lower_callable_result, coerce_numeric_operand
+from checked_values import scalar_operand, scalar_place
+from callable_calls import lower_callable_result
+from builtin_calls import coerce_numeric_operand
 
 
 pub def lower_foreign_call(

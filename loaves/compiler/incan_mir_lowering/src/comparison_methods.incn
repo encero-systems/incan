@@ -40,11 +40,11 @@ pub def comparison_functions(
     """Retain one borrowed equality body, and all four owned ordering bodies when a checked source Ord slot is supplied."""
     mut owners: list[list[str]] = []
     for owner in range(len(module.nominal_declarations)):
-        if library_item(module.nominal_declarations[owner]) != "":
+        if library_item(borrowed_at(module.nominal_declarations, owner)) != "":
             owners.append([])
             continue
         mut symbols: list[str] = []
-        match module.nominal_declarations[owner].comparison_equality:
+        match borrowed_at(module.nominal_declarations, owner).comparison_equality:
             Some(_identity) =>
                 symbols.append(comparison_body(constructors, module, owner, "__eq__", true, intrinsics)?)
                 if source_slot(module, owner, "__lt__"):
@@ -57,7 +57,7 @@ pub def comparison_functions(
 
 def source_slot(module: &BodyIrModule, owner: int, name: str) -> bool:
     """A retained source body filling this owner's canonical standard slot authorizes a bridge."""
-    identity = module.nominal_declarations[owner].canonical
+    identity = borrowed_at(module.nominal_declarations, owner).canonical
     for implementation_position in range(len(module.trait_implementations)):
         implementation = borrowed_at(module.trait_implementations, implementation_position)
         if implementation.owner == identity and standard_comparison_slot(implementation.method, name):
@@ -76,7 +76,7 @@ def comparison_body(
     """Resolve a selected non-generic implementation with its exact shared receiver and legacy other-operand ABI."""
     nominals = borrowed_table(module.nominal_declarations)
     enums = borrowed_table(module.enum_declarations)
-    declaration = module.nominal_declarations[owner]
+    declaration = borrowed_at(module.nominal_declarations, owner)
     mut selected: Option[CanonicalSymbolId] = None
     for implementation_position in range(len(module.trait_implementations)):
         implementation = borrowed_at(module.trait_implementations, implementation_position)
@@ -90,7 +90,10 @@ def comparison_body(
     match selected:
         None => return Err(f"unsupported Body IR unavailable native comparison slot {name}")
         Some(identity) =>
-            if name == "__eq__" and module.nominal_declarations[owner].comparison_equality != Some(identity.clone()):
+            if (
+                name == "__eq__"
+                and borrowed_at(module.nominal_declarations, owner).comparison_equality != Some(identity.clone())
+            ):
                 return Err("unsupported Body IR mismatched native equality witness")
             for body_position in range(len(module.bodies)):
                 body = borrowed_at(module.bodies, body_position)
@@ -119,7 +122,7 @@ def validate_comparison_body(
     enums = borrowed_table(module.enum_declarations)
     if len(body.type_parameters) != 0 or len(body.params) != 2:
         return Err("unsupported Body IR generic or nonbinary native comparison body")
-    name = str(module.nominal_declarations[owner].name)
+    name = str(borrowed_at(module.nominal_declarations, owner).name)
     reference = PlanType.ModelRef(owner, name)
     first = body.locals[parameter_local_index(body, 0)]
     second = body.locals[parameter_local_index(body, 1)]
@@ -146,11 +149,11 @@ pub def source_equality_value(module: &BodyIrModule, target: &MethodTarget, body
     for owner in range(len(module.nominal_declarations)):
         if (
             target.canonical == body.canonical
-            and module.nominal_declarations[owner].comparison_equality == body.canonical
+            and borrowed_at(module.nominal_declarations, owner).comparison_equality == body.canonical
         ):
-            return Some(PlanType.Model(owner, str(module.nominal_declarations[owner].name)))
+            return Some(PlanType.Model(owner, str(borrowed_at(module.nominal_declarations, owner).name)))
     for owner in range(len(module.enum_declarations)):
-        declaration = module.enum_declarations[owner]
+        declaration = borrowed_at(module.enum_declarations, owner)
         for implementation_position in range(len(module.trait_implementations)):
             implementation = borrowed_at(module.trait_implementations, implementation_position)
             if (
@@ -172,7 +175,7 @@ pub def enum_comparison_functions(
     """Select enum bridges from checked standard slots and their retained borrowed equality ABI, never variant order."""
     mut owners: list[list[str]] = []
     for owner in range(len(module.enum_declarations)):
-        declaration = module.enum_declarations[owner]
+        declaration = borrowed_at(module.enum_declarations, owner)
         mut symbols: list[str] = []
         if library_enum_item(declaration) == "" and len(declaration.type_parameters) == 0:
             for implementation_position in range(len(module.trait_implementations)):
@@ -230,7 +233,7 @@ def enum_comparison_body(
     """Require the unique checked enum slot body and its exact two-input bool ABI before planning a native bridge."""
     nominals = borrowed_table(module.nominal_declarations)
     enums = borrowed_table(module.enum_declarations)
-    declaration = module.enum_declarations[owner]
+    declaration = borrowed_at(module.enum_declarations, owner)
     mut selected: Option[CanonicalSymbolId] = None
     for implementation_position in range(len(module.trait_implementations)):
         implementation = borrowed_at(module.trait_implementations, implementation_position)

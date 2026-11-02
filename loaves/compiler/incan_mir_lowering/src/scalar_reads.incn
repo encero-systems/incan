@@ -2,6 +2,7 @@
 
 from pub::incan_mir_plan import Local, Place, PlanType, Projection
 from numerics import numeric_carrier
+from table_views import borrowed_at
 
 
 pub def scalar_storage_place(locals: &list[Local], reference_values: &list[int], source: Place) -> Result[Place, str]:
@@ -11,7 +12,7 @@ pub def scalar_storage_place(locals: &list[Local], reference_values: &list[int],
     for reference in reference_values:
         if source.local == reference:
             return Ok(source)
-    match locals[source.local].ty:
+    match borrowed_at(locals, source.local).ty:
         (PlanType.ScalarRef(elements) | PlanType.ScalarMutRef(elements)) =>
             if len(elements) != 1:
                 return Err("invalid Body IR scalar reference storage arity")

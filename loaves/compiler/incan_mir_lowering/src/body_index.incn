@@ -4,6 +4,7 @@ from rust::std::collections import BTreeMap
 from rust::std::sync import Arc
 from rust::incan_semantics_core import CanonicalSymbolId
 from rust::incan_semantics_core::body_ir import BodyIrModule
+from table_views import borrowed_at
 
 
 pub model BodyIndex:
@@ -35,7 +36,8 @@ pub def body_index(module: &BodyIrModule) -> BodyIndex:
     """Read bodies by reference once after specialization, retaining canonical keys without copying executable statements."""
     mut entries: BTreeMap[CanonicalSymbolId, list[int]] = BTreeMap.new()
     mut index = 0
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         match body.canonical:
             Some(identity) => entries.entry(identity.clone()).or_insert([]).push(index)
             None => pass

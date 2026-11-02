@@ -1,0 +1,623 @@
+"""Iterate lists, text, and frozen collections."""
+
+from pub::incan_mir_plan import (
+    BinaryOp,
+    Constant,
+    ListLeaf,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    tuple_element_type,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    UnaryOp,
+    assign as plan_assign,
+    place as plan_place,
+)
+from frozen_plan import frozen_collection_literal
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    Constant as RustConstant,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+    PlaceElem,
+    IterProtocol,
+)
+from tuple_iterators import zip_shape, zip_next
+from owned_lists import is_owned_list_iterator, owned_list_next
+from generators import generator_shape, generator_collect, generator_next
+from table_views import borrowed_at
+from element_places import is_element_place
+from element_borrows import mutable_element_place
+from models import field_step_type
+from tuples import is_tuple_type, tuple_has_owners, owned_carrier
+from builtins import list_call
+from frame import place_type, Builder, temporary, drop_owned, external_call, read_place, literal
+from collections import collection_arguments, is_owned_collection
+from lists import (
+    list_shape,
+    require_list_shape,
+    list_element,
+    is_list,
+    is_builtin_iteration,
+    exclusive_reference,
+    is_mutable_list_reference,
+)
+from layout_types import collection_leaf
+from checked_values import scalar_place
+from operators import operand_type
+from statements import drop_loop_owners, is_nominal_type
+from calls import instantiated_external_call
+from formatting import native_format_text
+from operand_borrows import borrow_text_operand
+from static_storage import computed_static_root
+from list_values import list_base_place, list_borrow, value_operand
+from list_methods import argument_value, call_destination, materialized_receiver, shared_receiver_place
+from hashed_collections import iterable_call
+from sequence_builtins import argument_type
+
+
+pub def operand_list_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Require the checked bare list root before preparing an iterator or receiver borrow."""
+    match value:
+        RustOperand.Place(read) => return list_root_place(builder, read.place, span)
+        _ => return Err("unsupported Body IR constant list place")
+
+
+def borrow_iteration_item(mut builder: Builder, local: int) -> None:
+    """Refuse later changes to an iteration item that is only a snapshot of storage the source program changes."""
+    if local not in builder.borrowed_items:
+        builder.borrowed_items.append(local)
+
+
+def pair_holds_list(ty: PlanType) -> bool:
+    """Report whether a polled pair carries a list, directly or in a nested tuple."""
+    match ty:
+        PlanType.Tuple(elements) =>
+            for element in elements:
+                if pair_holds_list(tuple_element_type(element)):
+                    return true
+            return false
+        _ => return is_list(ty)
+
+
+pub def inherit_borrowed_item(mut builder: Builder, target: Place, value: &RustRvalue) -> None:
+    """A list bound out of a snapshot iteration item is part of that snapshot, so it stays unchangeable too."""
+    if target.projection != Projection.Whole or not is_list(place_type(builder.locals, target)):
+        return
+    match value:
+        RustRvalue.Use(operand) =>
+            match operand:
+                RustOperand.Place(read) =>
+                    if len(read.place.projection) == 0:
+                        return
+                    match read.place.local_id():
+                        Some(local) =>
+                            root = int(local.index()) + 1 + builder.local_offset
+                            if root in builder.borrowed_items:
+                                borrow_iteration_item(builder, target.local)
+                        None => pass
+                _ => pass
+        _ => pass
+
+
+pub def initialize_text_iterator(
+    mut builder: Builder,
+    target: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Materialize a text iterable's characters once, before its loop, as the one-character strings legacy's loop draws.
+
+    The checked iterator slot then holds that list and is polled through the ordinary list cursor.
+    """
+    match value:
+        RustRvalue.Use(operand) =>
+            reference = borrow_text_operand(builder, operand, span)?
+            items = PlanType.List(ListLeaf.Str, 1)
+            builder.locals[target.local].ty = items
+            external_call(
+                builder,
+                "incan_native_runtime::text_items",
+                [PlanType.StringRef],
+                items,
+                [reference],
+                target,
+                span,
+            )
+            builder.owned.append(target.local)
+            cursor = temporary(builder, PlanType.Int, span)
+            builder.emit(plan_assign(cursor, RvalueKind.Use(literal(Constant.Int(0), span)), span))
+            builder.iterators.append((target.local, cursor.local))
+            return Ok(None)
+        _ => return Err("unsupported Body IR text iterator initialization")
+
+
+pub def shared_sequence_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read frozen snapshots or shared collection receivers, materializing indexed fields once without changing their owners."""
+    match argument_type(builder, arguments, 0, span)?:
+        PlanType.FrozenCollection(_name, _elements) =>
+            value = argument_value(builder, arguments, 0, span)?
+            return frozen_list_snapshot(builder, value, span)
+        _ => return shared_receiver_place(builder, arguments, 0, span)
+
+
+pub def frozen_dictionary_element(
+    mut builder: Builder,
+    receiver: Place,
+    source: &RustPlace,
+    slot: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read one baked dictionary value using its retained storage arguments, then apply legacy's owned read conversion."""
+    ty = place_type(builder.locals, receiver)
+    match ty:
+        PlanType.FrozenCollection(name, elements) =>
+            if name != "FrozenDict" or len(elements) != 2:
+                return Err("unsupported Body IR frozen dictionary shape")
+            match source.projection[slot]:
+                PlaceElem.Index(value) =>
+                    key = frozen_dictionary_key(builder, elements[0], value, span)?
+                    return frozen_dictionary_value(builder, receiver, elements, key, span)
+                _ => return Err("unsupported Body IR frozen dictionary nonindex projection")
+        _ => return Err("unsupported Body IR nonfrozen dictionary read")
+
+
+def frozen_dictionary_value(
+    mut builder: Builder,
+    receiver: Place,
+    elements: list[PlanType],
+    probe: tuple[Operand, PlanType, bool],
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Convert only the selected stored value to its source read representation; other entries stay untouched."""
+    ty = place_type(builder.locals, receiver)
+    key, key_type, text = probe
+    mut path = "incan_native_runtime::frozen_dict_get"
+    if text:
+        path = "incan_native_runtime::frozen_dict_text_get"
+    raw = temporary(builder, elements[1], span)
+    instantiated_external_call(
+        builder,
+        path,
+        elements,
+        [ty, key_type],
+        elements[1],
+        [read_place(receiver, false, span), key],
+        raw,
+        span,
+    )?
+    if elements[1] == PlanType.StaticText:
+        return native_format_text(builder, read_place(raw, false, span), false, span)
+    if elements[1] == PlanType.StaticBytes:
+        output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
+        instantiated_external_call(
+            builder,
+            "incan_native_runtime::own_static_bytes",
+            [PlanType.StaticBytes],
+            [PlanType.StaticBytes],
+            PlanType.List(ListLeaf.U8, 1),
+            [read_place(raw, false, span)],
+            output,
+            span,
+        )?
+        builder.owned.append(output.local)
+        return Ok(output)
+    match elements[1]:
+        PlanType.FrozenCollection(_kind, _arguments) => return Ok(raw)
+        PlanType.Int => return Ok(raw)
+        PlanType.Bool => return Ok(raw)
+        PlanType.FrozenStr => return Ok(raw)
+        _ => return Err("unsupported Body IR frozen dictionary value read")
+
+
+def frozen_dictionary_key(
+    mut builder: Builder,
+    storage: PlanType,
+    value: &RustOperand,
+    span: SourceSpan,
+) -> Result[tuple[Operand, PlanType, bool], str]:
+    """Use text probes for static text/FrozenStr keys and exact scalar probes for the admitted numeric keys."""
+    if storage in [PlanType.StaticText, PlanType.FrozenStr]:
+        key = borrow_text_operand(builder, value, span)?
+        return Ok((key, PlanType.StringRef, true))
+    if storage not in [PlanType.Int, PlanType.Bool]:
+        return Err("unsupported Body IR frozen dictionary key storage")
+    key = value_operand(builder, value, span)?
+    if operand_type(builder, key)? != storage:
+        return Err("unsupported Body IR frozen dictionary key type")
+    return Ok((key, storage, false))
+
+
+pub def frozen_dictionary_contains(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    negated: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve linear frozen-key membership without reading or cloning values."""
+    if len(arguments) != 2:
+        return Err("unsupported Body IR frozen dictionary membership arity")
+    ty = argument_type(builder, arguments, 0, span)?
+    match ty:
+        PlanType.FrozenCollection(name, elements) =>
+            if name != "FrozenDict" or len(elements) != 2:
+                return Err("unsupported Body IR frozen dictionary membership shape")
+            match arguments[1].as_one():
+                Some(value) =>
+                    key, key_type, text = frozen_dictionary_key(builder, elements[0], value, span)?
+                    mut path = "incan_native_runtime::frozen_dict_contains"
+                    if text:
+                        path = "incan_native_runtime::frozen_dict_text_contains"
+                    receiver = argument_value(builder, arguments, 0, span)?
+                    output = call_destination(builder, destination, PlanType.Bool, span)?
+                    instantiated_external_call(
+                        builder,
+                        path,
+                        elements,
+                        [ty, key_type],
+                        PlanType.Bool,
+                        [receiver, key],
+                        output,
+                        span,
+                    )?
+                    if negated:
+                        builder.emit(
+                            plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span),
+                        )
+                    return Ok(None)
+                None => return Err("unsupported Body IR spread frozen dictionary membership")
+        _ => return Err("unsupported Body IR nonfrozen dictionary membership")
+
+
+pub def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
+    """Keep static text reads owned and nominal list elements exact; runtime instantiation still proves Clone and Static."""
+    match ty:
+        PlanType.FrozenCollection(name, elements) =>
+            if name not in ["FrozenList", "FrozenSet", "FrozenDict"] or len(elements) == 0:
+                return Err("unsupported Body IR frozen collection snapshot")
+            if elements[0] == PlanType.StaticText:
+                return Ok(PlanType.List(ListLeaf.Str, 1))
+            if elements[0] == PlanType.StaticBytes:
+                if name != "FrozenList":
+                    return Err("unsupported Body IR frozen byte set or dictionary snapshot")
+                return Ok(PlanType.List(ListLeaf.U8, 2))
+            match elements[0]:
+                PlanType.Model(_owner, _name) =>
+                    if name != "FrozenList":
+                        return Err("unsupported Body IR frozen nominal set or dictionary snapshot")
+                    return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
+                _ => pass
+            if elements[0] not in [
+                PlanType.Int,
+                PlanType.Float,
+                PlanType.Bool,
+                PlanType.FrozenStr,
+                PlanType.FrozenBytes,
+            ]:
+                return Err("unsupported Body IR frozen collection snapshot with nonprimitive elements")
+            return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
+        _ => return Err("unsupported Body IR nonfrozen snapshot")
+
+
+pub def frozen_list_snapshot(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Materialize an ordered owned snapshot through the runtime, leaving immutable static storage unchanged."""
+    ty = operand_type(builder, value)?
+    snapshot = frozen_list_snapshot_type(ty)?
+    match ty:
+        PlanType.FrozenCollection(name, elements) =>
+            mut path = "incan_native_runtime::frozen_list_items"
+            if name == "FrozenSet":
+                path = "incan_native_runtime::frozen_set_items"
+            elif name == "FrozenDict":
+                path = "incan_native_runtime::frozen_dict_keys"
+            if elements[0] == PlanType.StaticText:
+                path = "incan_native_runtime::frozen_list_text_items"
+                if name == "FrozenSet":
+                    path = "incan_native_runtime::frozen_set_text_items"
+                elif name == "FrozenDict":
+                    path = "incan_native_runtime::frozen_dict_text_keys"
+            elif elements[0] == PlanType.StaticBytes:
+                path = "incan_native_runtime::frozen_list_byte_items"
+            output = temporary(builder, snapshot, span)
+            instantiated_external_call(builder, path, elements, [ty], snapshot, [value], output, span)?
+            builder.owned.append(output.local)
+            return Ok(output)
+        _ => return Err("unsupported Body IR nonfrozen snapshot")
+
+
+pub def set_constructor_source(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Snapshot frozen source items or consume an owned generator once before constructing the canonical set."""
+    value = value_operand(builder, source, span)?
+    match operand_type(builder, value)?:
+        PlanType.FrozenCollection(_name, _elements) =>
+            snapshot = frozen_list_snapshot(builder, value, span)?
+            return Ok(read_place(snapshot, true, span))
+        PlanType.Generator(leaf, depth) =>
+            match value.kind:
+                OperandKind.Move(receiver) =>
+                    snapshot = temporary(builder, PlanType.List(leaf, depth + 1), span)
+                    generator_collect(builder, receiver, snapshot, span)?
+                    builder.owned.append(snapshot.local)
+                    return Ok(read_place(snapshot, true, span))
+                _ => return Err("unsupported Body IR set constructor without an owned generator")
+        _ => return Ok(value)
+
+
+def initialize_frozen_iterator(mut builder: Builder, iterator: Place, span: SourceSpan) -> None:
+    """Start a fresh cursor for a constant's immutable snapshot without inventing a mutable source place."""
+    cursor = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(cursor, RvalueKind.Use(literal(Constant.Int(0), span)), span))
+    builder.iterators.append((iterator.local, cursor.local))
+
+
+def initialize_list_iterator(mut builder: Builder, iterator: Place, source: &RustOperand, span: SourceSpan) -> None:
+    """Retain cursor storage for Body IR's borrowed builtin iterable materialization, shared or exclusive."""
+    match source:
+        RustOperand.Place(read) =>
+            if read.fact == OwnershipFact.Borrow or read.fact == OwnershipFact.MutBorrow:
+                cursor = temporary(builder, PlanType.Int, span)
+                zero = Operand(kind=OperandKind.Literal(Constant.Int(0)), span=span)
+                builder.emit(plan_assign(cursor, RvalueKind.Use(zero), span))
+                builder.iterators.append((iterator.local, cursor.local))
+        _ => pass
+
+
+pub def list_next(
+    mut builder: Builder,
+    destination: &RustPlace,
+    iterator: &RustOperand,
+    protocol: &IterProtocol,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Poll a retained builtin collection cursor, branching to the loop exit on exhaustion."""
+    if not is_builtin_iteration(protocol) or len(builder.loops) == 0:
+        return Err("unsupported Body IR non-builtin list IterNext")
+    match iterator:
+        RustOperand.Place(read) =>
+            candidate = scalar_place(builder, read.place, span)?
+            if is_owned_list_iterator(place_type(builder.locals, candidate)):
+                if read.fact != OwnershipFact.MutBorrow:
+                    return Err("unsupported Body IR consuming iterator poll ownership")
+                target = list_root_place(builder, destination, span)?
+                return owned_list_next(builder, candidate, target, span)
+        _ => pass
+    receiver = operand_list_place(builder, iterator, span)?
+    match zip_shape(place_type(builder.locals, receiver)):
+        Some(_shape) =>
+            target = list_root_place(builder, destination, span)?
+            zip_next(builder, receiver, target, span)?
+            # Legacy changes a zipped operand's list items in place; a pair here holds only snapshots of them.
+            if pair_holds_list(place_type(builder.locals, target)):
+                borrow_iteration_item(builder, target.local)
+            return Ok(None)
+        None => pass
+    match generator_shape(place_type(builder.locals, receiver)):
+        Some(_shape) =>
+            target = list_root_place(builder, destination, span)?
+            return generator_next(builder, receiver, target, span)
+        None => pass
+    ty = place_type(builder.locals, receiver)
+    mut element = PlanType.Unit
+    match list_shape(ty):
+        Some((leaf, depth)) => element = list_element(leaf, depth)
+        None =>
+            arguments = collection_arguments(ty)
+            if len(arguments) == 0:
+                return Err("unsupported Body IR noncollection IterNext")
+            element = arguments[0]
+    mut cursor = -1
+    for index in range(len(builder.iterators)):
+        if builder.iterators[index][0] == receiver.local:
+            cursor = builder.iterators[index][1]
+    if cursor < 0:
+        return Err("unsupported Body IR list iterator without retained materialization")
+    reference = list_borrow(builder, receiver, false, span)?
+    length = temporary(builder, PlanType.Int, span)
+    iterable_call(builder, ty, "length", [], PlanType.Int, [reference], length, span)?
+    condition = temporary(builder, PlanType.Bool, span)
+    position = read_place(plan_place(cursor, span), false, span)
+    builder.emit(
+        plan_assign(condition, RvalueKind.Binary(BinaryOp.Less, position, read_place(length, false, span)), span),
+    )
+    next_block = builder.new_block(span)
+    exhausted = builder.new_block(span)
+    owners = builder.owned
+    builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), exhausted, next_block), span)
+    builder.current = exhausted
+    drop_loop_owners(builder, span)?
+    builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+    builder.current = next_block
+    builder.owned = owners
+    target = list_root_place(builder, destination, span)?
+    if is_list(place_type(builder.locals, receiver)) and is_mutable_list_reference(place_type(builder.locals, receiver)):
+        in_place_item(builder, receiver, target, element, position, span)?
+    else:
+        item_reference = list_borrow(builder, receiver, false, span)?
+        drop_owned(builder, target.local, span)
+        if element == PlanType.String or is_list(element) or is_nominal_type(element):
+            borrow_iteration_item(builder, target.local)
+        # A bytes value's items are unsigned bytes, which legacy's loop widens to the checked `int` item.
+        widened = element == PlanType.U8 and place_type(builder.locals, target) == PlanType.Int
+        mut item = target
+        if widened:
+            item = temporary(builder, PlanType.U8, span)
+        iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], item, span)?
+        if (
+            owned_carrier(element)
+            or element == PlanType.String
+            or is_owned_collection(element)
+            or tuple_has_owners(element)
+        ):
+            builder.owned.append(item.local)
+        if widened:
+            byte = read_place(item, false, span)
+            builder.emit(plan_assign(target, RvalueKind.NumericCast(byte, PlanType.U8, PlanType.Int), span))
+    # The cursor cannot overflow: a successful poll is bounded by the native collection length.
+    pair = temporary(builder, PlanType.CheckedInt, span)
+    one = Operand(kind=OperandKind.Literal(Constant.Int(1)), span=span)
+    builder.emit(plan_assign(pair, RvalueKind.Binary(BinaryOp.Add, position, one), span))
+    result = Place(local=pair.local, projection=Projection.Value, span=span)
+    builder.emit(plan_assign(plan_place(cursor, span), RvalueKind.Use(read_place(result, false, span)), span))
+    return Ok(None)
+
+
+def in_place_item(
+    mut builder: Builder,
+    iterator: Place,
+    item: Place,
+    element: PlanType,
+    position: Operand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Bind a loop item that the body changes in place as an exclusive reference to its element, as legacy's `iter_mut`.
+
+    The element is reborrowed through the runtime's checked `borrow_list_mut` at the cursor position, so each change
+    lands in the list. Tuples keep their complete layout behind that reference; scalar elements remain refused.
+    """
+    leaf, depth = require_list_shape(place_type(builder.locals, iterator), "unsupported Body IR nonlist cursor")?
+    mut reference_type = PlanType.Unit
+    match exclusive_reference(element):
+        Some(reference) => reference_type = reference
+        None => return Err("unsupported Body IR in-place iteration over tuple or scalar elements")
+    builder.locals[item.local].ty = reference_type
+    if item.local not in builder.in_place_items:
+        builder.in_place_items.append(item.local)
+    exclusive_list = list_borrow(builder, iterator, true, span)?
+    list_call(
+        builder,
+        "borrow_list_mut",
+        element,
+        [PlanType.ListMutRef(leaf, depth), PlanType.Int],
+        reference_type,
+        [exclusive_list, position],
+        item,
+        span,
+    )
+    return Ok(None)
+
+
+pub def iterator_assignment(
+    mut builder: Builder,
+    destination: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Materialize the explicit builtin iterator's live list view and initialize its cursor once.
+
+    The view is shared, unless the loop changes its items in place: then Body IR borrows the list exclusively and each
+    item becomes an exclusive reference to its element (see `in_place_item`).
+    """
+    match value:
+        RustRvalue.Use(value) =>
+            match value:
+                RustOperand.Constant(constant) =>
+                    match constant:
+                        RustConstant.FrozenAggregate(_ty, _elements) =>
+                            frozen = frozen_collection_literal(builder, constant, span)?
+                            snapshot = frozen_list_snapshot(builder, frozen, span)?
+                            reference = list_borrow(builder, snapshot, false, span)?
+                            builder.emit(plan_assign(destination, RvalueKind.Use(reference), span))
+                            initialize_frozen_iterator(builder, destination, span)
+                            return Ok(None)
+                        _ => pass
+                _ => pass
+            match value:
+                RustOperand.Place(read) =>
+                    mut exclusive = false
+                    match read.fact:
+                        OwnershipFact.Borrow => pass
+                        OwnershipFact.MutBorrow => exclusive = true
+                        _ => return Err("unsupported Body IR list iterator initialization ownership")
+                    mut root = iteration_root(builder, read.place, exclusive, span)?
+                    match place_type(builder.locals, root):
+                        PlanType.FrozenCollection(_name, _elements) =>
+                            if exclusive:
+                                return Err("unsupported Body IR mutable frozen iteration")
+                            root = frozen_list_snapshot(builder, read_place(root, false, span), span)?
+                        _ => pass
+                    root_type = place_type(builder.locals, root)
+                    dictionary = len(collection_arguments(root_type)) == 2
+                    if exclusive and not is_list(root_type) and not dictionary:
+                        return Err("unsupported Body IR in-place iteration over a set")
+                    reference = list_borrow(builder, root, exclusive, span)?
+                    if exclusive:
+                        builder.locals[destination.local].ty = operand_type(builder, reference)?
+                    builder.emit(plan_assign(destination, RvalueKind.Use(reference), span))
+                    initialize_list_iterator(builder, destination, value, span)
+                    return Ok(None)
+                _ => return Err("unsupported Body IR list iterator constant")
+        _ => return Err("unsupported Body IR list iterator initialization")
+
+
+def iteration_root(mut builder: Builder, value: &RustPlace, exclusive: bool, span: SourceSpan) -> Result[Place, str]:
+    """
+    Select the list a loop iterates: a loop changing the items of a list held by a list element or dictionary value
+    iterates the stored list itself, reached through the container's checked reborrows.
+    """
+    if is_element_place(builder, value)?:
+        if exclusive:
+            return mutable_element_place(builder, value, span)
+        return materialized_receiver(builder, value, span)
+    return list_root_place(builder, value, span)
+
+
+pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """
+    Borrow whole storage or an exact field, payload or tuple element path.
+
+    A constant index selects a tuple element exactly like a structural field, so it stays on this path. Indexing a list
+    retains its separate element-materialization route.
+    """
+    if len(value.projection) != 0:
+        match computed_static_root(builder, value, span)?:
+            Some(place) => return Ok(place)
+            None => pass
+        match value.local_id():
+            None => return Err("unsupported Body IR global list root projection")
+            Some(local) =>
+                mut ty = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
+                # A receiver reference projects its model's fields.
+                match ty:
+                    PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
+                    PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
+                    PlanType.EnumMutRef(owner, name) => ty = PlanType.Enum(owner, name)
+                    _ => pass
+                for projection in value.projection:
+                    match projection:
+                        PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) => pass
+                        PlaceElem.OptionPayload(option_type=_container, payload_type=_payload) => pass
+                        PlaceElem.UnionMember(ty=_member) => pass
+                        PlaceElem.Index(_index) =>
+                            if not is_tuple_type(ty):
+                                return Err(list_projection_refusal(builder.name, ty, projection))
+                        _ => return Err(list_projection_refusal(builder.name, ty, projection))
+                    ty = field_step_type(
+                        builder.constructors,
+                        builder.nominals,
+                        ty,
+                        projection,
+                        builder.enums,
+                        builder.unions,
+                        builder.intrinsics,
+                    )?
+        return scalar_place(builder, value, span)
+    return list_base_place(builder, value, span)
+
+
+def list_projection_refusal(name: str, ty: PlanType, projection: &PlaceElem) -> str:
+    """Name the retained carrier and projection that cannot provide structural collection storage."""
+    return f"unsupported Body IR list root projection in {name}: {ty:?}; {projection:?}"

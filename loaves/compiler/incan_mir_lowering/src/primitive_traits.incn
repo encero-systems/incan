@@ -22,14 +22,10 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import SourceSpan, PlanType
 from frame import Builder, temporary, place_type
 from layout_types import native_source_type
-from lowering import (
-    argument_place,
-    lower_assignment,
-    ordinal_value_owner,
-    select_value_enum_raw,
-    value_enum_raw_type,
-    source_operand_type,
-)
+from list_methods import argument_place
+from assignments import lower_assignment
+from value_enum_methods import ordinal_value_owner, select_value_enum_raw, value_enum_raw_type
+from sequence_builtins import source_operand_type
 from type_parameters import substitute
 from table_views import borrowed_at
 
@@ -112,7 +108,7 @@ def normalized_primitive_receiver(
             if owner < 0:
                 return Ok(None)
     # 2. Construct the source model through its checked single-field layout.
-    declaration = module.nominal_declarations[owner]
+    declaration = borrowed_at(module.nominal_declarations, owner)
     owner_type = native_source_type(
         builder.constructors,
         builder.nominals,
@@ -227,20 +223,23 @@ def normalized_primitive_static(
         return Ok(None)
     # 2. Select its exact source implementation or checked primitive decoder.
     mut result = target.clone()
-    for adoption_position in range(len(module.nominal_declarations[owner].trait_adoptions)):
-        adoption = borrowed_at(module.nominal_declarations[owner].trait_adoptions, adoption_position)
+    for adoption_position in range(len(borrowed_at(module.nominal_declarations, owner).trait_adoptions)):
+        adoption = borrowed_at(borrowed_at(module.nominal_declarations, owner).trait_adoptions, adoption_position)
         match adoption.primitive_adapter:
             Some(adapter) =>
                 if identity == Some(adapter.decode_slot.clone()):
                     result.canonical = Some(adapter.decoded_value.clone())
-                    receiver_type: RustType = RustType.Named(str(module.nominal_declarations[owner].name))
+                    receiver_type: RustType = RustType.Named(str(borrowed_at(module.nominal_declarations, owner).name))
                     result.receiver_type = Some(receiver_type)
                     return Ok(Some(result))
             None => pass
     mut implementation: Option[CanonicalSymbolId] = None
     for implementation_position in range(len(module.trait_implementations)):
         record = borrowed_at(module.trait_implementations, implementation_position)
-        if record.owner != module.nominal_declarations[owner].canonical or Some(record.method.clone()) != identity:
+        if (
+            record.owner != borrowed_at(module.nominal_declarations, owner).canonical
+            or Some(record.method.clone()) != identity
+        ):
             continue
         if len(record.slot_arguments) != 0 or len(record.type_arguments) != 0:
             return Err("unsupported Body IR generic primitive adapter associated implementation")
@@ -252,7 +251,7 @@ def normalized_primitive_static(
     match implementation:
         None => return Err("unsupported Body IR primitive adapter without associated implementation")
         Some(selected) => result.canonical = Some(selected.clone())
-    receiver_type: RustType = RustType.Named(str(module.nominal_declarations[owner].name))
+    receiver_type: RustType = RustType.Named(str(borrowed_at(module.nominal_declarations, owner).name))
     result.receiver_type = Some(receiver_type)
     return Ok(Some(result))
 

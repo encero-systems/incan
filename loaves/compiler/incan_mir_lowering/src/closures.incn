@@ -59,7 +59,7 @@ from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
 from frame import Builder
 from type_parameters import Instance, instantiate, instantiate_parameter
-from lowering import call_parameter_type
+from call_arguments import call_parameter_type
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:

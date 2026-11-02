@@ -11,6 +11,7 @@ from frame import Builder
 from pub::incan_mir_plan import PlanType
 from layout_types import native_source_type
 from type_parameters import substitute
+from table_views import borrowed_at
 
 
 pub def sdk_owned_callable_bindings(
@@ -161,7 +162,7 @@ def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Op
             match read.place.local_id():
                 Some(local) =>
                     index = int(local.index()) + builder.local_offset + 1
-                    return Ok(Some(builder.locals[index].ty))
+                    return Ok(Some(borrowed_at(builder.locals, index).ty))
                 None => pass
         _ => pass
     return Ok(None)

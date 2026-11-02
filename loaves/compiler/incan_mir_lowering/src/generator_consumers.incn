@@ -5,7 +5,8 @@ from frame import Builder, value_type, external_call, terminate_call
 from generators import generator_shape, generator_element, generator_runtime_call
 from generator_adapters import adapter_callable
 from options import carrier_layout
-from lowering import instantiated_external_call
+from calls import instantiated_external_call
+from table_views import borrowed_at
 
 
 pub def is_generator_consumer(method: str) -> bool:
@@ -142,7 +143,7 @@ def int_consumer(
     callable = adapter_callable(builder, arguments[0], signature, span)?
     parameters = [generator, PlanType.FunctionPointer(signature)]
     if method == "find":
-        result = builder.locals[output.local].ty
+        result = borrowed_at(builder.locals, output.local).ty
         _owner, declaration = carrier_layout(builder, result)?
         if declaration.carrier != "Option" or declaration.variants[1].fields != [PlanType.Int]:
             return Err("unsupported Body IR generator find carrier")
@@ -192,6 +193,6 @@ def consume(
 
 def require_result(mut builder: Builder, output: Place, result: PlanType) -> Result[None, str]:
     """Refuse a consumer whose checked destination does not hold the runtime result."""
-    if builder.locals[output.local].ty != result:
+    if borrowed_at(builder.locals, output.local).ty != result:
         return Err("unsupported Body IR generator consumer result type")
     return Ok(None)

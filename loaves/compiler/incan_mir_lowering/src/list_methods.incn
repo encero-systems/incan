@@ -1,0 +1,638 @@
+"""Lower checked list arguments, list methods and builtins, and indexed list mutation."""
+
+from pub::incan_mir_plan import (
+    Constant,
+    ListLeaf,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    UnaryOp,
+    assign as plan_assign,
+    place as plan_place,
+)
+from layout_types import shared_receiver_type
+from rust::incan_semantics_core::body_ir import (
+    GlobalPlace as RustGlobalPlace,
+    ArgumentElement as RustArgumentElement,
+    Constant as RustConstant,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+    PlaceElem,
+    PlaceOperand as RustPlaceOperand,
+)
+from generators import generator_shape, generator_collect, generator_runtime_call
+from generator_adapters import is_generator_adapter, iterator_method
+from generator_consumers import is_generator_consumer
+from table_views import borrowed_at
+from frozen_equality import borrow_frozen_argument, frozen_reference_type
+from decls import library_item
+from model_lists import prefix_place
+from element_places import is_element_place
+from element_borrows import borrow_element_mut
+from options import none_operand
+from builtins import list_call
+from frame import place_type, Builder, temporary, drop_owned, external_call, read_place, literal
+from collections import is_collection
+from lists import list_shape, require_list_shape, list_element
+from checked_values import scalar_operand, scalar_place
+from operators import operand_type
+from calls import instantiated_external_call
+from call_arguments import call_argument_operand
+from operand_borrows import borrow_slice_operand, list_slice_view, lower_text_helper
+from static_storage import persist_static_value, read_static
+from list_values import (
+    checked_list_argument,
+    element_read,
+    list_base_place,
+    list_borrow,
+    list_index_operand,
+    value_operand,
+)
+from builtin_methods import lower_generator_member
+from list_iteration import list_root_place, shared_sequence_receiver
+from hashed_collections import collection_length, collection_method
+from carrier_operands import boundary_operand, element_plan_operand
+from sequence_builtins import argument_type
+
+
+pub def argument_place(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    index: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """
+    Require one retained local receiver before constructing a runtime borrow.
+
+    1. Check the argument position.
+    2. Retain its exact local projection, refusing constants and spreads.
+    """
+    # 1. Check the argument position.
+    if index >= len(arguments):
+        return Err("invalid Body IR list call arity")
+    # 2. Retain its exact local projection.
+    match arguments[index].as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) => return list_root_place(builder, read.place, span)
+                _ => return Err("unsupported Body IR list receiver constant")
+        None => return Err("unsupported Body IR list spread argument")
+
+
+pub def shared_receiver_place(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    index: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Like `argument_place` for a receiver read only through a shared borrow, materializing a list element first."""
+    if index >= len(arguments):
+        return Err("invalid Body IR list call arity")
+    match arguments[index].as_one():
+        Some(RustOperand.Place(read)) =>
+            if is_element_place(builder, read.place)?:
+                return materialized_receiver(builder, read.place, span)
+        _ => pass
+    return argument_place(builder, arguments, index, span)
+
+
+pub def materialized_receiver(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Read a collection element once into temporary storage, retaining scalar copies and owned receiver values."""
+    match element_read(builder, source, span)?:
+        Some(item) =>
+            match item.kind:
+                OperandKind.Move(place) => return Ok(place)
+                OperandKind.Copy(place) => return Ok(place)
+                _ => pass
+        None => pass
+    return Err("unsupported Body IR projected non-list receiver")
+
+
+pub def argument_value(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    index: int,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize exactly one retained argument, refusing a spread before executing it."""
+    if index >= len(arguments):
+        return Err("invalid Body IR list call arity")
+    match arguments[index].as_one():
+        Some(value) => return value_operand(builder, value, span)
+        None => return Err("unsupported Body IR list spread argument")
+
+
+pub def call_destination(
+    mut builder: Builder,
+    destination: &Option[RustPlace],
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Select the checked destination or a typed temporary for a discarded call."""
+    match destination:
+        Some(place) =>
+            root = list_root_place(builder, place, span)?
+            if place_type(builder.locals, root) == ty:
+                return Ok(root)
+            return scalar_place(builder, place, span)
+        None => return Ok(temporary(builder, ty, span))
+
+
+pub def borrowed_list_argument(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    index: int,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow one checked positional list argument without admitting a spread."""
+    if index >= len(arguments):
+        return Err("unsupported Body IR missing list argument")
+    match arguments[index].as_one():
+        Some(value) => return checked_list_argument(builder, value, mutable, span)
+        None => return Err("unsupported Body IR list argument spread")
+
+
+def lower_list_iter(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Start a lazy iterator over a snapshot of the list, so the list stays readable, as legacy's `iter()` leaves it."""
+    if len(arguments) != 1:
+        return Err("invalid Body IR list iter arguments")
+    leaf, depth = require_list_shape(argument_type(builder, arguments, 0, span)?, "unsupported Body IR iter on non-list")?
+    element = list_element(leaf, depth)
+    cell = static_collection_receiver(builder, arguments, false, span)?
+    mut reference = read_place(plan_place(0, span), false, span)
+    match cell:
+        Some((_global, receiver)) => reference = list_borrow(builder, receiver, false, span)?
+        None => reference = borrowed_list_argument(builder, arguments, 0, false, span)?
+    snapshot = temporary(builder, PlanType.List(leaf, depth), span)
+    list_call(
+        builder,
+        "clone_list",
+        element,
+        [PlanType.ListRef(leaf, depth)],
+        PlanType.List(leaf, depth),
+        [reference],
+        snapshot,
+        span,
+    )
+    builder.owned.append(snapshot.local)
+    result = PlanType.Generator(leaf, depth - 1)
+    output = call_destination(builder, destination, result, span)?
+    if borrowed_at(builder.locals, output.local).ty != result:
+        return Err("unsupported Body IR list iter destination")
+    drop_owned(builder, output.local, span)
+    generator_runtime_call(
+        builder,
+        "list_generator",
+        element,
+        [PlanType.List(leaf, depth)],
+        result,
+        [read_place(snapshot, true, span)],
+        output,
+        span,
+    )
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
+pub def lower_list_method(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Admit already resolved builtin list members with exact runtime signatures."""
+    receiver_ty = argument_type(builder, arguments, 0, span)?
+    match generator_shape(receiver_ty):
+        Some((leaf, depth)) =>
+            method = iterator_method(member)
+            if is_generator_adapter(method) or is_generator_consumer(method):
+                return lower_generator_member(builder, method, arguments, destination, receiver_ty, span)
+            if method != "collect":
+                return Err(f"unsupported Body IR generator Method {member}")
+            if len(arguments) != 1:
+                return Err("invalid Body IR generator collect arguments")
+            receiver = argument_place(builder, arguments, 0, span)?
+            output = call_destination(builder, destination, PlanType.List(leaf, depth + 1), span)?
+            drop_owned(builder, output.local, span)
+            generator_collect(builder, receiver, output, span)?
+            builder.owned.append(output.local)
+            return Ok(None)
+        None => pass
+    if member == "List.iter":
+        return lower_list_iter(builder, arguments, destination, span)
+    if member in ["List.reserve", "List.reserve_exact"]:
+        return lower_list_reservation(builder, member, arguments, destination, span)
+    if member == "bytes.as_slice":
+        if (
+            len(arguments) != 1
+            or receiver_ty not in [
+                PlanType.List(ListLeaf.U8, 1),
+                PlanType.ListRef(ListLeaf.U8, 1),
+                PlanType.ListMutRef(ListLeaf.U8, 1),
+            ]
+        ):
+            return Err("invalid Body IR bytes.as_slice receiver or arity")
+        match arguments[0].as_one():
+            Some(value) =>
+                reference = borrow_slice_operand(builder, value, [PlanType.U8], false, span)?
+                output = call_destination(builder, destination, PlanType.SliceRef([PlanType.U8]), span)?
+                builder.emit(plan_assign(output, RvalueKind.Use(reference), span))
+                return Ok(None)
+            None => return Err("invalid Body IR bytes.as_slice spread")
+    if member == "List.contains":
+        return lower_list_helper(builder, false, arguments, destination, span)
+    if is_collection(receiver_ty):
+        return collection_method(builder, member, arguments, destination, span)
+    description = f"unsupported Body IR list Method {member} on non-list in {builder.name}"
+    source_location = f"{span.file}:{span.line}:{span.column}"
+    leaf, depth = require_list_shape(receiver_ty, f"{description} at {source_location}")?
+    element = list_element(leaf, depth)
+    mut name = ""
+    mut mutable = false
+    mut result = PlanType.Unit
+    mut parameters: list[PlanType] = []
+    match member:
+        "List.append" =>
+            name = "append_list"
+            mutable = true
+            parameters = [element]
+        "List.extend" =>
+            name = "extend_list"
+            mutable = true
+            parameters = [PlanType.ListRef(leaf, depth)]
+        "List.pop" =>
+            name = "pop_list"
+            mutable = true
+            result = element
+        "List.remove" =>
+            name = "remove_list"
+            mutable = true
+            parameters = [PlanType.Int]
+        "List.swap" =>
+            name = "swap_list"
+            mutable = true
+            parameters = [PlanType.Int, PlanType.Int]
+        "List.clone" =>
+            name = "clone_list"
+            result = PlanType.List(leaf, depth)
+        "List.count" =>
+            result = PlanType.Int
+            if len(arguments) == 1:
+                name = "length_list"
+            else:
+                name = "count_list"
+                parameters = [element]
+        "List.index" =>
+            name = "index_list"
+            result = PlanType.Int
+            parameters = [element]
+        _ => return Err(f"unsupported Body IR list Method {member}")
+    if len(arguments) != len(parameters) + 1:
+        return Err(f"unsupported Body IR list Method arity {member}")
+    mut operands: list[Operand] = []
+    for index in range(len(parameters)):
+        if name == "extend_list":
+            operands.append(borrowed_list_argument(builder, arguments, index + 1, false, span)?)
+        else:
+            match arguments[index + 1].as_one():
+                Some(value) => operands.append(boundary_operand(builder, value, parameters[index], span)?)
+                None => return Err("unsupported Body IR list method spread argument")
+    reference, cell = list_method_receiver(builder, arguments, mutable, span)?
+    mut receiver_type = PlanType.ListRef(leaf, depth)
+    if mutable:
+        receiver_type = PlanType.ListMutRef(leaf, depth)
+    output = call_destination(builder, destination, result, span)?
+    mut all_parameters = [receiver_type]
+    all_parameters.extend(parameters)
+    mut all_operands = [reference]
+    all_operands.extend(operands)
+    list_call(builder, name, element, all_parameters, result, all_operands, output, span)
+    if mutable:
+        match cell:
+            Some((global, receiver)) => persist_static_value(builder, global, receiver, span)?
+            None => pass
+    return Ok(None)
+
+
+def lower_list_reservation(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Reserve additional capacity on the actual checked list receiver, preserving the existing int-to-usize contract."""
+    if len(arguments) != 2:
+        return Err("invalid Body IR list reservation arity")
+    ty = argument_type(builder, arguments, 0, span)?
+    leaf, depth = require_list_shape(ty, "invalid Body IR list reservation receiver")?
+    count = argument_value(builder, arguments, 1, span)?
+    if operand_type(builder, count)? != PlanType.Int:
+        return Err("invalid Body IR list reservation count")
+    additional = temporary(builder, PlanType.USize, span)
+    builder.emit(plan_assign(additional, RvalueKind.NumericCast(count, PlanType.Int, PlanType.USize), span))
+    reference, cell = list_method_receiver(builder, arguments, true, span)?
+    output = call_destination(builder, destination, PlanType.Unit, span)?
+    mut method = "reserve"
+    if member == "List.reserve_exact":
+        method = "reserve_exact"
+    instantiated_external_call(
+        builder,
+        f"alloc::vec::Vec::{method}",
+        [list_element(leaf, depth)],
+        [PlanType.ListMutRef(leaf, depth), PlanType.USize],
+        PlanType.Unit,
+        [reference, read_place(additional, false, span)],
+        output,
+        span,
+    )?
+    match cell:
+        Some((global, receiver)) => persist_static_value(builder, global, receiver, span)?
+        None => pass
+    return Ok(None)
+
+
+def list_method_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[tuple[Operand, Option[tuple[RustGlobalPlace, Place]]], str]:
+    """Borrow ordinary receiver storage or a retained static snapshot after argument evaluation."""
+    cell = static_collection_receiver(builder, arguments, mutable, span)?
+    match cell:
+        Some((_global, receiver)) => return Ok((list_borrow(builder, receiver, mutable, span)?, cell))
+        None => return Ok((borrowed_list_argument(builder, arguments, 0, mutable, span)?, cell))
+
+
+pub def static_collection_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Option[tuple[RustGlobalPlace, Place]], str]:
+    """Read static storage after method arguments, retaining exclusive-access authority for a subsequent commit."""
+    if len(arguments) == 0:
+        return Err("invalid Body IR static method arity")
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) => return static_place_receiver(builder, read, mutable, span)
+        _ => return Ok(None)
+
+
+def static_place_receiver(
+    mut builder: Builder,
+    read: &RustPlaceOperand,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Option[tuple[RustGlobalPlace, Place]], str]:
+    """Materialize a checked global receiver while retaining its identity for the mutation's commit."""
+    match read.place.global():
+        Some(global) =>
+            if len(read.place.projection) != 0:
+                return Err("unsupported Body IR projected static collection method")
+            if mutable and read.fact != OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR static collection method without mutable borrow fact")
+            operand = read_static(builder, read.place, global, read.fact, span)?
+            match operand.kind:
+                OperandKind.Move(place) => return Ok(Some((global.clone(), place)))
+                _ => return Err("unsupported Body IR noncollection static method receiver")
+        None => return Ok(None)
+
+
+pub def lower_list_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Read string, list, and hashed-collection lengths through the legacy runtime contracts."""
+    if len(arguments) != 1:
+        return Err("unsupported Body IR len arity")
+    # An indexed nested list, such as `len(rows[1])`, is measured through the copy a shared list argument reads.
+    if indexes_nested_list(builder, arguments):
+        element = borrowed_list_argument(builder, arguments, 0, false, span)?
+        return list_length(builder, element, destination, span)
+    ty = argument_type(builder, arguments, 0, span)?
+    match ty:
+        PlanType.NativeArray(_elements, count) =>
+            output = call_destination(builder, destination, PlanType.Int, span)?
+            builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Int(count), span)), span))
+            return Ok(None)
+        PlanType.FrozenCollection(name, elements) =>
+            value = borrow_frozen_argument(builder, arguments[0], span)?
+            output = call_destination(builder, destination, PlanType.Int, span)?
+            mut path = "incan_native_runtime::frozen_list_length_ref"
+            if name == "FrozenSet":
+                path = "incan_native_runtime::frozen_set_length_ref"
+            elif name == "FrozenDict":
+                path = "incan_native_runtime::frozen_dict_length_ref"
+            return instantiated_external_call(
+                builder,
+                path,
+                elements,
+                [frozen_reference_type(ty)?],
+                PlanType.Int,
+                [value],
+                output,
+                span,
+            )
+        _ => pass
+    if ty == PlanType.FrozenBytes:
+        match arguments[0].as_one():
+            None => return Err("unsupported Body IR spread FrozenBytes length")
+            Some(value) =>
+                operand = scalar_operand(builder, value, span)?
+                mut output = temporary(builder, PlanType.Int, span)
+                match destination:
+                    Some(place) => output = scalar_place(builder, place, span)?
+                    None => pass
+                external_call(
+                    builder,
+                    "incan_native_runtime::length_frozen_bytes",
+                    [PlanType.FrozenBytes],
+                    PlanType.Int,
+                    [operand],
+                    output,
+                    span,
+                )
+                return Ok(None)
+    if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
+        return lower_text_helper(builder, "length_text", PlanType.Int, arguments, destination, span)
+    receiver = shared_receiver_place(builder, arguments, 0, span)?
+    if is_collection(place_type(builder.locals, receiver)):
+        return collection_length(builder, receiver, destination, span)
+    _ = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR len on non-list")?
+    reference = list_borrow(builder, receiver, false, span)?
+    return list_length(builder, reference, destination, span)
+
+
+def indexes_nested_list(mut builder: Builder, arguments: &list[RustArgumentElement]) -> bool:
+    """Recognize one index into a local list of lists, such as `rows[1]`."""
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            if len(read.place.projection) != 1:
+                return false
+            match read.place.projection[0]:
+                PlaceElem.Index(_index) => pass
+                _ => return false
+            match read.place.local_id():
+                Some(local) =>
+                    slot = int(local.index()) + 1 + builder.local_offset
+                    match list_shape(borrowed_at(builder.locals, slot).ty):
+                        Some((_leaf, depth)) => return depth > 1
+                        None => return false
+                None => return false
+        _ => return false
+
+
+def list_length(
+    mut builder: Builder,
+    reference: Operand,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Read a borrowed list's length through the runtime."""
+    leaf, depth = require_list_shape(operand_type(builder, reference)?, "unsupported Body IR len on non-list")?
+    output = call_destination(builder, destination, PlanType.Int, span)?
+    list_call(
+        builder,
+        "length_list",
+        list_element(leaf, depth),
+        [PlanType.ListRef(leaf, depth)],
+        PlanType.Int,
+        [reference],
+        output,
+        span,
+    )
+    return Ok(None)
+
+
+pub def lower_list_helper(
+    mut builder: Builder,
+    negated: bool,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Borrow both operands for native PartialEq, retaining haystack-first order and explicit negation.
+
+    `x in xs`, `x not in xs` and `xs.contains(x)` all lower here, so one admission policy serves every spelling.
+    """
+    if len(arguments) != 2:
+        return Err("unsupported Body IR list membership arity")
+    receiver = shared_sequence_receiver(builder, arguments, span)?
+    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR membership on non-list")?
+    admit_membership_equality(builder, leaf)?
+    element = list_element(leaf, depth)
+    mut needle_type = PlanType.Unit
+    match shared_receiver_type(element):
+        Ok(reference_type) => needle_type = reference_type
+        Err(reason) => return Err(f"{reason} in {builder.name} membership needle at {span.file}:{span.line}")
+    mut argument = literal(Constant.Unit, span)
+    match arguments[1].as_one():
+        Some(value) => argument = call_argument_operand(builder, value, needle_type, span, false)?
+        None => return Err("unsupported Body IR list membership needle spread")
+    reference = list_borrow(builder, receiver, false, span)?
+    slice_type = PlanType.SliceRef([element])
+    slice_reference = list_slice_view(builder, reference, [element], false, span)?
+    output = call_destination(builder, destination, PlanType.Bool, span)?
+    instantiated_external_call(
+        builder,
+        "incan_std_core::collections::list_contains",
+        [element],
+        [slice_type, needle_type],
+        PlanType.Bool,
+        [slice_reference, argument],
+        output,
+        span,
+    )?
+    if negated:
+        builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+    return Ok(None)
+
+
+def admit_membership_equality(builder: &Builder, leaf: ListLeaf) -> Result[None, str]:
+    """
+    Admit elements whose native PartialEq is Incan's structural equality: scalars, text, enums, tuples, lists,
+    dictionaries, sets, opaque native records and source models with derived equality. A source model with its own
+    `__eq__` has no native PartialEq to call, and a callable has no equality.
+    """
+    match leaf:
+        ListLeaf.Model(owner, _name) =>
+            if library_item(builder.nominals[owner]) == "" and "PartialEq" not in builder.nominals[owner].derives:
+                return Err("unsupported Body IR list membership nominal equality")
+        ListLeaf.FunctionPointer(_signature) => return Err("unsupported Body IR list membership callable equality")
+        _ => pass
+    return Ok(None)
+
+
+pub def indexed_assignment(
+    mut builder: Builder,
+    destination: &RustPlace,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Write one checked list element through the legacy mutable indexing helper."""
+    return indexed_assignment_at(builder, destination, 0, value, span)
+
+
+pub def indexed_assignment_at(
+    mut builder: Builder,
+    destination: &RustPlace,
+    start: int,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Write one checked list element whose list is reached after `start` structural steps (zero for a bare list)."""
+    if len(destination.projection) <= start:
+        return Err("unsupported Body IR list assignment without index")
+    # Materialize the replacement before borrowing storage that its value might itself read.
+    mut argument = assignment_value(builder, value, span)?
+    mut receiver = list_base_place(builder, destination, span)?
+    if start > 0:
+        receiver = prefix_place(builder, destination, start, span)?
+    for slot in range(start, len(destination.projection) - 1):
+        index = list_index_operand(builder, destination, slot, span)?
+        receiver = borrow_element_mut(builder, receiver, index, span)?
+    leaf, depth = require_list_shape(
+        place_type(builder.locals, receiver),
+        "unsupported Body IR indexed assignment on non-list",
+    )?
+    element = list_element(leaf, depth)
+    match value:
+        RustRvalue.Use(RustOperand.Constant(RustConstant.None)) => argument = none_operand(builder, element, span)?
+        _ => argument = element_plan_operand(builder, argument, element, span)?
+    subscript = list_index_operand(builder, destination, len(destination.projection) - 1, span)?
+    reference = list_borrow(builder, receiver, true, span)?
+    unit = temporary(builder, PlanType.Unit, span)
+    list_call(
+        builder,
+        "set_list",
+        element,
+        [PlanType.ListMutRef(leaf, depth), PlanType.Int, element],
+        PlanType.Unit,
+        [reference, subscript, argument],
+        unit,
+        span,
+    )
+    return Ok(None)
+
+
+def assignment_value(mut builder: Builder, value: &RustRvalue, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize the checked single value before borrowing its indexing destination mutably."""
+    match value:
+        RustRvalue.Use(operand) => return value_operand(builder, operand, span)
+        _ => return Err("unsupported Body IR indexed assignment rvalue")

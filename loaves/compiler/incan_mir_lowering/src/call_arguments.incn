@@ -1,0 +1,442 @@
+"""Order and lower call arguments against their parameters, defaulted slots, and explicit accesses."""
+
+from pub::incan_mir_plan import (
+    Constant,
+    Operand,
+    Place,
+    PlanType,
+    TupleElement,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from explicit_arguments import argument_access, explicit_place_argument
+from layout_types import native_source_type
+from rust::incan_semantics_core import IncanInputAccess
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding as RustArgumentBinding,
+    ArgumentElement as RustArgumentElement,
+    Body as RustBody,
+    Constant as RustConstant,
+    CallableParam as RustCallableParam,
+    BoundArgument as RustBoundArgument,
+    Operand as RustOperand,
+    OwnershipFact,
+)
+from generators import generator_reference, is_generator_type, is_generator_reference
+from frozen_equality import frozen_reference_type, frozen_place, borrow_frozen
+from element_places import is_element_place
+from element_borrows import shared_element_place
+from validation_errors import validation_error_reference
+from text_plan import owned_literal
+from numerics import numeric_carrier
+from frame import place_type, Builder, temporary, read_place, literal
+from collections import is_collection
+from lists import is_list, exclusive_reference, is_mutable_list_reference
+from closures import packed_input, function_assignment, parameter_representation
+from mutable_parameters import mutable_argument
+from checked_values import scalar_constant, scalar_place
+from operators import operand_type
+from statements import is_nominal_type
+from callable_calls import callable_argument
+from builtin_calls import coerce_numeric_operand
+from formatting import display_operand
+from operand_borrows import borrow_scalar_operand, borrow_slice_operand, borrow_str_operand, borrow_text_operand
+from list_values import checked_list_argument, cloned_list, list_borrow, value_operand
+from list_methods import materialized_receiver
+from list_iteration import list_root_place
+from carrier_operands import boundary_operand
+
+
+pub def call_parameter_type(
+    mut builder: Builder,
+    body: &RustBody,
+    parameter: &RustCallableParam,
+) -> Result[PlanType, str]:
+    """
+    The representation a call passes for one declared parameter, shared by functions and methods.
+
+    A list, set or dictionary parameter takes a shared or, when `mut`, an exclusive reference to the caller's storage;
+    `mut` text, models and enums take an exclusive reference to the caller's value; a `mut` scalar is the callee's own
+    copy. Rest parameters consume their checked owned packs. A `mut` tuple borrows its complete layout; an iterator without retained exclusive storage stays refused.
+    """
+    declared = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        parameter.ty,
+        builder.intrinsics,
+    )?
+    ty = parameter_representation(body, int(parameter.local.index()), declared)?
+    if parameter.input_access == IncanInputAccess.Inferred and parameter.mutable and lacks_exclusive_parameter(ty):
+        return Err("unsupported Body IR mutable tuple or iterator parameter")
+    return stored_parameter_type(body, parameter, ty)
+
+
+pub def stored_parameter_type(body: &RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
+    """
+    A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
+
+    Call materialization, frame locals and constructor signatures use this same storage decision so an escaping
+    generator never captures a borrow of a caller's list snapshot. Explicit inputs select their checked access first;
+    deferred producers still refuse that contract until retained dependencies are represented.
+    """
+    if parameter.input_access != IncanInputAccess.Inferred:
+        if body.is_generator():
+            return Err("unsupported Body IR explicit input access in a deferred producer")
+        return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
+    if body.is_generator() and not parameter.mutable:
+        return Ok(ty)
+    return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
+
+
+pub def lacks_exclusive_parameter(ty: PlanType) -> bool:
+    """Report whether a value that owns storage has no exclusive reference a `mut` parameter could receive."""
+    if not is_nominal_type(ty) or is_generator_type(ty):
+        return false
+    match exclusive_reference(ty):
+        Some(_reference) => return false
+        None => return true
+
+
+pub def has_defaulted_slots(binding: &RustArgumentBinding) -> bool:
+    """Report whether a resolved call leaves at least one declared slot to its default."""
+    match binding:
+        RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) => return len(defaults) != 0
+        RustArgumentBinding.ResolvedDeclarationOrder(arguments=_arguments, defaulted_slots=defaults) =>
+            return len(defaults) != 0
+        _ => return false
+
+
+pub def ordered_slot_operands(
+    mut builder: Builder,
+    binding: &RustArgumentBinding,
+    elements: &list[RustArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    offset: int = 0,
+    owned: bool = false,
+    positional: bool = false,
+    accesses: list[IncanInputAccess] = [],
+) -> Result[list[Operand], str]:
+    """
+    Place the written arguments into the callee's declared parameter slots.
+
+    Body IR has already evaluated arguments in the binding's recorded order. Fixed named free calls and imported SDK
+    factories can retain declaration order; written-order operations keep their explicit policy. The binding says which slot each materialized value fills.
+    Defaults, missing slots, named or spread elements are refused. An offset of one skips a method receiver,
+    whose borrow is lowered separately and whose slot is absent from the ordinary argument binding. With `owned`,
+    a collection slot receives an owned value, as an SDK crate's compiled signature takes it.
+
+    With `positional`, an unresolved binding whose elements are exactly one plain value per declared slot fills the
+    slots in written order: without a name, a spread or an omitted slot, position is the only binding. An SDK crate
+    call to an overloaded function arrives this way, since the checker records no slots for an overload set.
+    """
+    if offset < 0 or offset > len(elements):
+        return Err("invalid Body IR argument offset")
+    count = len(types)
+    if len(accesses) != 0 and len(accesses) != count:
+        return Err("invalid Body IR argument input access count")
+    match binding:
+        RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            return resolved_slot_operands(
+                builder,
+                bindings,
+                len(defaults),
+                elements,
+                types,
+                span,
+                offset,
+                owned,
+                accesses,
+            )
+        RustArgumentBinding.ResolvedDeclarationOrder(arguments=bindings, defaulted_slots=defaults) =>
+            for index in range(1, len(bindings)):
+                if int(bindings[index].slot) <= int(bindings[index - 1].slot):
+                    return Err("unsupported Body IR binding outside declaration order")
+            return resolved_slot_operands(
+                builder,
+                bindings,
+                len(defaults),
+                elements,
+                types,
+                span,
+                offset,
+                owned,
+                accesses,
+            )
+        RustArgumentBinding.UnresolvedPositional =>
+            if not positional or len(elements) - offset != count:
+                return Err("unsupported Body IR unresolved ArgumentBinding")
+            mut operands: list[Operand] = []
+            for index in range(count):
+                match elements[index + offset]:
+                    RustArgumentElement.One(value) =>
+                        access = argument_access(accesses, count, index)?
+                        operands.append(call_argument_operand(builder, value, types[index], span, owned, access)?)
+                    _ => return Err("unsupported Body IR named or spread ArgumentElement")
+            return Ok(operands)
+
+
+def resolved_slot_operands(
+    mut builder: Builder,
+    bindings: &list[RustBoundArgument],
+    default_count: int,
+    elements: &list[RustArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    offset: int,
+    owned: bool,
+    accesses: list[IncanInputAccess],
+) -> Result[list[Operand], str]:
+    """Pass already evaluated resolved values by slot, preserving the ownership order their binding variant records."""
+    count = len(types)
+    if default_count != 0 or len(bindings) != len(elements) - offset or len(bindings) != count:
+        return Err("unsupported Body IR defaulted or incomplete ArgumentBinding")
+    mut operands: list[Operand] = []
+    for _index in range(count):
+        operands.append(literal(Constant.Unit, span))
+    mut occupied: list[int] = []
+    for index in range(count):
+        slot = int(bindings[index].slot)
+        if slot < 0 or slot >= count or slot in occupied:
+            return Err("invalid Body IR argument slot map")
+        occupied.append(slot)
+        match elements[index + offset].as_one():
+            Some(value) =>
+                access = argument_access(accesses, count, slot)?
+                operands[slot] = call_argument_operand(builder, value, types[slot], span, owned, access)?
+            None => return Err("unsupported Body IR named or spread ArgumentElement")
+    return Ok(operands)
+
+
+pub def call_argument_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    span: SourceSpan,
+    owned: bool = false,
+    input_access: IncanInputAccess = IncanInputAccess.Inferred,
+) -> Result[Operand, str]:
+    """Honor explicit input authority before ordinary collection borrowing, callable adaptation, or boundary coercion."""
+    if input_access != IncanInputAccess.Inferred:
+        return explicit_argument_operand(builder, value, ty, span, input_access)
+    match ty:
+        PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
+        PlanType.StringRef => return borrow_text_operand(builder, value, span)
+        PlanType.StrRef => return borrow_str_operand(builder, value, span)
+        PlanType.ValidationErrorRef =>
+            match value:
+                RustOperand.Place(read) =>
+                    source = scalar_place(builder, read.place, span)?
+                    return validation_error_reference(builder, source, span)
+                _ => return Err("unsupported Body IR validation error reference without a place")
+        PlanType.SliceRef(elements) => return borrow_slice_operand(builder, value, elements, false, span)
+        PlanType.SliceMutRef(elements) => return borrow_slice_operand(builder, value, elements, true, span)
+        PlanType.ScalarRef(elements) => return borrow_scalar_operand(builder, value, elements, false, span)
+        PlanType.ScalarMutRef(elements) => return borrow_scalar_operand(builder, value, elements, true, span)
+        PlanType.FrozenCollectionRef(_name, _elements) =>
+            match value:
+                RustOperand.Place(read) =>
+                    existing = scalar_place(builder, read.place, span)?
+                    if place_type(builder.locals, existing) == ty:
+                        return Ok(read_place(existing, false, span))
+                _ => pass
+            match frozen_place(builder, value, span)?:
+                Some(storage) =>
+                    if frozen_reference_type(place_type(builder.locals, storage))? != ty:
+                        return Err("unsupported Body IR frozen argument owner mismatch")
+                    return borrow_frozen(builder, storage, span)
+                None => return Err("unsupported Body IR native frozen argument without exact storage")
+        _ => pass
+    if owned_collection(ty):
+        # The checked ABI distinguishes owned packs and SDK values from ordinary collection references.
+        return value_operand(builder, value, span)
+    if is_list(ty) or is_collection(ty):
+        if is_mutable_list_reference(ty):
+            match loop_variable_copy(builder, value, span)?:
+                Some(copy) => return list_borrow(builder, copy, true, span)
+                None => pass
+        return checked_list_argument(builder, value, is_mutable_list_reference(ty), span)
+    if is_generator_reference(ty):
+        match value:
+            RustOperand.Place(read) =>
+                if read.fact != OwnershipFact.MutBorrow:
+                    return Err("unsupported Body IR generator argument without mutable borrow fact")
+                root = list_root_place(builder, read.place, span)?
+                return generator_reference(builder, root, span)
+            _ => return Err("unsupported Body IR constant generator argument")
+    if ty == PlanType.String:
+        text = display_operand(builder, value, span)?
+        return Ok(read_place(text, true, span))
+    match ty:
+        PlanType.ModelRef(_owner, _name) => return shared_nominal_argument(builder, value, ty, span)
+        PlanType.EnumRef(_owner, _name) => return shared_nominal_argument(builder, value, ty, span)
+        PlanType.TupleRef(_elements) => return shared_nominal_argument(builder, value, ty, span)
+        PlanType.StringMutRef => return mutable_argument(builder, value, ty, span)
+        PlanType.ModelMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
+        PlanType.EnumMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
+        PlanType.TupleMutRef(_elements) => return mutable_argument(builder, value, ty, span)
+        _ => pass
+    operand = boundary_operand(builder, value, ty, span)?
+    coerced = coerce_numeric_operand(builder, operand, ty, span)?
+    return function_argument(builder, ty, coerced, span)
+
+
+def explicit_argument_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    span: SourceSpan,
+    access: IncanInputAccess,
+) -> Result[Operand, str]:
+    """Consume checked storage or a fresh owned literal; borrowed constants must already have retained call storage."""
+    match value:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Err("unsupported Body IR explicit argument from static storage")
+                None => pass
+            if is_element_place(builder, read.place)?:
+                return Err("unsupported Body IR explicit argument requires retained indexed storage")
+            source = scalar_place(builder, read.place, span)?
+            return explicit_place_argument(builder, source, read.fact, ty, access, span)
+        RustOperand.Constant(constant) => return explicit_constant_argument(builder, constant, ty, access, span)
+
+
+def explicit_constant_argument(
+    mut builder: Builder,
+    constant: &RustConstant,
+    expected: PlanType,
+    access: IncanInputAccess,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """A fresh owned literal has no earlier owner to retain or clone; shared/exclusive input storage stays mandatory."""
+    if access != IncanInputAccess.Owned:
+        return Err("unsupported Body IR borrowed constant without retained local storage")
+    match constant:
+        RustConstant.Str(text) =>
+            if expected != PlanType.String:
+                return Err("unsupported Body IR owned text literal carrier mismatch")
+            return Ok(read_place(owned_literal(builder, str(text), span), true, span))
+        _ => pass
+    if not numeric_carrier(expected) and expected not in [PlanType.Bool, PlanType.Unit]:
+        return Err("unsupported Body IR explicit owned constant carrier")
+    literal = scalar_constant(constant, span)?
+    converted = coerce_numeric_operand(builder, literal, expected, span)?
+    if operand_type(builder, converted)? != expected:
+        return Err("unsupported Body IR explicit owned constant carrier mismatch")
+    return Ok(converted)
+
+
+pub def shared_nominal_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow a checked nominal or enum, preserving shared list element loans and existing frame references."""
+    match value:
+        RustOperand.Place(read) =>
+            mut receiver = plan_place(0, span)
+            if is_element_place(builder, read.place)?:
+                if read.fact == OwnershipFact.Borrow:
+                    match shared_element_place(builder, read.place, span)?:
+                        Some(place) => receiver = place
+                        None => receiver = materialized_receiver(builder, read.place, span)?
+                else:
+                    receiver = materialized_receiver(builder, read.place, span)?
+            else:
+                receiver = scalar_place(builder, read.place, span)?
+            source = place_type(builder.locals, receiver)
+            if source == ty:
+                return Ok(read_place(receiver, false, span))
+            match source:
+                PlanType.Enum(owner, name) =>
+                    if ty != PlanType.EnumRef(owner, name):
+                        return Err(f"unsupported Body IR shared enum owner mismatch for {name}")
+                    reference = temporary(builder, ty, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
+                    return Ok(read_place(reference, false, span))
+                _ => pass
+            match source:
+                PlanType.Tuple(elements) =>
+                    if ty != PlanType.TupleRef(elements):
+                        return Err("unsupported Body IR shared tuple owner mismatch")
+                PlanType.Model(owner, name) =>
+                    if ty != PlanType.ModelRef(owner, name):
+                        return Err(
+                            f"unsupported Body IR shared receiver owner mismatch: {source:?} requires {ty:?} in {builder.name} at {span.file}:{span.line}",
+                        )
+                _ => return Err("unsupported Body IR shared receiver outside its nominal frame")
+            reference = temporary(builder, ty, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
+            return Ok(read_place(reference, false, span))
+        _ => return Err("unsupported Body IR shared receiver without a place")
+
+
+pub def owned_collection(ty: PlanType) -> bool:
+    """Whether a parameter takes a list, set or dictionary by value rather than through a borrow."""
+    match ty:
+        PlanType.List(_leaf, _depth) => return true
+        PlanType.Set(_leaf) => return true
+        PlanType.Dict(_key, _value) => return true
+        _ => return false
+
+
+def loop_variable_copy(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+    """
+    Copy a list loop variable, or a list field of one, that a function's `mut` parameter receives.
+
+    Legacy passes such a parameter `&mut item.clone()`, whether the loop copies its items or iterates them in place,
+    so the callee's changes never reach the iterated list. A method receiver is not an argument and changes the item.
+    """
+    match value:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            root = list_root_place(builder, read.place, span)?
+            if not is_list(place_type(builder.locals, root)):
+                return Ok(None)
+            if root.local in builder.borrowed_items or root.local in builder.in_place_items:
+                return Ok(Some(cloned_list(builder, root, span)?))
+            return Ok(None)
+        _ => return Ok(None)
+
+
+pub def tuple_pointer_element(element: TupleElement) -> bool:
+    """A tuple's function-pointer field requires explicit item reification, independently of whether it owns storage."""
+    match element:
+        TupleElement.FunctionPointer(_signature) => return true
+        _ => return false
+
+
+pub def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: SourceSpan) -> Result[Operand, str]:
+    """Reify an item passed into a function-pointer signature without changing its inferred binding type."""
+    match ty:
+        PlanType.FunctionPointer(_signature) =>
+            source = operand_type(builder, value)?
+            _type, operation = function_assignment(ty, source, value, true, f"call argument in {builder.name}")?
+            match operation:
+                RvalueKind.ReifyFunction(_value) =>
+                    result = temporary(builder, ty, span)
+                    builder.emit(plan_assign(result, operation, span))
+                    return Ok(read_place(result, false, span))
+                _ => return Ok(value)
+        _ => return Ok(value)
+
+
+pub def fixed_arguments(
+    mut builder: Builder,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Read already ordered positional elements, refusing spreading by name."""
+    mut result: list[Operand] = []
+    for element in elements:
+        match element.as_one():
+            Some(value) => result.append(value_operand(builder, value, span)?)
+            None => return Err("unsupported Body IR spread ArgumentElement")
+    return Ok(result)

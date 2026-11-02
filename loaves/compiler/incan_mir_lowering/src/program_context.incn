@@ -14,7 +14,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from rust::incan_semantics_core import IncanType as RustType
 from rust::std::collections import BTreeSet
-from table_views import borrowed_at
+from table_views import borrowed_at, borrowed_table
 from native_type_identity import ConstructorIndex, constructor_index
 
 

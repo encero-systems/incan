@@ -40,7 +40,10 @@ from tuples import tuple_aggregate
 from lists import list_shape, list_element
 from builtins import list_call
 from text_plan import owned_literal
-from lowering import scalar_place, text_argument, display_plan_value, append_list_value
+from checked_values import scalar_place
+from sequence_builtins import text_argument
+from formatting import display_plan_value
+from list_values import append_list_value
 
 
 pub def lower_reflection(

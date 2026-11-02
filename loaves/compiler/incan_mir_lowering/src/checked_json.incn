@@ -23,7 +23,7 @@ from frame import Builder, temporary, read_place, terminate_call, forget_owned, 
 from string_input import owned_string_frame
 from classes import function_name
 from type_parameters import Instance, request_instance, merge_instance_requests
-from lowering import instantiated_external_call
+from calls import instantiated_external_call
 from checked_json_contracts import checked_deserialize_name, checked_owner_arguments, selected_deserialize_hook
 from nominal_instances import NominalInstance
 from options import retain_body_carriers, retain_carrier, result_layout
@@ -32,6 +32,7 @@ from native_type_identity import ConstructorIndex
 from rust::std::sync import Arc
 from unions import collect_unions
 from decls import library_item
+from table_views import borrowed_at, borrowed_table
 
 
 pub def lower_checked_deserialize(
@@ -47,7 +48,7 @@ pub def lower_checked_deserialize(
     mut externals: list[ExternalFunction] = []
     mut pending: list[Instance] = []
     for owner_index in range(len(module.nominal_declarations)):
-        declaration = module.nominal_declarations[owner_index]
+        declaration = borrowed_at(module.nominal_declarations, owner_index)
         if declaration.canonical.kind != SemanticSourceTargetKind.Newtype or library_item(declaration) != "":
             continue
         name = checked_deserialize_name(declaration)?
@@ -62,16 +63,16 @@ pub def lower_checked_deserialize(
         retain_carrier(constructors, module, intrinsics, output, file)?
         hook_result = native_source_type(
             constructors,
-            list(module.nominal_declarations),
-            list(module.enum_declarations),
+            borrowed_table(module.nominal_declarations),
+            borrowed_table(module.enum_declarations),
             collect_unions(module),
             selected.return_type,
             intrinsics,
         )?
         result = native_source_type(
             constructors,
-            list(module.nominal_declarations),
-            list(module.enum_declarations),
+            borrowed_table(module.nominal_declarations),
+            borrowed_table(module.enum_declarations),
             collect_unions(module),
             output,
             intrinsics,
