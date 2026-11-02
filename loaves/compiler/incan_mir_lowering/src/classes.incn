@@ -86,7 +86,7 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
     if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
             Some(_mutable) =>
-                mut symbol = f"__incan_body_{body_span_symbol(body)}{type_component(body.locals[0].ty)}"
+                mut symbol = f"__incan_body_{body_span_symbol(body)}{type_component(borrowed_at(body.locals, 0).ty)}"
                 if len(body.type_parameters) != 0:
                     symbol += symbol_component(str(body.name))
                 return symbol
@@ -171,7 +171,7 @@ pub def body_type_bindings(
     match receiver_mode(body.locals[0].origin):
         None => return Ok((names, arguments))
         Some(_mutable) => pass
-    match body.locals[0].ty:
+    match borrowed_at(body.locals, 0).ty:
         RustType.Generic(base=base, args=owner_arguments) =>
             for nominal_position in range(len(module.nominal_declarations)):
                 declaration = borrowed_at(module.nominal_declarations, nominal_position)
@@ -200,7 +200,7 @@ def module_function_symbol(owner: str, body: &Body) -> str:
     # A trait default can have the same canonical declaration and span in several concrete receiver frames.
     if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
-            Some(_mutable) => symbol += "_receiver" + type_component(body.locals[0].ty)
+            Some(_mutable) => symbol += "_receiver" + type_component(borrowed_at(body.locals, 0).ty)
             None => pass
     if len(body.type_parameters) != 0:
         symbol += symbol_component(str(body.name))

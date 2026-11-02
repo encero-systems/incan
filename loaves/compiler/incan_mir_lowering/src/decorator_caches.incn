@@ -31,6 +31,7 @@ from frame import Builder, temporary, read_place, terminate_call, external_call,
 from text_plan import owned_literal
 from classes import body_module_identity
 from program_context import ProgramContext
+from table_views import borrowed_at
 
 
 pub enum DecoratorFrame:
@@ -89,8 +90,8 @@ pub def builder_signature(builder: &Builder) -> list[PlanType]:
     """The pointer signature of the frame being built, read from its parameter slots and then its return slot."""
     mut signature: list[PlanType] = []
     for index in range(1, builder.parameter_count + 1):
-        signature.append(builder.locals[index].ty.clone())
-    signature.append(builder.locals[0].ty.clone())
+        signature.append(borrowed_at(builder.locals, index).ty.clone())
+    signature.append(borrowed_at(builder.locals, 0).ty.clone())
     return signature
 
 

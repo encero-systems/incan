@@ -7,6 +7,7 @@ from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, place_type, dereferenced_place
 from numerics import numeric_carrier
 from program_context import body_at
+from table_views import borrowed_at
 
 
 pub def validate_source_input_call(builder: &Builder, callee: &RustBody) -> Result[None, str]:
@@ -150,7 +151,7 @@ def reference_contract(ty: PlanType) -> Result[tuple[PlanType, bool], str]:
 
 def require_writable_path(locals: &list[Local], source: Place) -> Result[None, str]:
     """Check each dereferenced layer, including a shared reference stored inside an otherwise writable model."""
-    mut current = locals[source.local].ty
+    mut current = borrowed_at(locals, source.local).ty
     mut fields: list[FieldProjection] = []
     match source.projection:
         Projection.Deref(_referent) =>

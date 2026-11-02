@@ -567,7 +567,8 @@ def validate_declarations_and_bodies(module: &BodyIrModule, modules: &list[BodyI
     for declaration in module.fieldless_enum_declarations:
         if not module.is_well_formed_fieldless_enum_declaration(declaration):
             return Err("invalid Body IR fieldless enum declaration identity")
-    for declaration in module.value_enum_declarations:
+    for declaration_position in range(len(module.value_enum_declarations)):
+        declaration = borrowed_at(module.value_enum_declarations, declaration_position)
         if not module.is_well_formed_value_enum_declaration(declaration):
             return Err("invalid Body IR value enum declaration identity")
     for body_position in range(len(module.bodies)):
@@ -597,23 +598,58 @@ def location(span: &RustSpan, source: &str, file: str) -> SourceSpan:
     return plan_span(file=file, line=number, column=1)
 
 
+pub def line_starts(source: &str) -> list[int]:
+    """Each line's starting byte offset, then the offset just past the last line, as `location` counts them."""
+    mut starts: list[int] = [0]
+    mut start = 0
+    separator = "\n"
+    for line in RustStr.split(RustString.as_str(source), RustString.as_str(separator)):
+        start += int(RustStr.len(line)) + 1
+        starts.append(start)
+    return starts
+
+
+def indexed_location(starts: &list[int], span: &RustSpan, file: str) -> SourceSpan:
+    """Map a byte offset as `location` does, by binary search over the frame's line starts."""
+    offset = int(span.start)
+    mut low = 0
+    mut high = len(starts) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if starts[middle] <= offset:
+            low = middle
+        else:
+            high = middle - 1
+    # An offset past the last line takes the line after it, at its first column.
+    if low == len(starts) - 1:
+        return plan_span(file=file, line=low + 1, column=1)
+    return plan_span(file=file, line=low + 1, column=offset - starts[low] + 1)
+
+
+def builder_location(builder: &Builder, span: &RustSpan) -> SourceSpan:
+    """Map a span in the frame's source through its line starts; a frame without them scans its source."""
+    if len(builder.line_starts) == 0:
+        return location(span, builder.source, builder.file)
+    return indexed_location(builder.line_starts, span, builder.file)
+
+
 pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map a local or proven model field into the native frame, which reserves local zero for return."""
     validate_callback_place(builder, value)?
     match union_projection(builder, value, span)?:
         Some(projected) => return Ok(projected)
         None => pass
-    # Materialize the suffix before borrowing it; direct mutable slice arguments still refuse (#2256).
-    mut frame_locals = builder.locals[builder.local_offset:]
+    # The frame's slots start at its offset in the shared locals table; borrow the table rather than copy a suffix.
     mut target = match model_place(
         builder.constructors,
         builder.nominals,
-        frame_locals,
+        borrowed_table(builder.locals),
         value,
         span,
         builder.enums,
         builder.unions,
         builder.intrinsics,
+        builder.local_offset,
     ):
         Ok(place) => place
         Err(error) => return Err(f"{error} in {builder.name} at {span.file}:{span.line}")
@@ -733,7 +769,7 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
         match value.local_id():
             Some(local) =>
                 index = int(local.index()) + 1 + builder.local_offset
-                if is_exclusive_borrow(builder.locals[index].ty):
+                if is_exclusive_borrow(borrowed_at(builder.locals, index).ty):
                     return Ok(read_place(plan_place(index, span), true, span))
             None => pass
     match element_read(builder, value, span)?:
@@ -792,7 +828,7 @@ def reference_value_read(
                 return Ok(None)
             if not reference_read_fact(fact):
                 return Err("unsupported Body IR reference value without a checked copy or transfer")
-            if is_exclusive_borrow(builder.locals[index].ty) and fact != OwnershipFact.Move:
+            if is_exclusive_borrow(borrowed_at(builder.locals, index).ty) and fact != OwnershipFact.Move:
                 return Err("unsupported Body IR exclusive reference value without a checked transfer")
             return Ok(Some(read_place(plan_place(index, span), fact == OwnershipFact.Move, span)))
 
@@ -878,7 +914,8 @@ def owned_target_read(
     match fact:
         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
         OwnershipFact.Move =>
-            transferred_tuple_field = is_tuple_type(builder.locals[target.local].ty) and is_direct_tuple_field(target)
+            holder = borrowed_at(builder.locals, target.local)
+            transferred_tuple_field = is_tuple_type(holder.ty) and is_direct_tuple_field(target)
             if (
                 target.projection != Projection.Whole
                 and not transferred_tuple_field
@@ -892,7 +929,7 @@ def owned_target_read(
             if (
                 target.projection != Projection.Whole
                 and not transferred_tuple_field
-                and is_tuple_type(builder.locals[target.local].ty)
+                and is_tuple_type(borrowed_at(builder.locals, target.local).ty)
                 and owned_carrier(place_type(builder.locals, target))
             ):
                 return Err("unsupported Body IR partial tuple move")
@@ -913,7 +950,7 @@ def owned_target_read(
                 return Ok(Operand(kind=OperandKind.Copy(target), span=span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
-            if is_list(ty) and is_tuple_type(builder.locals[target.local].ty):
+            if is_list(ty) and is_tuple_type(borrowed_at(builder.locals, target.local).ty):
                 return carrier_payload_value(builder, target, span)
             if place_type(builder.locals, target) == PlanType.String:
                 cloned = clone_text(builder, target, span)?
@@ -925,7 +962,10 @@ def owned_target_read(
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
             # A list held by a tuple element is materialized by cloning it, leaving the owning tuple whole.
-            if is_list(place_type(builder.locals, target)) and is_tuple_type(builder.locals[target.local].ty):
+            if (
+                is_list(place_type(builder.locals, target))
+                and is_tuple_type(borrowed_at(builder.locals, target.local).ty)
+            ):
                 return carrier_payload_value(builder, target, span)
             # A checked projected read borrows its parent. Materialize only the selected enum or model through its
             # real Clone implementation; copying or moving that field would invalidate the still-owned parent. A model
@@ -1712,10 +1752,12 @@ def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) 
     # Receipts are minted by the frame's own source module, which for an imported body is not the entry module.
     if not block.unsafe_acknowledgments_valid(builder.module_identity):
         return Err("unsupported Body IR invalid unsafe acknowledgment receipt or enclosing scope")
-    for statement in block.stmts:
+    # Borrow each statement: a copied statement would copy every block nested inside it.
+    for position in range(len(block.stmts)):
+        statement = borrowed_at(block.stmts, position)
         match lower_statement(module, builder, statement):
             Err(reason) =>
-                site = location(statement.span, builder.source, builder.file)
+                site = builder_location(builder, statement.span)
                 return Err(f"{reason} at {site.file}:{site.line}:{site.column}")
             Ok(_) => pass
         if builder.closed[builder.current]:
@@ -1725,7 +1767,7 @@ def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) 
 
 pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &RustStatement) -> Result[None, str]:
     """Preserve statement order and refuse constructs outside the supported slice."""
-    mut span = location(statement.span, builder.source, builder.file)
+    mut span = builder_location(builder, statement.span)
     match builder.anchor:
         Some(site) => span = site
         None => pass
@@ -1824,7 +1866,7 @@ def lower_native_race(
     mut callbacks: list[Operand] = []
     for arm in arms:
         futures.append(source_future_place(builder, arm.awaitable, span)?)
-        input = builder.locals[int(arm.binding.index()) + 1 + builder.local_offset].ty
+        input = borrowed_at(builder.locals, int(arm.binding.index()) + 1 + builder.local_offset).ty
         inputs.append(input)
         callbacks.append(race_callback(module, builder, arm, input, ty, span)?)
     types = [inputs[0], inputs[1], ty, place_type(builder.locals, futures[0]), place_type(builder.locals, futures[1])]
@@ -1960,7 +2002,7 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
 
 def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
     """Materialize a returned value for the return slot's type, taking ownership of an owned result."""
-    return_type = builder.locals[0].ty
+    return_type = borrowed_at(builder.locals, 0).ty
     if builder.returned_view != IncanInputAccess.Inferred:
         return view_return_operand(builder, operand, return_type, span)
     if return_type == PlanType.String:
@@ -1989,7 +2031,7 @@ def view_return_operand(
 
 def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:
     """Store a materialized result in the return slot, drop every live owner, and return."""
-    return_type = builder.locals[0].ty
+    return_type = borrowed_at(builder.locals, 0).ty
     result = coerce_numeric_operand(builder, value, return_type, span)?
     if callable_copy_type(return_type):
         assign_callable(builder, plan_place(0, span), result, true, span)?
@@ -2034,7 +2076,7 @@ def lower_yield(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> 
         None => pass
     if builder.generator_handle < 0:
         return Err("unsupported Body IR Yield outside generator producer")
-    match builder.locals[builder.generator_handle].ty:
+    match borrowed_at(builder.locals, builder.generator_handle).ty:
         PlanType.GeneratorYield(leaf, depth) =>
             operand = value_operand(builder, value, span)?
             converted = coerce_numeric_operand(builder, operand, generator_element(leaf, depth), span)?
@@ -2057,7 +2099,7 @@ pub def lower_assignment(
         if is_element_place(builder, destination)?:
             return element_assignment(module, builder, destination, value, span)
         base = list_base_place(builder, destination, span)?
-        ty = builder.locals[base.local].ty
+        ty = borrowed_at(builder.locals, base.local).ty
         if is_collection(ty):
             return dictionary_index_assignment(builder, destination, value, span)
         if is_list(ty):
@@ -2164,7 +2206,7 @@ def lower_local_assignment(
     """Handle callable and iteration bindings before assigning an ordinary stored value with checked ownership."""
     # Replace the borrowed value through its checked projection, never the reference slot itself.
     if (
-        builder.locals[target.local].ty == PlanType.StringMutRef
+        borrowed_at(builder.locals, target.local).ty == PlanType.StringMutRef
         and target.projection != Projection.Deref(PlanType.String)
     ):
         return Err("unsupported Body IR assignment to a mutable text reference slot")
@@ -2242,7 +2284,7 @@ def assign_stored_value(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Assign an ordinary stored value after callable construction and iteration-binding admission."""
-    match builder.locals[target.local].ty:
+    match borrowed_at(builder.locals, target.local).ty:
         PlanType.ListIntoIter(_leaf, _depth) =>
             match value:
                 RustRvalue.Use(RustOperand.Place(read)) =>
@@ -2499,7 +2541,7 @@ def hold_closure(
     A checked local starts with a provisional source signature; its first value fixes the supplied-flag and Fn/FnOnce ABI. Parameters, return storage and already materialized locals keep their existing ABI across later moves and drops.
     """
     if local <= builder.parameter_count or local in builder.materialized_closures:
-        match builder.locals[local].ty:
+        match borrowed_at(builder.locals, local).ty:
             PlanType.Closure(held) =>
                 if consumes_environment:
                     return Err("unsupported Body IR binding changing callable consumption")
@@ -2764,6 +2806,7 @@ def lifted_frame(
         current=0,
         source=builder.source,
         file=builder.file,
+        line_starts=builder.line_starts,
         module_identity=builder.module_identity,
         callable_identity=None,
         loops=[],
@@ -3001,7 +3044,7 @@ def lower_later_clause(
             environment.append(local)
             types.append(operand_type(builder, operand)?)
             operands.append(operand)
-    result = builder.locals[0].ty
+    result = borrowed_at(builder.locals, 0).ty
     name = f"__incan_generator_step_{builder.name}_{len(builder.synthesized)}"
     step = lift_generator_step(module, builder, name, item, types, environment, result, item_local, body, span)?
     synthesize(builder, step)
@@ -3015,7 +3058,7 @@ def lower_later_clause(
 def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
     """Snapshot a list, set or zip source per item, or move a generator the step built."""
     place = plan_place(slot, span)
-    ty = builder.locals[slot].ty
+    ty = borrowed_at(builder.locals, slot).ty
     match ty:
         PlanType.Set(_leaf) =>
             snapshot = cloned_collection(builder, place, span)?
@@ -3039,7 +3082,7 @@ def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[O
 def environment_operand(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
     """Copy a scalar or clone an owned snapshot or callable so the outer step retains its reusable environment."""
     place = plan_place(slot, span)
-    ty = builder.locals[slot].ty
+    ty = borrowed_at(builder.locals, slot).ty
     if not step_capture_type(ty):
         return Err("unsupported Body IR generator expression clause environment outside scalars, owned text and lists")
     match ty:
@@ -3289,7 +3332,8 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
         builder.owned = join_branch_owners(builder, after, ends, owners, span)?
     builder.current = after
     # Exhaustion and break share this exit; drop the iterator once, including any unvisited items.
-    for statement in body.stmts:
+    for position in range(len(body.stmts)):
+        statement = borrowed_at(body.stmts, position)
         match statement.kind:
             RustStatementKind.IterNext(destination=_item, iterator=RustOperand.Place(read), protocol=_protocol) =>
                 receiver = scalar_place(builder, read.place, span)?
@@ -3836,7 +3880,7 @@ def concrete_iterator_collect(
     match argument_type(builder, arguments, 0, span)?:
         PlanType.Model(index, _name) => owner = index
         _ => return Err("unsupported Body IR opaque Iterator.collect without concrete receiver")
-    declaration = module.nominal_declarations[owner]
+    declaration = borrowed_at(module.nominal_declarations, owner)
     if library_item(declaration) == "":
         return Err("opaque Iterator.collect requires a standard library owner")
     mut selected = target.clone()
@@ -3955,7 +3999,7 @@ def lower_selected_library_method(
                 return Ok(false)
             match element_method_owner(builder, arguments[0])?:
                 Some(PlanType.Model(owner, _name)) =>
-                    if library_item(module.nominal_declarations[owner]) == "":
+                    if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
                         return Ok(false)
                 _ => pass
             lower_library_method(module, builder, selection, target, arguments, destination, span)?
@@ -3973,7 +4017,7 @@ def lower_sdk_element_method(
     """Borrow a retained SDK collection element for its authenticated ordinary SDK method, preserving source dispatch."""
     match element_method_owner(builder, arguments[0])?:
         Some(PlanType.Model(owner, name)) =>
-            if library_item(module.nominal_declarations[owner]) == "":
+            if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
                 return Ok(false)
             selected = implementation_target(module, target, PlanType.Model(owner, name))?
             for callable_position in range(len(module.loaf_callables)):
@@ -4046,7 +4090,7 @@ def retain_sdk_factory_result(
                     )?
                     match result:
                         PlanType.Model(owner, _name) =>
-                            if library_item(module.nominal_declarations[owner]) == "":
+                            if library_item(borrowed_at(module.nominal_declarations, owner)) == "":
                                 return Ok(None)
                         _ => return Ok(None)
                     declared = checked_type_arguments(builder, [delegation.return_type.clone()])?
@@ -4816,18 +4860,18 @@ def library_receiver(
                                         return Ok(reference)
                                     _ => return Err("the standard library element receiver requires a nominal layout")
                             _ => return Err("the standard library method cannot consume this element receiver")
-                    mut declarations = module.nominal_declarations
-                    mut enums = module.enum_declarations
-                    mut frame_locals = builder.locals[builder.local_offset:]
+                    declarations = borrowed_table(module.nominal_declarations)
+                    enums = borrowed_table(module.enum_declarations)
                     mut receiver = model_place(
                         builder.constructors,
                         declarations,
-                        frame_locals,
+                        borrowed_table(builder.locals),
                         read.place,
                         span,
                         enums,
                         builder.unions,
                         builder.intrinsics,
+                        builder.local_offset,
                     )?
                     receiver.local += builder.local_offset
                     source = place_type(builder.locals, receiver)
@@ -6429,7 +6473,7 @@ def lower_zip_builtin(
         return Err("unsupported Body IR zip arity")
     output = call_destination(builder, destination, PlanType.Unit, span)?
     # The frame lays out zip over two iterators as a generator of pairs, which draws from both lazily.
-    match generator_shape(builder.locals[output.local].ty):
+    match generator_shape(borrowed_at(builder.locals, output.local).ty):
         Some(_shape) =>
             first = argument_value(builder, arguments, 0, span)?
             second = argument_value(builder, arguments, 1, span)?
@@ -6438,7 +6482,7 @@ def lower_zip_builtin(
             builder.owned.append(output.local)
             return Ok(None)
         None => pass
-    match zip_shape(builder.locals[output.local].ty):
+    match zip_shape(borrowed_at(builder.locals, output.local).ty):
         None => return Err("unsupported Body IR zip checked destination")
         Some((left, right)) =>
             first = argument_value(builder, arguments, 0, span)?
@@ -8384,7 +8428,8 @@ def finalize_plan_layouts(
 ) -> Result[None, str]:
     """Publish completed layouts and validate callable and coroutine storage after every instance has contributed."""
     # Instance lowering can append carriers needed by a callable or coroutine capture.
-    for declaration in intrinsics:
+    for declaration_position in range(len(intrinsics)):
+        declaration = borrowed_at(intrinsics, declaration_position)
         enums.append(declaration)
     if publish:
         publish_local_layouts(models, enums)
@@ -8471,14 +8516,30 @@ def lower_ordinary_bodies(
     unions: list[RustType],
     trace: bool,
 ) -> Result[None, str]:
-    """Lower selected source frames in module order, retaining synthesized callees and checked instance requests."""
+    """
+    Lower selected source frames in module order, retaining synthesized callees and checked instance requests.
+
+    Bodies are grouped by declaring module once, frame names are checked by key, and native signatures merge through
+    a keyed index, so no step rescans every body, frame or signature per frame.
+    """
+    mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
+    for position in range(len(context.bodies)):
+        owner = body_module_identity(body_at(context.bodies, position))?
+        module_bodies.entry(owner).or_insert([]).push(position)
+    mut names: BTreeMap[str, bool] = BTreeMap.new()
+    mut named = 0
+    mut signatures = external_index()
     for index in range(len(checked)):
         checked_module = borrowed_at(checked, index)
         checked_owner = str(checked_module.module_id.path())
-        for position in range(len(context.bodies)):
+        mut positions: list[int] = []
+        match module_bodies.get(checked_owner):
+            Some(selected) =>
+                for selected_position in selected:
+                    positions.append(int(selected_position.clone()))
+            None => pass
+        for position in positions:
             body = body_at(context.bodies, position)
-            if body_module_identity(body)? != checked_owner:
-                continue
             if not ordinary_body(context, body, emitted_frames):
                 continue
             if trace:
@@ -8496,10 +8557,13 @@ def lower_ordinary_bodies(
                 DecoratorFrame.Normal,
             ).map_err((reason) => reason + diagnostic_owner)?
             merge_instance_requests(instances, pending)
-            for retained_position in range(len(functions)):
-                retained = borrowed_at(functions, retained_position)
-                if retained.name == function.name:
-                    return Err(f"unsupported Body IR overloaded function {body.name}")
+            # Frames any helper appended since the last check are named first, so the check covers every frame.
+            while named < len(functions):
+                names.insert(str(borrowed_at(functions, named).name), true)
+                named += 1
+            match names.get(function.name):
+                Some(_retained) => return Err(f"unsupported Body IR overloaded function {body.name}")
+                None => pass
             functions.append(function)
             if kind == "library" and body.is_async:
                 mut captures: list[PlanType] = []
@@ -8526,7 +8590,7 @@ def lower_ordinary_bodies(
                 files[index],
                 intrinsics,
             )?
-            _ = merge_externals(externals, runtime)?
+            merge_indexed(externals, signatures, runtime)?
     return Ok(None)
 
 
@@ -9564,6 +9628,49 @@ pub def merge_externals(mut externals: list[ExternalFunction], additions: list[E
     return Ok(None)
 
 
+pub model ExternalIndex:
+    """Positions of each native path's signatures in an externals list that only grows while the index is in use."""
+
+    pub positions: BTreeMap[str, list[int]]
+    pub indexed: int
+
+
+pub def external_index() -> ExternalIndex:
+    """Start an empty index; `merge_indexed` indexes the list's existing entries before its first merge."""
+    positions: BTreeMap[str, list[int]] = BTreeMap.new()
+    return ExternalIndex(positions=positions, indexed=0)
+
+
+pub def merge_indexed(
+    mut externals: list[ExternalFunction],
+    mut index: ExternalIndex,
+    additions: list[ExternalFunction],
+) -> Result[None, str]:
+    """
+    Merge as `merge_externals` does, finding a path's retained signatures by key instead of scanning every entry.
+    Entries another helper appended since the last merge are indexed first, so the index stays exact while the list
+    only grows.
+    """
+    for external in additions:
+        while index.indexed < len(externals):
+            appended = borrowed_at(externals, index.indexed)
+            index.positions.entry(str(appended.path)).or_insert([]).push(index.indexed)
+            index.indexed += 1
+        mut found = false
+        match index.positions.get(external.path):
+            Some(positions) =>
+                for position in positions:
+                    retained = borrowed_at(externals, int(position.clone()))
+                    if retained.type_arguments == external.type_arguments:
+                        if retained.parameters != external.parameters or retained.return_type != external.return_type:
+                            return Err(conflicting_external_signatures(retained, external))
+                        found = true
+            None => pass
+        if not found:
+            externals.append(external)
+    return Ok(None)
+
+
 def conflicting_external_signatures(retained: &ExternalFunction, external: &ExternalFunction) -> str:
     """Keep each conflicting checked signature and source location in the native merge refusal."""
     target = f"unsupported Body IR conflicting native call signatures for {external.path}"
@@ -9603,9 +9710,13 @@ def entry_error(module: &BodyIrModule, ty: PlanType) -> bool:
     match ty:
         PlanType.String => return true
         PlanType.Model(index, _name) =>
-            return index < len(module.nominal_declarations) and library_item(module.nominal_declarations[index]) != ""
+            if index >= len(module.nominal_declarations):
+                return false
+            return library_item(borrowed_at(module.nominal_declarations, index)) != ""
         PlanType.Enum(index, _name) =>
-            return index < len(module.enum_declarations) and library_enum_item(module.enum_declarations[index]) != ""
+            if index >= len(module.enum_declarations):
+                return false
+            return library_enum_item(borrowed_at(module.enum_declarations, index)) != ""
         _ => return false
 
 
@@ -9661,7 +9772,7 @@ def lower_function(
         Err(reason) =>
             mut frame = str(body.name)
             if len(body.params) != 0:
-                frame += f" on {body.locals[parameter_local_index(body, 0)].ty}"
+                frame += f" on {borrowed_at(body.locals, parameter_local_index(body, 0)).ty}"
             return Err(f"{reason} in {frame} return ABI")
     declared_type = return_representation(body, declared_carrier)?
     return_type = producer_return_type(constructors, module, body, declared_type, intrinsics)?
@@ -9798,6 +9909,7 @@ def body_builder(
             current=0,
             source=source,
             file=file,
+            line_starts=line_starts(source),
             module_identity=body_module_identity(body)?,
             callable_identity=body.canonical.clone(),
             loops=[],
@@ -9830,7 +9942,7 @@ def body_builder(
             scope_parents=scope_parents,
             moved_tuple_fields=[],
             body_identity=body.canonical,
-            checked_local_types=[local.ty.clone() for local in body.locals],
+            checked_local_types=[borrowed_at(body.locals, position).ty.clone() for position in range(len(body.locals))],
             initializing_decorator=initializing_decorator,
             cached_decorator=cached_decorator,
             callable_name_dynamic_profile=callable_name_profile(module, body_module_identity(body)?)?,
@@ -9892,7 +10004,7 @@ def lower_entrypoint_effect(effect: &RustEntrypointEffect, mut builder: Builder)
     """Lower one retained effect; its explicit interop type also preserves the enum import in legacy bake emission."""
     match effect:
         RustEntrypointEffect.PrintText(text=text, span=source_span) =>
-            span = location(source_span, builder.source, builder.file)
+            span = builder_location(builder, source_span)
             value = owned_literal(builder, str(text), span)
             output = temporary(builder, PlanType.Unit, span)
             external_call(
@@ -9941,7 +10053,8 @@ def reference_value_storage(body: &RustBody, names: list[str], arguments: list[R
     """
     mut slots: list[int] = []
     body_name = str(body.name)
-    for local in body.locals:
+    for position in range(len(body.locals)):
+        local = borrowed_at(body.locals, position)
         closed: RustType = substitute(local.ty, names, arguments).map_err(
             (reason) => f"{reason} in reference storage of {body_name}",
         )?
@@ -9955,10 +10068,12 @@ def reference_value_storage(body: &RustBody, names: list[str], arguments: list[R
 def frame_scopes(body: &RustBody) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Retain the checked scope IDs and parent links in Copy tables; a negative parent denotes the root scope."""
     mut scoped_locals: list[tuple[int, int]] = []
-    for local in body.locals:
+    for local_position in range(len(body.locals)):
+        local = borrowed_at(body.locals, local_position)
         scoped_locals.append((int(local.id.index()) + 1, int(local.scope.0)))
     mut scope_parents: list[tuple[int, int]] = []
-    for scope in body.scopes:
+    for scope_position in range(len(body.scopes)):
+        scope = borrowed_at(body.scopes, scope_position)
         mut parent = -1
         match scope.parent:
             Some(enclosing) => parent = int(enclosing.0)
@@ -9982,8 +10097,11 @@ def frame_locals(
     iterators = list_iterator_locals(body.block)
     taking = taking_iterator_locals(body.block)
     pairs = pair_generator_locals(body)
+    starts = line_starts(source)
     mut locals = [Local(ty=return_type, span=span)]
-    for local in body.locals:
+    # Borrow each local and parameter: every frame types every local, so copied declarations cost per frame.
+    for local_position in range(len(body.locals)):
+        local = borrowed_at(body.locals, local_position)
         if int(local.id.index()) + 1 != len(locals):
             return Err("Body IR local order disagrees with LocalId")
         mut ty = PlanType.Unit
@@ -10001,7 +10119,8 @@ def frame_locals(
                 )?
         index = int(local.id.index()) + 1
         ty = local_representation(body, index - 1, ty)
-        for parameter in body.params:
+        for parameter_position in range(len(body.params)):
+            parameter = borrowed_at(body.params, parameter_position)
             if parameter.local == local.id and parameter.input_access != IncanInputAccess.Inferred:
                 if index in taking or index in iterators or index in pairs:
                     return Err("unsupported Body IR explicit input iteration storage")
@@ -10025,10 +10144,11 @@ def frame_locals(
             match generator_shape(ty):
                 Some((leaf, depth)) => ty = PlanType.GeneratorMutRef(leaf, depth)
                 None => ty = list_parameter_type(ty, false)
-        for parameter in body.params:
+        for parameter_position in range(len(body.params)):
+            parameter = borrowed_at(body.params, parameter_position)
             if parameter.local == local.id:
                 ty = stored_parameter_type(body, parameter, parameter_representation(body, index - 1, ty)?)?
-        locals.append(Local(ty=ty, span=location(local.span, source, file)))
+        locals.append(Local(ty=ty, span=indexed_location(starts, local.span, file)))
     return Ok(locals)
 
 
@@ -10085,7 +10205,9 @@ def frame_parameters(
 ) -> Result[list[Parameter], str]:
     """Build declaration-ordered parameters from their checked frame storage and source locations."""
     mut parameters: list[Parameter] = []
-    for parameter in body.params:
+    starts = line_starts(source)
+    for parameter_position in range(len(body.params)):
+        parameter = borrowed_at(body.params, parameter_position)
         ty = frame_parameter_type(
             constructors,
             module.nominal_declarations,
@@ -10100,7 +10222,7 @@ def frame_parameters(
         match parameter.default:
             CallableParamDefault.Required => pass
             _ =>
-                local = body.locals[int(parameter.local.index())]
+                local = borrowed_at(body.locals, int(parameter.local.index()))
                 declared = body_frame_type(
                     constructors,
                     module.nominal_declarations,
@@ -10114,7 +10236,7 @@ def frame_parameters(
         mut name = str(parameter.name)
         if name == "self":
             name = "__incan_self"
-        parameters.append(Parameter(name=name, ty=ty, span=location(parameter.span, source, file)))
+        parameters.append(Parameter(name=name, ty=ty, span=indexed_location(starts, parameter.span, file)))
     return Ok(parameters)
 
 
@@ -10250,7 +10372,7 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
                 Some(item) => return Ok(item)
                 None => pass
             base = list_base_place(builder, read.place, span)?
-            if is_collection(builder.locals[base.local].ty):
+            if is_collection(borrowed_at(builder.locals, base.local).ty):
                 return collection_value(builder, read, span)
             place = scalar_place(builder, read.place, span)?
             ty = place_type(builder.locals, place)
@@ -10320,7 +10442,7 @@ def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
     if not is_element_place(builder, source)?:
         return Ok(None)
     base = list_base_place(builder, source, span)?
-    if is_collection(builder.locals[base.local].ty):
+    if is_collection(borrowed_at(builder.locals, base.local).ty):
         return Ok(Some(dictionary_index_read(builder, source, span)?))
     return Ok(Some(indexed_read(builder, source, span)?))
 
@@ -10658,9 +10780,12 @@ def list_assignment(
         _ = list_assignment(builder, replacement, value, span)?
         replace_owned_destination(builder, destination, RvalueKind.Use(read_place(replacement, true, span)), span)
         return Ok(None)
-    leaf, depth = require_list_shape(builder.locals[destination.local].ty, "unsupported Body IR non-list assignment")?
+    leaf, depth = require_list_shape(
+        borrowed_at(builder.locals, destination.local).ty,
+        "unsupported Body IR non-list assignment",
+    )?
     ty = PlanType.List(leaf, depth)
-    if builder.locals[destination.local].ty != ty:
+    if borrowed_at(builder.locals, destination.local).ty != ty:
         return Err("unsupported Body IR whole borrowed list assignment")
     element = list_element(leaf, depth)
     output = temporary(builder, ty, span)
@@ -11341,7 +11466,7 @@ def lower_list_iter(
     builder.owned.append(snapshot.local)
     result = PlanType.Generator(leaf, depth - 1)
     output = call_destination(builder, destination, result, span)?
-    if builder.locals[output.local].ty != result:
+    if borrowed_at(builder.locals, output.local).ty != result:
         return Err("unsupported Body IR list iter destination")
     drop_owned(builder, output.local, span)
     generator_runtime_call(
@@ -11643,7 +11768,7 @@ def indexes_nested_list(mut builder: Builder, arguments: &list[RustArgumentEleme
             match read.place.local_id():
                 Some(local) =>
                     slot = int(local.index()) + 1 + builder.local_offset
-                    match list_shape(builder.locals[slot].ty):
+                    match list_shape(borrowed_at(builder.locals, slot).ty):
                         Some((_leaf, depth)) => return depth > 1
                         None => return false
                 None => return false
@@ -12328,7 +12453,7 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
         match value.local_id():
             None => return Err("unsupported Body IR global list root projection")
             Some(local) =>
-                mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+                mut ty = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
                 # A receiver reference projects its model's fields.
                 match ty:
                     PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
@@ -12441,7 +12566,7 @@ def collection_assignment(
             if kind != RustAggregateKind.Set:
                 return Err("unsupported Body IR non-set collection Aggregate")
             output = begin_collection(builder, destination, span)?
-            types = collection_arguments(builder.locals[output.local].ty)
+            types = collection_arguments(borrowed_at(builder.locals, output.local).ty)
             for element in elements:
                 match element.as_one():
                     Some(value) =>
@@ -12457,7 +12582,7 @@ def collection_assignment(
             return Ok(None)
         RustRvalue.Dict(entries) =>
             output = begin_collection(builder, destination, span)?
-            types = collection_arguments(builder.locals[output.local].ty)
+            types = collection_arguments(borrowed_at(builder.locals, output.local).ty)
             for entry in entries:
                 match entry:
                     DictEntry.Pair(key, value) =>
@@ -12700,7 +12825,7 @@ def optional_dictionary_get(
         None => return Err("unsupported Body IR discarded optional dictionary get")
     ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)
-    result = builder.locals[output.local].ty
+    result = borrowed_at(builder.locals, output.local).ty
     _owner, declaration = carrier_layout(builder, result)?
     if declaration.carrier != "Option" or declaration.variants[1].fields != [types[1]]:
         return Err("unsupported Body IR optional dictionary get carrier")
@@ -13213,7 +13338,7 @@ def lower_arm_guard(
             condition = scalar_operand(builder, guard, span)?
             for local in incoming:
                 if local not in builder.owned:
-                    if local == scrutinee or not releases_only_memory(builder.locals[local].ty):
+                    if local == scrutinee or not releases_only_memory(borrowed_at(builder.locals, local).ty):
                         return Err("unsupported Body IR match guard consuming an owner")
                     consumed.append(local)
             admitted = builder.new_block(span)
@@ -13276,10 +13401,10 @@ def bind_structural_pattern(
         RustPattern.Var(binding) =>
             local = int(binding.local.index()) + 1 + builder.local_offset
             ty = place_type(builder.locals, source)
-            if builder.locals[local].ty != ty:
+            if borrowed_at(builder.locals, local).ty != ty:
                 # A borrowed subject binds its components as shared references to them.
                 reference = borrowed_binding_type(ty)
-                if reference == PlanType.Unit or builder.locals[local].ty != reference:
+                if reference == PlanType.Unit or borrowed_at(builder.locals, local).ty != reference:
                     return Err("invalid Body IR structural pattern binding carrier")
                 builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(source), span))
                 return Ok(None)
@@ -13371,7 +13496,7 @@ def join_branch_owners(
         for local in arm_owners[index]:
             if local in live:
                 continue
-            if not releases_only_memory(builder.locals[local].ty):
+            if not releases_only_memory(borrowed_at(builder.locals, local).ty):
                 return Err("unsupported Body IR owned-value branch merge")
             drop_owned(builder, local, span)
         finish_fallthrough(builder, join, span)
@@ -14455,7 +14580,7 @@ def bind_shared_enum_payload(
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Preserve a checker-retained shared reference binding: copy a reference payload or borrow its owned nominal field. Match declaration slots rather than diagnostic names, and never materialize owned text or move an owner's payload into a reference slot."""
-    target = builder.locals[local].ty
+    target = borrowed_at(builder.locals, local).ty
     if local not in builder.reference_values or is_exclusive_borrow(target):
         return Ok(false)
     if not reference_read_fact(fact):
@@ -14490,7 +14615,7 @@ def bind_enum_fields(
         match fields[slot]:
             RustPattern.Var(binding) =>
                 local = int(binding.local.index()) + 1 + builder.local_offset
-                ty = builder.locals[local].ty
+                ty = borrowed_at(builder.locals, local).ty
                 projected = appended_field(
                     source,
                     FieldProjection(slot=slot, ty=payload_types[slot], variant=variant),

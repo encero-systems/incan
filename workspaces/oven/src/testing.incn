@@ -2,6 +2,7 @@
 
 from rust::std::process import Command
 from rust::std::io import Write, stderr
+from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue
 from files import parse_json, read
@@ -140,6 +141,13 @@ def run_test(binary: Path, file: str, test: JsonValue, project: str = "") -> Res
     trace_launch(binary.0)
     output = command.output().map_err((error) => f"cannot run {binary.0}: {error}")?
     passed = output.status.success()
+    # An exact selection that names no native test runs nothing and still succeeds; that never counts as a pass.
+    if passed and not ran_one_test(output.stdout):
+        println(f"{label} FAILED")
+        mut err = stderr()
+        # A closed standard error cannot be told about, so a failed write is ignored.
+        _ = err.write_all(RustString.from(f"{binary.0} has no test named {native}\n").into_bytes())
+        return Ok(false)
     if project != "" and passed and "1 ignored" in decoded(output.stdout):
         println(f"{label} SKIPPED (Rust ignore attribute)")
         return Ok(true)
@@ -159,6 +167,17 @@ def run_test(binary: Path, file: str, test: JsonValue, project: str = "") -> Res
     println(f"{label} FAILED")
     show_output(output.stdout, output.stderr)
     return Ok(false)
+
+
+def ran_one_test(printed: bytes) -> bool:
+    """
+    Whether the native harness ran exactly one test. Its report begins with this header before any test prints, so
+    only the header is read: what a test prints after it may be any bytes.
+    """
+    header = "\nrunning 1 test\n"
+    if len(printed) < len(header):
+        return false
+    return decoded(printed[:len(header)]) == header
 
 
 def show_output(printed: bytes, complained: bytes) -> None:

@@ -41,8 +41,8 @@ pub def called_members(body: &Body) -> list[SelectedMember]:
 
 def collect_member_block(body: &Body, block: &Block, mut selected: list[SelectedMember]) -> None:
     """Follow source control flow and match arms, retaining each exact checked call identity once."""
-    for statement in block.stmts:
-        collect_member_statement(body, statement.kind, selected)
+    for position in range(len(block.stmts)):
+        collect_member_statement(body, borrowed_at(block.stmts, position).kind, selected)
 
 
 def collect_member_statement(body: &Body, kind: &StatementKind, mut selected: list[SelectedMember]) -> None:
@@ -124,7 +124,7 @@ def selected_operand_type(body: &Body, value: &Operand) -> Option[RustType]:
             if len(read.place.projection) != 0:
                 return None
             match read.place.local_id():
-                Some(local) => return Some(body.locals[int(local.index())].ty.clone())
+                Some(local) => return Some(borrowed_at(body.locals, int(local.index())).ty.clone())
                 None => return None
 
 
@@ -232,8 +232,8 @@ def schedule_block(
     ancestors: list[str],
 ) -> Result[None, str]:
     """Visit checked calls through normalized blocks; other executable constructs retain their normal lowering path."""
-    for statement in block.stmts:
-        schedule_statement(module, statement.kind, names, arguments, pending, ancestors)?
+    for position in range(len(block.stmts)):
+        schedule_statement(module, borrowed_at(block.stmts, position).kind, names, arguments, pending, ancestors)?
     return Ok(None)
 
 
@@ -366,8 +366,8 @@ def schedule_call(
 
 pub def closed_arguments(arguments: list[RustType]) -> bool:
     """Require closed argument trees; native carrier admission validates the remaining type forms."""
-    for argument in arguments:
-        if not closed_type(argument):
+    for position in range(len(arguments)):
+        if not closed_type(borrowed_at(arguments, position)):
             return false
     return true
 

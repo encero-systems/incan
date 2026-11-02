@@ -7,7 +7,7 @@ from program_context import DisplayFunction
 from classes import frame_type, function_name
 from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
-from table_views import borrowed_table
+from table_views import borrowed_at, borrowed_table
 
 
 pub def display_functions(
@@ -21,11 +21,12 @@ pub def display_functions(
     nominals: &list[NominalDeclaration] = borrowed_table(module.nominal_declarations)
     enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
     for owner in range(len(module.nominal_declarations)):
-        declaration = module.nominal_declarations[owner]
+        declaration = borrowed_at(module.nominal_declarations, owner)
         match declaration.display_method:
             None => pass
             Some(selected) =>
-                for body in module.bodies:
+                for body_position in range(len(module.bodies)):
+                    body = borrowed_at(module.bodies, body_position)
                     if body.canonical != Some(selected.clone()) or len(body.type_parameters) != 0:
                         continue
                     if len(body.params) != 1 or len(body.locals) == 0:

@@ -208,9 +208,20 @@ fn planned_function<'plan>(
     let name = tcx.opt_item_name(def.to_def_id());
     plan.functions.iter().find(|function| {
         tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
-            && tcx.parent(def.to_def_id()).is_crate_root()
+            && declared_at_root(tcx, def)
             && name.is_some_and(|name| name.as_str() == function.name)
     })
+}
+
+/// A planned callable is declared at the crate root or in one of the root's callable partition modules.
+fn declared_at_root(tcx: TyCtxt<'_>, def: LocalDefId) -> bool {
+    let parent = tcx.parent(def.to_def_id());
+    parent.is_crate_root()
+        || (tcx.def_kind(parent) == rustc_hir::def::DefKind::Mod
+            && tcx.parent(parent).is_crate_root()
+            && tcx
+                .opt_item_name(parent)
+                .is_some_and(|name| name.as_str().starts_with(declarations::PARTITION_MODULE_PREFIX)))
 }
 
 /// Override only source-named planned functions; all compiler-generated items retain rustc's provider.
@@ -293,6 +304,9 @@ struct Callbacks<'manifest> {
     development: bool,
     loaded: Vec<(PathBuf, String)>,
     timing: crate::native_timing::Timing,
+    /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
+    /// are published, and a test harness selects each test by its module path.
+    partition: bool,
 }
 
 impl Callbacks<'_> {
@@ -306,8 +320,10 @@ impl Callbacks<'_> {
     }
 
     /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
-    /// errors.
+    /// errors. A program groups its callables by source file, one module each, re-exported at the crate root:
+    /// rustc forms codegen units per module, so one root module would optimize the whole unit on a single thread.
     fn declare_callables(&self, compiler: &interface::Compiler, krate: &mut ast::Crate, sources: &Sources<'_>) {
+        let mut grouped: std::collections::BTreeMap<&str, Vec<Box<ast::Item>>> = std::collections::BTreeMap::new();
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
                 Ok(span) => span,
@@ -337,7 +353,16 @@ impl Callbacks<'_> {
                     span,
                 ));
             }
-            krate.items.push(item);
+            if self.partition {
+                grouped.entry(function.span.file.as_str()).or_default().push(item);
+            } else {
+                krate.items.push(item);
+            }
+        }
+        for (index, items) in grouped.into_values().enumerate() {
+            krate
+                .items
+                .extend(declarations::partition_module(index, items, krate.spans.inner_span));
         }
         if !self.plan.programs.is_empty() {
             krate.items.push(
@@ -985,6 +1010,7 @@ pub fn compile(
         development: shared_store.is_some(),
         loaded: Vec::new(),
         timing,
+        partition: kind == UnitKind::Program,
     };
     let capture = crate::native_timing::Capture::begin();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));

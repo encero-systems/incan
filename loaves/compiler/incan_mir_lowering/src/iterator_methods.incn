@@ -15,28 +15,33 @@ from layout_types import native_source_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from trait_links import contains
-from native_arguments import uses_native_argument
 from decls import library_item
+from table_views import borrowed_at, borrowed_table
 
 
 pub def iterator_methods(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
+    native_names: list[str],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[IteratorMethods], str]:
     """Authorize only a concrete source adopter actually retained as an SDK storage argument; native bounds remain checked."""
-    declaration = module.nominal_declarations[owner]
-    if library_item(declaration) != "" or not uses_native_argument(module, str(declaration.name))?:
+    if str(borrowed_at(module.nominal_declarations, owner).name) not in native_names:
+        return Ok(None)
+    declaration = borrowed_at(module.nominal_declarations, owner)
+    if library_item(declaration) != "":
         return Ok(None)
     mut selected: Option[IteratorMethods] = None
-    for protocol in module.trait_declarations:
+    for protocol_position in range(len(module.trait_declarations)):
+        protocol = borrowed_at(module.trait_declarations, protocol_position)
         if not standard_protocol(protocol):
             continue
         mut arguments: list[RustType] = []
         mut next: Option[CanonicalSymbolId] = None
         mut slots: list[str] = []
-        for implementation in module.trait_implementations:
+        for implementation_position in range(len(module.trait_implementations)):
+            implementation = borrowed_at(module.trait_implementations, implementation_position)
             if (
                 implementation.owner != declaration.canonical
                 or implementation.method.origin != protocol.origin
@@ -77,7 +82,8 @@ pub def iterator_methods(
             None => return Err("unsupported Body IR native iterator without checked poll")
             Some(identity) =>
                 mut bodies: list[Body] = []
-                for body in module.bodies:
+                for body_position in range(len(module.bodies)):
+                    body = borrowed_at(module.bodies, body_position)
                     if body.canonical == Some(identity.clone()):
                         bodies.append(body.clone())
                 if len(bodies) != 1 or not poll_abi(constructors, module, bodies[0], owner, arguments[0], intrinsics)?:
@@ -88,8 +94,8 @@ pub def iterator_methods(
                     IteratorMethods(
                         item=native_source_type(
                             constructors,
-                            list(module.nominal_declarations),
-                            list(module.enum_declarations),
+                            borrowed_table(module.nominal_declarations),
+                            borrowed_table(module.enum_declarations),
                             collect_unions(module),
                             arguments[0],
                             intrinsics,
@@ -129,7 +135,7 @@ def poll_abi(
     match body.first_representation_gap():
         Some(_gap) => return Ok(false)
         None => pass
-    reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
+    reference = PlanType.ModelMutRef(owner, str(borrowed_at(module.nominal_declarations, owner).name))
     local = body.locals[parameter_local_index(body, 0)]
     if frame_type(constructors, module.nominal_declarations, module.enum_declarations, local, intrinsics)? != reference:
         return Ok(false)

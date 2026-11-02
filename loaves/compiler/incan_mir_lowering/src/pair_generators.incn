@@ -16,6 +16,7 @@ from rust::incan_semantics_core::body_ir import (
     StatementKind as RustStatementKind,
 )
 from pub::incan_mir_plan import ListLeaf, PlanType
+from table_views import borrowed_at
 
 
 pub def pair_generator_locals(body: &RustBody) -> list[int]:
@@ -40,8 +41,8 @@ pub def pair_generator_type(ty: PlanType) -> PlanType:
 
 def collect_pairs(body: &RustBody, block: &RustBlock, mut pairs: list[int]) -> None:
     """Visit the statements in order, so a loop iterator follows the pair slot its source call filled before it."""
-    for statement in block.stmts:
-        visit_statement(body, statement.kind, pairs)
+    for position in range(len(block.stmts)):
+        visit_statement(body, borrowed_at(block.stmts, position).kind, pairs)
 
 
 def visit_statement(body: &RustBody, kind: &RustStatementKind, mut pairs: list[int]) -> None:
@@ -121,7 +122,7 @@ def iterator_local(body: &RustBody, place: &RustPlace) -> bool:
     if len(place.projection) != 0:
         return false
     match place.local_id():
-        Some(local) => return is_iterator_type(body.locals[int(local.index())].ty)
+        Some(local) => return is_iterator_type(borrowed_at(body.locals, int(local.index())).ty)
         None => return false
 
 

@@ -18,6 +18,7 @@ from decls import library_item
 from program_context import body_at, nominal_at
 from table_views import borrowed_at
 from native_type_identity import ConstructorIndex, native_owner, representation_arguments
+from rust::std::collections import BTreeMap
 
 
 pub model NominalInstance:
@@ -96,7 +97,8 @@ def package_template(declaration: &NominalDeclaration) -> bool:
 
 def retains_declaration(declarations: &list[NominalDeclaration], declaration: &NominalDeclaration) -> bool:
     """Reuse only an identical canonical declaration with the same closed specialization key."""
-    for retained in declarations:
+    for position in range(len(declarations)):
+        retained = borrowed_at(declarations, position)
         if retained.name == declaration.name and retained.canonical == declaration.canonical:
             return true
     return false
@@ -187,28 +189,41 @@ pub def specialize_nominals_with_instances(
         cursor += 1
         if len(selected) != previous:
             cursor = 0
-    # 3. Retain concrete layouts, trait dispatch records and method frames together.
-    for instance in instances:
+    # 3. Retain concrete layouts, trait dispatch records and method frames together. Instances are borrowed, symbol
+    # collisions are found by name and each owner template reaches its instances by key, so no step rescans a table.
+    mut retained_names: BTreeMap[str, bool] = BTreeMap.new()
+    for retained_position in range(len(result.nominal_declarations)):
+        retained_names.insert(str(borrowed_at(result.nominal_declarations, retained_position).name), true)
+    mut owner_instances: BTreeMap[str, list[int]] = BTreeMap.new()
+    for instance_position in range(len(instances)):
+        instance = borrowed_at(instances, instance_position)
         declaration = close_layout(instance)?
-        for retained_index in range(len(result.nominal_declarations)):
-            if result.nominal_declarations[retained_index].name == declaration.name:
-                return Err(f"unsupported Body IR nominal instance symbol collision {declaration.name}")
-        result.nominal_declarations.push(declaration.clone())
+        match retained_names.get(declaration.name):
+            Some(_retained) => return Err(f"unsupported Body IR nominal instance symbol collision {declaration.name}")
+            None => pass
+        retained_names.insert(str(declaration.name), true)
+        result.nominal_declarations.push(declaration)
         append_closed_implementations(module, instance, result.trait_implementations)?
+        owner = instance.declaration.canonical.render_compact()
+        owner_instances.entry(owner).or_insert([]).push(instance_position)
     result.bodies.clear()
-    for body in inherited:
-        result.bodies.push(body.clone())
+    for inherited_position in range(len(inherited)):
+        result.bodies.push(borrowed_at(inherited, inherited_position).clone())
     for index in range(len(module.bodies)):
         body = body_at(module.bodies, index)
         owner = templates[index]
         if owner < 0:
             result.bodies.push(body.clone())
             continue
-        canonical = nominal_at(module.nominal_declarations, owner).canonical.clone()
-        for instance in instances:
-            if instance.declaration.canonical == canonical:
-                closed: Body = close_owner_body(body, instance)?
-                result.bodies.push(closed.clone())
+        canonical = nominal_at(module.nominal_declarations, owner).canonical
+        match owner_instances.get(canonical.render_compact()):
+            Some(positions) =>
+                for position in positions:
+                    instance = borrowed_at(instances, int(position.clone()))
+                    if instance.declaration.canonical == canonical:
+                        closed: Body = close_owner_body(body, instance)?
+                        result.bodies.push(closed)
+            None => pass
     return Ok((result, instances))
 
 
@@ -273,7 +288,7 @@ def has_generic_implementation_owner(module: &BodyIrModule, implementation: &Tra
 
 def append_closed_implementations(
     module: &BodyIrModule,
-    instance: NominalInstance,
+    instance: &NominalInstance,
     mut retained: list[TraitImplementation],
 ) -> Result[None, str]:
     """Close a checked instance's trait-slot and default-body bindings with the same substitution as its fields."""
@@ -385,11 +400,11 @@ def collect_nominal_type(
             owned_arguments = arguments.clone()
             return collect_generic_nominal_type(constructors, module, str(base), owned_arguments, instances, ancestors)
         RustType.Tuple(elements) =>
-            for element in elements:
-                _ = collect_nominal_type(constructors, module, element, instances, ancestors)?
+            for position in range(len(elements)):
+                _ = collect_nominal_type(constructors, module, borrowed_at(elements, position), instances, ancestors)?
         RustType.Function(params=parameters, return_type=result) =>
-            for parameter in parameters:
-                collect_nominal_type(constructors, module, parameter.ty, instances, ancestors)?
+            for position in range(len(parameters)):
+                collect_nominal_type(constructors, module, borrowed_at(parameters, position).ty, instances, ancestors)?
             collect_nominal_type(constructors, module, result, instances, ancestors)?
         RustType.Ref(inner) => return collect_nominal_type(constructors, module, inner, instances, ancestors)
         RustType.RefMut(inner) => return collect_nominal_type(constructors, module, inner, instances, ancestors)
@@ -406,8 +421,8 @@ def collect_generic_nominal_type(
     ancestors: list[str],
 ) -> Result[None, str]:
     """Resolve a closed carrier from its checked declaration; substitute every field template uniformly and leave native derive validation to rustc."""
-    for argument in arguments:
-        _ = collect_nominal_type(constructors, module, argument, instances, ancestors)?
+    for position in range(len(arguments)):
+        _ = collect_nominal_type(constructors, module, borrowed_at(arguments, position), instances, ancestors)?
     if not closed_arguments(arguments):
         return Ok(None)
     for index in range(len(module.nominal_declarations)):
@@ -439,7 +454,9 @@ def retain_nominal_instance(
     mut retained_arguments = arguments
     if native_owner(declaration):
         retained_arguments = representation_arguments(declarations, constructors, retained_arguments)
-    for retained in instances:
+    # Borrow each retained instance: a copy would duplicate its whole declaration for every checked type.
+    for position in range(len(instances)):
+        retained = borrowed_at(instances, position)
         if retained.declaration.canonical == declaration.canonical and retained.arguments == retained_arguments:
             return Ok(None)
     if declaration.canonical.render_compact() in ancestors:
@@ -448,7 +465,7 @@ def retain_nominal_instance(
     return Ok(None)
 
 
-def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
+def close_layout(instance: &NominalInstance) -> Result[NominalDeclaration, str]:
     """Validate provider templates, close fields and retain source instance arguments without discarded argument inventories."""
     mut result = instance.declaration.clone()
     if result.native_item != "":
@@ -492,7 +509,7 @@ def owner_template(module: &BodyIrModule, body: &Body) -> Option[int]:
     """Locate an open receiver in the native table, borrowing each declaration instead of copying it."""
     if len(body.locals) == 0 or not is_receiver(body.locals[0].origin):
         return None
-    match body.locals[0].ty:
+    match borrowed_at(body.locals, 0).ty:
         RustType.Generic(base=base, args=_arguments) =>
             name = str(base)
             for index in range(len(module.nominal_declarations)):
@@ -515,7 +532,7 @@ def admitted_owner(declaration: &NominalDeclaration) -> bool:
     return declaration.native_item != "" or declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model or declaration.canonical.kind == SemanticSourceTargetKind.Newtype
 
 
-def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str]:
+def close_owner_body(body: &Body, instance: &NominalInstance) -> Result[Body, str]:
     """Close receiver and field-dependent frame types while leaving the method's own parameters open for scheduling."""
     mut names = instance.declaration.type_parameters.clone()
     mut arguments: list[RustType] = []

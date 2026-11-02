@@ -12,6 +12,7 @@ from models import field_step_type
 from lists import list_shape, list_element, is_list
 from collections import is_collection, collection_arguments
 from model_lists import structural_prefix
+from table_views import borrowed_at
 
 
 pub def is_element_place(mut builder: Builder, source: &RustPlace) -> Result[bool, str]:
@@ -26,7 +27,7 @@ pub def is_element_place(mut builder: Builder, source: &RustPlace) -> Result[boo
     match source.local_id():
         None => return Ok(false)
         Some(local) =>
-            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            root = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
             if (
                 is_list(root)
                 or is_collection(root)
@@ -60,7 +61,7 @@ pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int
     match source.local_id():
         None => return Err("unsupported Body IR global element place")
         Some(local) =>
-            mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            mut ty = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
             # A receiver reference projects its model's fields.
             match ty:
                 PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)

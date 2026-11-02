@@ -8,6 +8,7 @@ from rust::incan_semantics_core::body_ir import (
     StatementKind as RustStatementKind,
 )
 from lists import is_builtin_iteration
+from table_views import borrowed_at
 
 
 pub def later_clauses(block: &RustBlock) -> list[tuple[int, int, list[int]]]:
@@ -27,14 +28,14 @@ pub def clause_iterator(body: &RustBlock) -> int:
     """Read the whole iterator local a loop polls first, or -1."""
     if len(body.stmts) == 0:
         return -1
-    return builtin_poll(body.stmts[0].kind)[0]
+    return builtin_poll(borrowed_at(body.stmts, 0).kind)[0]
 
 
 pub def clause_item(body: &RustBlock) -> int:
     """Read the whole local a loop's first poll fills, or -1."""
     if len(body.stmts) == 0:
         return -1
-    return builtin_poll(body.stmts[0].kind)[1]
+    return builtin_poll(borrowed_at(body.stmts, 0).kind)[1]
 
 
 def visit_block(block: &RustBlock, start: int, bound: list[int], mut clauses: list[tuple[int, int, list[int]]]) -> None:
@@ -44,15 +45,17 @@ def visit_block(block: &RustBlock, start: int, bound: list[int], mut clauses: li
     mut iterator = -1
     mut source = -1
     for index in range(start, len(block.stmts)):
-        if iterator >= 0 and opens_clause(block.stmts[index].kind, iterator):
+        # Borrow the statement: an indexed read would copy it and every block nested inside it.
+        statement = borrowed_at(block.stmts, index)
+        if iterator >= 0 and opens_clause(statement.kind, iterator):
             mut environment: list[int] = []
             environment.extend(assigned)
             clauses.append((iterator, source, environment))
-        visit_filters(block.stmts[index].kind, assigned, clauses)
-        initialized = iterator_initialization(block.stmts[index].kind)
+        visit_filters(statement.kind, assigned, clauses)
+        initialized = iterator_initialization(statement.kind)
         iterator = initialized[0]
         source = initialized[1]
-        local = assigned_local(block.stmts[index].kind)
+        local = assigned_local(statement.kind)
         if local >= 0 and local not in assigned:
             assigned.append(local)
 
@@ -77,8 +80,8 @@ def opens_clause(kind: &RustStatementKind, iterator: int) -> bool:
 
 def yields(block: &RustBlock) -> bool:
     """Report whether a block yields, directly or in a nested filter or loop."""
-    for statement in block.stmts:
-        if statement_yields(statement.kind):
+    for position in range(len(block.stmts)):
+        if statement_yields(borrowed_at(block.stmts, position).kind):
             return true
     return false
 

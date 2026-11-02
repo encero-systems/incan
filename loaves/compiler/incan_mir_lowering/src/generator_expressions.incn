@@ -13,6 +13,7 @@ from frame import Builder, temporary, read_place, value_type, terminate_call
 from generators import generator_shape, generator_element, generator_runtime_call
 from lists import list_shape, list_element, is_builtin_iteration, is_owned_list
 from closures import closure_capture_type
+from table_views import borrowed_at
 
 
 pub def first_clause_item(body: &RustGeneratorBody) -> Result[int, str]:
@@ -228,7 +229,7 @@ pub def construct_chain(
     """
     item = source_item(builder, source)?
     family = item_family(item)?
-    result = builder.locals[output.local].ty
+    result = borrowed_at(builder.locals, output.local).ty
     callable = value_type(builder, step)?
     source_type = value_type(builder, source)?
     match generator_shape(result):
@@ -284,7 +285,7 @@ pub def step_result(mut builder: Builder, accepted: Option[Operand], span: Sourc
 
     The value moves straight into the return slot, so it never joins the frame's owners.
     """
-    result = builder.locals[0].ty
+    result = borrowed_at(builder.locals, 0).ty
     match generator_shape(result):
         Some((leaf, depth)) =>
             element = generator_element(leaf, depth)

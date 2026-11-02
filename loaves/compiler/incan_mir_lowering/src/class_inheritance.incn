@@ -2,12 +2,14 @@
 
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
+from table_views import borrowed_at
 
 
 pub def specialize_classes(module: &BodyIrModule) -> Result[list[Body], str]:
     """Add one concrete receiver frame per inherited implementation after original module validation."""
     mut result: list[Body] = []
-    for declaration in module.nominal_declarations:
+    for declaration_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, declaration_position)
         match declaration.class_inheritance:
             None => pass
             Some(inheritance) =>
@@ -17,13 +19,14 @@ pub def specialize_classes(module: &BodyIrModule) -> Result[list[Body], str]:
                         continue
                     instantiated.append(record.implementation.clone())
                     mut found = false
-                    for body in module.bodies:
+                    for body_position in range(len(module.bodies)):
+                        body = borrowed_at(module.bodies, body_position)
                         if body.canonical != Some(record.implementation):
                             continue
                         found = true
                         if len(body.locals) == 0:
                             return Err("unsupported Body IR inherited class receiver frame")
-                        if body.locals[0].ty == concrete_receiver(str(declaration.name)):
+                        if borrowed_at(body.locals, 0).ty == concrete_receiver(str(declaration.name)):
                             continue
                         instance = instantiate_body(body, declaration)?
                         result.append(instance.clone())
@@ -47,7 +50,7 @@ def instantiate_body(body: &Body, owner: &NominalDeclaration) -> Result[Body, st
     if not instance_receiver(body.locals[0].origin):
         return Err("unsupported Body IR inherited class method without instance receiver")
     for index in range(1, len(body.locals)):
-        if body.locals[index].ty == body.locals[0].ty:
+        if borrowed_at(body.locals, index).ty == borrowed_at(body.locals, 0).ty:
             return Err("unsupported Body IR inherited class self value beyond the receiver")
     mut result = body.clone()
     # Typed locals keep the foreign field-store boundary explicit for the legacy compiler that builds this Loaf.

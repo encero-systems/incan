@@ -23,6 +23,7 @@ from frame import Builder, temporary, read_place, value_type, external_call, ter
 from generators import generator_shape, generator_element, generator_runtime_call
 from generator_expressions import construct_chain
 from lowering import step_callable, synthesize
+from table_views import borrowed_at
 
 
 pub def iterator_method(member: str) -> str:
@@ -92,7 +93,7 @@ def count_adapter(
     if method == "batch":
         leaf, depth = require_generator(source_type)?
         result = PlanType.Generator(leaf, depth + 1)
-    if builder.locals[output.local].ty != result:
+    if borrowed_at(builder.locals, output.local).ty != result:
         return Err(f"unsupported Body IR generator {method} types")
     name = f"{method}_generator"
     generator_runtime_call(builder, name, element, [source_type, PlanType.Int], result, [source, count], output, span)
@@ -108,7 +109,7 @@ def chain_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Draw the second owned generator's items after the first is exhausted."""
-    if owned_generator(builder, second)? != source_type or builder.locals[output.local].ty != source_type:
+    if owned_generator(builder, second)? != source_type or borrowed_at(builder.locals, output.local).ty != source_type:
         return Err("unsupported Body IR generator chain types")
     element = source_element(source_type)?
     generator_runtime_call(
@@ -134,7 +135,7 @@ def predicate_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Keep the items a function value accepts, or the prefix it accepts, or what follows that prefix."""
-    if builder.locals[output.local].ty != source_type:
+    if borrowed_at(builder.locals, output.local).ty != source_type:
         return Err(f"unsupported Body IR generator {method} types")
     element = source_element(source_type)?
     family = element_family(element)?
@@ -163,7 +164,7 @@ def map_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Transform each item with a function value when it is polled."""
-    result = builder.locals[output.local].ty
+    result = borrowed_at(builder.locals, output.local).ty
     mapped = source_element(result)?
     element = source_element(source_type)?
     signature = [element, mapped]
@@ -270,7 +271,7 @@ def flat_map_adapter(
 
     An expansion is a list, or a generator whose own items are drawn only as the result is polled.
     """
-    result = builder.locals[output.local].ty
+    result = borrowed_at(builder.locals, output.local).ty
     leaf, depth = require_generator(result)?
     mapped = generator_element(leaf, depth)
     if source_type == PlanType.Generator(ListLeaf.Str, 0):
@@ -415,7 +416,7 @@ pub def zip_generators(
 def pair_output(mut builder: Builder, output: Place, left: TupleElement, right: TupleElement) -> Result[PlanType, str]:
     """Require the generator of pairs the frame laid out for a pair adapter's checked destination."""
     result = PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
-    if builder.locals[output.local].ty != result:
+    if borrowed_at(builder.locals, output.local).ty != result:
         return Err("unsupported Body IR generator pair destination")
     return Ok(result)
 

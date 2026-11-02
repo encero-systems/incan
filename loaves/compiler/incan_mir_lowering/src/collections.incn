@@ -24,6 +24,7 @@ from rust::incan_semantics_core::body_ir import (
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, NumericTypeId
 from tuples import tuple_type, generic_tuple_type
 from models import runtime_storage_marker
+from table_views import borrowed_at
 
 
 pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
@@ -233,7 +234,7 @@ pub def insert_collection(
 
 pub def begin_collection(mut builder: Builder, destination: Place, span: SourceSpan) -> Result[Place, str]:
     """Allocate a typed owner for a checked literal without overwriting a live destination."""
-    ty = builder.locals[destination.local].ty
+    ty = borrowed_at(builder.locals, destination.local).ty
     owned = collection_owned(ty)
     if ty != owned:
         return Err("unsupported Body IR whole borrowed collection assignment")
@@ -257,7 +258,7 @@ pub def transfer_collection(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Transfer an already materialized owned collection, preserving the drop ledger."""
-    ty = builder.locals[destination.local].ty
+    ty = borrowed_at(builder.locals, destination.local).ty
     owned = collection_owned(ty)
     if ty != owned:
         return Err("unsupported Body IR whole borrowed collection assignment")
@@ -318,8 +319,8 @@ pub def extend_collection(
     match source.kind:
         OperandKind.Move(place) => source_place = place
         _ => return Err("unsupported Body IR collection spread without owned source")
-    ty = builder.locals[destination.local].ty
-    source_type = builder.locals[source_place.local].ty
+    ty = borrowed_at(builder.locals, destination.local).ty
+    source_type = borrowed_at(builder.locals, source_place.local).ty
     mut operation = "extend"
     mut source_reference_type = collection_reference(source_type, false)
     if source_type != collection_owned(ty):

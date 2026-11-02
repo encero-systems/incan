@@ -35,6 +35,7 @@ from rust::incan_semantics_core::body_ir import (
     DecoratedBinding as RustDecoratedBinding,
     TraitDefaultInstantiation,
 )
+from table_views import borrowed_at
 
 
 pub model Builder:
@@ -68,6 +69,8 @@ pub model Builder:
     pub current: int
     pub source: str
     pub file: str
+    # Each line's starting byte offset in `source`, read once per frame so that each span maps by binary search.
+    pub line_starts: list[int] = []
     pub module_identity: str
     # The enclosing checked callable authenticates per-invocation original reads; lifted anonymous frames have none.
     pub callable_identity: Option[RustCanonicalSymbolId]
@@ -202,7 +205,7 @@ def remaining_owned_places(mut builder: Builder, index: int, span: SourceSpan) -
     if not has_transfers:
         return [plan_place(index, span)]
     mut places: list[Place] = []
-    match builder.locals[index].ty:
+    match borrowed_at(builder.locals, index).ty:
         PlanType.Tuple(elements) =>
             for slot in range(len(elements)):
                 if (index, slot) not in builder.moved_tuple_fields:
@@ -270,7 +273,7 @@ pub def forget_moved_arguments(mut builder: Builder, arguments: list[Operand]) -
                 else:
                     match value.projection:
                         Projection.Field(slot, _ty) =>
-                            match builder.locals[value.local].ty:
+                            match borrowed_at(builder.locals, value.local).ty:
                                 PlanType.Tuple(_elements) => builder.moved_tuple_fields.append((value.local, slot))
                                 _ => pass
                         _ => pass
@@ -362,7 +365,7 @@ pub def place_type(locals: &list[Local], value: Place) -> PlanType:
         Projection.Value => return PlanType.Int
         Projection.Overflow => return PlanType.Bool
         Projection.Deref(ty) => return ty
-        Projection.Whole => return locals[value.local].ty
+        Projection.Whole => return borrowed_at(locals, value.local).ty
 
 
 pub def appended_field(source: Place, field: FieldProjection, span: SourceSpan) -> Result[Place, str]:

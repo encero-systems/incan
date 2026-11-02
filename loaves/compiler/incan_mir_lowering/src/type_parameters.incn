@@ -149,7 +149,8 @@ def static_owner_arguments(module: &BodyIrModule, target: &NamedCallableTarget) 
         Some(ty) =>
             match ty:
                 RustType.Generic(base=base, args=owner_arguments) =>
-                    for declaration in module.nominal_declarations:
+                    for declaration_position in range(len(module.nominal_declarations)):
+                        declaration = borrowed_at(module.nominal_declarations, declaration_position)
                         if declaration.template_carrier_name() != str(base):
                             continue
                         if len(declaration.type_parameters) != len(owner_arguments):
