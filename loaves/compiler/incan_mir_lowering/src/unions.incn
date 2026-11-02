@@ -98,8 +98,8 @@ def retain_body_union_types(
 ) -> None:
     """Visit a body's types against the caller's accumulated index, including computed statics during collection."""
     retain_union(unions, retained, added, body.return_type)
-    for local in body.locals:
-        retain_union(unions, retained, added, local.ty)
+    for position in range(len(body.locals)):
+        retain_union(unions, retained, added, borrowed_at(body.locals, position).ty)
 
 
 def retain_union(
@@ -108,21 +108,24 @@ def retain_union(
     mut added: BTreeSet[RustType],
     ty: &RustType,
 ) -> None:
-    """Test exact borrowed keys before copying a new union into its ordered slot and the instance's membership index."""
+    """
+    Test exact borrowed keys before copying a new union into its ordered slot and the instance's membership index.
+    Children are borrowed: this visits every frame local's type, so a copied subtree per level would dominate.
+    """
     match ty:
         RustType.Generic(base=base, args=arguments) =>
-            for argument in arguments:
-                retain_union(unions, retained, added, argument)
+            for position in range(len(arguments)):
+                retain_union(unions, retained, added, borrowed_at(arguments, position))
             if str(base) == "Union" and not retained.contains(ty) and not added.contains(ty):
                 added.insert(ty.clone())
                 unions.append(ty.clone())
         RustType.Function(params=parameters, return_type=result) =>
-            for parameter in parameters:
-                retain_union(unions, retained, added, parameter.ty)
+            for position in range(len(parameters)):
+                retain_union(unions, retained, added, borrowed_at(parameters, position).ty)
             retain_union(unions, retained, added, result)
         RustType.Tuple(elements) =>
-            for element in elements:
-                retain_union(unions, retained, added, element)
+            for position in range(len(elements)):
+                retain_union(unions, retained, added, borrowed_at(elements, position))
         RustType.Ref(inner) => retain_union(unions, retained, added, inner)
         RustType.RefMut(inner) => retain_union(unions, retained, added, inner)
         _ => pass

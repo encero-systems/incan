@@ -9934,7 +9934,7 @@ def body_builder(
             scope_parents=scope_parents,
             moved_tuple_fields=[],
             body_identity=body.canonical,
-            checked_local_types=[local.ty.clone() for local in body.locals],
+            checked_local_types=[borrowed_at(body.locals, position).ty.clone() for position in range(len(body.locals))],
             initializing_decorator=initializing_decorator,
             cached_decorator=cached_decorator,
             callable_name_dynamic_profile=callable_name_profile(module, body_module_identity(body)?)?,
@@ -10045,7 +10045,8 @@ def reference_value_storage(body: &RustBody, names: list[str], arguments: list[R
     """
     mut slots: list[int] = []
     body_name = str(body.name)
-    for local in body.locals:
+    for position in range(len(body.locals)):
+        local = borrowed_at(body.locals, position)
         closed: RustType = substitute(local.ty, names, arguments).map_err(
             (reason) => f"{reason} in reference storage of {body_name}",
         )?
@@ -10059,10 +10060,12 @@ def reference_value_storage(body: &RustBody, names: list[str], arguments: list[R
 def frame_scopes(body: &RustBody) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Retain the checked scope IDs and parent links in Copy tables; a negative parent denotes the root scope."""
     mut scoped_locals: list[tuple[int, int]] = []
-    for local in body.locals:
+    for local_position in range(len(body.locals)):
+        local = borrowed_at(body.locals, local_position)
         scoped_locals.append((int(local.id.index()) + 1, int(local.scope.0)))
     mut scope_parents: list[tuple[int, int]] = []
-    for scope in body.scopes:
+    for scope_position in range(len(body.scopes)):
+        scope = borrowed_at(body.scopes, scope_position)
         mut parent = -1
         match scope.parent:
             Some(enclosing) => parent = int(enclosing.0)
