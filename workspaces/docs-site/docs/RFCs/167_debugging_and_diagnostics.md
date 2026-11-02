@@ -501,6 +501,8 @@ The required source-debugging capability includes source-line and function break
 
 A supported artifact must retain or identify matching debug information and source revisions for every frame it claims to resolve. DWARF or another target-native format may provide this information. Stripping, relocation, downloaded artifacts and separated debug files must not silently sever the association. A source map must preserve its declared byte and character coordinate conventions; editor UTF-16 conversion must not change the underlying location.
 
+A Loaf's debug information, source maps and the layout facts used to present its values must be stored with the Loaf in the local store, beside the artifacts they describe, whether those artifacts were built locally or obtained with the Loaf. The session must obtain them by asking the Loaf, matched by artifact identity, without a network request at debug time. A Loaf published without its source must still carry its debug information, and the session must report that source as unavailable.
+
 Each requested value must distinguish available, optimized out, not captured, out of scope, uninitialized, unsupported, redacted and unreadable states as applicable. Raw foreign layout is not an Incan value merely because bytes are readable. Value display must not call user formatters, properties or other effectful code without an explicit evaluation request. Async task reconstruction, foreign frames and optimized stepping may have narrower support, which must be declared.
 
 Runtime diagnostics must distinguish an assertion, panic, error returned from an entry point, process signal, requested cancellation and toolchain failure when evidence permits. They must preserve the original message and termination semantics. An opt-in backtrace must use the same symbol and source policy. Unwinding and fatal-signal constraints may prevent complete capture; a missing stack must not be presented as an empty, complete stack. This RFC does not authorize catching a foreign panic and converting it into an ordinary Incan result.
@@ -547,7 +549,7 @@ The contract must support questions asked by meaning, including: run until a con
 
 ### Platforms and engines
 
-The suite must support Linux, macOS and Windows with one contract. A native debugger engine may provide process control, breakpoints, memory access and unwinding; the session, presentation, evaluation, provenance and agent contracts belong to the suite and must not change with the engine. A platform may use a different engine when it gives better support, and the capability report must name the engine in use.
+The suite must support Linux, macOS and Windows with one contract. The debugger engine provides process control, breakpoints, memory access and unwinding; the session, presentation, evaluation, provenance and agent contracts belong to the suite and must not change with the platform or the engine. The capability report must name the engine in use.
 
 ### Rust and mixed executions
 
@@ -657,15 +659,6 @@ Explicit capture retains selected observations and references to the artifacts n
 - **Pernosco**, built on rr recordings, lets a developer click a value and see where it came from. It requires a recording made through processor facilities on one operating system and processor family.
 - **PyCharm's scientific mode** combines a variables view, tabular data viewers and evaluation in the stopped frame. It sets the experience bar for exploring a stopped program.
 
-### Delivery order (non-normative)
-
-The suite is large, and its parts are useful on their own. A recommended order:
-
-1. Before running and readable failures: static provenance and edit-time evaluation in the language server; conditions, locations, compared values and opt-in stacks, for Incan and Rust.
-2. Source debugging, exploring a stopped program and agent use: breakpoints, stepping, namespaces, tables, frame evaluation and provenance, with the terminal client, the editor adapter and MCP.
-3. Recorded executions, code changes in a stopped program, symbols and captures: `incan demangle`, failure captures for tests, trace correlation.
-4. Memory and leak inspection, profiling, and foreign-call capture.
-
 ## Alternatives considered
 
 - **Document host commands only.** Useful as provider documentation, but leaves process attribution, symbol presentation, coverage and capture interchange to each user.
@@ -687,9 +680,10 @@ Source debugging and observer integration require a maintained platform and tool
 
 ## Implementation architecture (non-normative)
 
-- **Engine and session.** LLDB, the LLVM project's debugger, provides process control, breakpoints, memory access and unwinding on Linux, macOS and Windows. Oven owns the session above it: presentation, evaluation, provenance, recording, patching and the agent contract. The terminal client, a Debug Adapter Protocol adapter and MCP tools are clients of that session.
+- **Engine and session.** LLDB, the LLVM project's debugger, ships with the toolchain at the LLVM version the pinned rustc uses and provides process control, breakpoints, memory access and unwinding on Linux, macOS and Windows. Oven owns the session above it: presentation, evaluation, provenance, recording, patching and the agent contract. The terminal client, a Debug Adapter Protocol adapter and MCP tools are clients of that session.
 - **Debug information.** Incan code compiles through the pinned rustc, so Incan and Rust frames share one debug-information format, one unwinder and one panic mechanism. Incan source lines and scopes must be carried into that debug information.
-- **Values.** Oven presents Incan values from the compiler's type facts and Rust values through the toolchain's Rust formatting, so nothing is written per debugger.
+- **Values.** Oven reads values from the process through the engine and presents Incan and Rust values from the layout and type facts the compiler writes, not from the engine's own type formatting or per-debugger scripts, so values look the same on every platform.
+- **Debug artifacts.** A build stores debug information, source maps and layout facts in the Loaf's entry of the local store; the session reads them from there by artifact identity.
 - **Evaluation.** Read-only expressions are interpreted over checked bodies against values read from the stopped process; the same interpreter evaluates pure expressions in the language server. Expressions that call program code are compiled as a small function against the frame's types, by the compiler identity that built the artifact, then loaded into the process and called.
 - **Recording.** A recording artifact is compiled with instrumentation that writes assignments, constructions and returns, with locations, to a bounded buffer. Static provenance comes from checked bodies and the code graph.
 - **Patching.** A patchable artifact routes calls to patchable functions through an indirection table. Applying a change compiles only the changed functions, links them against the running program's symbols and updates the table.
@@ -699,17 +693,19 @@ Source debugging and observer integration require a maintained platform and tool
 
 - **Compiler diagnostics and semantic identity:** stable codes, source-anchor projection, declaration provenance, constants that can never satisfy their constraints, and shared rendering contracts.
 - **Checked bodies and native lowering:** source scopes, local names, assertion operands, static value provenance, recording instrumentation, patchable call indirection and generated-frame relationships.
-- **Native backend and artifact distribution:** target debug information carrying Incan source lines and scopes, symbol identity, recording and patchable artifacts, matching source/debug artifacts and relocation.
+- **Native backend and artifact distribution:** target debug information carrying Incan source lines and scopes, symbol identity, recording and patchable artifacts, matching source/debug artifacts stored with the Loaf, and relocation.
 - **Language server:** static provenance, edit-time evaluation of pure expressions and the shared read-only interpreter.
 - **Runtime and standard library:** panic/assertion observations, safe value representations, telemetry correlation and checked foreign boundaries.
 - **Platform and Oven tooling:** the debugging session on Linux, macOS and Windows, observer capability discovery, process scope, capture lifecycle and storage, code patching, memory/profiling operations, report projections and the structured agent contract over MCP.
 - **Debugger and editor integration:** source-level control across Rust and Incan frames, bounded value inspection, namespace and tabular views, frame evaluation, exact-source validation, the Debug Adapter Protocol adapter and diagnostic parity.
 - **Tests and contract tooling:** structured failure observations and support-profile conformance.
 
+## Design Decisions
+
+- Linux, macOS and Windows are supported with one contract. LLDB is the proposed engine on every platform; platform-specific limitations are dealt with during implementation and do not change the contract.
+- Debug information, source maps and layout facts live with the Loaf in the local store. The session asks the Loaf for them and makes no network request at debug time; a Loaf published without source still carries its debug information.
+
 ## Unresolved questions
 
-- Linux, macOS and Windows are required. Which architectures, engine versions and observer providers must qualify for the first supported release on each, and which may initially be explicitly unsupported? The proposed minimum source-debugging and value contracts apply to every target claimed as supported.
 - What does a recording record by default: all code in the project, the selected modules, or only functions named in the request? The default sets the overhead and storage of `--record`, and what provenance can answer without a second run.
-- What debug-artifact distribution policy should official releases and published dependencies guarantee: bundled source and symbols, separately obtainable matching artifacts, or source-free symbols by default? This determines download/storage cost and source-disclosure expectations, not the requirement to report missing artifacts honestly.
-
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
