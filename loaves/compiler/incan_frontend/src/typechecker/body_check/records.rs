@@ -25,7 +25,7 @@ use types::{next, parameter_fields, read_parameters, read_type, type_fields};
 pub(crate) type Fields = Vec<Vec<String>>;
 
 /// Current coordinates and canonical activation handles, keyed by persisted semantic identity. No type, call or
-/// diagnostic payload is retained here. The test sink may build these from a separate fresh checker oracle.
+/// diagnostic payload is retained here. The test sink may build these from a separate fresh checker baseline.
 struct Positions {
     nodes: SemanticNodeBindings,
     identities: BTreeMap<String, CanonicalSymbolId>,
@@ -150,7 +150,7 @@ pub(crate) fn project(
 }
 
 /// Rebuild a selected owner solely from canonical fields and current position/identity bindings. The independently
-/// checked current oracle supplies coordinates/handles only; no native fact payload is copied from it.
+/// checked current baseline supplies coordinates/handles only; no native fact payload is copied from it.
 fn restore(
     positions: &Positions,
     program: &Program,
@@ -694,7 +694,7 @@ pub(crate) fn fixture_projection(source: &str, name: &str, declaration: bool) ->
     project(&checker, &program, owner, declaration)
 }
 
-/// Test oracle: independently check the current revision, retain its coordinate bindings, reconstruct the supplied
+/// Test baseline: independently check the current revision, retain its coordinate bindings, reconstruct the supplied
 /// fields and compare every native field. The cold checker supplies expected values only, never reconstructed ones.
 pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result<Vec<String>, NodeBindingError> {
     let (program, checker, owner) = fixture(source, name)?;
@@ -722,7 +722,7 @@ pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result
     };
     compare_native(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
-        return Err(NodeBindingError::OracleDifference("ownership contract".into()));
+        return Err(NodeBindingError::BaselineDifference("ownership contract".into()));
     }
     if let (Some(contract), Some(binding)) = (&restored.ownership, &expected_binding) {
         contract
@@ -730,13 +730,13 @@ pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result
             .map_err(|message| NodeBindingError::InvalidField(message.into()))?;
     }
     if declaration && restored.binding != expected_binding {
-        return Err(NodeBindingError::OracleDifference("declaration signature".into()));
+        return Err(NodeBindingError::BaselineDifference("declaration signature".into()));
     }
     if declaration && restored.defaults != default_writers(&program, owner)? {
-        return Err(NodeBindingError::OracleDifference("selected default writers".into()));
+        return Err(NodeBindingError::BaselineDifference("selected default writers".into()));
     }
     if expected_types != restored.final_types {
-        return Err(NodeBindingError::OracleDifference(
+        return Err(NodeBindingError::BaselineDifference(
             "finalized own type projections".into(),
         ));
     }
@@ -753,12 +753,12 @@ pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result
         .collect()
 }
 
-/// The complete native value is an independent oracle only; every sorted map, sequence and scalar remains visible.
+/// The complete native value is an independent baseline only; every sorted map, sequence and scalar remains visible.
 fn compare_native(expected: &impl std::fmt::Debug, restored: &impl std::fmt::Debug) -> Result<(), NodeBindingError> {
-    let before = super::oracle_compare::canonical_debug(&format!("{expected:?}"));
-    let after = super::oracle_compare::canonical_debug(&format!("{restored:?}"));
+    let before = super::baseline_compare::canonical_debug(&format!("{expected:?}"));
+    let after = super::baseline_compare::canonical_debug(&format!("{restored:?}"));
     if before != after {
-        return Err(NodeBindingError::OracleDifference(format!(
+        return Err(NodeBindingError::BaselineDifference(format!(
             "expected {before}; actual {after}"
         )));
     }
@@ -788,7 +788,7 @@ fn default_writers(program: &Program, owner: Span) -> Result<BTreeMap<Span, (Spa
         .collect())
 }
 
-/// Independent full checking belongs only to the fixture oracle. Canonical production conversion never invokes it.
+/// Independent full checking belongs only to the fixture baseline. Canonical production conversion never invokes it.
 fn fixture(source: &str, name: &str) -> Result<(Program, TypeChecker, Span), NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
@@ -887,7 +887,7 @@ pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Field
     Ok(fields)
 }
 
-/// Rebuild a pending local owner and compare every native field to an independent pre-settlement cold oracle.
+/// Rebuild a pending local owner and compare every native field to an independent pre-settlement cold baseline.
 pub(crate) fn verify_local_fixture(source: &str, name: &str, fields: Fields) -> Result<(), NodeBindingError> {
     let (program, checker, owner) = local_fixture(source, name)?;
     let positions = Positions::new(&checker, &program, owner, false)?;
@@ -905,7 +905,7 @@ pub(crate) fn verify_local_fixture(source: &str, name: &str, fields: Fields) -> 
     compare_native(&expected, &local)
 }
 
-/// Run only existing declaration and statement operations, stopping before settlement. This is a fixture oracle,
+/// Run only existing declaration and statement operations, stopping before settlement. This is a fixture baseline,
 /// never a production per-record checking entry or a mechanism for filling missing record fields.
 fn local_fixture(source: &str, name: &str) -> Result<(Program, TypeChecker, Span), NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;

@@ -367,7 +367,7 @@ mod tests {
     }
 
     /// Local modes keep their callable owner through settlement, and an ordinary following function does not
-    /// inherit a previous body's ownership profile, including in the legacy cold-oracle comparison route.
+    /// inherit a previous body's ownership profile, including in the legacy cold-baseline comparison route.
     #[test]
     fn local_mode_facts_stay_with_their_callable() -> Result<(), Box<dyn std::error::Error>> {
         let source = "def borrowed() -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\ndef ordinary() -> int:\n    return 3\n";

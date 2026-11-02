@@ -35,9 +35,9 @@ pub enum NodeBindingError {
     /// Methods, generated ranges, joined ranges and opaque nested executable owners await their own profiles.
     #[error("unsupported canonical capability: {0}")]
     Unsupported(&'static str),
-    /// A test-only native round trip differed from the complete independent cold oracle.
+    /// A test-only native round trip differed from the complete independent cold baseline.
     #[error("native round-trip difference: {0}")]
-    OracleDifference(String),
+    BaselineDifference(String),
     /// The selected owner differs from the persisted owner, including an overload/signature change.
     #[error("canonical owner mismatch")]
     WrongOwner,

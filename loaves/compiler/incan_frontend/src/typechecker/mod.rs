@@ -47,7 +47,7 @@ mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
-pub(crate) use body_check::BodyIrOracleInputs;
+pub(crate) use body_check::BodyIrBaselineInputs;
 #[cfg(test)]
 pub(crate) use body_check::CheckedBodyInputError;
 pub use check_work::CheckWork;
@@ -554,13 +554,13 @@ struct CheckingNominalScope {
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
-    /// Test-only cold oracle bypasses local table extraction while retaining the original semantic operations.
+    /// Test-only cold baseline bypasses local table extraction while retaining the original semantic operations.
     #[cfg(test)]
     legacy_body_checking: bool,
     /// Verification-only declaration activations; a statement producer may not run inside any of them.
     #[cfg(test)]
     active_declaration_checks: Vec<Span>,
-    /// Per-body complete compatibility snapshots for cold-oracle comparisons, absent from production.
+    /// Per-body complete compatibility snapshots for cold-baseline comparisons, absent from production.
     #[cfg(test)]
     body_local_observations: Vec<(Span, String)>,
     /// Verification-only enclosing writers needed to reconstruct complete snapshots inside nominal declarations.
@@ -2812,11 +2812,11 @@ impl TypeChecker {
         &self.type_info
     }
 
-    /// Hand the accumulated type information to a later stage once checking is over. The opt-in Body IR oracle also
+    /// Hand the accumulated type information to a later stage once checking is over. The opt-in Body IR baseline also
     /// retains indexed immutable owner references; checking and settlement are never repeated.
     pub fn into_type_info(mut self) -> TypeCheckInfo {
-        if std::env::var_os("INCAN_BODY_IR_FREE_ORACLE").is_some() {
-            self.type_info.body_ir_oracle_inputs = Some(self.body_ir_oracle_inputs());
+        if std::env::var_os("INCAN_BODY_IR_FREE_BASELINE").is_some() {
+            self.type_info.body_ir_baseline_inputs = Some(self.body_ir_baseline_inputs());
         }
         self.type_info
     }

@@ -1,4 +1,4 @@
-//! Exact representation-operation comparisons over the same checked seed. These are migration oracles, not
+//! Exact representation-operation comparisons over the same checked seed. These are migration baselines, not
 //! producers: only this harness assembles a whole module to compare the independent native operations.
 
 use super::{
@@ -91,7 +91,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
 
     assert!(union_layouts::storage_types(std::iter::empty()).is_empty());
     assert_settled_function_seeds()?;
-    assert_free_function_input_oracle()?;
+    assert_free_function_input_baseline()?;
     assert_shared_loans()?;
     assert_equality_contract()?;
     let mut changed = seed.clone();
@@ -102,7 +102,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_eq!(postcard::to_stdvec(&seed)?, postcard::to_stdvec(&changed)?);
     let difference = assert_same_module(&seed, &changed)
         .err()
-        .ok_or("oracle omitted an invocation-only field")?;
+        .ok_or("baseline omitted an invocation-only field")?;
     assert!(difference.to_string().contains("native_attributes"));
     Ok(())
 }
@@ -217,7 +217,7 @@ fn assert_same_module(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let before = format!("{expected:#?}");
     let after = format!("{actual:#?}");
-    capture_module_oracle(expected, actual, &before, &after)?;
+    capture_module_baseline(expected, actual, &before, &after)?;
     if expected != actual || before.as_bytes() != after.as_bytes() {
         let mut left = before.lines();
         let mut right = after.lines();
@@ -349,7 +349,7 @@ fn assert_settled_function_seeds() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Retain both complete native and publication streams when the qualification harness requests evidence. The
 /// sequence identifies comparisons only; it is not an evaluation counter or a persistent compiler authority.
-fn capture_module_oracle(
+fn capture_module_baseline(
     expected: &bir::BodyIrModule,
     actual: &bir::BodyIrModule,
     before: &str,
@@ -357,7 +357,7 @@ fn capture_module_oracle(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COMPARISON: AtomicUsize = AtomicUsize::new(0);
-    let Some(directory) = std::env::var_os("INCAN_BODY_IR_ORACLE_DIR") else {
+    let Some(directory) = std::env::var_os("INCAN_BODY_IR_BASELINE_DIR") else {
         return Ok(());
     };
     let directory = std::path::PathBuf::from(directory);
@@ -396,9 +396,9 @@ fn assert_refused_reference_inputs() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Extend the existing representation oracle to nonempty declaration defaults, nominal construction, calls and
+/// Extend the existing representation baseline to nonempty declaration defaults, nominal construction, calls and
 /// nested lexical closures. The missing-owner control proves a comparison cannot silently skip an eligible body.
-fn assert_free_function_input_oracle() -> Result<(), Box<dyn std::error::Error>> {
+fn assert_free_function_input_baseline() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Value:\n    number: int = 1\n    offset: int = 2\ndef increment(value: int) -> int:\n    return value + 1\ndef chosen(value: int = increment(2)) -> int:\n    item = Value(number=value)\n    callback: Callable[int, int] = (number) => number + item.number\n    return callback(value)\ndef sibling() -> int:\n    values = [1, 2]\n    mut total = 0\n    for value in values:\n        total += increment(value)\n    return total\ndef refined() -> int:\n    mut values = []\n    values.append(1)\n    return len(values)\ndef defaults(prefix: int, items: list[float] = []) -> int:\n    return prefix\ndef residual() -> int:\n    callback = partial defaults(prefix=1)\n    return callback()\npreset = partial defaults(prefix=2)\ndef preset_use() -> int:\n    return preset()\ndef constructor_partial() -> int:\n    make = partial Value(number=3)\n    return make().number\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -406,7 +406,7 @@ fn assert_free_function_input_oracle() -> Result<(), Box<dyn std::error::Error>>
     checker
         .check_program(&program)
         .map_err(|errors| format!("{errors:?}"))?;
-    let owners = checker.body_ir_oracle_inputs();
+    let owners = checker.body_ir_baseline_inputs();
     let mut info = checker.into_type_info();
     let providers = ProviderOperationCatalog::new();
     let context = BodyIrContext {
@@ -418,7 +418,7 @@ fn assert_free_function_input_oracle() -> Result<(), Box<dyn std::error::Error>>
     let reports = tempfile::tempdir()?;
     std::fs::write(reports.path().join("interrupted.tmp"), b"{\"equal\":")?;
     assert!(super::verify_free_function_inputs(&program, &[], &info, &context, reports.path()).is_err());
-    info.body_ir_oracle_inputs = Some(owners);
+    info.body_ir_baseline_inputs = Some(owners);
     super::verify_free_function_inputs(&program, &[], &info, &context, reports.path())?;
     let mut comparisons = 0;
     for entry in std::fs::read_dir(reports.path())? {
@@ -440,9 +440,9 @@ fn assert_free_function_input_oracle() -> Result<(), Box<dyn std::error::Error>>
         arguments: Vec::new(),
     });
     assert_eq!(postcard::to_stdvec(expected)?, postcard::to_stdvec(&changed)?);
-    let failure = super::free_function_oracle::record_comparison(expected, &changed, "negative", reports.path())
+    let failure = super::free_function_baseline::record_comparison(expected, &changed, "negative", reports.path())
         .err()
-        .ok_or("free-function oracle omitted a native-only field")?;
+        .ok_or("free-function baseline omitted a native-only field")?;
     assert!(failure.to_string().contains("native_attributes"));
     Ok(())
 }

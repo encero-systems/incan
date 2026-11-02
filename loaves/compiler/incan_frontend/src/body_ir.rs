@@ -58,7 +58,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-pub use free_function_oracle::verify_module as verify_free_function_inputs;
+pub use free_function_baseline::verify_module as verify_free_function_inputs;
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
 pub use source_comparison::required_published_defaults as required_comparison_defaults;
@@ -156,7 +156,7 @@ pub fn build_body_ir_module(
 }
 
 /// Construct the compatibility module before representation refinement. This remains the whole-module route;
-/// separating its seed lets the cold oracle compare individual representation operations from identical inputs.
+/// separating its seed lets the cold baseline compare individual representation operations from identical inputs.
 fn build_module_seed(
     program: &ast::Program,
     module_path: &[String],
@@ -2405,7 +2405,7 @@ mod collect;
 mod collection_context;
 mod decorated_bindings;
 mod entrypoint_effects;
-mod free_function_oracle;
+mod free_function_baseline;
 mod model_constants;
 mod published_methods;
 mod registry_descriptions;
@@ -2445,27 +2445,27 @@ use reads::*;
 mod representation_tests;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/union_layouts.rs"]
+#[path = "body_ir/baselines/union_layouts.rs"]
 mod legacy_union_layouts;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/opaque_returns.rs"]
+#[path = "body_ir/baselines/opaque_returns.rs"]
 mod legacy_opaque_returns;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/shared_reads.rs"]
+#[path = "body_ir/baselines/shared_reads.rs"]
 mod legacy_shared_reads;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/source_comparison.rs"]
+#[path = "body_ir/baselines/source_comparison.rs"]
 mod legacy_source_comparison;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/trait_returns.rs"]
+#[path = "body_ir/baselines/trait_returns.rs"]
 mod legacy_trait_returns;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/trait_values.rs"]
+#[path = "body_ir/baselines/trait_values.rs"]
 mod legacy_trait_values;
 
 #[cfg(test)]
