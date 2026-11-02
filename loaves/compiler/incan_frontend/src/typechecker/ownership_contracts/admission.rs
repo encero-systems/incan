@@ -356,7 +356,12 @@ impl CheckedInputBody<'_> {
                 {
                     return Err("checked Copy semantics require a compatible native input carrier");
                 }
-                if argument.access == IncanInputAccess::Inferred && !copy && argument.source.is_some() {
+                // A closure local passed to a parameter its callee only calls lends its callable object for the call.
+                if argument.access == IncanInputAccess::Inferred
+                    && !copy
+                    && argument.source.is_some()
+                    && !super::projection::closure_argument(self.graph, argument)
+                {
                     return Err("ordinary non-Copy input requires its inferred access proof");
                 }
                 if argument.access == IncanInputAccess::Owned

@@ -237,7 +237,10 @@ impl CheckedInputBody<'_> {
                     .facts
                     .resolved_identity(expression.span)
                     .ok_or("input place has no canonical identity")?;
-                if let Some(id) = self.graph.local_loans.get(identity) {
+                // A closure local holds its closure value; its loan is the captured borrow, not an alias.
+                if let Some(id) = self.graph.local_loans.get(identity)
+                    && !self.graph.closures.values().any(|closure| &closure.local == identity)
+                {
                     let loan = self.graph.loans.get(id.0).ok_or("input alias loan is absent")?;
                     return Ok(Some((loan.source.clone(), Some(*id))));
                 }

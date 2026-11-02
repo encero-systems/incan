@@ -180,6 +180,19 @@ impl SourceAccesses<'_, '_> {
                 Some(CallArg::Positional(value) | CallArg::Named(_, value)) => value,
                 _ => return Err("source access call has no fixed written argument"),
             };
+            // A closure local passed on first uses the borrow it holds, then is read itself.
+            if argument.access == IncanInputAccess::Inferred
+                && let Some(Some(id)) = self.closure_callee(value)
+            {
+                let loan = self
+                    .proof
+                    .graph
+                    .loans
+                    .get(id.0)
+                    .ok_or("closure local has no captured loan")?;
+                let source = loan.source.clone();
+                self.access(value.span, &source, Some(id), flow::Access::Read)?;
+            }
             let source = self.place(value)?;
             match argument.access {
                 IncanInputAccess::Owned => {

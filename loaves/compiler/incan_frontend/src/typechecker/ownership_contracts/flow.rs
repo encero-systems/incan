@@ -382,7 +382,10 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
         if !destinations.insert(*loan) {
             return Err(InvalidGraph("loan has multiple local destinations"));
         }
-        if graph.permissions.contains_key(&Root::Binding(local.clone())) {
+        // A closure local is a value of its own that also holds its captured borrow; an alias is only the borrow.
+        if graph.permissions.contains_key(&Root::Binding(local.clone()))
+            && !graph.closures.values().any(|closure| &closure.local == local)
+        {
             return Err(InvalidGraph("local alias also declares an owned storage root"));
         }
         let source = graph

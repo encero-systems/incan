@@ -304,6 +304,15 @@ impl TypeChecker {
         }
     }
 
+    /// Whether the function or method `callee` of this module only calls the callable its parameter at `slot`
+    /// receives, so a closure passed there is not kept beyond the call.
+    pub(super) fn closure_parameter_only_called(&self, callee: &CanonicalSymbolId, slot: usize) -> bool {
+        self.capturing_callables
+            .admitting_params
+            .get(callee)
+            .is_some_and(|slots| slots.contains(&slot))
+    }
+
     /// The locals the closure at `span` captures, each resolved in the scope the closure is built in.
     pub(super) fn closure_captures(&self, span: crate::ast::Span) -> Option<&[Capture]> {
         self.capturing_callables.captures.get(&span).map(Vec::as_slice)

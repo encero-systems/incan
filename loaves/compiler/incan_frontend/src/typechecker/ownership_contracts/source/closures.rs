@@ -5,11 +5,11 @@
 //! receiver, or captures a value that is not Copy, a view a call returned, an exclusive borrow or more than one borrow
 //! is refused.
 
-use super::super::flow::ClosureCaptures;
+use super::super::flow::{ClosureCaptures, InputEvaluation, InvocationArgument};
 use super::{Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Unavailable};
 use crate::ast::{CallArg, Expr, Span, Spanned};
 use crate::ast_walk::any_expr_in_expr;
-use incan_semantics_core::CanonicalSymbolId;
+use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
 
 impl Builder<'_> {
     /// Bind a closure to a new local: read each captured Copy value, then borrow the one captured borrow for as long as
@@ -112,12 +112,12 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
-    /// The closure local a callee names, if it names one.
-    pub(super) fn closure_callee(&self, callee: &Spanned<Expr>) -> Option<CanonicalSymbolId> {
-        if !matches!(callee.node, Expr::Ident(_)) {
+    /// The closure local an expression names, if it names one: a callee, or an argument passed on.
+    pub(super) fn closure_local(&self, expression: &Spanned<Expr>) -> Option<CanonicalSymbolId> {
+        if !matches!(expression.node, Expr::Ident(_)) {
             return None;
         }
-        let identity = self.checker.type_info.resolved_identity(callee.span)?;
+        let identity = self.checker.type_info.resolved_identity(expression.span)?;
         self.closures.contains_key(identity).then(|| identity.clone())
     }
 
@@ -160,6 +160,59 @@ impl Builder<'_> {
             }
             None => incoming,
         })
+    }
+
+    /// Pass a closure local to a parameter its callee only calls: use the borrow it holds, then read the closure local
+    /// itself, which the callee borrows for the call. A parameter that may keep the closure is refused.
+    pub(super) fn closure_argument(
+        &mut self,
+        closure: &CanonicalSymbolId,
+        callee: &CanonicalSymbolId,
+        expression: &Spanned<Expr>,
+        position: (usize, usize),
+        mut incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, InvocationArgument), Unavailable> {
+        let (slot, written_position) = position;
+        if !self.checker.closure_parameter_only_called(callee, slot) {
+            return Err(Unavailable {
+                span: expression.span,
+                reason: "a closure passed to a parameter that may keep it".into(),
+            });
+        }
+        let start_node = self.graph.nodes.len();
+        incoming = self.event(incoming, Event::Nothing, expression.span);
+        if let Some(path) = self.closures.get(closure).cloned().flatten() {
+            let use_of_borrow = Event::Access {
+                place: path.place,
+                access: Access::Read,
+                through: path.through,
+            };
+            incoming = self.event(incoming, use_of_borrow, expression.span);
+        }
+        let place = self.root(closure, expression.span)?;
+        let source_node = self.graph.nodes.len();
+        let read = Event::Access {
+            place: place.clone(),
+            access: Access::Read,
+            through: None,
+        };
+        incoming = self.event(incoming, read, expression.span);
+        let end_node = self.graph.nodes.len();
+        incoming = self.event(incoming, Event::Nothing, expression.span);
+        let argument = InvocationArgument {
+            span: expression.span,
+            slot,
+            written_position,
+            access: IncanInputAccess::Inferred,
+            loan: None,
+            source: Some(place),
+            evaluation: InputEvaluation {
+                start_node,
+                end_node,
+                source_node: Some(source_node),
+            },
+        };
+        Ok((incoming, argument))
     }
 
     /// Whether a local is declared `Borrowed[T]` or `BorrowedMut[T]`, rather than bound to a view a call returns.

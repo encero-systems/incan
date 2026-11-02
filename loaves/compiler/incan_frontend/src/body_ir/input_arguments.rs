@@ -186,13 +186,15 @@ impl BodyBuilder<'_, '_> {
         expression: &ast::Spanned<ast::Expr>,
     ) -> Result<bir::Operand, String> {
         let local = place.local_id().ok_or("explicit source input has no local storage")?;
-        let copy = self
+        let proof = self
             .input_body
             .as_ref()
             .map_err(|reason| reason.to_string())?
             .as_ref()
-            .ok_or("explicit input has no owning source body proof")?
-            .value_is_copy(expression.span)?;
+            .ok_or("explicit input has no owning source body proof")?;
+        let copy = proof.value_is_copy(expression.span)?;
+        // A closure local passed to a parameter its callee only calls lends the callee its callable object.
+        let passed_closure = proof.is_closure_argument(expression.span);
         if matches!(access, IncanInputAccess::Owned | IncanInputAccess::Inferred)
             && copy != ty.abi_v0_facts().ownership.is_trivially_copy()
         {
@@ -213,6 +215,7 @@ impl BodyBuilder<'_, '_> {
                 (bir::OwnershipFact::Move, true)
             }
             IncanInputAccess::Inferred if copy => (bir::OwnershipFact::Copy, false),
+            IncanInputAccess::Inferred if passed_closure => (bir::OwnershipFact::Borrow, false),
             IncanInputAccess::Inferred => {
                 return Err("ordinary non-Copy input requires its inferred access proof".into());
             }

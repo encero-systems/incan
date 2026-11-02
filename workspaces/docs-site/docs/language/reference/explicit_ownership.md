@@ -219,7 +219,7 @@ def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
 
 ## Closures
 
-An input-checked body can bind a closure to a new local and call that local. A closure reads the locals it captures when it is built, and holds what it reads by value. A captured Copy value is read there. A captured shared input or local declared `Borrowed[T]` must be of a Copy value: the closure reads it by copy, and the place it borrows stays borrowed for as long as the local is called. Changing that place before the closure's last call is refused with `INCAN-T0126`. Calls take Copy arguments.
+An input-checked body can bind a closure to a new local and call that local. A closure reads the locals it captures when it is built, and holds what it reads by value. A captured Copy value is read there. A captured shared input or local declared `Borrowed[T]` must be of a Copy value: the closure reads it by copy, and the place it borrows stays borrowed for as long as the local is called. Changing that place before the closure's last call is refused with `INCAN-T0126`. Calls take Copy arguments. The closure local can also be passed to a parameter that its callee only calls: the callee borrows the closure for the call, and the body can call or pass it again afterwards.
 
 ```incan
 # accepted by source checking
@@ -240,7 +240,7 @@ def after_last_call(start: int) -> int:
 
 The following are refused with `INCAN-T0123`, each naming its reason:
 
-- Returning, storing or passing the closure local.
+- Returning or storing the closure local.
 - A closure that reads the receiver.
 - A closure that captures a value that is not Copy, owned or borrowed, a view a call returned, or an exclusive input or local.
 - A closure that captures more than one shared input.
