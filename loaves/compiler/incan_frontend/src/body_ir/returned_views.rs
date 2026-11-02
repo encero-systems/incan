@@ -200,10 +200,11 @@ impl BodyBuilder<'_, '_> {
         Some(substituted_place(access, slot, fields, receiver, arguments))
     }
 
-    /// Whether an expression is `?` on an already lowered call carrying a view, through parentheses.
+    /// Whether an expression is `?` taking a success-carried view out of an already lowered call, or out of a local
+    /// still holding one, through parentheses.
     pub(super) fn carried_view_try(&self, expression: &ast::Spanned<ast::Expr>) -> bool {
         match &unparenthesized(expression).node {
-            ast::Expr::Try(inner) => self.carried_view_places.contains_key(&unparenthesized(inner).span),
+            ast::Expr::Try(inner) => self.carried_view_of(inner).is_some_and(|(.., payload)| payload == 0),
             _ => false,
         }
     }

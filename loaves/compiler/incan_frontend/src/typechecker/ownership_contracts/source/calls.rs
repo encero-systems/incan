@@ -244,9 +244,9 @@ impl Builder<'_> {
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, receiver.span);
             // A chained receiver continues on the place its inner call's returned view substituted.
-            let source = match self.view_relation(receiver)? {
-                Some(relation) => {
-                    let (evaluated, path) = self.evaluate_view_call(receiver, relation, incoming)?;
+            let source = match self.view_source(receiver)? {
+                Some(view) => {
+                    let (evaluated, path) = self.evaluate_view_source(receiver, view, incoming)?;
                     incoming = evaluated;
                     path
                 }
@@ -499,6 +499,51 @@ impl Builder<'_> {
         }
     }
 
+    /// The place view an expression produces, from a call as `view_relation` selects it or from `?` on a local still
+    /// holding a carried call. `?` on such a local takes the view out as `?` on the call does.
+    pub(super) fn view_source(&self, expression: &Spanned<Expr>) -> Result<Option<ViewSource>, Unavailable> {
+        if let Some(relation) = self.view_relation(expression)? {
+            return Ok(Some(ViewSource::Call(relation)));
+        }
+        match &expression.node {
+            Expr::Paren(inner) => self.view_source(inner),
+            Expr::Try(inner) => {
+                let Some((identity, payload)) = self.bound_carrier(inner) else {
+                    return Ok(None);
+                };
+                if payload != 0 {
+                    return Err(Unavailable {
+                        span: expression.span,
+                        reason: "`?` cannot yet pass on an error that carries a view".into(),
+                    });
+                }
+                if self.view_carried == Some(1) {
+                    return Err(super::error_view_try(expression.span));
+                }
+                Ok(Some(ViewSource::Carrier(identity)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Evaluate the place view `view_source` selected, then borrow the caller's place under its result loan.
+    pub(super) fn evaluate_view_source(
+        &mut self,
+        expression: &Spanned<Expr>,
+        source: ViewSource,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, Path), Unavailable> {
+        match (source, &expression.node) {
+            (ViewSource::Call(relation), _) => self.evaluate_view_call(expression, relation, incoming),
+            (source @ ViewSource::Carrier(_), Expr::Paren(inner)) => self.evaluate_view_source(inner, source, incoming),
+            (ViewSource::Carrier(identity), Expr::Try(inner)) => self.take_bound_view(inner, identity, incoming),
+            (ViewSource::Carrier(_), _) => Err(Unavailable {
+                span: expression.span,
+                reason: "bound carried view needs `?` or a match to take the view out".into(),
+            }),
+        }
+    }
+
     /// The returned view relation of a selected call itself, direct or carried, read from its callee's contract
     /// without its body.
     pub(super) fn call_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
@@ -607,6 +652,12 @@ pub(super) struct ViewRelation {
     slot: SourceSlot,
     fields: Vec<incan_semantics_core::CanonicalSymbolId>,
     pub(super) carried: Option<usize>,
+}
+
+/// Where a place view comes from: a call returning a view, or `?` on a local still holding a carried call.
+pub(super) enum ViewSource {
+    Call(ViewRelation),
+    Carrier(incan_semantics_core::CanonicalSymbolId),
 }
 
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`

@@ -284,7 +284,8 @@ impl CheckedInputBody<'_> {
                     .and_then(|loan| self.graph.loans.get(loan.0))
                     .ok_or("method call has no checked receiver loan")?;
                 // A chained receiver reborrows its inner call's result loan on the same substituted place, including
-                // a carried view that `?` takes out of its carrier.
+                // a carried view that `?` takes out of its carrier, or the view `?` takes out of a local holding that
+                // carrier, which reborrows the local's loan keyed to the same call.
                 let inner = super::super::builtins::view_call(receiver);
                 let authenticated = match self.call_place(receiver)? {
                     Some((source, _)) => source == loan.source,
@@ -292,9 +293,12 @@ impl CheckedInputBody<'_> {
                         .parent
                         .and_then(|parent| self.graph.loans.get(parent.0))
                         .is_some_and(|parent| {
-                            parent.span == inner.span
+                            parent.span == self.view_call_span(receiver)
                                 && parent.source == loan.source
-                                && self.graph.invocations.contains_key(&inner.span)
+                                && (self.graph.invocations.contains_key(&inner.span)
+                                    || self
+                                        .carrier_loan(inner)
+                                        .is_some_and(|(carrier, _)| parent.parent == Some(carrier)))
                         }),
                 };
                 if !authenticated {

@@ -59,6 +59,33 @@ impl<'a> CheckedInputBody<'a> {
         })
     }
 
+    /// The loan of a local still holding a carried call's result, when an expression names one through
+    /// parentheses: the local's loan is a carried call's result loan and its own type is that carrier. `?` and a
+    /// `match` read it through that loan rather than consume it, and the view they take reborrows it, keyed to the
+    /// same call; a view bound with `view = call()?` has the payload's type instead.
+    pub(crate) fn carrier_loan(&self, expression: &Spanned<Expr>) -> Option<(super::flow::LoanId, &super::flow::Loan)> {
+        let local = super::super::builtins::view_call(expression);
+        if !matches!(local.node, Expr::Ident(_))
+            || !self
+                .facts
+                .expr_type(local.span)
+                .is_some_and(|ty| ty.is_result() || ty.is_option())
+        {
+            return None;
+        }
+        let id = *self.graph.local_loans.get(self.facts.resolved_identity(local.span)?)?;
+        let loan = self.graph.loans.get(id.0)?;
+        self.facts.selected_carried_view(loan.span)?;
+        Some((id, loan))
+    }
+
+    /// The call a view's loan is keyed to: the expression's view call, or the carried call a local holds when the
+    /// view is `?` on that local.
+    pub(crate) fn view_call_span(&self, expression: &Spanned<Expr>) -> HirSourceSpan {
+        let call = super::super::builtins::view_call(expression);
+        self.carrier_loan(call).map_or(call.span, |(_, loan)| loan.span)
+    }
+
     /// The access of an unannotated local bound to a returned view, when its loan is exactly its initializer
     /// call's result loan: the initializer itself, or the call `?` takes a carried view out of. Annotated locals and
     /// ordinary bindings return `None`.
@@ -78,7 +105,7 @@ impl<'a> CheckedInputBody<'a> {
             .loans
             .get(id.0)
             .ok_or("returned view local has no result loan")?;
-        if loan.span != super::super::builtins::view_call(initializer).span {
+        if loan.span != self.view_call_span(initializer) {
             return Err("returned view local differs from its initializer call");
         }
         Ok(Some(match loan.kind {

@@ -59,36 +59,10 @@ impl Builder<'_> {
             let (evaluated, path) = self.evaluate_view_call(scrutinee, relation, incoming)?;
             (evaluated, Some((path, payload)))
         } else if let Some((identity, payload)) = self.bound_carrier(scrutinee) {
-            // A bound carrier's read through its loan keeps the loan live until here; the match consumes it. The
-            // arm's view reborrows that loan, keyed to the same call, so each loan keeps one local destination.
-            self.carriers.remove(&identity);
-            let path = self.aliases.get(&identity).cloned().ok_or(Unavailable {
-                span: scrutinee.span,
-                reason: "bound carried view has no source place".into(),
-            })?;
-            let carried = path
-                .through
-                .and_then(|loan| self.graph.loans.get(loan.0))
-                .cloned()
-                .ok_or(Unavailable {
-                    span: scrutinee.span,
-                    reason: "bound carried view has no result loan".into(),
-                })?;
-            let evaluated = self.expression(scrutinee, incoming, false)?;
-            self.aliases.remove(&identity);
-            let exclusive = carried.kind == super::LoanKind::Exclusive;
-            let view = self.call_loan(path.clone(), exclusive, carried.writable, carried.span);
-            let evaluated = self.event(evaluated, Event::Borrow(view), scrutinee.span);
-            (
-                evaluated,
-                Some((
-                    Path {
-                        place: path.place,
-                        through: Some(view),
-                    },
-                    payload,
-                )),
-            )
+            let (evaluated, path) = self.take_bound_view(scrutinee, identity, incoming)?;
+            (evaluated, Some((path, payload)))
+        } else if self.is_taken_carrier(scrutinee) {
+            return Err(super::taken_carrier(scrutinee.span));
         } else if fresh_scrutinee(scrutinee) {
             (self.expression(scrutinee, incoming, false)?, None)
         } else {
@@ -181,8 +155,58 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// Take the view out of a local still holding a carried call, for a `match` or `?` on it. The local's read
+    /// through its loan keeps the loan live until here, and taking the view consumes the local. The view reborrows
+    /// that loan, keyed to the same call, so each loan keeps one local destination.
+    pub(super) fn take_bound_view(
+        &mut self,
+        carrier: &Spanned<Expr>,
+        identity: CanonicalSymbolId,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, Path), Unavailable> {
+        self.carriers.remove(&identity);
+        let path = self.aliases.get(&identity).cloned().ok_or(Unavailable {
+            span: carrier.span,
+            reason: "bound carried view has no source place".into(),
+        })?;
+        let carried = path
+            .through
+            .and_then(|loan| self.graph.loans.get(loan.0))
+            .cloned()
+            .ok_or(Unavailable {
+                span: carrier.span,
+                reason: "bound carried view has no result loan".into(),
+            })?;
+        let evaluated = self.expression(carrier, incoming, false)?;
+        self.aliases.remove(&identity);
+        self.taken_carriers.insert(identity);
+        let exclusive = carried.kind == super::LoanKind::Exclusive;
+        let view = self.call_loan(path.clone(), exclusive, carried.writable, carried.span);
+        let evaluated = self.event(evaluated, Event::Borrow(view), carrier.span);
+        Ok((
+            evaluated,
+            Path {
+                place: path.place,
+                through: Some(view),
+            },
+        ))
+    }
+
+    /// Whether an expression names, through parentheses, a local whose carried view was already taken out.
+    fn is_taken_carrier(&self, expression: &Spanned<Expr>) -> bool {
+        match &expression.node {
+            Expr::Paren(inner) => self.is_taken_carrier(inner),
+            Expr::Ident(_) => self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| self.taken_carriers.contains(identity)),
+            _ => false,
+        }
+    }
+
     /// The identity of a local still holding a carried view, through parentheses, with the payload carrying it.
-    fn bound_carrier(&self, expression: &Spanned<Expr>) -> Option<(CanonicalSymbolId, usize)> {
+    pub(super) fn bound_carrier(&self, expression: &Spanned<Expr>) -> Option<(CanonicalSymbolId, usize)> {
         match &expression.node {
             Expr::Paren(inner) => self.bound_carrier(inner),
             Expr::Ident(_) => {

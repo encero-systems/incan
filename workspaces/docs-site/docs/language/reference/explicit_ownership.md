@@ -179,7 +179,7 @@ At a call site, `?` takes the view out of the carrier. On success, the expressio
 
 A statement `match` on a carried call also takes the view out. In an `Ok(name)` or `Some(name)` arm, `name` is a view of the caller's substituted place for the arm, and the call's loan lasts while the arm uses it; like any pattern binding it follows the place it binds, so a `Reference[T]` view writes through it. An `Err` or `None` arm holds no view, so it can use or change the source. Any other use of a carried call is refused with `INCAN-T0123`.
 
-A carried call can also be bound to a new local first. The local holds the call's loan, so the source stays borrowed until a statement `match` on the local takes the view out, exactly as a match on the call does; that match consumes the local. Applying `?` to the local, using it any other way, or matching it again is refused with `INCAN-T0123`.
+A carried call can also be bound to a new local first. The local holds the call's loan, so the source stays borrowed until a statement `match` or `?` on the local takes the view out, exactly as on the call; either consumes the local. Using the local any other way, or taking the view out of it again, is refused with `INCAN-T0123`.
 
 An `Option[Borrowed[T]]` or `Option[Reference[T]]` result with a source clause is checked the same way, with `Some(...)` in place of `Ok(...)` and `None` carrying nothing. `?` does not apply to `Option`, so its callers take the view out with `match`.
 

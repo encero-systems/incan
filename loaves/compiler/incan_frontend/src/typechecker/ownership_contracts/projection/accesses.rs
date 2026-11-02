@@ -193,8 +193,9 @@ impl SourceAccesses<'_, '_> {
             }
             Expr::Literal(_) => {}
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, consume)?,
-            // `?` consumes its carrier, as the source flow evaluates it.
-            Expr::Try(inner) => self.expression(inner, true)?,
+            // `?` consumes its carrier, as the source flow evaluates it; a local still holding a carried call is read
+            // through its loan instead, as a match on it is.
+            Expr::Try(inner) => self.expression(inner, self.proof.carrier_loan(inner).is_none())?,
             Expr::Binary(left, _, right) => {
                 self.expression(left, false)?;
                 self.expression(right, false)?;
@@ -249,10 +250,13 @@ impl SourceAccesses<'_, '_> {
                 if invocation.receiver.is_none() {
                     return Err("source access method receiver has no stored place");
                 }
-                // A chained receiver is an inner checked view call; its own arguments are evaluated first.
+                // A chained receiver is an inner checked view call, whose own arguments are evaluated first, or `?` on
+                // a local still holding one.
                 if self.place(receiver)?.is_none() {
                     let inner = super::super::builtins::view_call(receiver);
-                    if !self.proof.graph.invocations.contains_key(&inner.span) {
+                    if !self.proof.graph.invocations.contains_key(&inner.span)
+                        && self.proof.carrier_loan(inner).is_none()
+                    {
                         return Err("source access method receiver has no stored place");
                     }
                     self.expression(receiver, false)?;
@@ -301,7 +305,7 @@ impl SourceAccesses<'_, '_> {
                 .loans
                 .get(id.0)
                 .ok_or("returned view local has no result loan")?;
-            if loan.span != super::super::builtins::view_call(&assignment.value).span {
+            if loan.span != self.proof.view_call_span(&assignment.value) {
                 return Err("returned view local differs from its initializer call");
             }
             return self.expression(&assignment.value, false);

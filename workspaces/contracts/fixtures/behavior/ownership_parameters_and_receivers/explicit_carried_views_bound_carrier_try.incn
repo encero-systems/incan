@@ -1,0 +1,66 @@
+# behavior: `?` on a local bound to a call that carries a view takes the view out as `?` on the call does: the view can be bound and written through, used as a receiver, or returned as a view, and an error leaves the body with the source usable again (#2500).
+# expect-stdout:
+#   3
+#   12
+#   13
+#   closed
+#   true
+
+"""Bind a carried result to a local, then take the view out with `?`."""
+
+
+class Counter:
+    pub value: int
+    pub open: bool
+
+    def bump(mut self) -> Result[Reference[Self], str] from self:
+        if not self.open:
+            return Err("closed")
+        self.value += 1
+        return Ok(self)
+
+    def add(mut self, amount: int) -> Result[Reference[Self], str] from self:
+        if not self.open:
+            return Err("closed")
+        self.value += amount
+        return Ok(self)
+
+    def bump_again(mut self) -> Result[Reference[Self], str] from self:
+        result = self.bump()
+        view = result?
+        return Ok(view)
+
+
+def bump_twice(mut counter: BorrowedMut[Counter]) -> Result[int, str]:
+    result = counter.bump()
+    mut view = result?
+    view.value += 1
+    return Ok(view.value)
+
+
+def chained(mut counter: BorrowedMut[Counter]) -> Result[int, str]:
+    result = counter.bump()
+    (result?).add(8)?
+    return Ok(counter.value)
+
+
+def again(mut counter: BorrowedMut[Counter]) -> int:
+    match counter.bump_again():
+        Ok(view) => return view.value
+        Err(_) => return -1
+
+
+def main() -> None:
+    mut counter = Counter(value=1, open=true)
+    match bump_twice(counter):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match chained(counter):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    println(again(counter))
+    counter.open = false
+    match bump_twice(counter):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    println(counter.value == 13)
