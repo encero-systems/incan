@@ -320,7 +320,7 @@ Stages S1 to S4 build the store (the bakery on the platform store substrate; S1 
 | 10 | E4 Scheduler, memory, lifecycle | Antichain scheduling, CPU and memory tokens, fairness, shared-interest cancellation, worker recycling, crash matrices | E3, S2 leases and collection |
 | 11 | E5 Test, run and readers | Harness partitioning, fresh per-case execution, explicit replay, LSP overlays, MCP and graph pages, contract runner | E4 |
 | 12 | S4 Distribution qualification | Same sets from local bake, bundle and registry; trust refusals, upgrades, platforms and filesystems, Baseline-comparable workloads | E5 |
-| 13 | E6 Native incremental proof | Override audit, tracked per-definition inputs, qualified seeds, fixed CGUs, edited and cold oracle comparisons | E2 to E5 |
+| 13 | E6 Native incremental proof | Override audit, tracked per-definition inputs, qualified seeds, fixed CGUs, edited and cold baseline comparisons | E2 to E5 |
 | 14 | E7 Default switch and removal | Default engine, full census and CI phases, removal of obsolete authority in a separate cleanup, including the hand-ordered release script | E6, S4, the acceptance report |
 
 E1 is split in two so the engine's own proofs do not wait for the compiler's per-declaration producers. E1a proves the engine's mechanics with one record per compiled unit: the compiler already works in units, and RFC 124 gives each unit an identity from its compiled inputs. E1b swaps that one producer for the per-declaration producers of the producer map's first slice; the engine does not change. The rule that a compiler adapter must not repackage whole-program results as per-declaration records still holds: E1a's records are unit records and are named so. Where the [build engine design](build_engine_design.md)'s E1 exit says otherwise, this page governs.
@@ -403,7 +403,7 @@ Baselines come from the baseline measurement of 2026-10-29 (#2481, bundle 0cb030
 | Proof | Kind | Baseline | Measured | Commit | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | Producer map covers every producer, key, rank and read kind | Correctness | String refusal and lower-again retry | | | |
-| Cold-oracle equivalence for body, signature, layout, default, namespace insert and delete, absent import, candidate set, feature, toolchain and Loaf edits | Correctness | Not covered | | | |
+| Cold-baseline equivalence for body, signature, layout, default, namespace insert and delete, absent import, candidate set, feature, toolchain and Loaf edits | Correctness | Not covered | | | |
 | Checking scope equals the first engine's, unreachable bodies included | Correctness | First engine's scope | | | |
 | One-record edit reuses sibling checks, Body IR and plans | Efficiency | One lowering-body edit 270.79 s; edited unit 252.02 s | | | |
 | No evaluation starts before its inputs are final; no restart | Correctness | Retry loop bounded by distinct facades | | | |

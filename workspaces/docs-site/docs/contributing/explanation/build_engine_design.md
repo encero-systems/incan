@@ -411,7 +411,7 @@ Report semantic reuse and native/debug reuse separately. The strongest RFC 124 s
 
 The engine calls versioned compiler-owned producer and reader contracts. Their observable identities, outcomes, ownership/lifetime rules and read witnesses remain independent of whether their implementation is currently Rust or later Incan. Wire schemas and durable records carry typed identities, schema-defined values and scoped handles, not Rust heap layouts, process pointers or Rust trait-object representations. An in-process adapter may use native types privately under the pinned compiler generation; those types must not become the engine's durable protocol.
 
-The current checker, Body IR semantics and rustc route remain the bootstrap semantic authority. Replacing an implementation with Incan does not authorize different checking scope, diagnostics, ownership or native behavior. It supplies a new exact producer/compiler identity and must meet the same contracts and cold-oracle tests; the old implementation can remain a comparison oracle until the replacement is qualified. Cross-generation result reuse still needs explicit identity/admission evidence, not merely a matching interface name.
+The current checker, Body IR semantics and rustc route remain the bootstrap semantic authority. Replacing an implementation with Incan does not authorize different checking scope, diagnostics, ownership or native behavior. It supplies a new exact producer/compiler identity and must meet the same contracts and cold-baseline tests; the old implementation can remain a comparison baseline until the replacement is qualified. Cross-generation result reuse still needs explicit identity/admission evidence, not merely a matching interface name.
 
 The intended low-level Incan authoring surface is `std.compiler`. Its exact types and callable spellings remain subject to the compiler-authoring spike; the protocol above does not claim those APIs already exist. Compiler policy and producers should become ordinary Incan consumers of that surface. The pinned rustc layer supplies only the primitives needed to express its native types, callbacks, scoped values and queries correctly. The engine must not depend on a permanent authored-Rust implementation of those primitives.
 
@@ -627,7 +627,7 @@ The run report prints `proved`, `failed`, or `unmeasured` for each property, wit
 | Computed once | By completed computation key: attempts, actual producer calls, commits, hits, and crash retries; healthy duplicate successful producers = 0 |
 | Stored once | Unique full canonical identities versus retained copies/bytes; transport duplicates and writable views reported separately |
 | Selected work only | Requested roots, prepared/visited/evaluated record counts, dirty closure, and reasons for every native unit |
-| Early cutoff | Changed input/read sets, equal-value stops, consumers not evaluated, and a cold recomputation oracle |
+| Early cutoff | Changed input/read sets, equal-value stops, consumers not evaluated, and a cold recomputation baseline |
 | No whole-closure reads | Bytes and records read per family/package, unrelated selected-but-unused Loaf reads, maximum decoded/mapped live set |
 | Nothing semantic held idle | Zero owned semantic records/borrows/mappings after release plus measured private footprint and worker retirements |
 | Shared physical pages | Same canonical file identities plus supported synchronized sharing measurements; not sums of RSS |
@@ -687,7 +687,7 @@ During coexistence, legacy stores/ledgers remain legacy authority only for legac
 | `testing.incn` / contract batch runner | Typed case/harness requests and one resource scheduler; unchanged expected semantics |
 | Driver `frontend.rs` / `adapter.rs` | Retain language/native authority; expose record-scoped inputs and audited native query tracking |
 
-Do not delete the old engine while any acceptance row still needs it as the oracle. Once approved as default, run the full census again with the default selector, then remove obsolete owner caches, stamp-ledger authority, whole-closure request transport, implicit cold fallback, and duplicate scheduler paths. Preserve verification tools and compatibility output adapters still required by public contracts. A separate cleanup commit identifies every deleted authority and its replacement.
+Do not delete the old engine while any acceptance row still needs it as the baseline. Once approved as default, run the full census again with the default selector, then remove obsolete owner caches, stamp-ledger authority, whole-closure request transport, implicit cold fallback, and duplicate scheduler paths. Preserve verification tools and compatibility output adapters still required by public contracts. A separate cleanup commit identifies every deleted authority and its replacement.
 
 ## 13. Acceptance and head-to-head comparison
 
@@ -716,7 +716,7 @@ These are mandatory, not performance tradeoffs:
 
 1. **Zero lost PASS** against the exact frozen integration PASS set; no new FAIL/PEND, disabled case, weakened assertion, or automatic legacy fallback. Existing baseline exceptions are named and unchanged.
 2. Exact diagnostics, codegraph assertions, formatting, runtime output, exit/signal behavior, and test isolation remain correct, including profiling enabled.
-3. Body, signature, layout, default, namespace insertion/deletion, absent import, candidate-set change, feature, toolchain, and Loaf-version edits match a fresh cold recomputation oracle.
+3. Body, signature, layout, default, namespace insertion/deletion, absent import, candidate-set change, feature, toolchain, and Loaf-version edits match a fresh cold recomputation baseline.
 4. One-record edit proves unchanged sibling checks/Body IR/plan functions are reused; changed read sets with equal values update witnesses without inappropriate propagation.
 5. Concurrent identical requests in two virtual homes produce one successful result computation and, for deterministic input, one payload, with caller-specific admission/selection intact. Advance or cancel A while B remains interested: A is superseded/cancelled and B completes from the same computation. Force GC between shared publication and B's selection, and lose B's selection acknowledgment: leases preserve the result and transaction resolution recovers B without a rebake.
 6. Crash injection at every staging/publication/ack boundary yields old-complete or new-complete snapshots, never partial visibility; retries do not replay program effects.
@@ -767,7 +767,7 @@ Run `incan run hello.incn` in records mode from a prefilled store. It prints the
 
 **Dependencies:** E1 and S3's record/edge API. Complete signatures/layouts/defaults/bodies/instances, compiler-owned preparation, negative/range witnesses, typed refusals, diagnostic coordinate projections, and result-view transactions. Replace B4's string/retry discovery on the new route with prepared keyed reads.
 
-**Exit:** Cold-oracle equivalence for the semantic edit matrix, exact producer counts, same checking scope as legacy, no unfinished-input evaluation/restart on the selected acceptance corpus. Legal language cases that do not fit the rank contract block this stage and require a compiler/design finding, not a newly invented language refusal.
+**Exit:** Cold-baseline equivalence for the semantic edit matrix, exact producer counts, same checking scope as legacy, no unfinished-input evaluation/restart on the selected acceptance corpus. Legal language cases that do not fit the rank contract block this stage and require a compiler/design finding, not a newly invented language refusal.
 
 ### E3. Loaf capability admission and shared native units
 
@@ -789,7 +789,7 @@ Run `incan run hello.incn` in records mode from a prefilled store. It prints the
 
 ### E6. Native incremental proof and performance qualification
 
-**Dependencies:** E2-E5 and the native adapter tracking work in §5.4. Audit every override, introduce tracked per-definition/unit inputs, qualify immutable incremental seeds and fixed CGU membership, and run edited/cold oracle comparisons. Keep native incremental off until these pass.
+**Dependencies:** E2-E5 and the native adapter tracking work in §5.4. Audit every override, introduce tracked per-definition/unit inputs, qualify immutable incremental seeds and fixed CGU membership, and run edited/cold baseline comparisons. Keep native incremental off until these pass.
 
 **Exit:** Safe per-definition native invalidation, observed CGU work, conservative extern compatibility, all head-to-head scenarios and efficiency rows measured. If the pinned compiler cannot supply this, report the exact boundary and keep this stage blocked; do not claim the engine's native edit-loop north star delivered.
 
