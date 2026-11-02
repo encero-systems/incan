@@ -85,17 +85,7 @@ impl Builder<'_> {
                     ) || matches!(ty, Some(ResolvedType::Generic(name, arguments))
                         if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1)
                 }
-                BuiltinFnId::Print => matches!(
-                    ty,
-                    Some(
-                        ResolvedType::Str
-                            | ResolvedType::FrozenStr
-                            | ResolvedType::Int
-                            | ResolvedType::Float
-                            | ResolvedType::Bool
-                            | ResolvedType::Unit
-                    )
-                ),
+                BuiltinFnId::Print => ty.is_some_and(primitive_display),
                 _ => false,
             };
             if !supported {
@@ -560,4 +550,21 @@ fn plain_result(ty: &ResolvedType) -> bool {
             | ResolvedType::FrozenStr
             | ResolvedType::FrozenBytes
     )
+}
+
+/// Printing reaches no nominal display hook for primitive values and for lists whose items print the same way.
+fn primitive_display(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Str
+        | ResolvedType::FrozenStr
+        | ResolvedType::Int
+        | ResolvedType::Float
+        | ResolvedType::Bool
+        | ResolvedType::Unit => true,
+        ResolvedType::Generic(name, arguments) => {
+            collections::from_str(name) == Some(CollectionTypeId::List)
+                && matches!(arguments.as_slice(), [item] if primitive_display(item))
+        }
+        _ => false,
+    }
 }

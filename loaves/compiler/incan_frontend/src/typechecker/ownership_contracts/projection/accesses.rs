@@ -7,7 +7,8 @@ use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{
-    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ListEntry, Spanned, Statement,
+    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, Spanned,
+    Statement,
 };
 use crate::typechecker::ownership_contracts::CallableSource;
 
@@ -435,9 +436,49 @@ impl SourceAccesses<'_, '_> {
                         return Ok(false);
                     }
                 }
+                Statement::While(loop_) => {
+                    let Condition::Expr(condition) = &loop_.condition else {
+                        return Err("source access requires expression conditions");
+                    };
+                    self.expression(condition, false)?;
+                    self.block(&loop_.body)?;
+                }
+                Statement::For(loop_) => self.for_loop(loop_)?,
+                Statement::Loop(loop_) => {
+                    self.block(&loop_.body)?;
+                    if !super::operations::breaks_out(&loop_.body) {
+                        return Ok(false);
+                    }
+                }
+                Statement::Break(None) | Statement::Continue => return Ok(false),
                 _ => return Err("source access coverage requires the supported statement profile"),
             }
         }
         Ok(true)
+    }
+
+    /// A loop evaluates its iterable once; a loop that takes the list's items consumes it. Each poll of a stored
+    /// iterable reads it through the loop's own shared loan, created over that exact place at the iterable.
+    fn for_loop(&mut self, loop_: &ForStmt) -> Result<(), &'static str> {
+        let takes_items = self.proof.facts.for_loop_takes_items(loop_.iter.span);
+        let iterable = if takes_items { None } else { self.place(&loop_.iter)? };
+        self.expression(&loop_.iter, takes_items)?;
+        if let Some((place, through)) = iterable {
+            let loan = self
+                .proof
+                .graph
+                .loans
+                .iter()
+                .position(|loan| {
+                    loan.span == loop_.iter.span
+                        && loan.source == place
+                        && loan.parent == through
+                        && loan.kind == flow::LoanKind::Shared
+                })
+                .ok_or("loop poll has no iteration loan")?;
+            self.access(loop_.iter.span, &place, Some(flow::LoanId(loan)), flow::Access::Read)?;
+        }
+        self.block(&loop_.body)?;
+        Ok(())
     }
 }

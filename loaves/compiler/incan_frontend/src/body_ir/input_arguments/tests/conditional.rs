@@ -19,6 +19,7 @@ fn transfers(block: &bir::Block, owner: bir::LocalId) -> usize {
             bir::StatementKind::If {
                 then_block, else_block, ..
             } => transfers(then_block, owner) + else_block.as_ref().map_or(0, |block| transfers(block, owner)),
+            bir::StatementKind::Loop { body } => transfers(body, owner),
             _ => 0,
         })
         .sum()
@@ -371,13 +372,63 @@ fn conditional_paths_preserve_dead_tails_and_shadowed_owners() -> Result<(), Box
     Ok(())
 }
 
+/// A transfer inside a loop joins the loop's exits. A `for` or `while` loop can end without reaching its `break`,
+/// so the owner keeps its scope drop for that path; a `loop` leaves only through the `break` after the transfer.
+#[test]
+fn loop_transfers_join_the_loop_exits() -> Result<(), Box<dyn std::error::Error>> {
+    let consume = "def consume(value: Owned[str]) -> None:\n    pass\n";
+    for (body, dropped) in [
+        (
+            "def main(rounds: Borrowed[list[int]]) -> None:\n    value = \"owner\"\n    for _round in rounds:\n        consume(value)\n        break\n",
+            true,
+        ),
+        (
+            "def main(flag: bool) -> None:\n    value = \"owner\"\n    while flag:\n        consume(value)\n        break\n",
+            true,
+        ),
+        (
+            "def main() -> None:\n    value = \"owner\"\n    loop:\n        consume(value)\n        break\n",
+            false,
+        ),
+    ] {
+        let module = staged(&format!("{consume}{body}"), false)?;
+        let lowered = module
+            .bodies
+            .iter()
+            .find(|lowered| lowered.name == "main")
+            .ok_or("missing loop caller")?;
+        let owner = lowered
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some("value"))
+            .ok_or("missing owner")?
+            .id;
+        assert_eq!(transfers(&lowered.block, owner), 1, "{body}");
+        assert_eq!(
+            lowered
+                .block
+                .stmts
+                .iter()
+                .any(|statement| matches!(statement.kind, bir::StatementKind::Drop { local } if local == owner)),
+            dropped,
+            "{body}"
+        );
+        assert!(
+            lowered
+                .checked_input_profile
+                .as_ref()
+                .is_some_and(|profile| profile.version == 2),
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
 /// Recursive source projection must not turn a failure-only assertion transfer into an ordinary branch transfer.
-/// Loops likewise retain their staged refusal rather than inheriting a nearby statement-if's scope permission.
 #[test]
 fn conditional_projection_keeps_nested_unsupported_cleanup_refused() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
         "def consume(value: Owned[str]) -> str:\n    return \"message\"\ndef main(flag: bool) -> None:\n    value = \"owner\"\n    if flag:\n        assert flag, consume(value)\n",
-        "def consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"owner\"\n    if flag:\n        while flag:\n            consume(value)\n            break\n",
     ] {
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;

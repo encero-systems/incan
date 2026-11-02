@@ -37,7 +37,7 @@ from element_borrows import mutable_element_place
 from models import field_step_type
 from tuples import is_tuple_type, tuple_has_owners, owned_carrier
 from builtins import list_call
-from frame import place_type, Builder, temporary, drop_owned, external_call, read_place, literal
+from frame import place_type, Builder, temporary, drop_owned, exhaust_loop, external_call, read_place, literal
 from collections import collection_arguments, is_owned_collection
 from lists import (
     list_shape,
@@ -437,7 +437,7 @@ pub def list_next(
     builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), exhausted, next_block), span)
     builder.current = exhausted
     drop_loop_owners(builder, span)?
-    builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+    exhaust_loop(builder, span)
     builder.current = next_block
     builder.owned = owners
     target = list_root_place(builder, destination, span)?

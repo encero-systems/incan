@@ -27,7 +27,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from collections import primitive_leaf, leaf_type
 from tuples import type_name, tuple_type, generic_tuple_type
-from frame import Builder, temporary, terminate_call, read_place, drop_owned, value_type
+from frame import Builder, temporary, terminate_call, read_place, drop_owned, exhaust_loop, value_type
 from table_views import borrowed_at
 
 
@@ -390,7 +390,7 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
             # Each branch owns the initialized poll buffer independently; even exhaustion must drop it.
             builder.current = exhausted
             drop_owned(builder, storage.local, span)
-            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            exhaust_loop(builder, span)
             builder.current = selected
             builder.owned = owners
             drop_owned(builder, output.local, span)

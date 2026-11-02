@@ -1204,6 +1204,8 @@ struct BodyBuilder<'type_info, 'source> {
     returned_view: Option<returned_views::ReturnedViewSource>,
     /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
     input_if_scopes: Vec<bir::ScopeId>,
+    /// Statement loops whose exit states are joined for authenticated whole owners, innermost last.
+    input_loops: Vec<conditional_inputs::InputLoop>,
     /// Canonical provider context that requires an explicit refusal for ambiguous bare builtin spellings.
     runtime_type_conflicts: &'source std::collections::BTreeSet<String>,
     /// Project-aware entry points retain selected pattern carriers before source aliases are erased.
@@ -1353,6 +1355,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             input_local_bindings: Vec::new(),
             returned_view: None,
             input_if_scopes: Vec::new(),
+            input_loops: Vec::new(),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
             retain_nominal_carriers: lowering_facts.retain_nominal_carriers,
             function_default_sources: lowering_facts.function_default_sources,
