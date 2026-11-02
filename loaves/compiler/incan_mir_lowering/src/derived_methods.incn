@@ -24,6 +24,7 @@ from options import carrier_payload_value, clone_tuple_operand
 from tuples import is_tuple_type
 from text_plan import clone_text
 from decls import library_enum_item
+from table_views import borrowed_at
 
 
 pub def is_derived_clone(target: &MethodTarget) -> bool:
@@ -423,14 +424,16 @@ def declares_own_method(
 
 def owns_method(module: &BodyIrModule, owner: &CanonicalSymbolId, names: list[str]) -> bool:
     """Whether a body inside the owner's declaration, or a trait slot recorded for it, has one of `names`."""
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         match body.canonical:
             Some(identity) =>
                 name = str(identity.declaration_name)
                 if identity.origin == owner.origin and contains(owner, identity) and name in names:
                     return true
             None => pass
-    for implementation in module.trait_implementations:
+    for implementation_position in range(len(module.trait_implementations)):
+        implementation = borrowed_at(module.trait_implementations, implementation_position)
         if implementation.owner == owner.clone() and str(implementation.method.declaration_name) in names:
             return true
     return false

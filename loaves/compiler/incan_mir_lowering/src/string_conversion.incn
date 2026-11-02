@@ -29,6 +29,7 @@ from native_type_identity import ConstructorIndex
 from rust::std::sync import Arc
 from unions import collect_unions
 from type_parameters import substitute
+from table_views import borrowed_at, borrowed_table
 
 
 pub def string_conversion_callee(
@@ -80,7 +81,8 @@ pub def string_conversion_callee(
                     )
                     return Ok(Some((CalleeKind.External(path), result)))
                 RustType.Named(name) =>
-                    for declaration in module.nominal_declarations:
+                    for declaration_position in range(len(module.nominal_declarations)):
+                        declaration = borrowed_at(module.nominal_declarations, declaration_position)
                         if declaration.name == name or declaration.carrier_name() == name:
                             root = conversion_name(module, declaration)?
                             if root != "":
@@ -102,7 +104,7 @@ pub def lower_string_conversions(
     if conversion_trait(module)? == "":
         return Ok((functions, externals))
     for index in range(len(module.nominal_declarations)):
-        declaration = module.nominal_declarations[index]
+        declaration = borrowed_at(module.nominal_declarations, index)
         name = conversion_name(module, declaration)?
         if name == "":
             continue
@@ -112,16 +114,16 @@ pub def lower_string_conversions(
         retain_carrier(constructors, module, intrinsics, input_result, file)?
         result = native_source_type(
             constructors,
-            list(module.nominal_declarations),
-            list(module.enum_declarations),
+            borrowed_table(module.nominal_declarations),
+            borrowed_table(module.enum_declarations),
             collect_unions(module),
             output,
             intrinsics,
         )?
         underlying_result = native_source_type(
             constructors,
-            list(module.nominal_declarations),
-            list(module.enum_declarations),
+            borrowed_table(module.nominal_declarations),
+            borrowed_table(module.enum_declarations),
             collect_unions(module),
             input_result,
             intrinsics,
@@ -153,13 +155,13 @@ def conversion_function(
     span: SourceSpan,
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
     """Convert the owned string once, propagate Err unchanged, and wrap only the successful underlying value."""
-    declaration = module.nominal_declarations[index]
+    declaration = borrowed_at(module.nominal_declarations, index)
     mut builder = owned_string_frame(constructor_owner, module, name, result, intrinsics, span)
     constructors = constructor_owner.as_ref()
     underlying = native_source_type(
         constructors,
-        list(module.nominal_declarations),
-        list(module.enum_declarations),
+        borrowed_table(module.nominal_declarations),
+        borrowed_table(module.enum_declarations),
         collect_unions(module),
         declaration.field_types[0],
         intrinsics,
@@ -223,7 +225,8 @@ def underlying_conversion(
         RustType.Named(name) =>
             match owner.named_type_identities.get(name):
                 Some(identity) =>
-                    for declaration in module.nominal_declarations:
+                    for declaration_position in range(len(module.nominal_declarations)):
+                        declaration = borrowed_at(module.nominal_declarations, declaration_position)
                         # The foreign map exposes a borrowed identity; compare owned identity values.
                         if declaration.canonical == identity.clone():
                             root = conversion_name(module, declaration)?

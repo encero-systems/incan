@@ -688,6 +688,45 @@ pub(crate) fn item(kind: ast::ItemKind, span: Span) -> Box<ast::Item> {
     })
 }
 
+/// Names a crate-root module that holds one partition of a unit's planned callables.
+pub(crate) const PARTITION_MODULE_PREFIX: &str = "__incan_unit_";
+
+/// One module holding a group of callables with every crate-root name in scope, re-exported at the crate root so
+/// each callable keeps its root path. Returns the module and its root re-export.
+pub(crate) fn partition_module(index: usize, items: Vec<Box<ast::Item>>, span: Span) -> [Box<ast::Item>; 2] {
+    let name = format!("{PARTITION_MODULE_PREFIX}{index}");
+    let name = name.as_str();
+    let glob = |prefix: ast::Path| {
+        ast::ItemKind::Use(ast::UseTree {
+            prefix,
+            kind: ast::UseTreeKind::Glob(span),
+        })
+    };
+    // The module only imports the root's names; it re-exports nothing of its own beyond its callables.
+    let root = rustc_span::Ident::new(rustc_span::symbol::kw::Super, span);
+    let mut scope = item(glob(ast::Path::from_ident(root)), span);
+    scope.vis.kind = ast::VisibilityKind::Inherited;
+    let mut contents: ThinVec<Box<ast::Item>> = ThinVec::with_capacity(items.len() + 1);
+    contents.push(scope);
+    contents.extend(items);
+    let module = item(
+        ast::ItemKind::Mod(
+            ast::Safety::Default,
+            ident(name, span),
+            ast::ModKind::Loaded(
+                contents,
+                ast::Inline::Yes,
+                ast::ModSpans {
+                    inner_span: span,
+                    inject_use_span: span,
+                },
+            ),
+        ),
+        span,
+    );
+    [module, item(glob(ast::Path::from_ident(ident(name, span))), span)]
+}
+
 /// Load metadata without reserving a source type's name at the crate root. The original dependency alias remains
 /// available in the extern prelude and on the anonymous HIR declaration for exact native crate resolution.
 pub fn external_crate(name: &str, span: Span) -> Box<ast::Item> {

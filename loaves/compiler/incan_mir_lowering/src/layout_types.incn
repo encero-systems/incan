@@ -9,14 +9,7 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
-from pub::incan_mir_plan import (
-    PlanType,
-    ListLeaf,
-    EnumDeclaration,
-    TupleElement,
-    semantic_type_matches,
-    tuple_element_type,
-)
+from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, tuple_element_type
 from numerics import sized_numeric
 from models import model_type, hashed_element
 from tuples import tuple_element
@@ -98,11 +91,14 @@ pub def native_source_type(
     intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
-    mut index = 0
-    for declaration in intrinsics:
-        if semantic_type_matches(declaration, ty):
-            return Ok(PlanType.Enum(len(enums) + index, declaration.name))
-        index += 1
+    # This runs for every resolved type. Only Option, Result and Union carriers are intrinsic, and the checked type is
+    # wrapped once so that each borrowed carrier compares its key in place instead of copying it.
+    if intrinsic_carrier(ty):
+        key = Some(ty.clone())
+        for index in range(len(intrinsics)):
+            declaration = borrowed_at(intrinsics, index)
+            if declaration.semantic_key == key:
+                return Ok(PlanType.Enum(len(enums) + index, declaration.name))
     match enum_type(enums, ty):
         Some(result) => return Ok(result)
         None => pass
@@ -468,13 +464,22 @@ def hashed_leaf(
                 for argument in arguments:
                     hashed_leaf(constructors, nominals, enums, argument, intrinsics)?
                 mut index = 0
-                for carrier in intrinsics:
-                    if carrier.carrier == str(base) and semantic_type_matches(carrier, ty):
+                key = Some(ty.clone())
+                for carrier_position in range(len(intrinsics)):
+                    carrier = borrowed_at(intrinsics, carrier_position)
+                    if carrier.carrier == str(base) and carrier.semantic_key == key:
                         return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
                     index += 1
                 return Err(f"unsupported Body IR unretained carrier hashed key {ty}")
         _ => pass
     return hashed_element(nominals, ty)
+
+
+def intrinsic_carrier(ty: &RustType) -> bool:
+    """Whether a checked type can name a retained intrinsic carrier: only Option, Result and Union are retained."""
+    match ty:
+        RustType.Generic(base=base, args=_arguments) => return base == "Option" or base == "Result" or base == "Union"
+        _ => return false
 
 
 def layout_tuple_type(

@@ -40,6 +40,7 @@ from lowering import (
     materialized_receiver,
     instantiated_external_call,
 )
+from table_views import borrowed_at
 
 
 pub def shared_element_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
@@ -259,7 +260,7 @@ def element_start(mut builder: Builder, source: &RustPlace) -> Result[int, str]:
     match source.local_id():
         None => return Err("unsupported Body IR mutable borrow of a static element")
         Some(local) =>
-            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            root = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
             if is_list(root) or is_collection(root):
                 return Ok(0)
     match structural_prefix(builder, source)?:
@@ -340,7 +341,7 @@ def dereferenced(mut builder: Builder, place: Place) -> Place:
     """Project through a whole nominal reference so its fields append to the referent rather than the reference."""
     if place.projection != Projection.Whole:
         return place
-    match builder.locals[place.local].ty:
+    match borrowed_at(builder.locals, place.local).ty:
         PlanType.ModelMutRef(owner, name) =>
             return Place(local=place.local, projection=Projection.Deref(PlanType.Model(owner, name)), span=place.span)
         PlanType.TupleMutRef(elements) =>

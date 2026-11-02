@@ -39,6 +39,7 @@ from frame import (
     cleanup_exit,
 )
 from models import place_type
+from table_views import borrowed_table, borrowed_at
 
 
 pub def is_future(ty: PlanType) -> bool:
@@ -65,8 +66,8 @@ pub def future_type(
                 Some(
                     native_source_type(
                         constructors,
-                        list(module.nominal_declarations),
-                        list(module.enum_declarations),
+                        borrowed_table(module.nominal_declarations),
+                        borrowed_table(module.enum_declarations),
                         collect_unions(module),
                         ty,
                         intrinsics,
@@ -95,8 +96,8 @@ def capture_types(
     """Retain owned captures, including declaration-owned rest packs, and at most one nominal loan."""
     mut fields: list[PlanType] = []
     mut loans = 0
-    mut nominals = module.nominal_declarations
-    mut enums = module.enum_declarations
+    nominals = borrowed_table(module.nominal_declarations)
+    enums = borrowed_table(module.enum_declarations)
     for parameter in body.params:
         ty = frame_type(constructors, nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
         validate_collection_capture(parameter.kind, ty)?
@@ -132,7 +133,8 @@ pub def validate_futures(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Validate source coroutine identities and captures before native storage is selected by rustc."""
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         if not body.is_async:
             continue
         match body.canonical:
@@ -205,8 +207,8 @@ pub def construct_future(
     fields = capture_types(builder.program.constructors.as_ref(), module, body, builder.intrinsics)?
     output = native_source_type(
         builder.constructors,
-        list(module.nominal_declarations),
-        list(module.enum_declarations),
+        borrowed_table(module.nominal_declarations),
+        borrowed_table(module.enum_declarations),
         collect_unions(module),
         body.return_type,
         builder.intrinsics,

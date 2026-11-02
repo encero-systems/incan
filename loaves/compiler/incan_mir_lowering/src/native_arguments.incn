@@ -4,11 +4,17 @@ from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin
 from rust::incan_semantics_core::body_ir import BodyIrModule
 from nominal_instances import instance_arguments
 from decls import library_item
+from table_views import borrowed_at
 
 
-pub def uses_native_argument(module: &BodyIrModule, name: str) -> Result[bool, str]:
-    """Find a source carrier in foreign Rust storage; an ordinary Loaf's generic ADT imposes no SDK trait ABI."""
-    for declaration in module.nominal_declarations:
+pub def native_argument_names(module: &BodyIrModule) -> Result[list[str], str]:
+    """
+    Collect, once per module, the source carrier names found in foreign Rust storage arguments. Each needs its source
+    ABI implementations; an ordinary Loaf's generic ADT imposes no SDK trait ABI.
+    """
+    mut names: list[str] = []
+    for position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, position)
         if library_item(declaration) == "":
             continue
         if not foreign_storage(declaration.canonical.origin):
@@ -19,9 +25,8 @@ pub def uses_native_argument(module: &BodyIrModule, name: str) -> Result[bool, s
         if len(arguments) == 0:
             arguments = instance_arguments(declaration)?
         for argument in arguments:
-            if contains_name(argument, name):
-                return Ok(true)
-    return Ok(false)
+            collect_names(argument, names)
+    return Ok(names)
 
 
 def foreign_storage(origin: &SymbolOrigin) -> bool:
@@ -31,13 +36,14 @@ def foreign_storage(origin: &SymbolOrigin) -> bool:
         _ => return false
 
 
-def contains_name(ty: &RustType, name: str) -> bool:
-    """Inspect checked argument trees after canonical project-name qualification has resolved aliases."""
+def collect_names(ty: &RustType, mut names: list[str]) -> None:
+    """Record each named argument in a checked argument tree once; canonical qualification has resolved aliases."""
     match ty:
-        RustType.Named(value) => return str(value) == name
+        RustType.Named(value) =>
+            name = str(value)
+            if name not in names:
+                names.append(name)
         RustType.Generic(base=_base, args=arguments) =>
             for argument in arguments:
-                if contains_name(argument, name):
-                    return true
+                collect_names(argument, names)
         _ => pass
-    return false

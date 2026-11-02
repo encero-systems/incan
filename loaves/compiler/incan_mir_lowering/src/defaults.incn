@@ -20,6 +20,7 @@ from collections import is_collection
 from numerics import numeric_carrier
 from rust::incan_semantics_core import IncanInputAccess
 from explicit_arguments import parameter_accesses, argument_access
+from table_views import borrowed_at
 
 
 pub def model_default_arguments(
@@ -69,7 +70,8 @@ pub def method_default_arguments(
     partial of an admitted owner retains such a frame, so any other call with omitted slots, under the method's name
     or a method alias of it, takes the method's own defaults. `None` means no slot was omitted.
     """
-    for owner in module.nominal_declarations:
+    for position in range(len(module.nominal_declarations)):
+        owner = borrowed_at(module.nominal_declarations, position)
         for preset_binding in owner.method_partial_defaults:
             if preset_binding.name != target.name or Some(preset_binding.target.clone()) != target.canonical:
                 continue
@@ -298,8 +300,8 @@ pub def evaluate_default(
             # The computation runs for this construction or call, so its statements report that site.
             anchor = builder.anchor
             builder.anchor = Some(span)
-            for statement in computation.stmts:
-                lower_statement(module, builder, statement)?
+            for position in range(len(computation.stmts)):
+                lower_statement(module, builder, borrowed_at(computation.stmts, position))?
             builder.anchor = anchor
             before = builder.owned
             result = call_argument_operand(builder, computation.result, ty, span, owned, access)?

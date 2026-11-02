@@ -9,6 +9,7 @@ from lowering import scalar_place, display_operand, clone_nominal_operand
 from lists import parameter_storage_type
 from tuples import is_tuple_type
 from options import clone_tuple_operand
+from table_views import borrowed_at
 
 
 pub def mutable_argument(
@@ -50,7 +51,7 @@ def argument_source(mut builder: Builder, value: &RustOperand, ty: PlanType, spa
             place = scalar_place(builder, read.place, span)?
             # A `mut` parameter handed on to another one is reborrowed, so the changes still reach its own caller.
             exclusive = parameter_storage_type(ty, true)
-            if place.projection == Projection.Whole and builder.locals[place.local].ty == exclusive:
+            if place.projection == Projection.Whole and borrowed_at(builder.locals, place.local).ty == exclusive:
                 handed_on = Place(local=place.local, projection=Projection.Deref(ty), span=span)
                 return checked_source(builder, handed_on, read.fact, span)
             if place_type(builder.locals, place) != ty:
@@ -68,7 +69,7 @@ def argument_source(mut builder: Builder, value: &RustOperand, ty: PlanType, spa
 
 def checked_source(mut builder: Builder, place: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Place, str]:
     """Borrow a value the checker hands over exclusively in place, and copy one it only reads."""
-    match builder.locals[place.local].ty:
+    match borrowed_at(builder.locals, place.local).ty:
         PlanType.ModelRef(_owner, _name) =>
             site = f"{builder.name} frame local {place.local} at {span.file}:{span.line}"
             return Err(f"unsupported Body IR mutable argument through a shared receiver in {site} ({fact:?})")

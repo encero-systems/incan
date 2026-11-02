@@ -1,6 +1,6 @@
 """Concrete source-trait specialization and checker-selected static dispatch."""
 
-from table_views import borrowed_at
+from table_views import borrowed_at, borrowed_table
 from rust::incan_semantics_core import (
     IncanCallableParam as RustCallableParam,
     IncanType as RustType,
@@ -48,7 +48,7 @@ pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrMo
     mut has_default = false
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
-        if len(body.locals) > 0 and body.locals[0].ty == RustType.SelfType:
+        if len(body.locals) > 0 and borrowed_at(body.locals, 0).ty == RustType.SelfType:
             has_default = true
             break
     if not has_default:
@@ -221,7 +221,7 @@ def specialize_for(
     result.bodies.clear()
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
-        if len(body.locals) == 0 or body.locals[0].ty != RustType.SelfType:
+        if len(body.locals) == 0 or borrowed_at(body.locals, 0).ty != RustType.SelfType:
             result.bodies.push(body.clone())
             continue
         # One default can fill several slots of one adopter (its own and the supertrait slots it refines); the
@@ -451,9 +451,11 @@ pub def receiver_fills_source_slot(
 def source_owner(module: &BodyIrModule, owner: PlanType) -> bool:
     """Whether a receiver owner is a model or enum declared in source rather than an opaque library item."""
     match owner:
-        PlanType.Model(index, _name) => return library_item(module.nominal_declarations[index]) == ""
+        PlanType.Model(index, _name) => return library_item(borrowed_at(module.nominal_declarations, index)) == ""
         PlanType.Enum(index, _name) =>
-            return index < len(module.enum_declarations) and library_enum_item(module.enum_declarations[index]) == ""
+            if index >= len(module.enum_declarations):
+                return false
+            return library_enum_item(borrowed_at(module.enum_declarations, index)) == ""
         _ => return false
 
 
@@ -574,7 +576,7 @@ def receiver_selects_slot_arguments(
     selected_method: CanonicalSymbolId = implementation.method.clone()
     match owner:
         PlanType.Model(index, _name) =>
-            for adoption in module.nominal_declarations[index].trait_adoptions:
+            for adoption in borrowed_at(module.nominal_declarations, index).trait_adoptions:
                 if adoption.arguments != implementation.slot_arguments:
                     continue
                 match adoption.methods:
@@ -635,9 +637,9 @@ pub def owner_method_index(
             continue
         match frame_type(builder.constructors, builder.nominals, builder.enums, body.locals[0], builder.intrinsics):
             Ok(receiver) =>
-                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={body.locals[0].ty}, frame={receiver:?}); "
+                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={borrowed_at(body.locals, 0).ty}, frame={receiver:?}); "
             Err(error) =>
-                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={body.locals[0].ty}, frame_error={error}); "
+                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={borrowed_at(body.locals, 0).ty}, frame_error={error}); "
     return Err(
         f"unsupported Body IR nonlocal or trait-object Method; target={target.canonical:?}; owner={owner:?}; owner_identity={identity:?}; implementation={canonical:?}; canonical_candidates={candidate_count}; candidates_limit=6; candidates=[{candidates}]",
     )
@@ -675,10 +677,10 @@ pub def implementation_target(
 def owner_identity(module: &BodyIrModule, owner: PlanType) -> Result[CanonicalSymbolId, str]:
     """The retained declaration identity a model or source enum receiver owner fills its trait slots under."""
     match owner:
-        PlanType.Model(index, _name) => return Ok(module.nominal_declarations[index].canonical.clone())
+        PlanType.Model(index, _name) => return Ok(borrowed_at(module.nominal_declarations, index).canonical.clone())
         PlanType.Enum(index, _name) =>
             if index < len(module.enum_declarations):
-                return Ok(module.enum_declarations[index].canonical.clone())
+                return Ok(borrowed_at(module.enum_declarations, index).canonical.clone())
         _ => pass
     return Err("unsupported Body IR trait-object receiver")
 
@@ -726,18 +728,19 @@ def receiver_place_type(mut builder: Builder, place: &RustPlace, span: SourceSpa
     if is_element_place(builder, place)?:
         return element_place_type(builder, place)
     # Deferred defaults read only the local-offset view of the frame's locals.
-    mut frame_locals = builder.locals[builder.local_offset:]
-    path = model_place(
+    mut path = model_place(
         builder.constructors,
         builder.nominals,
-        frame_locals,
+        borrowed_table(builder.locals),
         place,
         span,
         builder.enums,
         builder.unions,
         builder.intrinsics,
+        builder.local_offset,
     )?
-    return Ok(place_type(frame_locals, path))
+    path.local += builder.local_offset
+    return Ok(place_type(builder.locals, path))
 
 
 def nominal_owner(module: &BodyIrModule, actual: PlanType) -> Option[PlanType]:
@@ -765,7 +768,7 @@ pub def validate_static_receiver(
             closed: RustType = substitute(template, names, arguments).map_err(
                 (reason) => f"{reason} in static receiver of {target_name}",
             )?
-            match enum_type(list(module.enum_declarations), closed):
+            match enum_type(borrowed_table(module.enum_declarations), closed):
                 Some(_owner) => return Ok(None)
                 None => pass
             match model_type(constructors, module.nominal_declarations, closed)?:

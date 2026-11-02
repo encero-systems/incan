@@ -19,6 +19,7 @@ from rust::incan_semantics_core::body_ir import (
     loaf_item_path,
 )
 from symbols import symbol_component
+from table_views import borrowed_at
 
 
 pub def validate_conversion_placement(modules: &list[BodyIrModule], entry: int) -> Result[None, str]:
@@ -118,7 +119,8 @@ pub def conversion_chain(
                     if canonical_module_identity(canonical) != canonical_module_identity(declaration.canonical):
                         return Err("unsupported Body IR automatic string conversion nonlocal underlying")
                     mut selected: Option[NominalDeclaration] = None
-                    for candidate in module.nominal_declarations:
+                    for candidate_position in range(len(module.nominal_declarations)):
+                        candidate = borrowed_at(module.nominal_declarations, candidate_position)
                         # Compare owned identity values across the foreign declaration boundary.
                         if candidate.canonical == canonical.clone():
                             match selected:
