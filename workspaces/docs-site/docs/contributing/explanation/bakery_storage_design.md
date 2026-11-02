@@ -1,6 +1,6 @@
 # Bakery storage design
 
-This page is the storage contract under the [build engine architecture](build_engine_architecture.md), which [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md) commits to; it was accepted with the [build engine design](build_engine_design.md) on 2026-10-30. The architecture page governs where they differ. In particular, DD-0013 supersedes DD-0012's rule that a damaged record is a miss; §5.3 gives the recovery rules.
+This page is the storage contract under the [build engine architecture](build_engine_architecture.md), which [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md) commits to; it was accepted with the build engine design, now the architecture page's detailed contracts, on 2026-10-30. The architecture page governs where they differ. In particular, DD-0013 supersedes DD-0012's rule that a damaged record is a miss; §5.3 gives the recovery rules.
 
 **Scope:** one embedded store per physical bakery, with Incan homes as virtual stores over it, and portable sealed record sets for Loaves and the registry.
 
@@ -601,7 +601,7 @@ Preserve the existing `map_read` and native-consumer integration. Align the modu
 
 ### References
 
-- [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md), the [build engine architecture](build_engine_architecture.md) and the [build engine design](build_engine_design.md): the engine this store serves.
+- [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md) and the [build engine architecture](build_engine_architecture.md), with its detailed contracts: the engine this store serves.
 - [DD-0012: Incremental compilation over a persistent semantic store](../../design_records/0012_incremental_compilation_over_a_semantic_store.md): per-declaration facets, name slots, the ranked graph, frozen Loaves and deterministic compaction.
 - RFC 124 (Oven store unit identity and cross-plan artifact sharing) and RFC 125 (incan.pub Loaf registry and baked asset distribution).
 - RFC 165 (typed embedded storage with `std.db`, over the `incan_platform.store` substrate) and RFC 166 (indexed graphs and snapshot-bound graph access in `std.graph`): the contracts this store implements and serves.
