@@ -98,7 +98,7 @@ impl TypeCheckInfo {
                     binding = Some(candidate);
                 }
                 let binding = binding.ok_or("ordinary invocation has no canonical source header")?;
-                if binding.is_async || binding.params.is_empty() || binding.params != call.parameters {
+                if binding.is_async || binding.params != call.parameters {
                     return Err("ordinary invocation differs from its synchronous concrete header");
                 }
                 Ok(None)

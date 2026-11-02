@@ -2798,6 +2798,82 @@ mod tests {
         Ok(checker)
     }
 
+    /// Loops over explicit inputs execute under the conditional profile: a loop reads each item of a borrowed input,
+    /// and an owned input or local may be transferred inside a loop whose break leaves it before a second iteration.
+    #[test]
+    fn explicit_loops_execute_under_the_conditional_profile() -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "def total(values: Borrowed[list[int]]) -> int:\n    mut sum = 0\n    for value in values:\n        sum += value\n    return sum\n",
+            "def consume(text: Owned[str]) -> None:\n    pass\ndef maybe(text: Owned[str], rounds: Borrowed[list[int]]) -> None:\n    for _round in rounds:\n        consume(text)\n        break\n",
+            "def consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"owner\"\n    if flag:\n        while flag:\n            consume(value)\n            break\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(checker.errors.is_empty(), "{source}: {:?}", checker.errors);
+        }
+        Ok(())
+    }
+
+    /// A plain helper without arguments is an ordinary helper call like one with Copy arguments: a checked body may
+    /// read its scalar result.
+    #[test]
+    fn checked_bodies_call_plain_helpers_without_arguments() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked(
+            "def seven() -> int:\n    return 7\ndef take(text: Owned[str]) -> None:\n    pass\ndef main() -> None:\n    before = seven()\n    take(\"x\")\n    println(before)\n",
+        )?;
+        assert!(
+            checker.errors.is_empty(),
+            "{:?} {:?}",
+            checker.errors,
+            flow_summary(&checker)
+        );
+        Ok(())
+    }
+
+    /// Printing a list of primitives reaches no nominal display hook, so a checked caller may print the list an
+    /// exclusive input replaced. A list of models may display through derived or user hooks and stays refused.
+    #[test]
+    fn checked_callers_print_lists_of_primitives() -> Result<(), Box<dyn std::error::Error>> {
+        let accepted = checked(
+            "def collapse(mut values: BorrowedMut[list[int]]) -> None:\n    values = [9]\ndef main() -> None:\n    mut values = [1, 2, 3]\n    collapse(values)\n    println(values)\n",
+        )?;
+        assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+        let refused = checked(
+            "class Tag:\n    pub name: str\ndef keep(mut tags: BorrowedMut[list[Tag]]) -> None:\n    pass\ndef main() -> None:\n    mut tags = [Tag(name=\"a\")]\n    keep(tags)\n    println(tags)\n",
+        )?;
+        assert!(
+            refused
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{:?}",
+            refused.errors
+        );
+        Ok(())
+    }
+
+    /// A transfer inside a loop that can reach another iteration uses an owner the first iteration already moved:
+    /// the back edge from the body's end, and from a `continue`, carries the transfer to the next one.
+    #[test]
+    fn explicit_loops_refuse_a_transfer_another_iteration_repeats() -> Result<(), Box<dyn std::error::Error>> {
+        let declarations = "def consume(text: Owned[str]) -> None:\n    pass\n";
+        for body in [
+            "def again(text: Owned[str], rounds: Borrowed[list[int]]) -> None:\n    for _round in rounds:\n        consume(text)\n",
+            "def again(text: Owned[str], flag: bool) -> None:\n    while flag:\n        consume(text)\n",
+            "def again(text: Owned[str], flag: bool) -> None:\n    while flag:\n        consume(text)\n        if flag:\n            continue\n        break\n",
+        ] {
+            let refused = checked(&format!("{declarations}{body}"))?;
+            assert!(
+                refused
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0126")),
+                "{body}: {:?}",
+                refused.errors
+            );
+        }
+        Ok(())
+    }
+
     /// Reannotation remains outside admission. A method body's alias, an alias returned as the declared view source
     /// and a conditional owned local (under the conditional profile) are admitted.
     #[test]

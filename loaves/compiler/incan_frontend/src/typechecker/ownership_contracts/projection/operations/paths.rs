@@ -17,6 +17,7 @@ pub(super) fn execution_order(graph: &flow::Graph, function: CallableSource<'_>)
         graph,
         expected: vec![Vec::new(); graph.nodes.len()],
         next: 1,
+        loops: Vec::new(),
     };
     let _ = paths.block(function.body(), vec![0])?;
     if paths.next != graph.nodes.len() {
@@ -37,6 +38,8 @@ struct SourcePaths<'a> {
     graph: &'a flow::Graph,
     expected: Vec<Vec<usize>>,
     next: usize,
+    /// Each enclosing loop's header node and the paths that leave it through `break`.
+    loops: Vec<(usize, Vec<usize>)>,
 }
 
 impl SourcePaths<'_> {
@@ -90,10 +93,81 @@ impl SourcePaths<'_> {
                     });
                     outgoing
                 }
+                // Loops follow the source graph's own shape: a header, the condition or the iterable's poll, the
+                // body with its back edge to the header, and exits from the condition or poll and each `break`.
+                Statement::While(loop_) => {
+                    let Condition::Expr(condition) = &loop_.condition else {
+                        return Err("operation paths require a checked expression condition");
+                    };
+                    let header = self.node(incoming)?;
+                    let tested = self.region(condition.span, vec![header]);
+                    self.repeat(header, &loop_.body, tested)?
+                }
+                Statement::Loop(loop_) => {
+                    let header = self.node(incoming)?;
+                    self.repeat(header, &loop_.body, Vec::new())?
+                }
+                Statement::For(loop_) => {
+                    let evaluated = self.region(loop_.iter.span, incoming);
+                    let header = self.node(evaluated)?;
+                    let polled = self.region(loop_.iter.span, vec![header]);
+                    self.repeat(header, &loop_.body, polled)?
+                }
+                Statement::Break(None) => {
+                    self.loops
+                        .last_mut()
+                        .ok_or("operation path break has no enclosing loop")?
+                        .1
+                        .extend(incoming);
+                    Vec::new()
+                }
+                Statement::Continue => {
+                    let header = self
+                        .loops
+                        .last()
+                        .ok_or("operation path continue has no enclosing loop")?
+                        .0;
+                    self.connect(&incoming, header);
+                    Vec::new()
+                }
                 _ => return Err("operation execution requires the supported statement profile"),
             };
         }
         Ok(incoming)
+    }
+
+    /// Run a loop body from its entry paths, linking every completed iteration back to the header. The loop leaves
+    /// through `exits` (its failed condition or exhausted poll) and through each `break` in its body.
+    fn repeat(
+        &mut self,
+        header: usize,
+        body: &[Spanned<Statement>],
+        exits: Vec<usize>,
+    ) -> Result<Vec<usize>, &'static str> {
+        let entry = if exits.is_empty() { vec![header] } else { exits.clone() };
+        self.loops.push((header, Vec::new()));
+        let completed = self.block(body, entry)?;
+        self.connect(&completed, header);
+        let (_, breaks) = self.loops.pop().ok_or("operation path loop has no owner")?;
+        Ok(exits.into_iter().chain(breaks).collect())
+    }
+
+    /// The one event node the source graph creates for a loop header, after every incoming path.
+    fn node(&mut self, incoming: Vec<usize>) -> Result<usize, &'static str> {
+        let node = self.next;
+        if node >= self.graph.nodes.len() {
+            return Err("operation path loop header has no source event");
+        }
+        self.connect(&incoming, node);
+        self.next += 1;
+        Ok(node)
+    }
+
+    /// Record each predecessor's edge to `next`, as the source graph builder appends it.
+    fn connect(&mut self, incoming: &[usize], next: usize) {
+        for predecessor in incoming {
+            self.expected[*predecessor].push(next);
+        }
     }
 
     /// Ordinary expressions execute their retained events sequentially. Empty literal regions preserve incoming

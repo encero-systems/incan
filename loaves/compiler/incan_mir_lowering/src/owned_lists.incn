@@ -15,7 +15,7 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, place_type, temporary, read_place, terminate_call, forget_owned, drop_owned
+from frame import Builder, place_type, temporary, read_place, terminate_call, forget_owned, drop_owned, exhaust_loop
 from lists import list_element
 
 
@@ -120,7 +120,7 @@ pub def owned_list_next(mut builder: Builder, receiver: Place, target: Place, sp
             drop_owned(builder, poll.local, span)
             if builder.owned != builder.loop_owners[-1]:
                 return Err("unsupported Body IR consuming poll with initialized loop-local owners")
-            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            exhaust_loop(builder, span)
             builder.current = selected
             builder.owned = owners
             drop_owned(builder, target.local, span)
