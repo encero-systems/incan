@@ -1,0 +1,5 @@
+"""A test module under the Loaf's tests directory."""
+
+
+def test_adds() -> None:
+    assert 1 + 2 == 3
