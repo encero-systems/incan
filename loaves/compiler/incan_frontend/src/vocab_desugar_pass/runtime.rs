@@ -580,6 +580,9 @@ struct Worker {
     input: Sender<Vec<u8>>,
     /// Framed output or a pipe/protocol failure.
     output: Receiver<Result<Value, PipeFailure>>,
+    /// The number the next batch carries; its reply echoes it, so a frame carrying another number, or none, is
+    /// unsolicited however soon it arrives.
+    next_batch: u64,
 }
 
 /// Why a worker's pipes produced no frame.
@@ -621,25 +624,38 @@ impl Worker {
         std::thread::spawn(move || {
             let _ = std::io::copy(&mut BufReader::new(stderr), &mut std::io::sink());
         });
-        Ok(Self { child, input, output })
+        Ok(Self {
+            child,
+            input,
+            output,
+            next_batch: 0,
+        })
     }
 
     /// Whether a frame or pipe failure arrived while no request was outstanding.
-    ///
-    /// Replies are not tagged with their request, so any queued frame would be read as the next request's reply.
     fn has_unsolicited_frame(&self) -> bool {
         !matches!(self.output.try_recv(), Err(TryRecvError::Empty))
     }
 
     /// Exchange one module batch within ten seconds, distinguishing signal crashes, exits and malformed frames.
+    ///
+    /// The batch carries its number and its reply must echo it, so a frame the worker wrote for no request is refused
+    /// rather than read as this batch's reply.
     fn invoke(&mut self, request: &Value) -> Result<Value, String> {
-        let mut bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;
+        let batch = self.next_batch;
+        self.next_batch += 1;
+        let mut tagged = request.clone();
+        if let Value::Object(fields) = &mut tagged {
+            fields.insert("batch".into(), Value::from(batch));
+        }
+        let mut bytes = serde_json::to_vec(&tagged).map_err(|error| error.to_string())?;
         bytes.push(b'\n');
         self.input
             .send(bytes)
             .map_err(|_| "native worker exited before reading its request".to_string())?;
         match self.output.recv_timeout(INVOCATION_TIMEOUT) {
-            Ok(Ok(value)) => Ok(value),
+            Ok(Ok(value)) if value.get("batch").and_then(Value::as_u64) == Some(batch) => Ok(value),
+            Ok(Ok(_)) => Err("unsolicited frame before its reply".into()),
             Ok(Err(PipeFailure::Malformed(message))) => Err(message),
             Ok(Err(PipeFailure::Closed(message))) => match self.exit_status_after_pipe_failure()? {
                 Some(status) if !status.success() => Err(if status.code().is_none() {
