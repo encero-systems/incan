@@ -1,0 +1,11 @@
+# behavior: a provider's published view relation governs a separately compiled consumer: replacing the viewed field while the view is still used is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+from pub::viewlib import SampleBuffer
+
+
+def overlap(mut buffer: BorrowedMut[SampleBuffer]) -> int:
+    mut samples = buffer.edit_samples()
+    buffer.samples = []
+    samples.append(1)
+    return len(samples)

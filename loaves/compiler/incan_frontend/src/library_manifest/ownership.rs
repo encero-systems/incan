@@ -65,6 +65,147 @@ pub(super) fn hydrate(contract: &OwnershipExport) -> Result<CheckedOwnershipCont
     )
 }
 
+/// Every published callable's checked contract, over the same public namespaces as [`has_contracts`], keyed by the
+/// canonical identity a consumer's call selects: a function's published identity, paired with overloads in
+/// declaration order as overload symbols pair them, and a method's own identity. A re-export carries its target's
+/// contract, so that exact target must publish it. A contract that cannot be keyed is refused, never dropped.
+pub(crate) fn exported_contracts(
+    manifest: &super::LibraryManifest,
+) -> Result<Vec<(incan_semantics_core::CanonicalSymbolId, CheckedOwnershipContract)>, LibraryManifestError> {
+    let mut contracts = root_contracts(manifest)?;
+    let Some(api) = &manifest.contract_metadata.api else {
+        if manifest.exports.aliases.iter().any(|alias| {
+            alias
+                .projected_function
+                .as_ref()
+                .is_some_and(|function| function.ownership.is_some())
+        }) {
+            return Err(invalid(
+                "a re-exported callable's ownership contract has no published declaration",
+            ));
+        }
+        return Ok(contracts);
+    };
+    let mut reexported = Vec::new();
+    for module in &api.modules {
+        let mut overloads: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for declaration in &module.declarations {
+            use crate::api_metadata::ApiDeclaration;
+            if !crate::api_metadata::checked_api_declaration_is_public_namespace_member(declaration) {
+                continue;
+            }
+            let methods = match declaration {
+                ApiDeclaration::Function(function) => {
+                    let slot = overloads.entry(function.name.as_str()).or_insert(0);
+                    let index = *slot;
+                    *slot += 1;
+                    if let Some(export) = &function.ownership {
+                        // The identity graph keys a module function by its declaring source path, as a consumer's
+                        // import of it selects; overloads pair in declaration order.
+                        let source_path = module
+                            .module_path
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(function.name.clone()))
+                            .collect::<Vec<_>>();
+                        let identity = manifest
+                            .contract_metadata
+                            .identity_graph
+                            .function_identities_for_source_path(&source_path)
+                            .get(index)
+                            .cloned()
+                            .ok_or_else(|| invalid("ownership contract names no published function identity"))?;
+                        contracts.push((identity, hydrate(export)?));
+                    }
+                    continue;
+                }
+                ApiDeclaration::Alias(alias) => {
+                    reexported.extend(
+                        alias
+                            .projected_function
+                            .iter()
+                            .map(|function| &function.callable)
+                            .filter(|callable| callable.ownership.is_some()),
+                    );
+                    continue;
+                }
+                ApiDeclaration::Model(owner) => &owner.methods,
+                ApiDeclaration::Class(owner) => &owner.methods,
+                ApiDeclaration::Trait(owner) => &owner.methods,
+                ApiDeclaration::Enum(owner) => &owner.methods,
+                ApiDeclaration::Newtype(owner) => &owner.methods,
+                _ => continue,
+            };
+            for method in methods {
+                if let Some(export) = &method.ownership {
+                    let identity = method
+                        .canonical
+                        .as_ref()
+                        .and_then(CanonicalIdentityExport::hydrate)
+                        .ok_or_else(|| invalid("ownership contract names no published method identity"))?;
+                    contracts.push((identity, hydrate(export)?));
+                }
+            }
+        }
+    }
+    // A re-export resolves to its target's identity, so that exact declaration must publish the contract.
+    let published = |callable: &crate::api_metadata::ApiCallableMetadata| {
+        contracts.iter().any(|(identity, _)| {
+            identity.declaration_name == callable.name
+                && identity.declaration_span == callable.anchor.span
+                && matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if *library == manifest.name)
+        })
+    };
+    if !reexported.into_iter().all(published) {
+        return Err(invalid(
+            "a re-exported callable's ownership contract has no published declaration",
+        ));
+    }
+    Ok(contracts)
+}
+
+/// Root exports: functions paired with their published identities, and the methods of every exported type.
+fn root_contracts(
+    manifest: &super::LibraryManifest,
+) -> Result<Vec<(incan_semantics_core::CanonicalSymbolId, CheckedOwnershipContract)>, LibraryManifestError> {
+    let mut contracts = Vec::new();
+    let mut overloads: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for function in &manifest.exports.functions {
+        let slot = overloads.entry(function.name.as_str()).or_insert(0);
+        let index = *slot;
+        *slot += 1;
+        let Some(export) = &function.ownership else {
+            continue;
+        };
+        let identity = manifest
+            .contract_metadata
+            .identity_graph
+            .function_identities_for_public_name(&function.name)
+            .get(index)
+            .cloned()
+            .flatten()
+            .ok_or_else(|| invalid("ownership contract names no published function identity"))?;
+        contracts.push((identity, hydrate(export)?));
+    }
+    let methods = (manifest.exports.models.iter().flat_map(|model| &model.methods))
+        .chain(manifest.exports.classes.iter().flat_map(|class| &class.methods))
+        .chain(manifest.exports.traits.iter().flat_map(|trait_| &trait_.methods))
+        .chain(manifest.exports.enums.iter().flat_map(|owner| &owner.methods))
+        .chain(manifest.exports.newtypes.iter().flat_map(|owner| &owner.methods));
+    for method in methods {
+        let Some(export) = &method.ownership else {
+            continue;
+        };
+        let identity = method
+            .canonical
+            .as_ref()
+            .and_then(CanonicalIdentityExport::hydrate)
+            .ok_or_else(|| invalid("ownership contract names no published method identity"))?;
+        contracts.push((identity, hydrate(export)?));
+    }
+    Ok(contracts)
+}
+
 /// Validate the contract and its explicit type markers against one exact signature.
 pub(super) fn validate(
     contract: Option<&OwnershipExport>,
@@ -456,7 +597,8 @@ mod tests {
         Ok(())
     }
 
-    /// A checked submodule cannot bypass provider execution refusal by omitting its declaration from root exports.
+    /// A checked submodule cannot bypass provider contracts by omitting its declaration from root exports: a contract
+    /// with no published identity refuses the consumer's import rather than letting its calls run unchecked.
     #[test]
     fn api_submodule_contracts_refuse_consumer_execution() -> Result<(), Box<dyn std::error::Error>> {
         use crate::api_metadata::{

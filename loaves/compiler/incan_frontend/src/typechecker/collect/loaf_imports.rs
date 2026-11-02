@@ -359,19 +359,35 @@ impl TypeChecker {
         span: Span,
     ) -> Option<std::sync::Arc<LibraryManifest>> {
         if let Some(entry) = self.loaves.entry(library) {
-            // Admission validated the format capability; imports need not rescan every API declaration.
-            if entry.artifact.manifest.manifest_format == crate::library_manifest::OWNERSHIP_MANIFEST_FORMAT {
-                self.errors.push(
-                    crate::diagnostics::CompileError::type_error(
-                        format!("Provider '{library}' requires explicit ownership execution support"),
-                        span,
-                    )
-                    .with_stable_code("INCAN-T0123")
-                    .with_note("Its contract metadata is preserved, but this compiler cannot execute it safely yet"),
-                );
-                return None;
+            let manifest = std::sync::Arc::clone(&entry.artifact.manifest);
+            // A provider's checked contracts govern calls to its callables exactly as a local declaration's do.
+            if manifest.manifest_format == crate::library_manifest::OWNERSHIP_MANIFEST_FORMAT {
+                match crate::library_manifest::ownership::exported_contracts(&manifest) {
+                    Ok(contracts) => {
+                        for (identity, contract) in contracts {
+                            self.type_info
+                                .declarations
+                                .ownership_contracts
+                                .entry(identity)
+                                .or_insert(contract);
+                        }
+                    }
+                    Err(error) => {
+                        self.errors.push(
+                            crate::diagnostics::CompileError::type_error(
+                                format!(
+                                    "Provider '{library}' publishes an ownership contract this compiler cannot read"
+                                ),
+                                span,
+                            )
+                            .with_stable_code("INCAN-T0123")
+                            .with_note(error.to_string()),
+                        );
+                        return None;
+                    }
+                }
             }
-            return Some(std::sync::Arc::clone(&entry.artifact.manifest));
+            return Some(manifest);
         }
         let known = self.loaves.keys().map(str::to_owned).collect::<Vec<_>>();
         self.errors.push(errors::unknown_pub_library(library, &known, span));
