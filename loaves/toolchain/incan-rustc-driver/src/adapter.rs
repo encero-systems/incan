@@ -304,7 +304,8 @@ struct Callbacks<'manifest> {
     development: bool,
     loaded: Vec<(PathBuf, String)>,
     timing: crate::native_timing::Timing,
-    /// A program or test has no consumers of its item paths, so its callables may live in per-file modules.
+    /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
+    /// are published, and a test harness selects each test by its module path.
     partition: bool,
 }
 
@@ -319,7 +320,7 @@ impl Callbacks<'_> {
     }
 
     /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
-    /// errors. A program or test groups its callables by source file, one module each, re-exported at the crate root:
+    /// errors. A program groups its callables by source file, one module each, re-exported at the crate root:
     /// rustc forms codegen units per module, so one root module would optimize the whole unit on a single thread.
     fn declare_callables(&self, compiler: &interface::Compiler, krate: &mut ast::Crate, sources: &Sources<'_>) {
         let mut grouped: std::collections::BTreeMap<&str, Vec<Box<ast::Item>>> = std::collections::BTreeMap::new();
@@ -1009,7 +1010,7 @@ pub fn compile(
         development: shared_store.is_some(),
         loaded: Vec::new(),
         timing,
-        partition: kind != UnitKind::Library,
+        partition: kind == UnitKind::Program,
     };
     let capture = crate::native_timing::Capture::begin();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));

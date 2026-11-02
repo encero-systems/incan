@@ -2,6 +2,7 @@
 
 from rust::std::process import Command
 from rust::std::io import Write, stderr
+from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue
 from files import parse_json, read
@@ -140,6 +141,13 @@ def run_test(binary: Path, file: str, test: JsonValue, project: str = "") -> Res
     trace_launch(binary.0)
     output = command.output().map_err((error) => f"cannot run {binary.0}: {error}")?
     passed = output.status.success()
+    # An exact selection that names no native test runs nothing and still succeeds; that never counts as a pass.
+    if passed and "running 1 test" not in decoded(output.stdout):
+        println(f"{label} FAILED")
+        mut err = stderr()
+        # A closed standard error cannot be told about, so a failed write is ignored.
+        _ = err.write_all(RustString.from(f"{binary.0} has no test named {native}\n").into_bytes())
+        return Ok(false)
     if project != "" and passed and "1 ignored" in decoded(output.stdout):
         println(f"{label} SKIPPED (Rust ignore attribute)")
         return Ok(true)
