@@ -2745,13 +2745,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         } = self.method_call_binding(recv, name, call, retained_binding);
 
         let intrinsic_carrier = self.checked_intrinsic_carrier(recv, name);
-        let receiver_operand = self.lower_method_receiver(recv, name, intrinsic_carrier.as_deref(), span, scope, out);
-
-        let (mut arg_operands, mut binding) =
-            match self.bind_declared_args(&format!("method `{name}`"), declared, args, scope, out) {
-                Ok(bound) => bound,
-                Err(description) => {
+        let (receiver_operand, mut arg_operands, mut binding) =
+            match self.bind_explicit_method_input(canonical.as_ref(), recv, args, span, scope, out) {
+                Some(Ok(bound)) => bound,
+                Some(Err(description)) => {
                     return self.unsupported_operand(description, scope, hir_span_value, out);
+                }
+                None => {
+                    let receiver_operand =
+                        self.lower_method_receiver(recv, name, intrinsic_carrier.as_deref(), span, scope, out);
+                    match self.bind_declared_args(&format!("method `{name}`"), declared, args, scope, out) {
+                        Ok((operands, binding)) => (receiver_operand, operands, binding),
+                        Err(description) => {
+                            return self.unsupported_operand(description, scope, hir_span_value, out);
+                        }
+                    }
                 }
             };
         self.retain_trait_partial_presets(name, canonical.as_ref(), &mut arg_operands, &mut binding);
@@ -2811,6 +2819,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             type_args: resolved_type_args,
             binding,
         };
+        let receiver_argument = match call_args.first() {
+            Some(bir::ArgumentElement::One(operand)) => Some(operand.clone()),
+            _ => None,
+        };
+        if let Some(view) =
+            self.view_call_place(span, receiver_argument.as_ref(), call_args.get(1..).unwrap_or_default())
+        {
+            return match view {
+                Ok((place, access)) => self.push_view_call(
+                    bir::Callee::Method(target),
+                    call_args,
+                    place,
+                    access,
+                    hir_span_value,
+                    out,
+                ),
+                Err(description) => self.unsupported_operand(description, scope, hir_span_value, out),
+            };
+        }
         self.push_call_temp(
             bir::Callee::Method(target),
             call_args,

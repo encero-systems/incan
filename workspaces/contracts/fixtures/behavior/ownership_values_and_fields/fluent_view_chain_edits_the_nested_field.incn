@@ -1,0 +1,28 @@
+# behavior: a fluent chain of exclusive returned views continues on the original nested field, so both edits reach the owner (#2500).
+# expect-stdout:
+#   Rotterdam
+#   3011
+
+class Address:
+    pub city: str
+    pub postcode: str
+
+    def set_city(mut self, city: str) -> Reference[Self] from self:
+        self.city = city
+        return self
+
+    def set_postcode(mut self, postcode: str) -> Reference[Self] from self:
+        self.postcode = postcode
+        return self
+
+
+class Customer:
+    pub name: str
+    pub address: Address
+
+
+def main() -> None:
+    mut customer = Customer(name="Sam", address=Address(city="Utrecht", postcode="3511"))
+    customer.address.set_city("Rotterdam").set_postcode("3011")
+    println(customer.address.city)
+    println(customer.address.postcode)

@@ -3,11 +3,12 @@
 use incan_semantics_core::HirSourceSpan;
 
 use super::super::super::flow;
-use crate::ast::{AssertKind, Condition, FunctionDecl, Spanned, Statement};
+use crate::ast::{AssertKind, Condition, Spanned, Statement};
+use crate::typechecker::ownership_contracts::CallableSource;
 
 /// Source event regions retain their producer order, but only these reconstructed edges establish execution.
 /// This validator does not infer ownership from spans; canonical access and loan validation owns that contract.
-pub(super) fn execution_order(graph: &flow::Graph, function: &FunctionDecl) -> Result<Vec<usize>, &'static str> {
+pub(super) fn execution_order(graph: &flow::Graph, function: CallableSource<'_>) -> Result<Vec<usize>, &'static str> {
     let entry = graph.nodes.first().ok_or("operation execution has no entry")?;
     if graph.entry != 0 || entry.span != graph.owner.declaration_span || !matches!(entry.event, flow::Event::Nothing) {
         return Err("operation execution has no canonical source entry");
@@ -17,7 +18,7 @@ pub(super) fn execution_order(graph: &flow::Graph, function: &FunctionDecl) -> R
         expected: vec![Vec::new(); graph.nodes.len()],
         next: 1,
     };
-    let _ = paths.block(&function.body, vec![0])?;
+    let _ = paths.block(function.body(), vec![0])?;
     if paths.next != graph.nodes.len() {
         return Err("operation execution contains events outside reachable source regions");
     }

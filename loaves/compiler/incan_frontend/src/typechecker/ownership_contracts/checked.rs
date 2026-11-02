@@ -9,7 +9,7 @@ use crate::ownership_metadata::{
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::types::ownership;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
 use std::collections::BTreeMap;
 
 struct Signature<'a> {
@@ -19,6 +19,7 @@ struct Signature<'a> {
     result_type: &'a ResolvedType,
     source: Option<&'a Spanned<ResultSource>>,
     receiver: Option<(&'a str, &'a ResolvedType)>,
+    receiver_mode: Option<Receiver>,
 }
 
 impl TypeChecker {
@@ -39,16 +40,16 @@ impl TypeChecker {
 
     /// Retain a method only after dispatch selected it, using the completed parameter inventory. Diagnostic
     /// fallback validation can inspect a candidate but must not publish it as the source call's ownership target.
+    /// A call site whose parameters needed no snapshot uses the selected declaration's own inventory.
     pub(in crate::typechecker) fn record_selected_method_input_call(
         &mut self,
         identity: Option<&CanonicalSymbolId>,
         receiver: Option<Receiver>,
+        declared: &[CallableParam],
         span: Span,
     ) {
-        let call = self
-            .type_info
-            .call_site_callable_params(span)
-            .and_then(|parameters| self.explicit_input_call_fact(identity, parameters, receiver));
+        let parameters = self.type_info.call_site_callable_params(span).unwrap_or(declared);
+        let call = self.explicit_input_call_fact(identity, parameters, receiver);
         if let Some(call) = call {
             self.type_info.protocols.explicit_input_calls.insert(span, call);
         }
@@ -68,8 +69,9 @@ impl TypeChecker {
             .declarations
             .ownership_contracts
             .get(callee)
-            .is_some_and(|contract| contract.modes.iter().any(|mode| mode.component.parameter.is_some()))
-        {
+            .is_some_and(|contract| {
+                contract.result_source.is_some() || contract.modes.iter().any(|mode| mode.component.parameter.is_some())
+            }) {
             super::InputCallKind::Explicit
         } else {
             if self.current_body_identity().is_none() || receiver.is_some() {
@@ -226,6 +228,7 @@ impl TypeChecker {
                 result_type: &binding.return_type,
                 source: function.result_source.as_ref(),
                 receiver: None,
+                receiver_mode: None,
             };
             if let Ok(Some(contract)) = self.checked_ownership_signature(&signature) {
                 self.type_info
@@ -266,6 +269,7 @@ impl TypeChecker {
                         .receiver_binding
                         .as_ref()
                         .map(|binding| (binding.node.as_str(), &receiver_type)),
+                    receiver_mode: method.node.receiver,
                 };
                 if let Ok(Some(contract)) = self.checked_ownership_signature(&signature) {
                     self.type_info
@@ -336,6 +340,7 @@ impl TypeChecker {
                 result_type: result,
                 source: function.result_source.as_ref(),
                 receiver: None,
+                receiver_mode: None,
             },
         );
     }
@@ -364,6 +369,7 @@ impl TypeChecker {
                     .receiver_binding
                     .as_ref()
                     .map(|binding| (binding.node.as_str(), receiver_type)),
+                receiver_mode: method.receiver,
             },
         );
     }
@@ -376,7 +382,7 @@ impl TypeChecker {
                     self.type_info
                         .declarations
                         .ownership_contracts
-                        .insert(identity, contract);
+                        .insert(identity.clone(), contract);
                 }
                 Ok(None) => return,
                 Err(error) => {
@@ -385,18 +391,127 @@ impl TypeChecker {
                 }
             }
         }
-        if let Some(source) = signature.source {
-            self.errors.push(
+        if signature.source.is_some()
+            && let Some(contract) = self.type_info.declarations.ownership_contracts.get(&identity).cloned()
+            && let Err(error) = self.check_returned_view_header(&contract, &signature)
+        {
+            self.errors.push(error);
+        }
+    }
+
+    /// A returned view needs a source that grants its access and holds its value type. Owned and ordinary inputs
+    /// cannot back a view, and a shared source cannot supply exclusive access.
+    fn check_returned_view_header(
+        &self,
+        contract: &CheckedOwnershipContract,
+        signature: &Signature<'_>,
+    ) -> Result<(), CompileError> {
+        let Some(source) = signature.source else { return Ok(()) };
+        let view = crate::ownership_metadata::returned_view(Some(contract))
+            .map_err(|reason| {
                 CompileError::type_error(
-                    "Borrowed result-source contracts are recognized but not executable yet".into(),
-                    source.span,
+                    format!("Returned access cannot execute yet: {reason}"),
+                    signature.result.span,
                 )
                 .with_stable_code("INCAN-T0123")
-                .with_note(
-                    "A resolved source declaration is not proof that the executable body retains only that source",
-                ),
-            );
+            })?
+            .ok_or_else(|| {
+                Self::ownership_source_error(
+                    "A result source requires a Borrowed[T] or Reference[T] result",
+                    source.span,
+                )
+            })?;
+        let exclusive = view.access == IncanInputAccess::Exclusive;
+        let source_type = match view.source.slot {
+            SourceSlot::Receiver => {
+                let (_, receiver) = signature.receiver.ok_or_else(|| {
+                    Self::ownership_source_error("Result source receiver is absent", source.node.binding.span)
+                })?;
+                if exclusive && signature.receiver_mode != Some(Receiver::Mutable) {
+                    return Err(Self::ownership_source_error(
+                        "Reference[T] requires exclusive access to its source; declare the receiver `mut self`",
+                        source.node.binding.span,
+                    ));
+                }
+                receiver.clone()
+            }
+            SourceSlot::Parameter(slot) => {
+                let input = contract
+                    .modes
+                    .iter()
+                    .find(|mode| mode.component.parameter == Some(slot) && mode.component.children.is_empty());
+                let refusal = match input.map(|mode| mode.mode) {
+                    Some(ownership::OwnershipMode::BorrowedMut) => None,
+                    Some(ownership::OwnershipMode::Borrowed) if !exclusive => None,
+                    Some(ownership::OwnershipMode::Borrowed) => {
+                        Some("Reference[T] requires exclusive access to its source; a Borrowed[T] input is shared")
+                    }
+                    Some(ownership::OwnershipMode::Owned) => {
+                        Some("An Owned[T] input is consumed by the call; a returned view cannot borrow from it")
+                    }
+                    _ => Some("A returned view's source must be a Borrowed[T] or BorrowedMut[T] input"),
+                };
+                match (refusal, input) {
+                    (None, Some(input)) => input.underlying.clone(),
+                    (refusal, _) => {
+                        return Err(Self::ownership_source_error(
+                            refusal.unwrap_or("A returned view's source must be a borrowed input"),
+                            source.node.binding.span,
+                        ));
+                    }
+                }
+            }
+        };
+        let (_, held) = self.resolve_ownership_source_fields(&source_type, source)?;
+        let returned = match signature.receiver {
+            Some((_, receiver)) => self.substitute_self_in_resolved_type(view.mode.underlying.clone(), receiver),
+            None => view.mode.underlying.clone(),
+        };
+        if returned != held {
+            return Err(Self::ownership_source_error(
+                &format!("Returned view type '{returned}' differs from its source's type '{held}'"),
+                signature.result.span,
+            ));
         }
+        Ok(())
+    }
+
+    /// The value a body returns when its declaration's result is a direct returned view; otherwise the result.
+    /// A malformed relation keeps the written result; its declaration check reports the refusal.
+    pub(in crate::typechecker) fn returned_value_type(
+        &self,
+        identity: &CanonicalSymbolId,
+        result: &ResolvedType,
+    ) -> ResolvedType {
+        let contract = self.type_info.declarations.ownership_contracts.get(identity);
+        crate::ownership_metadata::result_value_type(contract, result)
+            .cloned()
+            .unwrap_or_else(|_| result.clone())
+    }
+
+    /// Project a selected declaration's returned view into the call's value type, as for its inputs. The published
+    /// result metadata keeps the mode; the call's relation is checked against the declaration's contract.
+    pub(in crate::typechecker) fn ownership_call_value_result(
+        &self,
+        identity: Option<&CanonicalSymbolId>,
+        result: &ResolvedType,
+        span: Span,
+    ) -> Result<Option<ResolvedType>, CompileError> {
+        let Some(contract) =
+            identity.and_then(|identity| self.type_info.declarations.ownership_contracts.get(identity))
+        else {
+            return Ok(None);
+        };
+        let refusal = |reason: &str| CompileError::type_error(reason.into(), span).with_stable_code("INCAN-T0123");
+        if crate::ownership_metadata::returned_view(Some(contract))
+            .map_err(refusal)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        crate::ownership_metadata::result_value_type(Some(contract), result)
+            .map(|value| Some(value.clone()))
+            .map_err(refusal)
     }
 
     /// Resolve immutable header obligations without publishing diagnostics or consulting a callee's statements.
@@ -458,7 +573,7 @@ impl TypeChecker {
                     source.node.binding.span,
                 ));
             };
-            let fields = self.resolve_ownership_source_fields(ty, source)?;
+            let (fields, _) = self.resolve_ownership_source_fields(ty, source)?;
             contract.result_source = Some(ResultDependency { slot, fields });
         }
         if contract.modes.is_empty() && contract.result_source.is_none() {
@@ -555,7 +670,7 @@ impl TypeChecker {
         &self,
         root: &ResolvedType,
         source: &Spanned<ResultSource>,
-    ) -> Result<Vec<CanonicalSymbolId>, CompileError> {
+    ) -> Result<(Vec<CanonicalSymbolId>, ResolvedType), CompileError> {
         let mut ty = root.clone();
         let mut fields = Vec::new();
         for field in &source.node.fields {
@@ -599,7 +714,7 @@ impl TypeChecker {
             fields.push(identity);
             ty = next_type;
         }
-        Ok(fields)
+        Ok((fields, ty))
     }
 
     /// Report malformed source relationships consistently for direct and alias-expanded signatures.

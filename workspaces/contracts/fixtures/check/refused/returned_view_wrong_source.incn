@@ -1,0 +1,9 @@
+# behavior: a returned view must return its declared source place, not another field (#2500).
+# expect-diagnostic: INCAN-T0124
+
+class Address:
+    pub city: str
+    pub street: str
+
+    def view(mut self) -> Reference[str] from self.city:
+        return self.street

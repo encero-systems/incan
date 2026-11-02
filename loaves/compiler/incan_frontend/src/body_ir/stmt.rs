@@ -127,6 +127,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Statement::ChainedAssignment(chained_assignment) => {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
+            ast::Statement::Return(Some(returned)) if self.returned_view.is_some() => {
+                if let Err(reason) = self.lower_view_return(returned, scope, span, out) {
+                    self.push_unsupported_stmt(reason, span, out);
+                }
+            }
             ast::Statement::Return(value) => {
                 let value = value
                     .as_ref()
@@ -149,10 +154,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     self.lower_yield(value, scope, span, out);
                 } else {
                     let value = self.lower_expr_to_operand(expr, scope, out);
-                    out.push(bir::Statement {
-                        kind: bir::StatementKind::Expr { value },
-                        span,
-                    });
+                    // A discarded view call already ran for its effects; its substituted place is not read.
+                    if self.type_info.selected_call_view(expr.span).is_none() {
+                        out.push(bir::Statement {
+                            kind: bir::StatementKind::Expr { value },
+                            span,
+                        });
+                    }
                 }
             }
             ast::Statement::Assert(assert_stmt) => self.lower_assert(assert_stmt, remaining, scope, span, out),

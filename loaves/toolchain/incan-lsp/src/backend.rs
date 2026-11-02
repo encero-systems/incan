@@ -5060,7 +5060,7 @@ mod ownership_signature_tests {
         let program = incan_frontend::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
         checker.set_current_package_identity(Some("provider".into()));
-        assert!(checker.check_program(&program).is_err());
+        checker.check_program(&program).map_err(|errors| format!("{errors:?}"))?;
         let api = collect_checked_api_metadata(&program, &checker, vec!["provider".into()]);
         let mut function = api
             .declarations

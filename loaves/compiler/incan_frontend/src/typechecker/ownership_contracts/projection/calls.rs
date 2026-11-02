@@ -25,11 +25,17 @@ pub(crate) struct CheckedInputArgument {
     pub source: Option<CheckedInputSource>,
 }
 
+/// A method receiver borrowed for one invocation: shared for `self`, exclusive for `mut self`.
+pub(crate) struct CheckedInputReceiver {
+    pub source: CheckedInputSource,
+    pub exclusive: bool,
+}
+
 /// Instantiated value parameters and authenticated source access belong to one selected invocation.
 pub(crate) struct CheckedInputInvocation<'a> {
     pub parameters: &'a [CallableParam],
     pub arguments: Vec<CheckedInputArgument>,
-    pub has_receiver: bool,
+    pub receiver: Option<CheckedInputReceiver>,
 }
 
 impl<'a> CheckedInputBody<'a> {
@@ -65,15 +71,45 @@ impl<'a> CheckedInputBody<'a> {
                 source,
             });
         }
+        let receiver = invocation
+            .receiver
+            .map(|loan| {
+                let loan = self
+                    .graph
+                    .loans
+                    .get(loan.0)
+                    .ok_or("explicit method receiver has no checked loan")?;
+                Ok::<_, &'static str>(CheckedInputReceiver {
+                    source: project_source(&loan.source)?,
+                    exclusive: loan.kind == flow::LoanKind::Exclusive,
+                })
+            })
+            .transpose()?;
         Ok(CheckedInputInvocation {
             parameters: &call.parameters,
             arguments,
-            has_receiver: invocation.receiver.is_some(),
+            receiver,
         })
     }
 }
 
 impl TypeCheckInfo {
+    /// The returned view a selected call produces, read from its callee's contract: the access, the source slot
+    /// and the declared stored-field path. Calls without a returned view, or without selected facts, give `None`.
+    pub(crate) fn selected_call_view(
+        &self,
+        span: HirSourceSpan,
+    ) -> Option<(
+        IncanInputAccess,
+        crate::ownership_metadata::SourceSlot,
+        Vec<CanonicalSymbolId>,
+    )> {
+        let call = self.protocols.explicit_input_calls.get(&span)?;
+        let contract = self.selected_input_contract(call).ok()?;
+        let view = crate::ownership_metadata::returned_view(contract).ok()??;
+        Some((view.access, view.source.slot.clone(), view.source.fields.clone()))
+    }
+
     /// Select the explicit route even when its owning body proof is absent, so defaults and indirect evaluations
     /// cannot fall back to ordinary inferred passing merely because the supported source flow was unavailable.
     pub(crate) fn has_explicit_input_invocation(
@@ -84,7 +120,10 @@ impl TypeCheckInfo {
         self.protocols.explicit_input_calls.contains_key(&span)
             || callee
                 .and_then(|callee| self.declarations.ownership_contracts.get(callee))
-                .is_some_and(|contract| contract.modes.iter().any(|mode| mode.component.parameter.is_some()))
+                .is_some_and(|contract| {
+                    contract.result_source.is_some()
+                        || contract.modes.iter().any(|mode| mode.component.parameter.is_some())
+                })
     }
 }
 

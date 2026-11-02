@@ -1,5 +1,5 @@
-# behavior: Returned ownership dependencies remain refused until their dedicated executable source relationship exists.
+# behavior: A returned view nested inside another result type remains refused until aggregate dependencies are represented.
 # expect-diagnostic: INCAN-T0123
 
-def inspect(value: Borrowed[str]) -> Borrowed[str] from value:
-    return value
+def inspect(value: Borrowed[str]) -> Result[Borrowed[str], str] from value:
+    return Ok(value)

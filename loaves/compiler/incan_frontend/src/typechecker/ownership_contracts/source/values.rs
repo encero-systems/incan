@@ -45,8 +45,8 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
-    /// A complete local model field binding constructs fresh storage after evaluating supplied values in written
-    /// order. Deferred defaults, native/class constructors and non-Copy place transfer require separate proofs.
+    /// A complete local model or class field binding constructs fresh storage after evaluating supplied values in
+    /// written order. Deferred defaults, native constructors and non-Copy place transfer require separate proofs.
     pub(super) fn model_construction(
         &mut self,
         callee: &Spanned<Expr>,
@@ -57,12 +57,15 @@ impl Builder<'_> {
         let owner = self.checker.type_info.resolved_identity(callee.span);
         if !matches!(callee.node, Expr::Ident(_))
             || owner.is_none_or(|owner| {
-                owner.kind != SemanticSourceTargetKind::Model || !matches!(owner.origin, SymbolOrigin::Module(_))
+                !matches!(
+                    owner.kind,
+                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                ) || !matches!(owner.origin, SymbolOrigin::Module(_))
             })
         {
             return Err(Unavailable {
                 span,
-                reason: "construction needs a checked local model declaration".into(),
+                reason: "construction needs a checked local model or class declaration".into(),
             });
         }
         let binding = self

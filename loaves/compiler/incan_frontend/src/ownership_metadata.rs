@@ -157,6 +157,64 @@ pub(crate) fn direct_input_access(
         .map_or(incan_semantics_core::IncanInputAccess::Inferred, |(_, access)| access))
 }
 
+/// A whole result that is a view of exactly one source place: the declared parameter or receiver with its stored
+/// field path. The access is shared for `Borrowed[T]` and exclusive for `Reference[T]`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ReturnedView<'a> {
+    pub mode: &'a AccessMode<crate::symbols::ResolvedType>,
+    pub access: incan_semantics_core::IncanInputAccess,
+    pub source: &'a ResultDependency<incan_semantics_core::CanonicalSymbolId>,
+}
+
+/// Resolve a direct returned view. Owned aggregates retaining a dependency and views nested inside another result
+/// type need aggregate dependency facts and stay refused; absence of both result facts is an ordinary result.
+pub(crate) fn returned_view(
+    contract: Option<&CheckedOwnershipContract>,
+) -> Result<Option<ReturnedView<'_>>, &'static str> {
+    use incan_lang::lang::types::ownership::OwnershipMode;
+    use incan_semantics_core::IncanInputAccess;
+    let Some(contract) = contract else { return Ok(None) };
+    if contract.schema_version != 1 {
+        return Err("unsupported checked ownership contract schema");
+    }
+    let mut results = contract.modes.iter().filter(|mode| mode.component.parameter.is_none());
+    match (results.next(), &contract.result_source) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err("an owned result that retains a source dependency requires aggregate dependency facts"),
+        (Some(_), None) => Err("borrowed result has no source dependency"),
+        (Some(mode), Some(source)) => {
+            if results.next().is_some() || !mode.component.children.is_empty() {
+                return Err("returned access inside another type requires aggregate dependency facts");
+            }
+            let access = match mode.mode {
+                OwnershipMode::Reference => IncanInputAccess::Exclusive,
+                OwnershipMode::Borrowed => IncanInputAccess::Shared,
+                OwnershipMode::BorrowedMut => return Err("returned exclusive access is written Reference[T]"),
+                OwnershipMode::Owned => return Err("an owned result cannot retain access to its source"),
+            };
+            Ok(Some(ReturnedView { mode, access, source }))
+        }
+    }
+}
+
+/// Expose a returned view's value type only when its canonical declaration authorizes the direct result mode, as for
+/// inputs. An ordinary result is returned unchanged.
+pub(crate) fn result_value_type<'a>(
+    contract: Option<&CheckedOwnershipContract>,
+    result: &'a crate::symbols::ResolvedType,
+) -> Result<&'a crate::symbols::ResolvedType, &'static str> {
+    if returned_view(contract)?.is_none() {
+        return Ok(result);
+    }
+    let crate::symbols::ResolvedType::Generic(_, arguments) = result else {
+        return Err("selected ownership contract does not match its result metadata");
+    };
+    let [underlying] = arguments.as_slice() else {
+        return Err("selected returned access requires exactly one value type");
+    };
+    Ok(underlying)
+}
+
 /// Keep the source mode and its payload together after validating the selected structural slot.
 fn direct_input_mode(
     contract: Option<&CheckedOwnershipContract>,

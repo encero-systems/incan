@@ -54,7 +54,8 @@ def element_generic_loans(
 
 pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> list[list[str]]:
     """
-    Retain generic loans: 1. Visit original parameters. 2. Visit the result. 3. Omit unneeded annotations.
+    Retain generic loans: 1. Visit original parameters. 2. Visit the result. 3. Tie a returned view to its source.
+    4. Omit unneeded annotations.
 
     Each reference introduced by one type argument has a distinct binder, reused at every occurrence of that
     argument. Source-written references remain elided; they never acquire a substituted argument's binder.
@@ -65,7 +66,15 @@ pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> list[list
         signature.append(type_lifetimes(parameter.ty, body.type_parameters, arguments, ""))
     # 2. Visit the original result under the same binder identities.
     signature.append(type_lifetimes(body.return_type, body.type_parameters, arguments, ""))
-    # 3. Omit annotations when specialization introduces no generic loans, including transformed generators.
+    # 3. A returned view's outer reference shares its source parameter's outer borrow, and nothing else.
+    match body.returned_view:
+        Some(view) =>
+            slot = int(view.slot)
+            signature[slot] = ["view"] + signature[slot]
+            signature[len(signature) - 1] = ["view"] + signature[len(signature) - 1]
+            return signature
+        None => pass
+    # 4. Omit annotations when specialization introduces no generic loans, including transformed generators.
     if has_generic_loans(signature):
         return signature
     return []

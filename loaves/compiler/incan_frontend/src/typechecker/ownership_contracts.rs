@@ -14,7 +14,7 @@ pub(super) mod projection;
 mod report;
 mod source;
 
-pub(super) use admission::direct_function_boundary;
+pub(super) use admission::{direct_function_boundary, direct_method_boundary};
 pub(super) use source::{CallableSource, Unavailable};
 
 use super::TypeChecker;
@@ -108,7 +108,15 @@ impl TypeChecker {
             return;
         }
         self.retain_input_copy_values(&identity, span);
-        let output = match source::build(self, callable, span, &identity) {
+        let (graph, view_errors) = source::build_reporting_views(self, callable, span, &identity);
+        let view_refused = !view_errors.is_empty();
+        self.errors.extend(view_errors);
+        let output = match graph {
+            // A return that does not borrow the declared view source leaves the body without a proof.
+            Ok(_) if view_refused => InputFlow::Unavailable(Unavailable {
+                span,
+                reason: "returned view does not borrow its declared source".into(),
+            }),
             Ok(graph) => match flow::analyze(&graph) {
                 Ok(analysis) => {
                     self.errors.extend(report::conflicts(&graph, &analysis));
@@ -122,8 +130,13 @@ impl TypeChecker {
             .protocols
             .explicit_input_flow
             .insert(identity.clone(), output);
-        if let CallableSource::Function(function) = callable
-            && let Err(reason) = self.type_info.direct_input_admission(&identity, function)
+        let admission = match callable {
+            CallableSource::Function(function) => self.type_info.direct_input_admission(&identity, function),
+            CallableSource::Method(method) => self.type_info.method_input_admission(&identity, method),
+        };
+        // A refused returned view already names the offending return; admission would only repeat it.
+        if let Err(reason) = admission
+            && !view_refused
         {
             self.errors.push(CompileError::type_error(
                 format!("Explicit ownership body cannot execute yet: {reason}"), span,
@@ -644,13 +657,13 @@ mod tests {
         Ok(())
     }
 
-    /// Calls, escaping results and temporary owners remain unavailable until their exact checked access
+    /// Calls, aggregate results and temporary owners remain unavailable until their exact checked access
     /// and dependency facts exist; a partial graph cannot count as validation of the whole callable.
     #[test]
     fn source_flow_refuses_unprojected_dependencies() -> Result<(), Box<dyn std::error::Error>> {
         for source in [
             "def show(value: Borrowed[int]) -> int:\n    return abs(value)\n",
-            "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n",
+            "def view(value: Borrowed[str]) -> Result[Borrowed[str], str] from value:\n    return Ok(value)\n",
             "def local(value: Borrowed[str]) -> None:\n    let view: Reference[str] = value\n",
             "def temporary() -> None:\n    let view: Borrowed[str] = \"temporary\"\n",
         ] {
@@ -741,24 +754,14 @@ mod tests {
         Ok(())
     }
 
-    /// A selected method closes Self in its ownership contract using the same receiver as its parameter types.
+    /// A selected method closes Self in its ownership contract using the same receiver as its parameter types; a
+    /// shared receiver and a shared argument may borrow the same owner.
     #[test]
     fn method_input_payload_retains_checked_self_substitution() -> Result<(), Box<dyn std::error::Error>> {
         let checker = checked(
             "class Reader:\n    def view(self, other: Borrowed[Self]) -> None:\n        pass\ndef run() -> None:\n    reader = Reader()\n    reader.view(reader)\n",
         )?;
-        assert!(
-            !checker.errors.is_empty(),
-            "explicit execution gate unexpectedly opened"
-        );
-        assert!(
-            checker
-                .errors
-                .iter()
-                .all(|error| error.stable_code() == Some("INCAN-T0123")),
-            "{:?}",
-            checker.errors
-        );
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
         assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 1);
         Ok(())
     }
@@ -801,11 +804,15 @@ mod tests {
                     .any(|error| error.stable_code() == Some("INCAN-T0126")),
                 conflict
             );
-            assert!(
+            // A method frame without conflicts is admitted; a conflicting one has no executable proof.
+            assert_eq!(
                 checker
                     .errors
                     .iter()
-                    .any(|error| error.stable_code() == Some("INCAN-T0123"))
+                    .any(|error| error.stable_code() == Some("INCAN-T0123")),
+                conflict,
+                "{source}: {:?}",
+                checker.errors
             );
         }
         let checker = checked(
@@ -1826,7 +1833,7 @@ mod tests {
                 .type_info
                 .checked_input_body(owner)?
                 .ok_or("missing proof")?
-                .validate_operation_coverage(function)?;
+                .validate_operation_coverage(CallableSource::Function(function))?;
             let InputFlow::Checked { graph, .. } = checker
                 .type_info
                 .protocols
@@ -1866,7 +1873,7 @@ mod tests {
                         facts
                             .checked_input_body(owner)?
                             .ok_or("missing proof")?
-                            .validate_operation_coverage(function)
+                            .validate_operation_coverage(CallableSource::Function(function))
                             .is_err(),
                         "accepted altered branch {branch}"
                     );
@@ -2741,7 +2748,7 @@ mod tests {
                 false,
             ),
             (
-                "def read(value: Borrowed[int]) -> Borrowed[int] from value:\n    return value\n",
+                "def read(value: Borrowed[int], other: Borrowed[int]) -> Borrowed[int] from value:\n    return other\n",
                 false,
             ),
         ] {
@@ -2774,13 +2781,19 @@ mod tests {
         Ok(checker)
     }
 
-    /// Reannotation, method bodies, returned aliases and conditional owned locals remain outside direct admission.
+    /// Reannotation and conditional owned locals remain outside direct admission. A method body's alias and an
+    /// alias returned as the declared view source are admitted.
     #[test]
     fn local_alias_admission_preserves_other_boundaries() -> Result<(), Box<dyn std::error::Error>> {
         for source in [
-            "def wrong() -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n",
             "class Counter:\n    value: int\n    def read(self) -> int:\n        let local: Borrowed[int] = self.value\n        return local\n",
             "def read(value: Borrowed[str]) -> Borrowed[str] from value:\n    let local: Borrowed[str] = value\n    return local\n",
+        ] {
+            let checker = checked(source)?;
+            assert!(checker.errors.is_empty(), "{source}: {:?}", checker.errors);
+        }
+        for source in [
+            "def wrong() -> int:\n    mut value = 1\n    value: BorrowedMut[int] = 2\n    return value\n",
             "def read(value: Owned[int], choose: bool) -> int:\n    if choose:\n        let local: Owned[int] = value\n        return local\n    return value\n",
         ] {
             let checker = checked(source)?;
@@ -2894,10 +2907,11 @@ mod tests {
     }
 
     /// Abstract and concrete receiver sources share checked slots; concrete field paths retain their declaration.
+    /// Both returned views are executable.
     #[test]
     fn receiver_contracts_cover_abstract_and_concrete_methods() -> Result<(), Box<dyn std::error::Error>> {
         for (source, fields) in [
-            ("pub trait Reader:\n    def view(self) -> Borrowed[str] from self\n", 0),
+            ("pub trait Reader:\n    def view(self) -> Borrowed[Self] from self\n", 0),
             (
                 "pub class Page:\n    title: str\n    def view(self) -> Borrowed[str] from self.title:\n        return self.title\n",
                 1,
@@ -2923,12 +2937,7 @@ mod tests {
             let dependency = contract.result_source.as_ref().ok_or("missing receiver source")?;
             assert_eq!(dependency.slot, crate::ownership_metadata::SourceSlot::Receiver);
             assert_eq!(dependency.fields.len(), fields);
-            assert!(
-                checker
-                    .errors
-                    .iter()
-                    .any(|error| error.stable_code() == Some("INCAN-T0123"))
-            );
+            assert!(checker.errors.is_empty(), "{source}: {:?}", checker.errors);
         }
         Ok(())
     }
@@ -3008,5 +3017,114 @@ mod tests {
         );
         assert!(invalid.type_info.declarations.ownership_contracts.is_empty());
         Ok(())
+    }
+
+    /// A method frame is checked like a function, and its caller's receiver loan conflicts with an overlapping
+    /// explicit argument while a disjoint field argument stays accepted.
+    #[test]
+    fn method_frames_check_receiver_and_argument_overlap() -> Result<(), Box<dyn std::error::Error>> {
+        let declarations = "class Counter:\n    pub value: int\n    pub step: int\n\n    def bump(mut self, mut amount: BorrowedMut[int]) -> None:\n        self.value = self.value + amount\n";
+        let accepted = checked(&format!(
+            "{declarations}\ndef main() -> int:\n    mut counter = Counter(value=1, step=2)\n    mut step = 2\n    counter.bump(step)\n    return counter.value\n"
+        ))?;
+        assert!(
+            accepted.errors.is_empty(),
+            "{:?} {:?}",
+            accepted.errors,
+            accepted
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .values()
+                .filter_map(|flow| match flow {
+                    InputFlow::Unavailable(reason) => Some(reason.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        );
+        let overlapping = checked(&format!(
+            "{declarations}\ndef main() -> int:\n    mut counter = Counter(value=1, step=2)\n    counter.bump(counter.step)\n    return counter.value\n"
+        ))?;
+        assert!(
+            overlapping
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{:?}",
+            overlapping.errors
+        );
+        Ok(())
+    }
+
+    /// The RFC's returned field views: a method may hold the whole receiver while running, and its result retains
+    /// only the declared field, so a disjoint sibling edit is accepted while overlapping edits, owner replacement,
+    /// wrong sources, fresh values and manufactured exclusive access are refused.
+    #[test]
+    fn returned_field_views_retain_only_their_declared_source() -> Result<(), Box<dyn std::error::Error>> {
+        let declarations = "class Address:\n    pub city: str\n\n    def set_city(mut self, city: str) -> Reference[Self] from self:\n        self.city = city\n        return self\n\nclass Customer:\n    pub name: str\n    pub address: Address\n\n    def edit_address(mut self) -> Reference[Address] from self.address:\n        return self.address\n";
+        let accepted = checked(&format!(
+            "{declarations}\ndef main() -> None:\n    mut customer = Customer(name=\"Sam\", address=Address(city=\"Utrecht\"))\n    mut address = customer.edit_address()\n    customer.name = \"Samuel\"\n    address.set_city(\"Rotterdam\")\n    assert customer.address.city == \"Rotterdam\"\n"
+        ))?;
+        assert!(
+            accepted.errors.is_empty(),
+            "{:?} {:?}",
+            accepted.errors,
+            flow_summary(&accepted)
+        );
+        for (body, code) in [
+            (
+                "    mut address = customer.edit_address()\n    customer.address.city = \"Amsterdam\"\n    address.set_city(\"Rotterdam\")\n",
+                "INCAN-T0126",
+            ),
+            (
+                "    mut address = customer.edit_address()\n    customer = Customer(name=\"Alex\", address=Address(city=\"Amsterdam\"))\n    address.set_city(\"Rotterdam\")\n",
+                "INCAN-T0126",
+            ),
+        ] {
+            let refused = checked(&format!(
+                "{declarations}\ndef main() -> None:\n    mut customer = Customer(name=\"Sam\", address=Address(city=\"Utrecht\"))\n{body}"
+            ))?;
+            assert!(
+                refused.errors.iter().any(|error| error.stable_code() == Some(code)),
+                "{body}: {:?} {:?}",
+                refused.errors,
+                flow_summary(&refused)
+            );
+        }
+        for source in [
+            "class Address:\n    pub city: str\n    pub street: str\n    def view(mut self) -> Reference[str] from self.city:\n        return self.street\n",
+            "class Address:\n    pub city: str\n    def view(mut self) -> Reference[Address] from self:\n        return Address(city=\"Utrecht\")\n",
+            "class Address:\n    pub city: str\n    def view(self) -> Reference[Address] from self:\n        return self\n",
+            "class Address:\n    pub city: str\ndef view(address: Owned[Address]) -> Borrowed[Address] from address:\n    return address\n",
+        ] {
+            let refused = checked(source)?;
+            assert!(
+                refused
+                    .errors
+                    .iter()
+                    .any(|error| error.stable_code() == Some("INCAN-T0124")),
+                "{source}: {:?}",
+                refused.errors
+            );
+        }
+        Ok(())
+    }
+
+    /// Each body's flow outcome, for assertion messages.
+    fn flow_summary(checker: &TypeChecker) -> Vec<(String, String)> {
+        checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .map(|(owner, flow)| {
+                let outcome = match flow {
+                    InputFlow::Checked { analysis, .. } => format!("checked {:?}", analysis.conflicts),
+                    InputFlow::Unavailable(reason) => format!("unavailable {reason:?}"),
+                    InputFlow::Invalid { fault, .. } => format!("invalid {fault:?}"),
+                };
+                (owner.declaration_name.clone(), outcome)
+            })
+            .collect()
     }
 }
