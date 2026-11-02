@@ -2,7 +2,9 @@
 //! describe a source shape whose native storage or cleanup is still deliberately unavailable.
 
 use super::CallableSource;
-use crate::ast::{BinaryOp, Condition, Expr, FunctionDecl, MethodDecl, Param, ParamKind, Spanned, Statement};
+use crate::ast::{
+    BinaryOp, Condition, Expr, FunctionDecl, MatchBody, MethodDecl, Param, ParamKind, Spanned, Statement,
+};
 use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
@@ -44,6 +46,17 @@ fn callable_boundary(callable: CallableSource<'_>) -> bool {
 /// Recursive source shape only: full CFG/event coverage remains the authority for every retained operation.
 fn input_statements_supported(body: &[Spanned<Statement>], conditionals: bool) -> bool {
     body.iter().all(|statement| match &statement.node {
+        // A match's arms are paths of the conditional profile, like an `if`'s branches.
+        Statement::Expr(Spanned {
+            node: Expr::Match(_, arms),
+            ..
+        }) => {
+            conditionals
+                && arms.iter().all(|arm| match &arm.node.body {
+                    MatchBody::Expr(_) => true,
+                    MatchBody::Block(body) => input_statements_supported(body, true),
+                })
+        }
         Statement::Pass
         | Statement::Assignment(_)
         | Statement::FieldAssignment(_)
@@ -74,14 +87,15 @@ fn input_statements_supported(body: &[Spanned<Statement>], conditionals: bool) -
     })
 }
 
-/// Whether a body has control flow of its own, which only the conditional profile can execute.
+/// Whether a body has control flow of its own, which only the conditional profile can execute: branches, loops,
+/// match arms and `?` propagation.
 fn has_control_flow(body: &[Spanned<Statement>]) -> bool {
     body.iter().any(|statement| {
         matches!(
             statement.node,
             Statement::If(_) | Statement::While(_) | Statement::Loop(_) | Statement::For(_)
         )
-    })
+    }) || any_expr_in_body(body, |expression| matches!(expression, Expr::Try(_) | Expr::Match(..)))
 }
 
 impl TypeCheckInfo {
@@ -176,7 +190,7 @@ impl TypeCheckInfo {
                 matches!(
                     expression,
                     Expr::Index(..) | Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _)
-                )
+                ) || (!conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..)))
             })
         {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");

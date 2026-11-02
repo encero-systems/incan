@@ -1,0 +1,89 @@
+# behavior: explicit bodies propagate with `?`, construct results and match on them; an owner still held when `?` propagates or when an arm skips its transfer is dropped by its frame, and repeating both paths leaves the heap as it found it (#2500).
+# expect-stdout:
+#   5
+#   empty
+#   5 characters
+#   empty
+#   kept
+#   heap flat
+
+"""Propagate, construct and match results in explicit bodies, and measure what the error paths leave behind."""
+
+from rust::drop_probe import live_heap_bytes
+
+
+def heap() -> int:
+    return live_heap_bytes()
+
+
+def size(text: Owned[str]) -> Result[int, str]:
+    if len(text) == 0:
+        return Err("empty")
+    return Ok(len(text))
+
+
+def both(text: Owned[str], other: Owned[str]) -> Result[int, str]:
+    first = size(text)?
+    second = size(other)?
+    return Ok(first + second)
+
+
+def describe(text: Owned[str]) -> str:
+    match size(text):
+        Ok(count) => return f"{count} characters"
+        Err(message) => return message
+
+
+def keep(value: Owned[str]) -> None:
+    println("kept")
+
+
+def quiet(value: Owned[str]) -> None:
+    pass
+
+
+def route(text: Owned[str], other: Owned[str]) -> None:
+    match size(text):
+        Ok(_) => keep(other)
+        Err(_) => pass
+
+
+def quiet_route(text: Owned[str], other: Owned[str]) -> None:
+    match size(text):
+        Ok(_) => quiet(other)
+        Err(_) => pass
+
+
+def repeated_paths() -> None:
+    """
+    Run each error path a thousand times: `?` propagating past a second owner, and a match arm skipping its transfer.
+    An owner left behind grows the heap by at least a thousand allocations; less than a byte a round is the
+    allocator's own bookkeeping.
+    """
+    before = heap()
+    mut left = 0
+    while left < 1000:
+        match both("", f"{left}: a payload that `?` propagates past, for its frame to drop"):
+            Ok(_) => pass
+            Err(_) => pass
+        quiet_route("", f"{left}: a payload the skipped arm leaves for its frame to drop")
+        left += 1
+    grown = heap() - before
+    if grown < 1000:
+        println("heap flat")
+    else:
+        println(f"heap grew by {grown} bytes over 1000 rounds")
+
+
+def main() -> None:
+    match both("ab", "cde"):
+        Ok(total) => println(total)
+        Err(message) => println(message)
+    match both("", "cde"):
+        Ok(total) => println(total)
+        Err(message) => println(message)
+    println(describe("hello"))
+    println(describe(""))
+    route("x", "y")
+    route("", "y")
+    repeated_paths()

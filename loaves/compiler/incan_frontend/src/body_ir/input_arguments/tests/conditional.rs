@@ -4,10 +4,18 @@ use super::{bir, staged};
 
 /// Count actual whole-owner call transfers recursively; unsupported operands are not successful transfers.
 fn transfers(block: &bir::Block, owner: bir::LocalId) -> usize {
-    block
-        .stmts
+    statement_transfers(&block.stmts, owner)
+}
+
+/// Count transfers in a statement list, including each match arm's body.
+fn statement_transfers(statements: &[bir::Statement], owner: bir::LocalId) -> usize {
+    statements
         .iter()
         .map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Match { arms, .. },
+                ..
+            } => arms.iter().map(|arm| statement_transfers(&arm.body_stmts, owner)).sum(),
             bir::StatementKind::Call { args, .. } => args
                 .iter()
                 .filter(|argument| {
@@ -421,6 +429,40 @@ fn loop_transfers_join_the_loop_exits() -> Result<(), Box<dyn std::error::Error>
             "{body}"
         );
     }
+    Ok(())
+}
+
+/// A transfer in one match arm joins like a statement-if branch: the other arm keeps the owner, which keeps its scope
+/// drop for that path.
+#[test]
+fn match_arm_transfers_join_like_branches() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def size(text: Owned[str]) -> Result[int, str]:\n    return Ok(len(text))\ndef keep(value: Owned[str]) -> None:\n    pass\ndef main(text: Owned[str]) -> None:\n    value = \"owner\"\n    match size(text):\n        Ok(_) => keep(value)\n        Err(_) => pass\n";
+    let module = staged(source, false)?;
+    let lowered = module
+        .bodies
+        .iter()
+        .find(|lowered| lowered.name == "main")
+        .ok_or("missing match caller")?;
+    let owner = lowered
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("value"))
+        .ok_or("missing owner")?
+        .id;
+    assert_eq!(transfers(&lowered.block, owner), 1);
+    assert!(
+        lowered
+            .block
+            .stmts
+            .iter()
+            .any(|statement| matches!(statement.kind, bir::StatementKind::Drop { local } if local == owner))
+    );
+    assert!(
+        lowered
+            .checked_input_profile
+            .as_ref()
+            .is_some_and(|profile| profile.version == 2)
+    );
     Ok(())
 }
 

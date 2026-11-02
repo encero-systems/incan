@@ -1,0 +1,9 @@
+[project]
+name = "explicit_results_propagate_and_match"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+drop_probe = { path = "rust/drop_probe" }

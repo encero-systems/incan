@@ -7,8 +7,8 @@ use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{
-    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, Spanned,
-    Statement,
+    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, MatchBody,
+    Spanned, Statement,
 };
 use crate::typechecker::ownership_contracts::CallableSource;
 
@@ -193,6 +193,8 @@ impl SourceAccesses<'_, '_> {
             }
             Expr::Literal(_) => {}
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, consume)?,
+            // `?` consumes its carrier, as the source flow evaluates it.
+            Expr::Try(inner) => self.expression(inner, true)?,
             Expr::Binary(left, _, right) => {
                 self.expression(left, false)?;
                 self.expression(right, false)?;
@@ -338,6 +340,26 @@ impl SourceAccesses<'_, '_> {
         for statement in statements {
             match &statement.node {
                 Statement::Pass => {}
+                // Arm bindings own fresh payloads and record no access; each arm starts after the scrutinee.
+                Statement::Expr(Spanned {
+                    node: Expr::Match(scrutinee, arms),
+                    ..
+                }) => {
+                    self.expression(scrutinee, false)?;
+                    let mut reaches = false;
+                    for arm in arms {
+                        reaches |= match &arm.node.body {
+                            MatchBody::Expr(value) => {
+                                self.expression(value, false)?;
+                                true
+                            }
+                            MatchBody::Block(body) => self.block(body)?,
+                        };
+                    }
+                    if !reaches {
+                        return Ok(false);
+                    }
+                }
                 Statement::Expr(value) => self.expression(value, false)?,
                 Statement::Return(value) => {
                     let view = crate::ownership_metadata::returned_view(

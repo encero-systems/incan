@@ -113,7 +113,7 @@ impl Builder<'_> {
 
     /// Copy values need no transfer; literal, formatted and nested constructed values own their fresh storage.
     /// A source place with a non-Copy type is never reclassified as fresh merely because its last use is here.
-    fn fresh_or_copy_field(&self, value: &Spanned<Expr>) -> bool {
+    pub(super) fn fresh_or_copy_field(&self, value: &Spanned<Expr>) -> bool {
         if self
             .checker
             .type_info

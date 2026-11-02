@@ -802,7 +802,7 @@ fn ordinary_helpers_are_scoped_to_required_input_bodies() -> Result<(), Box<dyn 
         ),
         (
             "def absent[T](value: int) -> Option[T]:\n    return None\ndef use(value: Borrowed[int]) -> Option[int]:\n    return absent[int](value)\n",
-            false,
+            true,
         ),
     ] {
         let checker = checked(source)?;
@@ -2525,6 +2525,50 @@ fn explicit_loops_execute_under_the_conditional_profile() -> Result<(), Box<dyn 
         let checker = checked(source)?;
         assert!(checker.errors.is_empty(), "{source}: {:?}", checker.errors);
     }
+    Ok(())
+}
+
+/// `?` continues with the success payload and leaves on the error, like a `return`; `Ok`, `Err` and `Some`
+/// construct a fresh carrier from an owned payload; a `match` on a fresh carrier starts every arm from the
+/// evaluated scrutinee and binds its payload as a fresh owner.
+#[test]
+fn explicit_bodies_propagate_construct_and_match_results() -> Result<(), Box<dyn std::error::Error>> {
+    let declarations = "def size(text: Owned[str]) -> Result[int, str]:\n    if len(text) == 0:\n        return Err(\"empty\")\n    return Ok(len(text))\n";
+    for body in [
+        "def both(text: Owned[str], other: Owned[str]) -> Result[int, str]:\n    first = size(text)?\n    second = size(other)?\n    return Ok(first + second)\n",
+        "def describe(text: Owned[str]) -> str:\n    match size(text):\n        Ok(count) => return f\"{count}\"\n        Err(message) => return message\n",
+        "def keep(value: Owned[str]) -> None:\n    pass\ndef route(text: Owned[str], other: Owned[str]) -> None:\n    match size(text):\n        Ok(_) => keep(other)\n        Err(_) => pass\n",
+        "def maybe(text: Owned[str], keep: bool) -> Option[str]:\n    if keep:\n        return Some(f\"{text}!\")\n    return None\n",
+    ] {
+        let checker = checked(&format!("{declarations}{body}"))?;
+        assert!(
+            checker.errors.is_empty(),
+            "{body}: {:?} {:?}",
+            checker.errors,
+            flow_summary(&checker)
+        );
+    }
+    let refused = checked(&format!(
+        "{declarations}def twice(text: Owned[str]) -> Result[int, str]:\n    first = size(text)?\n    second = size(text)?\n    return Ok(first + second)\n"
+    ))?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        refused.errors
+    );
+    // Moving a stored owner into a carrier waits for constructed values' transfer materialization, as models do.
+    let staged = checked("def wrap(text: Owned[str]) -> Option[str]:\n    return Some(text)\n")?;
+    assert!(
+        staged
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0123")),
+        "{:?}",
+        staged.errors
+    );
     Ok(())
 }
 

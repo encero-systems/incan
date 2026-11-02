@@ -101,10 +101,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let range_layouts_before = self.materialized_range_locals.clone();
         let mut range_layouts_after_arms = Vec::with_capacity(arms.len());
         let mut lowered_arms = Vec::with_capacity(arms.len());
+        // Explicit transfer subjects join like statement-if branches: every arm starts from the scrutinee's state,
+        // and the state after the match is what every continuing arm leaves.
+        let subjects = self.input_subject_locals();
+        let entry_moves = self.input_move_state(&subjects);
+        let mut reaching_moves = Vec::new();
         for arm in arms {
             // At runtime exactly one arm executes. Lower every arm from the predecessor fact set so a range
             // constructed only in an earlier textual arm cannot authorize field projections in a later one.
             self.materialized_range_locals = range_layouts_before.clone();
+            self.restore_input_move_state(&subjects, &entry_moves);
             let arm_span = hir_span(arm.span);
             let arm_scope = self.new_scope(Some(scope), arm_span);
 
@@ -130,6 +136,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // ----
             let mut guard_stmts = Vec::new();
             self.conditional_scopes.push(arm_scope);
+            // A guard is a further condition inside the arm; only unguarded arms have an explicit join.
+            let joined = arm.node.guard.is_none();
+            if joined {
+                self.input_if_scopes.push(arm_scope);
+            }
             let guard = arm
                 .node
                 .guard
@@ -149,7 +160,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     (stmts, bir::Operand::Constant(bir::Constant::Unit))
                 }
             };
+            if joined {
+                self.input_if_scopes.pop();
+            }
             self.conditional_scopes.pop();
+            match &arm.node.body {
+                ast::MatchBody::Expr(_) => reaching_moves.push(self.input_move_state(&subjects)),
+                ast::MatchBody::Block(block_stmts) => {
+                    self.retain_reaching_input_moves(block_stmts, &subjects, &mut reaching_moves)
+                }
+            }
 
             // ---- Restore the enclosing scope's bindings before moving on to the next (mutually exclusive) arm ----
             self.restore_local_bindings(saved_bindings);
@@ -166,6 +186,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // Code after a match must be valid for whichever arm matched. Preserve a layout fact only when every
         // arm leaves it true; no-arm matches conservatively retain no constructed-layout fact.
         self.materialized_range_locals = intersect_local_states(range_layouts_after_arms);
+        self.restore_input_move_state(&subjects, &intersect_local_states(reaching_moves));
 
         let ty = self.resolve_ty(expr_span);
         self.push_assign_temp(
