@@ -9,8 +9,8 @@ use super::flow::{
     Permission, Place, Projection, Root,
 };
 use crate::ast::{
-    AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, FunctionDecl,
-    MethodDecl, Param, Receiver, Span, Spanned, Statement,
+    AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
+    FunctionDecl, MethodDecl, Param, Receiver, Span, Spanned, Statement,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -873,6 +873,75 @@ impl Builder<'_> {
         ))
     }
 
+    /// Iterate an evaluated iterable. A stored iterable stays shared-borrowed while the loop runs: each poll at the
+    /// header reads through that loan, so the back edge keeps it live across the body and an edit of the iterable
+    /// there conflicts. A loop that takes the list's items consumes it instead. The item is a fresh local declared at
+    /// each poll; it is an owned value, never a view of the iterable.
+    fn for_loop(&mut self, loop_: &ForStmt, span: Span, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
+        let crate::ast::Pattern::Binding(name) = &loop_.pattern.node else {
+            return Err(Unavailable {
+                span: loop_.pattern.span,
+                reason: "loop pattern needs checked binding access".into(),
+            });
+        };
+        if self.checker.type_info.protocols.iterations.contains_key(&loop_.iter.span)
+            || self.checker.type_info.protocols.iterations.contains_key(&span)
+        {
+            return Err(Unavailable {
+                span: loop_.iter.span,
+                reason: "protocol iteration needs checked callable access facts".into(),
+            });
+        }
+        let item = self
+            .checker
+            .type_info
+            .resolved_write_identity(loop_.pattern.span, name)
+            .cloned()
+            .ok_or(Unavailable {
+                span: loop_.pattern.span,
+                reason: "missing checked loop item".into(),
+            })?;
+        let takes_items = self.checker.type_info.for_loop_takes_items(loop_.iter.span);
+        let iterable = if takes_items { None } else { self.optional_place(&loop_.iter)? };
+        let mut evaluated = self.expression(&loop_.iter, incoming, takes_items)?;
+        let iteration = match iterable {
+            Some(path) => {
+                let place = path.place.clone();
+                let loan = self.call_loan(path, false, false, loop_.iter.span);
+                evaluated = self.event(evaluated, Event::Borrow(loan), loop_.iter.span);
+                Some((loan, place))
+            }
+            None => None,
+        };
+        let header = self.event(evaluated, Event::Nothing, span)[0];
+        // The poll reads the iterable through its loan; exhaustion leaves the loop from here.
+        let poll = match iteration {
+            Some((loan, place)) => self.event(
+                vec![header],
+                Event::Access {
+                    place,
+                    access: Access::Read,
+                    through: Some(loan),
+                },
+                loop_.iter.span,
+            ),
+            None => vec![header],
+        };
+        // Each poll declares the item afresh, as an initializer does: its root is registered, with no write event.
+        self.root(&item, loop_.pattern.span)?;
+        self.loops.push(LoopEdges {
+            header,
+            breaks: Vec::new(),
+        });
+        let body = self.block(&loop_.body, poll.clone())?;
+        self.connect(&body, header);
+        let edges = self.loops.pop().ok_or(Unavailable {
+            span,
+            reason: "missing loop owner".into(),
+        })?;
+        Ok(poll.into_iter().chain(edges.breaks).collect())
+    }
+
     /// Project explicit branches, loop back-edges and exits. Unsupported statement effects refuse the whole profile.
     fn statement(&mut self, statement: &Spanned<Statement>, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
         match &statement.node {
@@ -976,6 +1045,7 @@ impl Builder<'_> {
                     })?
                     .breaks)
             }
+            Statement::For(loop_) => self.for_loop(loop_, statement.span, incoming),
             Statement::Break(None) => {
                 self.loops
                     .last_mut()

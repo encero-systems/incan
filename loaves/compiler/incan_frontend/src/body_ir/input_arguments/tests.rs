@@ -258,10 +258,10 @@ fn named_temporary_inputs_retain_binding_provenance() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// Nested stored fields retain canonical place identity; a branch move is still refused until drop obligations
-/// represent which path retained the owner. Neither case may fall back to a synthesized owner copy.
+/// Nested stored fields retain canonical place identity, and a branch move executes under the conditional profile,
+/// whose path-correct drops record which path retained the owner. Neither case may fall back to a synthesized copy.
 #[test]
-fn nested_borrow_preserves_projection_and_conditional_move_refuses() -> Result<(), Box<dyn std::error::Error>> {
+fn nested_borrow_preserves_projection_and_conditional_move_executes() -> Result<(), Box<dyn std::error::Error>> {
     let module = staged(
         "model Point:\n    x: int\ndef replace(mut value: BorrowedMut[int]) -> None:\n    value = 7\ndef apply(mut point: BorrowedMut[Point]) -> int:\n    replace(point.x)\n    return point.x\n",
         false,
@@ -322,7 +322,7 @@ fn nested_borrow_preserves_projection_and_conditional_move_refuses() -> Result<(
             .as_ref()
             .is_some_and(|profile| profile.version == 2)
     );
-    assert!(body.first_representation_gap().is_some());
+    assert!(body.first_representation_gap().is_none());
     Ok(())
 }
 

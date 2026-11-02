@@ -88,8 +88,51 @@ impl TypeCheckInfo {
         self.input_projection(owner, CallableSource::Method(method), false)
     }
 
-    /// Retain a fully authenticated conditional source projection for the staged version2 representation. This
-    /// does not replace direct_input_admission: source execution and native/publication version gates stay closed.
+    /// The executable profile of a function body: profile 1 for a straight-line body, else profile 2 when its
+    /// statement-ifs project completely. The checker's execution gate and Body IR select the same profile.
+    pub(crate) fn executable_function_input<'a>(
+        &'a self,
+        owner: &CanonicalSymbolId,
+        function: &FunctionDecl,
+    ) -> Result<Option<(u32, CheckedInputBody<'a>)>, &'static str> {
+        self.executable_input(owner, CallableSource::Function(function))
+    }
+
+    /// The executable profile of a concrete method body, selected as for functions.
+    pub(crate) fn executable_method_input<'a>(
+        &'a self,
+        owner: &CanonicalSymbolId,
+        method: &MethodDecl,
+    ) -> Result<Option<(u32, CheckedInputBody<'a>)>, &'static str> {
+        self.executable_input(owner, CallableSource::Method(method))
+    }
+
+    /// A body whose straight-line projection is refused executes under profile 2 only if it has a statement-if and
+    /// its conditional projection is complete; the straight-line refusal is reported otherwise.
+    fn executable_input<'a>(
+        &'a self,
+        owner: &CanonicalSymbolId,
+        callable: CallableSource<'_>,
+    ) -> Result<Option<(u32, CheckedInputBody<'a>)>, &'static str> {
+        let reason = match self.input_projection(owner, callable, false) {
+            Ok(proof) => return Ok(proof.map(|proof| (1, proof))),
+            Err(reason) => reason,
+        };
+        if !callable
+            .body()
+            .iter()
+            .any(|statement| matches!(statement.node, Statement::If(_)))
+        {
+            return Err(reason);
+        }
+        match self.input_projection(owner, callable, true) {
+            Ok(Some(proof)) => Ok(Some((2, proof))),
+            _ => Err(reason),
+        }
+    }
+
+    /// Retain a fully authenticated conditional source projection, the version-2 profile of a body with
+    /// statement-ifs. `executable_function_input` selects it when the straight-line profile is refused.
     pub(crate) fn conditional_input_projection<'a>(
         &'a self,
         owner: &CanonicalSymbolId,

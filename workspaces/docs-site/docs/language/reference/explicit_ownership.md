@@ -17,7 +17,7 @@ Explicit ownership inside a tuple, outcome, field or callable annotation is also
 
 ## Direct-input profile
 
-Synchronous free functions and concrete methods can use direct `Borrowed[T]`, `BorrowedMut[T]` and `Owned[T]` parameters within the following restrictions. They require fixed parameters without defaults, generic binders or decorators and straight-line direct access. It preserves existing storage for shared and exclusive inputs, including scalar values, and transfers an owned non-Copy root without adding a repair clone. A method's receiver is checked as a borrowed input: `self` grants shared access and `mut self` exclusive, writable access. A call to such a method borrows its receiver from existing storage for the invocation.
+Synchronous free functions and concrete methods can use direct `Borrowed[T]`, `BorrowedMut[T]` and `Owned[T]` parameters within the following restrictions. They require fixed parameters without defaults, generic binders or decorators, and direct access in straight-line statements or `if`/`elif`/`else` branches; loops are refused. It preserves existing storage for shared and exclusive inputs, including scalar values, and transfers an owned non-Copy root without adding a repair clone. A method's receiver is checked as a borrowed input: `self` grants shared access and `mut self` exclusive, writable access. A call to such a method borrows its receiver from existing storage for the invocation.
 
 ```incan
 # accepted by source checking
@@ -35,7 +35,7 @@ The same source profile admits local `Borrowed[T]` and `BorrowedMut[T]` aliases 
 
 The checked loan ends after its last dependent operation, allowing later access through the original owner. An observer, comparison or formatted string takes shared read access to each non-Copy borrowed operand until the operation consumes it. This applies to direct borrowed parameters and to shared or exclusive aliases. For example, `print(view, replace(original))` conflicts if `view` borrows `original` and `replace` requests exclusive access. An exclusive alias cannot avoid the conflict by passing itself to `replace`. Using a disjoint source for `replace` is permitted. A completed inner operation can end its dependency earlier: `print(f"{view}", replace(original))` first constructs an independent formatted string, then replaces the original. Copy operands retain ordinary value-read behavior.
 
-A local `Owned[T]` initializer creates independent destination storage. A whole non-Copy source transfers and cannot be used afterward; a Copy source remains usable. A fresh initializer supplies its new value directly. Initializing from a non-Copy field, a shared non-Copy source or a source with a conflicting live borrow is refused. The straight-line restriction also applies to these local initializers.
+A local `Owned[T]` initializer creates independent destination storage. A whole non-Copy source transfers and cannot be used afterward; a Copy source remains usable. A fresh initializer supplies its new value directly. Initializing from a non-Copy field, a shared non-Copy source or a source with a conflicting live borrow is refused. An initializer inside a branch transfers its source on that path only: the source stays usable on the other paths, and each path drops exactly the owners it still holds.
 
 ```incan
 # accepted by source checking
@@ -46,9 +46,9 @@ def size() -> int:
 ```
 
 
-Returned dependencies other than the returned views below, indirect calls, indexed access, conditional transfers and projected non-Copy transfers remain refused. These restrictions apply to callers as well as callees, including callers whose own parameters have no explicit ownership annotations.
+Returned dependencies other than the returned views below, indirect calls, indexed access, loops and projected non-Copy transfers remain refused. These restrictions apply to callers as well as callees, including callers whose own parameters have no explicit ownership annotations.
 
-Assertion messages are evaluated only on failure. They may read borrowed values or use a checked exclusive input, but transferring a stored non-Copy owner from a message receives `INCAN-T0123` until conditional cleanup is supported. This also applies to ordinary locals passed to an `Owned` parameter. A fresh value constructed for the failure message and a Copy input do not transfer a surviving outer owner.
+Assertion messages are evaluated only on failure. They may read borrowed values or use a checked exclusive input, but transferring a stored non-Copy owner from a message receives `INCAN-T0123`: unlike an `if` branch, the failure path does not yet carry its own cleanup. This also applies to ordinary locals passed to an `Owned` parameter. A fresh value constructed for the failure message and a Copy input do not transfer a surviving outer owner.
 
 ## Ordinary helpers within an input-checked body
 
@@ -64,7 +64,7 @@ def use(value: Borrowed[int]) -> int:
     return add(value)
 ```
 
-Named fixed arguments retain their existing declaration-order evaluation. Mutable ordinary inputs, non-Copy ordinary arguments, defaults, indirect calls and nominal result dependencies remain refused within this profile. A generic binder alone does not change input access: an instantiation that leaves the checked parameter inventory unchanged can satisfy this source rule, while a substituted parameter inventory needs further retained evidence. These helper facts do not enable conditional execution.
+Named fixed arguments retain their existing declaration-order evaluation. Mutable ordinary inputs, non-Copy ordinary arguments, defaults, indirect calls and nominal result dependencies remain refused within this profile. A generic binder alone does not change input access: an instantiation that leaves the checked parameter inventory unchanged can satisfy this source rule, while a substituted parameter inventory needs further retained evidence.
 
 ## Result-source syntax
 

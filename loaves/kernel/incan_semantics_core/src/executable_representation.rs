@@ -59,12 +59,14 @@ use crate::body_ir::{
 /// Version 42 retains each explicit local binding on its body, so a body that loses its checked profile still
 /// exposes the explicit-input obligation.
 /// Version 43 retains a body's returned view: the parameter slot its result borrows and the view's access.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 43;
+/// Version 44 executes conditional explicit bodies: a checked input profile 2 is admitted, and its owned initializer
+/// transfers travel with the body.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 44;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
-/// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations or returned
-/// views.
-const OLDEST_SUPPORTED_VERSION: u32 = 43;
+/// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
+/// views or conditional profiles.
+const OLDEST_SUPPORTED_VERSION: u32 = 44;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -1484,7 +1486,7 @@ mod tests {
         source.checked_input_profile.as_mut().ok_or("missing profile")?.owner = identity("other", 2);
         assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
         assert!(publication::project_compiled_frame(&source, &context, "probe", &eligible).is_err());
-        for obsolete in [36_u32, 37, 38, 39, 40, 41, 42] {
+        for obsolete in [36_u32, 37, 38, 39, 40, 41, 42, 43] {
             assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
         }
         Ok(())
