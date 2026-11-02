@@ -366,8 +366,8 @@ def schedule_call(
 
 pub def closed_arguments(arguments: list[RustType]) -> bool:
     """Require closed argument trees; native carrier admission validates the remaining type forms."""
-    for argument in arguments:
-        if not closed_type(argument):
+    for position in range(len(arguments)):
+        if not closed_type(borrowed_at(arguments, position)):
             return false
     return true
 
