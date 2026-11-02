@@ -6872,11 +6872,11 @@ impl TypeChecker {
         let function_identity =
             self.symbols
                 .module_declaration_identity(&func.name, SemanticSourceTargetKind::Function, decl_span);
-        self.symbols
-            .set_return_type(self.returned_value_type(&function_identity, &return_type));
+        let body_return_type = self.returned_value_type(&function_identity, &return_type);
+        self.symbols.set_return_type(body_return_type.clone());
 
-        // Set error type for ? checking
-        self.current_return_error_type = return_type.result_err_type().cloned();
+        // Set error type for ? checking: the value type, so a view carried in the error compares as its value.
+        self.current_return_error_type = body_return_type.result_err_type().cloned();
 
         let previous_c_abi_raw_call_owner =
             self.current_c_abi_raw_call_owner
@@ -7577,8 +7577,8 @@ impl TypeChecker {
         let body_return_type = self.returned_value_type(&method_identity, &return_type);
         let yield_context = self.set_method_return_context(method, &body_return_type, &self_ty);
 
-        // Set error type for ? checking
-        self.current_return_error_type = return_type.result_err_type().cloned();
+        // Set error type for ? checking: the value type, so a view carried in the error compares as its value.
+        self.current_return_error_type = body_return_type.result_err_type().cloned();
 
         // ---- Prepared inputs ----
         PreparedMethodCheck {

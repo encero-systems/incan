@@ -91,16 +91,17 @@ struct Builder<'a> {
     graph: Graph,
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
-    /// Locals bound to a call that carries a view, not yet consumed. Each aliases the view's place under the call's
-    /// result loan, which it holds until a `match` takes the view out; any other use of it is refused.
-    carriers: BTreeSet<CanonicalSymbolId>,
+    /// Locals bound to a call that carries a view, not yet consumed, with the payload carrying it. Each aliases the
+    /// view's place under the call's result loan, which it holds until a `match` takes the view out; any other use of
+    /// it is refused.
+    carriers: BTreeMap<CanonicalSymbolId, usize>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
     /// The declared returned view: whether it is exclusive, and the exact source place every return borrows.
     view: Option<(bool, Place)>,
-    /// Whether the returned view is carried as a `Result` or `Option` payload rather than returned whole.
-    view_carried: bool,
+    /// The `Result` or `Option` payload carrying the returned view, or `None` for a view returned whole.
+    view_carried: Option<usize>,
     /// Returns that do not borrow the declared view source. These are program errors, reported by the caller.
     view_errors: Vec<crate::diagnostics::CompileError>,
 }
@@ -225,10 +226,10 @@ fn build_graph(
         constrained: BTreeSet::new(),
         borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
-        carriers: BTreeSet::new(),
+        carriers: BTreeMap::new(),
         loops: Vec::new(),
         view: None,
-        view_carried: false,
+        view_carried: None,
         view_errors: Vec::new(),
     };
     builder.inputs(parameters, identity)?;
@@ -386,7 +387,7 @@ impl Builder<'_> {
                         reason: "missing checked place identity".into(),
                     })?
                     .clone();
-                if self.carriers.contains(&identity) {
+                if self.carriers.contains_key(&identity) {
                     return Err(Unavailable {
                         span: expression.span,
                         reason: "a bound carried view needs a match to take the view out".into(),
@@ -514,7 +515,9 @@ impl Builder<'_> {
             }
             // A carried view stays in its carrier until `?` or a match takes it out; the carrier holds a loan.
             Expr::Call(..) | Expr::MethodCall(..)
-                if self.call_relation(expression)?.is_some_and(|relation| relation.carried) =>
+                if self
+                    .call_relation(expression)?
+                    .is_some_and(|relation| relation.carried.is_some()) =>
             {
                 Err(Unavailable {
                     span: expression.span,
@@ -531,8 +534,12 @@ impl Builder<'_> {
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
             // `?` consumes its carrier and continues with the success payload; the error path leaves the body as a
             // `return` does, carrying only the carrier's own error value. Only a body without a returned view, or one
-            // whose view is itself carried, has that exit.
-            Expr::Try(inner) if self.view.is_none() || self.view_carried => self.expression(inner, incoming, true),
+            // whose view is carried in the success payload, has that exit; an error that carries the view must be the
+            // declared source's.
+            Expr::Try(inner) if self.view.is_none() || self.view_carried == Some(0) => {
+                self.expression(inner, incoming, true)
+            }
+            Expr::Try(_) if self.view_carried == Some(1) => Err(error_view_try(expression.span)),
             Expr::Binary(left, operation, right) => {
                 let incoming = self.expression(left, incoming, false)?;
                 let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
@@ -690,9 +697,8 @@ impl Builder<'_> {
         if mode.is_none()
             && root.declaration_span == assignment.name_span
             && root.kind == SemanticSourceTargetKind::Local
-            && let Some(relation) = self
-                .call_relation(&assignment.value)?
-                .filter(|relation| relation.carried)
+            && let Some(relation) = self.call_relation(&assignment.value)?
+            && let Some(payload) = relation.carried
         {
             let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
             let loan = path.through.ok_or(Unavailable {
@@ -706,7 +712,7 @@ impl Builder<'_> {
                 });
             }
             self.aliases.insert(root.clone(), path);
-            self.carriers.insert(root);
+            self.carriers.insert(root, payload);
             return Ok(incoming);
         }
         let source = self.optional_place(&assignment.value)?;
@@ -1054,12 +1060,10 @@ impl Builder<'_> {
             }
             Statement::Return(value) => {
                 match (value, self.view.clone()) {
-                    (Some(value), Some((exclusive, source))) if self.view_carried => {
-                        self.carried_return(value, exclusive, &source, incoming)?
-                    }
-                    (Some(value), Some((exclusive, source))) => {
-                        self.view_return(value, exclusive, &source, incoming)?
-                    }
+                    (Some(value), Some((exclusive, source))) => match self.view_carried {
+                        Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
+                        None => self.view_return(value, exclusive, &source, incoming)?,
+                    },
                     (None, Some(_)) => self.view_errors.push(view_error(
                         "A returned view must return its declared source place",
                         statement.span,
@@ -1148,6 +1152,14 @@ impl Builder<'_> {
                 reason: "statement needs additional checked dependency facts".into(),
             }),
         }
+    }
+}
+
+/// `?` in a body whose error carries its view: the exit would return the carrier's own error, not the source place.
+fn error_view_try(span: Span) -> Unavailable {
+    Unavailable {
+        span,
+        reason: "`?` in a body whose error carries a view would return an error other than its source place".into(),
     }
 }
 

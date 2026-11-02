@@ -67,24 +67,36 @@ pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[li
     # 2. Visit the original result under the same binder identities.
     signature.append(type_lifetimes(body.return_type, body.type_parameters, arguments, ""))
     # 3. A returned view's reference shares its source parameter's outer borrow, and nothing else. A direct view's
-    # reference is the result itself; a carried view's is the carrier's first payload, the result's first reference.
+    # reference is the result itself; a carried view's is the first reference of its carrying payload.
     match body.returned_view:
         Some(view) =>
             slot = int(view.slot)
             signature[slot] = ["view"] + signature[slot]
             result = signature[len(signature) - 1]
-            if view.carried:
-                if len(result) == 0:
-                    return Err("carried returned view has no payload reference")
-                signature[len(signature) - 1] = ["view"] + result[1:]
-            else:
-                signature[len(signature) - 1] = ["view"] + result
+            match view.carried:
+                Some(payload) =>
+                    position = payload_reference(body.return_type, int(payload), body.type_parameters, arguments)
+                    if position >= len(result):
+                        return Err("carried returned view has no payload reference")
+                    signature[len(signature) - 1] = result[:position] + ["view"] + result[position + 1:]
+                None => signature[len(signature) - 1] = ["view"] + result
             return Ok(signature)
         None => pass
     # 4. Omit annotations when specialization introduces no generic loans, including transformed generators.
     if has_generic_loans(signature):
         return Ok(signature)
     return Ok([])
+
+
+def payload_reference(result: &RustType, payload: int, names: list[str], arguments: list[RustType]) -> int:
+    """The position of a carried view's reference among its result's references: after every earlier payload's."""
+    mut position = 0
+    match result:
+        RustType.Generic(base=_base, args=elements) =>
+            for index in range(payload):
+                position += len(type_lifetimes(elements[index], names, arguments, ""))
+        _ => pass
+    return position
 
 
 def has_generic_loans(signature: list[list[str]]) -> bool:

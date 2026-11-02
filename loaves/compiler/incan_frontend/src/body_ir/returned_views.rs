@@ -1,6 +1,7 @@
 //! Returned views: a view body returns a borrow of its declared source place, and a caller aliases the
-//! substituted place of a view call rather than holding the returned reference. A carried view travels as the first
-//! payload of a `Result` or `Option`; `?` continues on the substituted place without reading the carrier's reference.
+//! substituted place of a view call rather than holding the returned reference. A carried view travels as one payload
+//! of a `Result` or `Option`; `?` on a success-carried view continues on the substituted place without reading the
+//! carrier's reference.
 
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, IncanType};
 
@@ -63,11 +64,13 @@ impl BodyBuilder<'_, '_> {
         Ok(())
     }
 
-    /// A carried view's body returns its carrier: `Ok` or `Some` holds a borrow of exactly the declared source
-    /// place, an error holds its owned payload, and a carried view call or `None` is returned as lowered.
+    /// A carried view's body returns its carrier: the variant holding the view (`Ok` or `Some`, or `Err` for a view
+    /// carried in the error) holds a borrow of exactly the declared source place, the other variant holds its owned
+    /// payload, and a carried view call or `None` is returned as lowered.
     pub(super) fn lower_carried_return(
         &mut self,
         value: &ast::Spanned<ast::Expr>,
+        carried: usize,
         scope: bir::ScopeId,
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
@@ -90,20 +93,19 @@ impl BodyBuilder<'_, '_> {
             _ => None,
         };
         let operand = match (constructed, &carrier) {
-            (Some((Some(bir::ResultVariantKind::Ok), payload)), IncanType::Generic { base, args })
-                if base == "Result" && args.len() == 2 =>
-            {
-                let (place, access) = self.authenticated_view_place(payload, scope, out)?;
-                self.carried_variant(
-                    bir::ResultVariantKind::Ok,
-                    bir::Operand::place(place, view_fact(access), false),
-                    value.span,
-                    &carrier,
-                    scope,
-                    out,
-                )
+            (Some((Some(kind), payload)), IncanType::Generic { base, args }) if base == "Result" && args.len() == 2 => {
+                let payload = if (kind == bir::ResultVariantKind::Ok) == (carried == 0) {
+                    let (place, access) = self.authenticated_view_place(payload, scope, out)?;
+                    bir::Operand::place(place, view_fact(access), false)
+                } else {
+                    let owned = self.lower_expr_to_operand(payload, scope, out);
+                    self.owned_parameter_operand(payload, owned)
+                };
+                self.carried_variant(kind, payload, carried, value.span, &carrier, scope, out)
             }
-            (Some((None, payload)), IncanType::Generic { base, args }) if base == "Option" && args.len() == 1 => {
+            (Some((None, payload)), IncanType::Generic { base, args })
+                if base == "Option" && args.len() == 1 && carried == 0 =>
+            {
                 let (place, access) = self.authenticated_view_place(payload, scope, out)?;
                 self.push_assign_temp(
                     bir::Rvalue::Aggregate(
@@ -116,13 +118,6 @@ impl BodyBuilder<'_, '_> {
                     out,
                 )
             }
-            (Some((Some(bir::ResultVariantKind::Err), payload)), IncanType::Generic { base, args })
-                if base == "Result" && args.len() == 2 =>
-            {
-                let error = self.lower_expr_to_operand(payload, scope, out);
-                let error = self.owned_parameter_operand(payload, error);
-                self.carried_variant(bir::ResultVariantKind::Err, error, value.span, &carrier, scope, out)
-            }
             _ => self.lower_return_operand(value, scope, out),
         };
         out.push(bir::Statement {
@@ -132,11 +127,14 @@ impl BodyBuilder<'_, '_> {
         Ok(())
     }
 
-    /// Construct one variant of the body's reference-carrying `Result`, whose success type is the view's reference.
+    /// Construct one variant of the body's reference-carrying `Result`, whose `carried` payload type is the view's
+    /// reference.
+    #[allow(clippy::too_many_arguments)]
     fn carried_variant(
         &mut self,
         kind: bir::ResultVariantKind,
         payload: bir::Operand,
+        carried: usize,
         span: ast::Span,
         carrier: &IncanType,
         scope: bir::ScopeId,
@@ -152,6 +150,7 @@ impl BodyBuilder<'_, '_> {
                 .get(&span)
                 .cloned()
                 .unwrap_or_default(),
+            carried,
         );
         self.push_assign_temp(
             bir::Rvalue::ResultVariant(bir::ResultVariant {
@@ -209,9 +208,12 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// The substituted place and access of an already lowered call carrying a view, or of the call a local bound to
-    /// one still holds, through parentheses.
-    pub(super) fn carried_view_of(&self, call: &ast::Spanned<ast::Expr>) -> Option<(bir::Place, IncanInputAccess)> {
+    /// The substituted place, access and carrying payload of an already lowered call carrying a view, or of the call
+    /// a local bound to one still holds, through parentheses.
+    pub(super) fn carried_view_of(
+        &self,
+        call: &ast::Spanned<ast::Expr>,
+    ) -> Option<(bir::Place, IncanInputAccess, usize)> {
         let expression = unparenthesized(call);
         let span = match &expression.node {
             ast::Expr::Ident(_) => *self
@@ -223,24 +225,31 @@ impl BodyBuilder<'_, '_> {
         self.carried_view_places.get(&span).cloned()
     }
 
-    /// The span of a call that carries a view in its result, written without `?`, through parentheses.
-    pub(super) fn carried_view_call(&self, expression: &ast::Spanned<ast::Expr>) -> Option<ast::Span> {
+    /// The span of a call that carries a view in its result, written without `?`, through parentheses, with the
+    /// payload carrying the view.
+    pub(super) fn carried_view_call(&self, expression: &ast::Spanned<ast::Expr>) -> Option<(ast::Span, usize)> {
         let expression = unparenthesized(expression);
-        matches!(expression.node, ast::Expr::Call(..) | ast::Expr::MethodCall(..))
-            .then_some(expression.span)
-            .filter(|span| self.type_info.selected_carried_view(*span).is_some())
+        if !matches!(expression.node, ast::Expr::Call(..) | ast::Expr::MethodCall(..)) {
+            return None;
+        }
+        let (.., payload) = self.type_info.selected_carried_view(expression.span)?;
+        Some((expression.span, payload))
     }
 
     /// For a call whose selected callee carries a view in its `Result` or `Option`, the same substituted place a
-    /// direct view would give. `?` continues on it; the carrier's own reference is never read.
+    /// direct view would give, with the payload carrying the view. `?` on a success-carried view continues on it; the
+    /// carrier's own reference is never read.
     pub(super) fn carried_view_place(
         &self,
         span: ast::Span,
         receiver: Option<&bir::Operand>,
         arguments: &[bir::ArgumentElement],
-    ) -> Option<Result<(bir::Place, IncanInputAccess), String>> {
-        let (access, slot, fields) = self.type_info.selected_carried_view(span)?;
-        Some(substituted_place(access, slot, fields, receiver, arguments))
+    ) -> Option<Result<(bir::Place, IncanInputAccess, usize), String>> {
+        let (access, slot, fields, payload) = self.type_info.selected_carried_view(span)?;
+        Some(
+            substituted_place(access, slot, fields, receiver, arguments)
+                .map(|(place, access)| (place, access, payload)),
+        )
     }
 
     /// Emit a view call for its effects only. The returned reference is not retained: the caller uses the
@@ -302,13 +311,14 @@ fn substituted_place(
     Ok((place, access))
 }
 
-/// A carrier type whose first argument is the view's reference: `Result[&mut T, E]` for `Result[T, E]` with an
-/// exclusive view. Other types are returned unchanged.
-pub(super) fn reference_carrier(carrier: IncanType, access: IncanInputAccess) -> IncanType {
+/// A carrier type whose `payload` argument is the view's reference: `Result[&mut T, E]` for `Result[T, E]` with an
+/// exclusive view in the success payload, `Result[T, &E]` with a shared view in the error. Other types are returned
+/// unchanged.
+pub(super) fn reference_carrier(carrier: IncanType, access: IncanInputAccess, payload: usize) -> IncanType {
     match carrier {
-        IncanType::Generic { base, mut args } if !args.is_empty() => {
-            let value = Box::new(args[0].clone());
-            args[0] = if access == IncanInputAccess::Exclusive {
+        IncanType::Generic { base, mut args } if payload < args.len() => {
+            let value = Box::new(args[payload].clone());
+            args[payload] = if access == IncanInputAccess::Exclusive {
                 IncanType::RefMut(value)
             } else {
                 IncanType::Ref(value)
@@ -320,14 +330,15 @@ pub(super) fn reference_carrier(carrier: IncanType, access: IncanInputAccess) ->
 }
 
 /// The checked leaf identities of a value-typed carrier, moved under the reference `reference_carrier` places at the
-/// first payload: a leaf at `[0, ...]` sits at `[0, 0, ...]` once that payload is a reference to it.
+/// `payload` argument: a leaf at `[payload, ...]` sits at `[payload, 0, ...]` once that payload is a reference to it.
 fn reference_carrier_identities(
     identities: std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    payload: usize,
 ) -> std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId> {
     identities
         .into_iter()
         .map(|(mut path, identity)| {
-            if path.first() == Some(&0) {
+            if path.first() == Some(&payload) {
                 path.insert(1, 0);
             }
             (path, identity)

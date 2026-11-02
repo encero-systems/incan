@@ -158,14 +158,15 @@ pub(crate) fn direct_input_access(
 }
 
 /// A result that is a view of exactly one source place: the declared parameter or receiver with its stored field
-/// path. The access is shared for `Borrowed[T]` and exclusive for `Reference[T]`. A carried view is the first payload
-/// of a `Result` or `Option` result rather than the whole result; the declaration's header check confirms the carrier.
+/// path. The access is shared for `Borrowed[T]` and exclusive for `Reference[T]`. A carried view is one payload of a
+/// `Result` or `Option` result rather than the whole result; the declaration's header check confirms the carrier.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReturnedView<'a> {
     pub mode: &'a AccessMode<crate::symbols::ResolvedType>,
     pub access: incan_semantics_core::IncanInputAccess,
     pub source: &'a ResultDependency<incan_semantics_core::CanonicalSymbolId>,
-    pub carried: bool,
+    /// The carrier payload holding the view: `0` for `Ok` or `Some`, `1` for `Err`; `None` for a view returned whole.
+    pub carried: Option<usize>,
 }
 
 /// Resolve a direct or carried returned view. Owned aggregates retaining a dependency and views nested elsewhere in a
@@ -186,8 +187,8 @@ pub(crate) fn returned_view(
         (Some(_), None) => Err("borrowed result has no source dependency"),
         (Some(mode), Some(source)) => {
             let carried = match mode.component.children.as_slice() {
-                [] => false,
-                [0] => true,
+                [] => None,
+                [payload @ (0 | 1)] => Some(*payload),
                 _ => return Err("returned access inside another type requires aggregate dependency facts"),
             };
             if results.next().is_some() {
@@ -226,17 +227,17 @@ pub(crate) fn result_value_type(
         },
         _ => Err("selected ownership contract does not match its result metadata"),
     };
-    if !view.carried {
+    let Some(payload) = view.carried else {
         return underlying(result);
-    }
+    };
     let ResolvedType::Generic(carrier, arguments) = result else {
         return Err("a carried returned view requires a Result or Option result");
     };
-    if !(result.is_result() || result.is_option()) || arguments.is_empty() {
-        return Err("a carried returned view requires a Result or Option result");
+    if !(result.is_result() || result.is_option()) || payload >= arguments.len() {
+        return Err("a carried returned view requires a Result or Option payload");
     }
     let mut values = arguments.clone();
-    values[0] = underlying(&arguments[0])?;
+    values[payload] = underlying(&arguments[payload])?;
     Ok(ResolvedType::Generic(carrier.clone(), values))
 }
 

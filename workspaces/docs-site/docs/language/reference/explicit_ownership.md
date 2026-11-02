@@ -118,7 +118,7 @@ The grammar is `from parameter` followed by zero or more `.field` projections. M
 
 An explicit borrowed result requires a source even if there is only one parameter. This also applies to an explicit borrowed component inside an outcome or tuple. Missing sources and roots outside the callable's parameters or receiver produce `INCAN-T0124`. Every projected field must be a stored model or class field; generic fields use their declared type arguments. Computed properties are not valid source fields.
 
-An `Owned` result can declare a source relationship. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage. An `Owned` result with a source, and a borrowed result nested in a tuple or another type, are refused for execution with `INCAN-T0123`. A borrowed success payload of a `Result` or `Option` is a [carried view](#carried-views).
+An `Owned` result can declare a source relationship. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage. An `Owned` result with a source, and a borrowed result nested in a tuple or another type, are refused for execution with `INCAN-T0123`. A borrowed payload of a `Result` or `Option` is a [carried view](#carried-views).
 
 ## Returned views
 
@@ -182,6 +182,23 @@ A statement `match` on a carried call also takes the view out. In an `Ok(name)` 
 A carried call can also be bound to a new local first. The local holds the call's loan, so the source stays borrowed until a statement `match` on the local takes the view out, exactly as a match on the call does; that match consumes the local. Applying `?` to the local, using it any other way, or matching it again is refused with `INCAN-T0123`.
 
 An `Option[Borrowed[T]]` or `Option[Reference[T]]` result with a source clause is checked the same way, with `Some(...)` in place of `Ok(...)` and `None` carrying nothing. `?` does not apply to `Option`, so its callers take the view out with `match`.
+
+A `Result[T, Borrowed[E]]` or `Result[T, Reference[E]]` result with a source clause carries the view in its error payload instead. Only one payload of a result can carry a view. Every `Err(...)` return must carry exactly the source place, an alias of it, or a call that carries an error view of the same place; a value created in the body produces `INCAN-T0124`. `Ok(...)` builds its success value under the carrier construction rules above. `?` in such a body is refused with `INCAN-T0123`.
+
+```incan
+# accepted by source checking
+class Account:
+    pub name: str
+    pub balance: int
+
+    def withdraw(mut self, amount: int) -> Result[int, Borrowed[str]] from self.name:
+        if amount > self.balance:
+            return Err(self.name)
+        self.balance -= amount
+        return Ok(self.balance)
+```
+
+At a call site, a statement `match` on the call, or on a local bound to it, takes the view out: in an `Err(name)` arm, `name` is a view of the caller's substituted place, and an `Ok` arm holds no view. `?` on such a call is refused with `INCAN-T0123`.
 
 ```incan
 # accepted by source checking

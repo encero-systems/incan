@@ -475,18 +475,27 @@ impl Builder<'_> {
     }
 
     /// The place view an expression produces: a selected call returning a direct view, or `?` taking a carried view
-    /// out of its `Result` or `Option`. A call returning a carried view is itself a carrier value, not a place.
+    /// out of its `Result` or `Option` success payload. A call returning a carried view is itself a carrier value, not
+    /// a place. `?` on a call whose error carries the view would pass that view on out of this body, and `?` in a body
+    /// whose own error carries its view would return another error; neither executes yet.
     pub(super) fn view_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
         match &expression.node {
             Expr::Paren(inner) => self.view_relation(inner),
-            Expr::Try(inner) => Ok(self
-                .call_relation(inner)?
-                .filter(|relation| relation.carried)
-                .map(|relation| ViewRelation {
-                    carried: false,
+            Expr::Try(inner) => match self.call_relation(inner)? {
+                Some(relation) if relation.carried == Some(1) => Err(Unavailable {
+                    span: expression.span,
+                    reason: "`?` cannot yet pass on an error that carries a view".into(),
+                }),
+                _ if self.view_carried == Some(1) => Err(super::error_view_try(expression.span)),
+                Some(relation) if relation.carried == Some(0) => Ok(Some(ViewRelation {
+                    carried: None,
                     ..relation
                 })),
-            _ => Ok(self.call_relation(expression)?.filter(|relation| !relation.carried)),
+                _ => Ok(None),
+            },
+            _ => Ok(self
+                .call_relation(expression)?
+                .filter(|relation| relation.carried.is_none())),
         }
     }
 
@@ -591,13 +600,13 @@ impl Builder<'_> {
     }
 }
 
-/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and whether the
-/// view is carried as a `Result` or `Option` payload.
+/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the `Result` or
+/// `Option` payload carrying the view, if any.
 pub(super) struct ViewRelation {
     exclusive: bool,
     slot: SourceSlot,
     fields: Vec<incan_semantics_core::CanonicalSymbolId>,
-    pub(super) carried: bool,
+    pub(super) carried: Option<usize>,
 }
 
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`

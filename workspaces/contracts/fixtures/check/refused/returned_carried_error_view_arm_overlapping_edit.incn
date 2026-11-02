@@ -1,0 +1,21 @@
+# behavior: inside the `Err` arm of a match on a call whose error carries a view, editing the source while the view is still used is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+class Account:
+    pub name: str
+    pub balance: int
+
+    def withdraw(mut self, amount: int) -> Result[int, Borrowed[str]] from self.name:
+        if amount > self.balance:
+            return Err(self.name)
+        self.balance -= amount
+        return Ok(self.balance)
+
+
+def overlap(mut account: BorrowedMut[Account]) -> int:
+    match account.withdraw(5):
+        Ok(left) => return left
+        Err(name) =>
+            account.name = "other"
+            println(name)
+            return -1

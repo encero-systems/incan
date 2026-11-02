@@ -635,7 +635,7 @@ fn returned_value(binding: &FunctionBindingInfo, facts: &BodyIrLoweringFacts<'_,
         .unwrap_or_else(|_| binding.return_type.clone())
 }
 
-/// A carried view's body returns its carrier with the view's reference as the first payload, through the same
+/// A carried view's body returns its carrier with the view's reference as the carrying payload, through the same
 /// `reference_carrier` its callers use for the call's result. Other bodies keep their checked return type.
 fn carried_return_type(
     binding: Option<&FunctionBindingInfo>,
@@ -646,7 +646,10 @@ fn carried_return_type(
         .and_then(|binding| binding.identity.as_ref())
         .and_then(|identity| facts.type_info.declarations.ownership_contracts.get(identity));
     match crate::ownership_metadata::returned_view(contract) {
-        Ok(Some(view)) if view.carried => super::returned_views::reference_carrier(ty, view.access),
+        Ok(Some(view)) => match view.carried {
+            Some(payload) => super::returned_views::reference_carrier(ty, view.access, payload),
+            None => ty,
+        },
         _ => ty,
     }
 }

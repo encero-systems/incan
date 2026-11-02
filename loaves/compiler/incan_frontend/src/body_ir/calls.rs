@@ -2838,13 +2838,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 Err(description) => self.unsupported_operand(description, scope, hir_span_value, out),
             };
         }
-        // A carried view's call holds its callee's carrier, whose success payload is the view's reference; `?`
-        // continues on the substituted place recorded here.
+        // A carried view's call holds its callee's carrier, whose carrying payload is the view's reference; `?` and a
+        // match continue on the substituted place recorded here.
         let ty = match self.carried_view_place(span, receiver_argument.as_ref(), call_args.get(1..).unwrap_or_default())
         {
-            Some(Ok((place, access))) => {
-                self.carried_view_places.insert(span, (place, access));
-                super::returned_views::reference_carrier(ty, access)
+            Some(Ok((place, access, payload))) => {
+                self.carried_view_places.insert(span, (place, access, payload));
+                super::returned_views::reference_carrier(ty, access, payload)
             }
             Some(Err(description)) => return self.unsupported_operand(description, scope, hir_span_value, out),
             None => ty,

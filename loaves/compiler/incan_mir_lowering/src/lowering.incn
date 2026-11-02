@@ -9855,12 +9855,12 @@ def lower_function(
     )?
     if body.returned_view.is_some() and (body.is_async or body.is_generator()):
         return Err("unsupported Body IR returned view in an async or generator frame")
-    # A carried view's carrier is an ordinary owned result whose success payload already holds the borrow.
+    # A carried view's carrier is an ordinary owned result whose carrying payload already holds the borrow.
     match direct_view_access(body):
         Some(access) => builder.returned_view = access
         None => pass
     match body.returned_view:
-        Some(view) => builder.carries_view = view.carried
+        Some(view) => builder.carries_view = view.carried.is_some()
         None => pass
     initialize_body_frame(module, body, builder, parameters, declared_type, span)?
     lower_block(module, builder, body.block)?

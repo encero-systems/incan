@@ -127,8 +127,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let arm_scope = self.new_scope(Some(scope), arm_span);
 
             // ---- Lower the pattern, declaring one fresh arm-scoped local per distinct bound name ----
-            // A carried view's `Ok` or `Some` arm names the call's substituted place, as `?` does; the carrier's own
-            // reference is never read, so that pattern binds no payload.
+            // The arm of the variant holding a carried view names the call's substituted place, as `?` does; the
+            // carrier's own reference is never read, so that pattern binds no payload.
             let arm_view = carried_view
                 .as_ref()
                 .and_then(|view| self.bind_carried_arm_view(&arm.node.pattern, view));

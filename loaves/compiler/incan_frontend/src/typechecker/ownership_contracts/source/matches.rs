@@ -44,54 +44,59 @@ impl Builder<'_> {
 
     /// A statement `match` evaluates its fresh scrutinee once. Every arm starts from that evaluation and binds its
     /// payload as a fresh owner, and the arms that continue join after the match. On a call carrying a view, the
-    /// call's result loan covers the arms: an `Ok` or `Some` binding aliases the caller's place under it, while an
-    /// error or `None` arm holds no view, so the loan ends there unless a later use keeps it.
+    /// call's result loan covers the arms: the binding of the variant holding the view (`Ok` or `Some`, or `Err` for
+    /// a view carried in the error) aliases the caller's place under it, while the other arms hold no view, so the
+    /// loan ends there unless a later use keeps it.
     pub(super) fn match_statement(
         &mut self,
         scrutinee: &Spanned<Expr>,
         arms: &[Spanned<MatchArm>],
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
-        let (evaluated, view) =
-            if let Some(relation) = self.call_relation(scrutinee)?.filter(|relation| relation.carried) {
-                let (evaluated, path) = self.evaluate_view_call(scrutinee, relation, incoming)?;
-                (evaluated, Some(path))
-            } else if let Some(identity) = self.bound_carrier(scrutinee) {
-                // A bound carrier's read through its loan keeps the loan live until here; the match consumes it. The
-                // arm's view reborrows that loan, keyed to the same call, so each loan keeps one local destination.
-                self.carriers.remove(&identity);
-                let path = self.aliases.get(&identity).cloned().ok_or(Unavailable {
+        let (evaluated, view) = if let Some(relation) = self.call_relation(scrutinee)?
+            && let Some(payload) = relation.carried
+        {
+            let (evaluated, path) = self.evaluate_view_call(scrutinee, relation, incoming)?;
+            (evaluated, Some((path, payload)))
+        } else if let Some((identity, payload)) = self.bound_carrier(scrutinee) {
+            // A bound carrier's read through its loan keeps the loan live until here; the match consumes it. The
+            // arm's view reborrows that loan, keyed to the same call, so each loan keeps one local destination.
+            self.carriers.remove(&identity);
+            let path = self.aliases.get(&identity).cloned().ok_or(Unavailable {
+                span: scrutinee.span,
+                reason: "bound carried view has no source place".into(),
+            })?;
+            let carried = path
+                .through
+                .and_then(|loan| self.graph.loans.get(loan.0))
+                .cloned()
+                .ok_or(Unavailable {
                     span: scrutinee.span,
-                    reason: "bound carried view has no source place".into(),
+                    reason: "bound carried view has no result loan".into(),
                 })?;
-                let carried = path
-                    .through
-                    .and_then(|loan| self.graph.loans.get(loan.0))
-                    .cloned()
-                    .ok_or(Unavailable {
-                        span: scrutinee.span,
-                        reason: "bound carried view has no result loan".into(),
-                    })?;
-                let evaluated = self.expression(scrutinee, incoming, false)?;
-                self.aliases.remove(&identity);
-                let exclusive = carried.kind == super::LoanKind::Exclusive;
-                let view = self.call_loan(path.clone(), exclusive, carried.writable, carried.span);
-                let evaluated = self.event(evaluated, Event::Borrow(view), scrutinee.span);
-                (
-                    evaluated,
-                    Some(Path {
+            let evaluated = self.expression(scrutinee, incoming, false)?;
+            self.aliases.remove(&identity);
+            let exclusive = carried.kind == super::LoanKind::Exclusive;
+            let view = self.call_loan(path.clone(), exclusive, carried.writable, carried.span);
+            let evaluated = self.event(evaluated, Event::Borrow(view), scrutinee.span);
+            (
+                evaluated,
+                Some((
+                    Path {
                         place: path.place,
                         through: Some(view),
-                    }),
-                )
-            } else if fresh_scrutinee(scrutinee) {
-                (self.expression(scrutinee, incoming, false)?, None)
-            } else {
-                return Err(Unavailable {
-                    span: scrutinee.span,
-                    reason: "match on a stored place needs checked binding access".into(),
-                });
-            };
+                    },
+                    payload,
+                )),
+            )
+        } else if fresh_scrutinee(scrutinee) {
+            (self.expression(scrutinee, incoming, false)?, None)
+        } else {
+            return Err(Unavailable {
+                span: scrutinee.span,
+                reason: "match on a stored place needs checked binding access".into(),
+            });
+        };
         let mut outgoing = Vec::new();
         for arm in arms {
             if let Some(guard) = &arm.node.guard {
@@ -100,9 +105,12 @@ impl Builder<'_> {
                     reason: "match guard needs checked binding access".into(),
                 });
             }
-            match (&view, super::super::builtins::carried_view_binding(&arm.node.pattern)) {
-                (Some(path), Some((name, span))) => self.view_arm_binding(name, span, path)?,
-                _ => self.arm_binding(&arm.node.pattern)?,
+            let binding = view.as_ref().and_then(|(path, payload)| {
+                super::super::builtins::carried_view_binding(&arm.node.pattern, *payload).map(|binding| (path, binding))
+            });
+            match binding {
+                Some((path, (name, span))) => self.view_arm_binding(name, span, path)?,
+                None => self.arm_binding(&arm.node.pattern)?,
             }
             outgoing.extend(match &arm.node.body {
                 MatchBody::Expr(value) => self.expression(value, evaluated.clone(), false)?,
@@ -112,17 +120,19 @@ impl Builder<'_> {
         Ok(outgoing)
     }
 
-    /// A carried view's body returns `Ok` or `Some` of its declared source place, a carried view of the same source
-    /// from another call, or an error or `None`, which carries no view. Any other value is a program error.
+    /// A carried view's body returns the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the
+    /// error) of its declared source place, a carried view of the same source from another call, or another variant
+    /// or `None`, which carries no view. Any other value is a program error.
     pub(super) fn carried_return(
         &mut self,
         value: &Spanned<Expr>,
+        carried: usize,
         exclusive: bool,
         source: &Place,
         incoming: Vec<usize>,
     ) -> Result<(), Unavailable> {
         match self.carrier_value(value) {
-            Some((ConstructorId::Ok | ConstructorId::Some, arguments)) => {
+            Some((variant, arguments)) if super::super::builtins::variant_carries_view(variant, carried) => {
                 let [CallArg::Positional(payload)] = arguments else {
                     return Err(Unavailable {
                         span: value.span,
@@ -131,16 +141,19 @@ impl Builder<'_> {
                 };
                 return self.view_return(payload, exclusive, source, incoming);
             }
-            Some((ConstructorId::Err, _)) => {
+            Some(_) => {
                 self.expression(value, incoming, true)?;
                 return Ok(());
             }
-            _ => {}
+            None => {}
         }
         if matches!(value.node, Expr::Literal(Literal::None)) {
             return Ok(());
         }
-        if let Some(relation) = self.call_relation(value)?.filter(|relation| relation.carried) {
+        if let Some(relation) = self
+            .call_relation(value)?
+            .filter(|relation| relation.carried == Some(carried))
+        {
             let (incoming, path) = self.evaluate_view_call(value, relation, incoming)?;
             if path.place == *source {
                 let loan = self.call_loan(path, exclusive, exclusive, value.span);
@@ -155,29 +168,33 @@ impl Builder<'_> {
             return Ok(());
         }
         self.view_errors.push(super::view_error(
-            "A returned carried view must return Ok of its declared source place, an error, or a carried view of the \
-             same source",
+            if carried == 0 {
+                "A returned carried view must return Ok of its declared source place, an error, or a carried view of \
+                 the same source"
+            } else {
+                "A returned carried view must return Err of its declared source place, a success value, or a carried \
+                 view of the same source"
+            },
             value.span,
         ));
         self.expression(value, incoming, true)?;
         Ok(())
     }
 
-    /// The identity of a local still holding a carried view, through parentheses.
-    fn bound_carrier(&self, expression: &Spanned<Expr>) -> Option<CanonicalSymbolId> {
+    /// The identity of a local still holding a carried view, through parentheses, with the payload carrying it.
+    fn bound_carrier(&self, expression: &Spanned<Expr>) -> Option<(CanonicalSymbolId, usize)> {
         match &expression.node {
             Expr::Paren(inner) => self.bound_carrier(inner),
-            Expr::Ident(_) => self
-                .checker
-                .type_info
-                .resolved_identity(expression.span)
-                .filter(|identity| self.carriers.contains(*identity))
-                .cloned(),
+            Expr::Ident(_) => {
+                let identity = self.checker.type_info.resolved_identity(expression.span)?;
+                let payload = self.carriers.get(identity)?;
+                Some((identity.clone(), *payload))
+            }
             _ => None,
         }
     }
 
-    /// Bind an `Ok` or `Some` payload of a carried view's call as a view local of the caller's place under the call's
+    /// Bind the payload holding a carried view's call's view as a view local of the caller's place under the call's
     /// result loan, as `view = call()?` binds it.
     fn view_arm_binding(&mut self, name: &str, span: Span, path: &Path) -> Result<(), Unavailable> {
         let identity = self

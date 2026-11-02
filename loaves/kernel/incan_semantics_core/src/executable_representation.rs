@@ -63,12 +63,14 @@ use crate::body_ir::{
 /// transfers travel with the body.
 /// Version 45 marks a returned view carried in a `Result` or `Option` payload, so a caller keeps the source loan
 /// through `?` instead of taking the carrier as an owned value.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 45;
+/// Version 46 records which payload carries a returned view, so a view may travel in a `Result` error as well as in
+/// its success payload.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 46;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
-/// views, conditional profiles or carried views.
-const OLDEST_SUPPORTED_VERSION: u32 = 45;
+/// views, conditional profiles or the payload carrying a view.
+const OLDEST_SUPPORTED_VERSION: u32 = 46;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]

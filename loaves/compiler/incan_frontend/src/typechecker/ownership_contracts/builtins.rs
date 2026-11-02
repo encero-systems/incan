@@ -44,16 +44,24 @@ pub(super) fn view_call(expression: &Spanned<Expr>) -> &Spanned<Expr> {
     }
 }
 
-/// The name an `Ok(name)` or `Some(name)` arm binds, with its span. In a match on a carried view's call, that arm
-/// receives the view; the checker's source flow and Body IR both select it here.
-pub(crate) fn carried_view_binding(pattern: &Spanned<Pattern>) -> Option<(&str, Span)> {
+/// Whether a carrier variant holds the view of a result that carries it in `payload`: `Ok` or `Some` for payload `0`,
+/// `Err` for payload `1`. Every other variant holds no view.
+pub(crate) fn variant_carries_view(variant: ConstructorId, payload: usize) -> bool {
+    match payload {
+        0 => matches!(variant, ConstructorId::Ok | ConstructorId::Some),
+        1 => variant == ConstructorId::Err,
+        _ => false,
+    }
+}
+
+/// The name the arm of the variant holding the view binds, with its span: `Ok(name)` or `Some(name)` for payload `0`,
+/// `Err(name)` for payload `1`. In a match on a carried view's call, that arm receives the view; the checker's source
+/// flow and Body IR both select it here.
+pub(crate) fn carried_view_binding(pattern: &Spanned<Pattern>, payload: usize) -> Option<(&str, Span)> {
     let Pattern::Constructor(name, arguments) = &pattern.node else {
         return None;
     };
-    if !matches!(
-        constructors::from_str(&name.node),
-        Some(ConstructorId::Ok | ConstructorId::Some)
-    ) {
+    if !constructors::from_str(&name.node).is_some_and(|variant| variant_carries_view(variant, payload)) {
         return None;
     }
     let [PatternArg::Positional(payload)] = arguments.as_slice() else {

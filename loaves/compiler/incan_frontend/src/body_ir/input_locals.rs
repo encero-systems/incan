@@ -111,10 +111,10 @@ impl BodyBuilder<'_, '_> {
         self.retain_input_local_binding(assignment, identity, access);
         // A local bound to a call that carries a view stores the carrier itself, typed as the call's own result; a
         // later match takes the view out of it at the call's substituted place.
-        if let Some(call) = self.carried_view_call(&assignment.value) {
+        if let Some((call, payload)) = self.carried_view_call(&assignment.value) {
             self.carried_view_locals.insert(identity.clone(), call);
             return Some((|| {
-                let ty = super::returned_views::reference_carrier(self.resolve_ty(call), access);
+                let ty = super::returned_views::reference_carrier(self.resolve_ty(call), access, payload);
                 let value = self.lower_expr_to_operand(&assignment.value, scope, out);
                 let place = self
                     .assignment_target_place(assignment, ty, remaining, scope, span, out)
@@ -142,17 +142,18 @@ impl BodyBuilder<'_, '_> {
         })())
     }
 
-    /// Bind an `Ok` or `Some` arm of a match on a carried view's call to the call's substituted place, as
-    /// `view = call()?` binds it. A pattern binding follows the place it binds, so an exclusive view writes through
-    /// it. Returns the identity to unbind after the arm, or `None` when the arm binds an ordinary payload.
+    /// Bind the arm of the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the error) of a
+    /// match on a carried view's call to the call's substituted place, as `view = call()?` binds it. A pattern
+    /// binding follows the place it binds, so an exclusive view writes through it. Returns the identity to unbind
+    /// after the arm, or `None` when the arm binds an ordinary payload.
     pub(super) fn bind_carried_arm_view(
         &mut self,
         pattern: &ast::Spanned<ast::Pattern>,
-        view: &(bir::Place, IncanInputAccess),
+        view: &(bir::Place, IncanInputAccess, usize),
     ) -> Option<CanonicalSymbolId> {
-        let (name, span) = crate::typechecker::carried_view_binding(pattern)?;
+        let (place, access, payload) = view.clone();
+        let (name, span) = crate::typechecker::carried_view_binding(pattern, payload)?;
         let identity = self.type_info.resolved_write_identity(span, name)?.clone();
-        let (place, access) = view.clone();
         self.input_local_bindings.push(bir::ExplicitInputBinding {
             declaration: hir_span(span),
             identity: Some(identity.clone()),

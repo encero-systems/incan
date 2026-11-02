@@ -1469,7 +1469,7 @@ pub struct CheckedOwnedInitializer {
 }
 
 /// A body's result borrows one slot of `Body::params` (a method's receiver is slot 0) with shared or exclusive
-/// access, either as the whole result or as the first payload of a `Result` or `Option` result. The body requires a
+/// access, either as the whole result or as one payload of a `Result` or `Option` result. The body requires a
 /// checked profile, and so does every caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReturnedView {
@@ -1477,8 +1477,9 @@ pub struct ReturnedView {
     pub slot: usize,
     /// `Shared` for a `Borrowed[T]` result, `Exclusive` for a `Reference[T]` result.
     pub access: crate::IncanInputAccess,
-    /// Whether the view is carried as the first payload of a `Result` or `Option` result.
-    pub carried: bool,
+    /// The result payload carrying the view: `0` for the `Ok` or `Some` payload, `1` for the `Err` payload; `None` for
+    /// a view that is the whole result.
+    pub carried: Option<usize>,
 }
 
 /// An explicit local binding's checked input access, retained on its body independently of the checked profile.
@@ -1681,11 +1682,13 @@ impl Body {
             {
                 return Some("returned view must borrow an existing parameter slot with shared or exclusive access");
             }
-            if view.carried
+            // A `Result` carries a view in either payload; an `Option` only in its one payload.
+            if let Some(payload) = view.carried
                 && !matches!(&self.return_type, crate::IncanType::Generic { base, args }
-                    if (base == "Result" || base == "Option") && !args.is_empty())
+                    if (base == "Result" && args.len() == 2 && payload < 2)
+                        || (base == "Option" && args.len() == 1 && payload == 0))
             {
-                return Some("carried returned view requires a Result or Option result");
+                return Some("carried returned view requires a payload of a Result or Option result");
             }
         }
         if profile.version == 1 && !profile.owned_initializers.is_empty() {

@@ -421,10 +421,13 @@ impl TypeChecker {
                     source.span,
                 )
             })?;
-        // A carried view is the first payload of a `Result` or `Option` result; no other type carries one.
-        if view.carried && !(signature.result_type.is_result() || signature.result_type.is_option()) {
+        // A carried view is one payload of a `Result` result or the payload of an `Option` result; no other type
+        // carries one.
+        if let Some(payload) = view.carried
+            && !(signature.result_type.is_result() || (signature.result_type.is_option() && payload == 0))
+        {
             return Err(Self::ownership_source_error(
-                "A view inside a result must be the first payload of a Result or Option",
+                "A view inside a result must be a payload of a Result or the payload of an Option",
                 signature.result.span,
             ));
         }

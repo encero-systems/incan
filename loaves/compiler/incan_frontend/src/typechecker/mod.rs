@@ -6134,7 +6134,7 @@ impl TypeChecker {
     }
 
     /// Resolve an annotation whose outer ownership mode, when `defer` selects it, is checked by its declaration's
-    /// contract instead of being refused here. With `carried`, the mode of a `Result` or `Option` first payload is
+    /// contract instead of being refused here. With `carried`, the mode of one `Result` or `Option` payload is
     /// deferred the same way, for a view carried in the result. Other nested modes are always refused.
     fn resolve_type_checked_deferring(
         &mut self,
@@ -6155,16 +6155,19 @@ impl TypeChecker {
                     incan_lang::lang::types::collections::from_str(carrier),
                     Some(CollectionTypeId::Result | CollectionTypeId::Option)
                 )
-                && let Some(Spanned {
-                    node: Type::Generic(name, payload),
-                    ..
-                }) = arguments.first()
-                && payload.len() == 1
-                && self.explicit_ownership_mode(name).is_some_and(&defer)
+                && let Some(index) = arguments.iter().position(|argument| {
+                    matches!(&argument.node, Type::Generic(name, payload)
+                        if payload.len() == 1 && self.explicit_ownership_mode(name).is_some_and(&defer))
+                })
             {
-                self.refuse_unimplemented_ownership_annotation(&payload[0]);
-                for argument in &arguments[1..] {
-                    self.refuse_unimplemented_ownership_annotation(argument);
+                // One payload carries the view; every other payload stays an ordinary type.
+                for (position, argument) in arguments.iter().enumerate() {
+                    match &argument.node {
+                        Type::Generic(_, payload) if position == index => {
+                            self.refuse_unimplemented_ownership_annotation(&payload[0]);
+                        }
+                        _ => self.refuse_unimplemented_ownership_annotation(argument),
+                    }
                 }
             } else {
                 self.refuse_unimplemented_ownership_annotation(ty);

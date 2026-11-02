@@ -105,11 +105,15 @@ impl TypeCheckInfo {
         crate::ownership_metadata::SourceSlot,
         Vec<CanonicalSymbolId>,
     )> {
-        self.selected_view_of_kind(span, false)
+        let view = self
+            .selected_returned_view(span)
+            .filter(|view| view.carried.is_none())?;
+        Some((view.access, view.source.slot.clone(), view.source.fields.clone()))
     }
 
-    /// The returned view a selected call carries as the first payload of its `Result` or `Option` result, with the
-    /// same access, source slot and stored-field path as a direct view.
+    /// The returned view a selected call carries in one payload of its `Result` or `Option` result, with the same
+    /// access, source slot and stored-field path as a direct view, and the payload carrying it: `0` for `Ok` or
+    /// `Some`, `1` for `Err`.
     pub(crate) fn selected_carried_view(
         &self,
         span: HirSourceSpan,
@@ -117,25 +121,21 @@ impl TypeCheckInfo {
         IncanInputAccess,
         crate::ownership_metadata::SourceSlot,
         Vec<CanonicalSymbolId>,
+        usize,
     )> {
-        self.selected_view_of_kind(span, true)
+        let view = self.selected_returned_view(span)?;
+        Some((
+            view.access,
+            view.source.slot.clone(),
+            view.source.fields.clone(),
+            view.carried?,
+        ))
     }
 
-    fn selected_view_of_kind(
-        &self,
-        span: HirSourceSpan,
-        carried: bool,
-    ) -> Option<(
-        IncanInputAccess,
-        crate::ownership_metadata::SourceSlot,
-        Vec<CanonicalSymbolId>,
-    )> {
+    fn selected_returned_view(&self, span: HirSourceSpan) -> Option<crate::ownership_metadata::ReturnedView<'_>> {
         let call = self.protocols.explicit_input_calls.get(&span)?;
         let contract = self.selected_input_contract(call).ok()?;
-        let view = crate::ownership_metadata::returned_view(contract)
-            .ok()?
-            .filter(|view| view.carried == carried)?;
-        Some((view.access, view.source.slot.clone(), view.source.fields.clone()))
+        crate::ownership_metadata::returned_view(contract).ok()?
     }
 
     /// Select the explicit route even when its owning body proof is absent, so defaults and indirect evaluations

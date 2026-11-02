@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 
@@ -396,9 +395,11 @@ impl SourceAccesses<'_, '_> {
                             .get(self.proof.canonical_owner()),
                     )?;
                     match (value, view) {
-                        (Some(value), Some(view)) if view.carried => self.carried_return(value)?,
-                        // A returned view borrows its source place: the graph holds a borrow, not a value access.
-                        (Some(value), Some(_)) => self.view_return(value)?,
+                        (Some(value), Some(view)) => match view.carried {
+                            Some(payload) => self.carried_return(value, payload)?,
+                            // A returned view borrows its source place: the graph holds a borrow, not a value access.
+                            None => self.view_return(value)?,
+                        },
                         (Some(value), None) => self.expression(value, true)?,
                         (None, _) => {}
                     }
@@ -510,14 +511,17 @@ impl SourceAccesses<'_, '_> {
         Ok(())
     }
 
-    /// A carried view's return: `Ok` or `Some` of the declared place is a view return, an error is an owned value,
-    /// `None` evaluates nothing, and a carried view call of the same source is evaluated.
-    fn carried_return(&mut self, value: &Spanned<Expr>) -> Result<(), &'static str> {
+    /// A carried view's return: the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the
+    /// error) of the declared place is a view return, another variant is an owned value, `None` evaluates nothing, and
+    /// a carried view call of the same source is evaluated.
+    fn carried_return(&mut self, value: &Spanned<Expr>, carried: usize) -> Result<(), &'static str> {
         match super::super::builtins::carrier_construction(self.proof.facts, value) {
-            Some((ConstructorId::Ok | ConstructorId::Some, [CallArg::Positional(payload)])) => {
+            Some((variant, [CallArg::Positional(payload)]))
+                if super::super::builtins::variant_carries_view(variant, carried) =>
+            {
                 self.view_return(payload)
             }
-            Some((ConstructorId::Err, _)) => self.expression(value, true),
+            Some(_) => self.expression(value, true),
             _ if matches!(value.node, Expr::Literal(Literal::None)) => Ok(()),
             _ => {
                 if !self.proof.graph.invocations.contains_key(&value.span) {

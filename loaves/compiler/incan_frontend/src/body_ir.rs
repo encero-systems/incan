@@ -1202,8 +1202,9 @@ struct BodyBuilder<'type_info, 'source> {
     input_local_bindings: Vec<bir::ExplicitInputBinding>,
     /// The declared view this body returns, once its parameter locals exist.
     returned_view: Option<returned_views::ReturnedViewSource>,
-    /// Each lowered call carrying a view in its `Result` or `Option`, by call span: its substituted place and access.
-    carried_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess)>,
+    /// Each lowered call carrying a view in its `Result` or `Option`, by call span: its substituted place, access and
+    /// the payload carrying the view.
+    carried_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess, usize)>,
     /// Each local bound to such a call, by identity: the call's span, whose substituted place a match takes out.
     carried_view_locals: HashMap<incan_semantics_core::CanonicalSymbolId, ast::Span>,
     /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
