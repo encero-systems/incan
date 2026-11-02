@@ -3,7 +3,7 @@
 use incan_semantics_core::HirSourceSpan;
 
 use super::super::super::flow;
-use crate::ast::{AssertKind, Condition, Spanned, Statement};
+use crate::ast::{AssertKind, Condition, Expr, MatchBody, Spanned, Statement};
 use crate::typechecker::ownership_contracts::CallableSource;
 
 /// Source event regions retain their producer order, but only these reconstructed edges establish execution.
@@ -56,6 +56,21 @@ impl SourcePaths<'_> {
             }
             incoming = match &statement.node {
                 Statement::Pass => incoming,
+                // Each arm starts from the evaluated scrutinee; the arms that continue join after the match.
+                Statement::Expr(Spanned {
+                    node: Expr::Match(scrutinee, arms),
+                    ..
+                }) => {
+                    let evaluated = self.region(scrutinee.span, incoming);
+                    let mut outgoing = Vec::new();
+                    for arm in arms {
+                        outgoing.extend(match &arm.node.body {
+                            MatchBody::Expr(value) => self.region(value.span, evaluated.clone()),
+                            MatchBody::Block(body) => self.block(body, evaluated.clone())?,
+                        });
+                    }
+                    outgoing
+                }
                 Statement::Assignment(_)
                 | Statement::CompoundAssignment(_)
                 | Statement::FieldAssignment(_)

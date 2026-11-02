@@ -17,7 +17,7 @@ Explicit ownership inside a tuple, outcome, field or callable annotation is also
 
 ## Direct-input profile
 
-Synchronous free functions and concrete methods can use direct `Borrowed[T]`, `BorrowedMut[T]` and `Owned[T]` parameters within the following restrictions. They require fixed parameters without defaults, generic binders or decorators, and direct access in straight-line statements, `if`/`elif`/`else` branches and `for`, `while` and `loop` loops with `continue` and value-free `break`. It preserves existing storage for shared and exclusive inputs, including scalar values, and transfers an owned non-Copy root without adding a repair clone. A method's receiver is checked as a borrowed input: `self` grants shared access and `mut self` exclusive, writable access. A call to such a method borrows its receiver from existing storage for the invocation.
+Synchronous free functions and concrete methods can use direct `Borrowed[T]`, `BorrowedMut[T]` and `Owned[T]` parameters within the following restrictions. They require fixed parameters without defaults, generic binders or decorators, and direct access in straight-line statements, `if`/`elif`/`else` branches, `for`, `while` and `loop` loops with `continue` and value-free `break`, statement `match` and `?`. It preserves existing storage for shared and exclusive inputs, including scalar values, and transfers an owned non-Copy root without adding a repair clone. A method's receiver is checked as a borrowed input: `self` grants shared access and `mut self` exclusive, writable access. A call to such a method borrows its receiver from existing storage for the invocation.
 
 ```incan
 # accepted by source checking
@@ -57,6 +57,30 @@ def first_round(text: Owned[str], rounds: Borrowed[list[int]]) -> None:
     for _round in rounds:
         consume(text)
         break
+```
+
+A `?` consumes its `Result` or `Option` and continues with the success payload. On an error it leaves the body as a `return` does, and the body drops each owner it still holds. `Ok`, `Err` and `Some` build a fresh carrier from a fresh or Copy payload; moving a stored non-Copy owner into a carrier receives `INCAN-T0123`, as for model fields. A call whose result is a `Result` or `Option` of plain scalar, text or byte values is admitted like those values.
+
+A statement `match` on a call's or constructor's result runs exactly one arm. `Ok`, `Err` and `Some` patterns bind their payload as a fresh owner, and `None` and `_` bind nothing. An arm may transfer an owner that the other arms keep, and each continuing arm drops exactly the owners it still holds. A match on a stored place, a guarded arm and other patterns receive `INCAN-T0123`.
+
+```incan
+# accepted by source checking
+def size(text: Owned[str]) -> Result[int, str]:
+    if len(text) == 0:
+        return Err("empty")
+    return Ok(len(text))
+
+
+def both(text: Owned[str], other: Owned[str]) -> Result[int, str]:
+    first = size(text)?
+    second = size(other)?
+    return Ok(first + second)
+
+
+def describe(text: Owned[str]) -> str:
+    match size(text):
+        Ok(count) => return f"{count} characters"
+        Err(message) => return message
 ```
 
 Returned dependencies other than the returned views below, indirect calls, indexed access and projected non-Copy transfers remain refused. These restrictions apply to callers as well as callees, including callers whose own parameters have no explicit ownership annotations.
