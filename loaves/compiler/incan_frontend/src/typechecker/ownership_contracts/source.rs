@@ -18,6 +18,7 @@ use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod calls;
+mod matches;
 mod operations;
 mod values;
 
@@ -499,6 +500,9 @@ impl Builder<'_> {
                 self.apply_call(Some(receiver), arguments, expression.span, incoming)
             }
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
+            // `?` consumes its carrier and continues with the success payload; the error path leaves the body as a
+            // `return` does, carrying only the carrier's own error value. A returned view's body has no such exit yet.
+            Expr::Try(inner) if self.view.is_none() => self.expression(inner, incoming, true),
             Expr::Binary(left, operation, right) => {
                 let incoming = self.expression(left, incoming, false)?;
                 let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
@@ -884,7 +888,12 @@ impl Builder<'_> {
                 reason: "loop pattern needs checked binding access".into(),
             });
         };
-        if self.checker.type_info.protocols.iterations.contains_key(&loop_.iter.span)
+        if self
+            .checker
+            .type_info
+            .protocols
+            .iterations
+            .contains_key(&loop_.iter.span)
             || self.checker.type_info.protocols.iterations.contains_key(&span)
         {
             return Err(Unavailable {
@@ -902,7 +911,11 @@ impl Builder<'_> {
                 reason: "missing checked loop item".into(),
             })?;
         let takes_items = self.checker.type_info.for_loop_takes_items(loop_.iter.span);
-        let iterable = if takes_items { None } else { self.optional_place(&loop_.iter)? };
+        let iterable = if takes_items {
+            None
+        } else {
+            self.optional_place(&loop_.iter)?
+        };
         let mut evaluated = self.expression(&loop_.iter, incoming, takes_items)?;
         let iteration = match iterable {
             Some(path) => {
@@ -946,6 +959,10 @@ impl Builder<'_> {
     fn statement(&mut self, statement: &Spanned<Statement>, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
         match &statement.node {
             Statement::Pass => Ok(incoming),
+            Statement::Expr(Spanned {
+                node: Expr::Match(scrutinee, arms),
+                ..
+            }) => self.match_statement(scrutinee, arms, incoming),
             // A discarded returned view still borrows its source for the call; its result loan is never used.
             Statement::Expr(value) => match self.view_relation(value)? {
                 Some(relation) => Ok(self.evaluate_view_call(value, relation, incoming)?.0),

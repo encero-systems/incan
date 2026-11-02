@@ -6,7 +6,7 @@ use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
-use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, ListEntry, Spanned, Statement};
+use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, ListEntry, MatchBody, Spanned, Statement};
 use crate::typechecker::ownership_contracts::CallableSource;
 
 mod paths;
@@ -82,6 +82,31 @@ impl CheckedInputBody<'_> {
                 Statement::FieldAssignment(value) => {
                     self.visit_operation_expression(&value.object, parameters, execution, seen)?;
                     self.visit_operation_expression(&value.value, parameters, execution, seen)?;
+                }
+                // Every arm starts from the evaluated scrutinee; the match reaches what follows when one arm does.
+                Statement::Expr(Spanned {
+                    node: Expr::Match(scrutinee, arms),
+                    ..
+                }) => {
+                    self.visit_operation_expression(scrutinee, parameters, execution, seen)?;
+                    let mut reaches = false;
+                    for arm in arms {
+                        if arm.node.guard.is_some() {
+                            return Err("operation coverage requires unguarded match arms");
+                        }
+                        reaches |= match &arm.node.body {
+                            MatchBody::Expr(value) => {
+                                self.visit_operation_expression(value, parameters, execution, seen)?;
+                                true
+                            }
+                            MatchBody::Block(body) => {
+                                self.visit_operation_statements(body, parameters, execution, seen)?
+                            }
+                        };
+                    }
+                    if !reaches {
+                        return Ok(false);
+                    }
                 }
                 Statement::Expr(value) => self.visit_operation_expression(value, parameters, execution, seen)?,
                 Statement::Return(value) => {
@@ -179,7 +204,8 @@ impl CheckedInputBody<'_> {
     ) -> Result<(), &'static str> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Literal(_) => {}
-            Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Field(inner, _) => {
+            // `?` evaluates its carrier; the propagating path leaves the body without a further operation.
+            Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Field(inner, _) | Expr::Try(inner) => {
                 self.visit_operation_expression(inner, parameters, execution, seen)?;
             }
             Expr::Binary(left, _, right) => {

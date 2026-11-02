@@ -33,6 +33,9 @@ impl Builder<'_> {
         {
             return self.observer_call(builtin, arguments, span, incoming);
         }
+        if self.carrier_constructor(callee) {
+            return self.carrier_construction(arguments, span, incoming);
+        }
         if self.checker.type_info.constructor_field_binding(span).is_some() {
             return self.model_construction(callee, arguments, span, incoming);
         }
@@ -535,21 +538,25 @@ pub(super) struct ViewRelation {
     fields: Vec<incan_semantics_core::CanonicalSymbolId>,
 }
 
-/// This initial call profile admits only closed scalar/owned byte-string results, with no possible retained source
-/// dependency. Aggregates, references, native and generic results await their checked dependency representation.
+/// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`
+/// carriers of them, with no possible retained source dependency. Other aggregates, references, native and generic
+/// results await their checked dependency representation.
 fn plain_result(ty: &ResolvedType) -> bool {
-    matches!(
-        ty,
+    match ty {
         ResolvedType::Unit
-            | ResolvedType::Int
-            | ResolvedType::Float
-            | ResolvedType::Numeric(_)
-            | ResolvedType::Bool
-            | ResolvedType::Str
-            | ResolvedType::Bytes
-            | ResolvedType::FrozenStr
-            | ResolvedType::FrozenBytes
-    )
+        | ResolvedType::Int
+        | ResolvedType::Float
+        | ResolvedType::Numeric(_)
+        | ResolvedType::Bool
+        | ResolvedType::Str
+        | ResolvedType::Bytes
+        | ResolvedType::FrozenStr
+        | ResolvedType::FrozenBytes => true,
+        ResolvedType::Generic(_, arguments) if ty.is_result() || ty.is_option() => {
+            !arguments.is_empty() && arguments.iter().all(plain_result)
+        }
+        _ => false,
+    }
 }
 
 /// Printing reaches no nominal display hook for primitive values and for lists whose items print the same way.
