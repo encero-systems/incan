@@ -1,0 +1,12 @@
+# behavior: a closure in an explicit body cannot yet capture a borrowed local; only shared inputs and Copy values (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+
+def total(start: Borrowed[Counter]) -> int:
+    mut owned = Counter(value=start.value)
+    view: Borrowed[Counter] = owned
+    read: () -> int = () => view.value
+    return read()

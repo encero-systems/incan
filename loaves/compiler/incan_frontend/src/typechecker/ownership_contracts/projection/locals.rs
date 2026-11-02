@@ -94,7 +94,14 @@ impl<'a> CheckedInputBody<'a> {
         destination: &CanonicalSymbolId,
         initializer: &Spanned<Expr>,
     ) -> Result<Option<IncanInputAccess>, &'static str> {
-        if self.facts.protocols.explicit_local_modes.contains_key(destination) {
+        // A closure local holds its closure value; its loan is the closure's captured borrow, not a view.
+        if self.facts.protocols.explicit_local_modes.contains_key(destination)
+            || self
+                .graph
+                .closures
+                .values()
+                .any(|closure| &closure.local == destination)
+        {
             return Ok(None);
         }
         let Some(id) = self.graph.local_loans.get(destination) else {

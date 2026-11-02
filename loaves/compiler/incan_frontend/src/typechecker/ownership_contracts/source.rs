@@ -18,6 +18,7 @@ use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod calls;
+mod closures;
 mod matches;
 mod operations;
 mod values;
@@ -96,6 +97,9 @@ struct Builder<'a> {
     carriers: BTreeMap<CanonicalSymbolId, matches::BoundCarrier>,
     /// Locals a `match` or `?` already took a carried view out of; any later use of them is refused.
     taken_carriers: BTreeSet<CanonicalSymbolId>,
+    /// Locals bound to a closure, with the place and loan of the borrow each holds. A closure local can only be
+    /// called.
+    closures: BTreeMap<CanonicalSymbolId, Option<Path>>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
@@ -217,6 +221,7 @@ fn build_graph(
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
+            closures: BTreeMap::new(),
             nodes: vec![Node {
                 event: Event::Nothing,
                 successors: Vec::new(),
@@ -229,6 +234,7 @@ fn build_graph(
         aliases: BTreeMap::new(),
         carriers: BTreeMap::new(),
         taken_carriers: BTreeSet::new(),
+        closures: BTreeMap::new(),
         loops: Vec::new(),
         view: None,
         view_carried: None,
@@ -398,6 +404,14 @@ impl Builder<'_> {
                 if self.taken_carriers.contains(&identity) {
                     return Err(taken_carrier(expression.span));
                 }
+                if self.closures.contains_key(&identity) {
+                    return Err(Unavailable {
+                        span: expression.span,
+                        reason: "a closure bound to a local can only be called; it cannot yet be returned, stored or \
+                                 passed"
+                            .into(),
+                    });
+                }
                 match self.aliases.get(&identity) {
                     Some(path) => Ok(path.clone()),
                     None => Ok(Path {
@@ -560,6 +574,10 @@ impl Builder<'_> {
                     outgoing,
                 )
             }
+            Expr::Closure(..) => Err(Unavailable {
+                span: expression.span,
+                reason: "a closure needs a local binding before it is called".into(),
+            }),
             _ => Err(Unavailable {
                 span: expression.span,
                 reason: "expression needs checked call or dependency access facts".into(),
@@ -710,6 +728,14 @@ impl Builder<'_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.checker.type_info.protocols.explicit_local_modes.get(&root))
             .flatten();
+        // A new local initialized by a closure holds the closure's captured borrow, if it has one.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && root.kind == SemanticSourceTargetKind::Local
+            && matches!(assignment.value.node, Expr::Closure(..))
+        {
+            return self.bind_closure(root, &assignment.value, incoming);
+        }
         // A new local initialized by a returned view aliases its substituted place under the call's result loan.
         if mode.is_none()
             && root.declaration_span == assignment.name_span

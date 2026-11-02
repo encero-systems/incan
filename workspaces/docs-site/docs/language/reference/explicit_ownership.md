@@ -217,6 +217,25 @@ def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
             return 0
 ```
 
+## Closures
+
+An input-checked body can bind a closure to a new local and call that local. A closure reads the locals it captures when it is built, and holds what it reads by value. A captured Copy value is read there. A captured shared input must be of a Copy value: the closure reads it by copy, and the input stays borrowed for as long as the local is called. Calls take Copy arguments.
+
+```incan
+# accepted by source checking
+def total(amount: Borrowed[int], extra: int) -> int:
+    base = 10
+    add: (int) -> int = (step) => amount + step + base
+    return add(extra) + add(1)
+```
+
+The following are refused with `INCAN-T0123`, each naming its reason:
+
+- Returning, storing or passing the closure local.
+- A closure that reads the receiver.
+- A closure that captures an owned value that is not Copy, a shared input whose value is not Copy, a borrowed local or an exclusive input.
+- A closure that captures more than one shared input.
+
 ## Source conflict diagnostics
 
 For checked function and method bodies with direct input contracts or explicit local loans, `INCAN-T0126` reports permission conflicts, overlapping live borrows and use after ownership transfer. It identifies the conflicting operation and its source declaration, borrow origin or earlier move. When a reachable dependent use keeps a borrow live, that use is included as a related location. A method's shared receiver cannot grant an exclusive local field loan; a mutable receiver can grant one when no overlapping dependency remains live.
@@ -231,7 +250,7 @@ def update(mut value: Owned[int]) -> int:
 
 Selected free-function and method calls retain their declared input access through the invocation, independently of whether the callee reads or writes the argument. A fresh scalar or owned string/byte expression can supply temporary storage for that call. Borrowing an existing variable through parentheses preserves that variable’s permissions; it does not create a fresh writable owner. This call-access rule requires direct input contracts, complete fixed arguments, and scalar or owned string/byte results without retained dependencies, or a returned view.
 
-The absence of `INCAN-T0126` does not imply acceptance. Bodies outside the direct-input subset receive `INCAN-T0123`, including returned dependencies other than returned views, captures and suspension.
+The absence of `INCAN-T0126` does not imply acceptance. Bodies outside the direct-input subset receive `INCAN-T0123`, including returned dependencies other than returned views, captures other than those described under [Closures](#closures), and suspension.
 
 ## Place-binding migration warning
 

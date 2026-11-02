@@ -1,0 +1,10 @@
+# behavior: a closure an explicit body binds to a local can only be called there; passing it on is refused for now, because the borrow it holds would go with it (#2500).
+# expect-diagnostic: INCAN-T0123
+
+def apply(read: () -> int) -> int:
+    return read()
+
+
+def total(amount: Borrowed[int]) -> int:
+    read: () -> int = () => amount + 1
+    return apply(read)

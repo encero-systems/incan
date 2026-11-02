@@ -220,8 +220,81 @@ pub(in crate::typechecker) struct Graph {
     pub invocations: BTreeMap<HirSourceSpan, Invocation>,
     /// Observer and operator dependencies retain their evaluated operand and exact consumption event.
     pub operations: BTreeMap<HirSourceSpan, OperationInputs>,
+    /// Closures bound to a local, by closure expression, with the captures they read or borrow when built.
+    pub closures: BTreeMap<HirSourceSpan, ClosureCaptures>,
     pub nodes: Vec<Node>,
     pub entry: usize,
+}
+
+/// A closure bound to a local. It reads each captured Copy value when it is built; its one captured borrow becomes
+/// a shared loan the local holds, so every call of the local is a use of that borrow.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct ClosureCaptures {
+    pub local: CanonicalSymbolId,
+    /// The captured declarations, in the checker's capture order.
+    pub captures: Vec<CanonicalSymbolId>,
+    /// The loan held on the one borrowed capture.
+    pub loan: Option<LoanId>,
+    /// The read of each captured Copy value when the closure is built.
+    pub reads: Vec<usize>,
+}
+
+/// Each capture is either the closure's one loan or one read at the closure itself, and the loan is shared, keyed to
+/// the closure and held by its local. The retained links are validated here; they are never recovered from spans.
+fn validate_closures(graph: &Graph) -> Result<(), InvalidGraph> {
+    for (span, closure) in &graph.closures {
+        if closure.local.kind != incan_semantics_core::SemanticSourceTargetKind::Local {
+            return Err(InvalidGraph("closure is not bound to a local"));
+        }
+        let mut covered = BTreeSet::new();
+        if let Some(id) = closure.loan {
+            let loan = graph.loans.get(id.0).ok_or(InvalidGraph("closure loan is unknown"))?;
+            let Root::Binding(source) = &loan.source.root else {
+                return Err(InvalidGraph("closure loan borrows a bounded temporary"));
+            };
+            if loan.span != *span
+                || loan.kind != LoanKind::Shared
+                || loan.writable
+                || loan.parent.is_some()
+                || !loan.source.projection.is_empty()
+                || graph.local_loans.get(&closure.local) != Some(&id)
+                || !closure.captures.contains(source)
+            {
+                return Err(InvalidGraph("closure loan differs from its shared captured borrow"));
+            }
+            covered.insert(source.clone());
+        } else if graph.local_loans.contains_key(&closure.local) {
+            return Err(InvalidGraph("closure local holds a loan its closure does not record"));
+        }
+        for index in &closure.reads {
+            let node = graph
+                .nodes
+                .get(*index)
+                .ok_or(InvalidGraph("closure capture read is outside callable"))?;
+            let Event::Access {
+                place,
+                access: Access::Read,
+                through: None,
+            } = &node.event
+            else {
+                return Err(InvalidGraph("closure capture is not a plain read"));
+            };
+            let Root::Binding(source) = &place.root else {
+                return Err(InvalidGraph("closure capture reads a bounded temporary"));
+            };
+            if node.span != *span
+                || !place.projection.is_empty()
+                || !closure.captures.contains(source)
+                || !covered.insert(source.clone())
+            {
+                return Err(InvalidGraph("closure capture read differs from its capture"));
+            }
+        }
+        if covered.len() != closure.captures.len() {
+            return Err(InvalidGraph("closure capture has neither a read nor a loan"));
+        }
+    }
+    Ok(())
 }
 
 /// Source conflict category, independent of human diagnostic wording or native compiler diagnostics.
@@ -289,6 +362,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
     validate_invocations(graph)?;
     validate_owned_initializations(graph)?;
     operations::validate_operations(graph)?;
+    validate_closures(graph)?;
     let mut origins = vec![None; graph.loans.len()];
     let mut destinations = BTreeSet::new();
     for (local, loan) in &graph.local_loans {
@@ -776,6 +850,7 @@ mod tests {
             operations: BTreeMap::new(),
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
+            closures: BTreeMap::new(),
             nodes: events
                 .into_iter()
                 .zip(edges)

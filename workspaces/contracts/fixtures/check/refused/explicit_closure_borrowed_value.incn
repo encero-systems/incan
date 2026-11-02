@@ -1,0 +1,10 @@
+# behavior: a closure in an explicit body cannot yet capture a borrowed input whose value is not Copy; the native closure holds its captures by value and would need a copy (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+
+def total(counter: Borrowed[Counter]) -> int:
+    read: () -> int = () => counter.value
+    return read()

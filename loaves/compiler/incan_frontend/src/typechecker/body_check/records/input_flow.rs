@@ -4,8 +4,8 @@
 use super::types::next;
 use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
-    Access, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind, Node,
-    OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
+    Access, ClosureCaptures, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind,
+    Node, OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::BTreeMap;
@@ -107,6 +107,25 @@ pub(super) fn ordered_key(previous: &mut String, before: &[String], remaining: u
     }
     *previous = key;
     Ok(())
+}
+
+/// Each closure bound to a local, keyed by its expression: the local, its captures, its loan and its capture reads.
+fn closures(positions: &Positions, graph: &Graph, fields: &mut Vec<String>) -> Result<(), NodeBindingError> {
+    let mut closures = Vec::new();
+    for (span, closure) in &graph.closures {
+        let mut row = vec![anchor(positions, *span)?];
+        let key = canonical_key(&row);
+        row.push(positions.identity(&closure.local)?);
+        row.push(closure.captures.len().to_string());
+        for capture in &closure.captures {
+            row.push(positions.identity(capture)?);
+        }
+        loan_option(closure.loan, &mut row);
+        row.push(closure.reads.len().to_string());
+        row.extend(closure.reads.iter().map(usize::to_string));
+        closures.push((key, row));
+    }
+    ordered_fields(closures, fields)
 }
 
 /// Convert the complete graph to bounded record primitives; liveness is recomputed from these exact facts on restore.
@@ -224,6 +243,7 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         invocations.push((key, row));
     }
     ordered_fields(invocations, fields)?;
+    closures(positions, graph, fields)?;
     fields.push(graph.nodes.len().to_string());
     for node in &graph.nodes {
         match &node.event {
@@ -527,6 +547,7 @@ impl Reader<'_> {
                 return Err(NodeBindingError::MissingNode);
             }
         }
+        let closures = self.closures()?;
         let mut nodes = Vec::new();
         for _ in 0..self.count()? {
             let event = match self.token()? {
@@ -568,9 +589,41 @@ impl Reader<'_> {
             owned_locals,
             operations,
             invocations,
+            closures,
             nodes,
         })
     }
+    /// Restore each closure bound to a local in canonical order: its local, captures, loan and capture reads.
+    fn closures(&mut self) -> Result<BTreeMap<HirSourceSpan, ClosureCaptures>, NodeBindingError> {
+        let mut closures = BTreeMap::new();
+        let mut previous = String::new();
+        for _ in 0..self.count()? {
+            let before = self.values.as_slice();
+            let span = self.semantic_span()?;
+            ordered_key(&mut previous, before, self.values.len())?;
+            let local = self.identity()?;
+            let mut captures = Vec::new();
+            for _ in 0..self.count()? {
+                captures.push(self.identity()?);
+            }
+            let loan = self.loan_option()?;
+            let mut reads = Vec::new();
+            for _ in 0..self.count()? {
+                reads.push(self.number()?);
+            }
+            let closure = ClosureCaptures {
+                local,
+                captures,
+                loan,
+                reads,
+            };
+            if closures.insert(span, closure).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        Ok(closures)
+    }
+
     /// Require complete consumption, preventing hidden trailing facts from being ignored.
     pub fn finish(&mut self) -> Result<(), NodeBindingError> {
         if self.values.next().is_some() {

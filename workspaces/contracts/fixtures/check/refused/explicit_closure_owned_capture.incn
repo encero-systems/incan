@@ -1,0 +1,11 @@
+# behavior: a closure in an explicit body cannot yet capture an owned value that is not Copy; it would need to move or copy it (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+
+def total(start: Borrowed[Counter]) -> int:
+    owned = Counter(value=start.value)
+    read: () -> int = () => owned.value
+    return read()
