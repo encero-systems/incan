@@ -1,6 +1,6 @@
 # RFC 167: Debugging and diagnostics for Incan programs and tools
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-31
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -17,7 +17,7 @@
     - RFC 131 (error origins, cause chains and opt-in stack capture)
     - RFC 165 (std.db typed embedded storage)
     - RFC 169 (typed datasets)
-- **Issue:** —
+- **Issue:** [#1640](https://github.com/encero-systems/incan/issues/1640)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
