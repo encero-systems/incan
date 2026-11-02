@@ -1,4 +1,4 @@
-# behavior: a closure in an explicit body cannot yet capture a borrowed local; only shared inputs and Copy values (#2500).
+# behavior: a closure in an explicit body cannot yet capture a borrowed local whose value is not Copy; the native closure holds its captures by value (#2500).
 # expect-diagnostic: INCAN-T0123
 
 class Counter:

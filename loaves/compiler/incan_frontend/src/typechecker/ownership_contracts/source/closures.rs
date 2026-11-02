@@ -1,11 +1,12 @@
 //! Closures bound to a local of an explicit body. A closure reads the locals it captures when it is built, so a
 //! captured Copy value is read there and a captured borrow becomes a shared loan the local holds; every call of the
-//! local is a use of that borrow. The native closure holds its captures by value, so a captured borrow must be of a
-//! Copy value. A closure that escapes, reads the receiver, or captures an owned value that is not Copy, a borrowed
-//! value that is not Copy, a borrowed local, an exclusive borrow or more than one borrow is refused.
+//! local is a use of that borrow; a captured `Borrowed[T]` local is reborrowed through its own loan. The native closure
+//! holds its captures by value, so a captured borrow must be of a Copy value. A closure that escapes, reads the
+//! receiver, or captures a value that is not Copy, a view a call returned, an exclusive borrow or more than one borrow
+//! is refused.
 
 use super::super::flow::ClosureCaptures;
-use super::{Access, Builder, Event, Loan, LoanId, LoanKind, Path, Unavailable};
+use super::{Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Unavailable};
 use crate::ast::{CallArg, Expr, Span, Spanned};
 use crate::ast_walk::any_expr_in_expr;
 use incan_semantics_core::CanonicalSymbolId;
@@ -45,14 +46,16 @@ impl Builder<'_> {
             if self.carriers.contains_key(&identity) || self.taken_carriers.contains(&identity) {
                 return Err(refuse("a closure capturing a carried result"));
             }
-            if self.aliases.contains_key(&identity) {
-                return Err(refuse("a closure capturing a borrowed local"));
-            }
-            let path = Path {
-                place: self.root(&identity, closure.span)?,
-                through: None,
+            let path = match self.aliases.get(&identity) {
+                // An annotated borrowed local is captured as a reborrow of its own loan.
+                Some(path) if self.annotated_borrow(&identity) => path.clone(),
+                Some(_) => return Err(refuse("a closure capturing a view")),
+                None => Path {
+                    place: self.root(&identity, closure.span)?,
+                    through: None,
+                },
             };
-            if self.borrowed_inputs.contains(&path.place.root) {
+            if path.through.is_some() || self.borrowed_inputs.contains(&path.place.root) {
                 if self.exclusive_path(&path) {
                     return Err(refuse("a closure capturing an exclusive borrow"));
                 }
@@ -157,6 +160,16 @@ impl Builder<'_> {
             }
             None => incoming,
         })
+    }
+
+    /// Whether a local is declared `Borrowed[T]` or `BorrowedMut[T]`, rather than bound to a view a call returns.
+    fn annotated_borrow(&self, identity: &CanonicalSymbolId) -> bool {
+        self.checker
+            .type_info
+            .protocols
+            .explicit_local_modes
+            .get(identity)
+            .is_some_and(|mode| matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut))
     }
 
     /// Whether a captured place is borrowed exclusively: through an exclusive loan, or as an exclusive input.

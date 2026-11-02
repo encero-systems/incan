@@ -227,7 +227,8 @@ pub(in crate::typechecker) struct Graph {
 }
 
 /// A closure bound to a local. It reads each captured Copy value when it is built; its one captured borrow becomes
-/// a shared loan the local holds, so every call of the local is a use of that borrow.
+/// a shared loan the local holds, reborrowing a captured borrowed local's own loan, so every call of the local is a use
+/// of that borrow.
 #[derive(Debug, Clone)]
 pub(in crate::typechecker) struct ClosureCaptures {
     pub local: CanonicalSymbolId,
@@ -249,16 +250,25 @@ fn validate_closures(graph: &Graph) -> Result<(), InvalidGraph> {
         let mut covered = BTreeSet::new();
         if let Some(id) = closure.loan {
             let loan = graph.loans.get(id.0).ok_or(InvalidGraph("closure loan is unknown"))?;
-            let Root::Binding(source) = &loan.source.root else {
+            let Root::Binding(root) = &loan.source.root else {
                 return Err(InvalidGraph("closure loan borrows a bounded temporary"));
+            };
+            // A captured borrowed local is reborrowed through its own loan; a captured input is borrowed whole.
+            let source = match loan.parent {
+                Some(parent) => closure
+                    .captures
+                    .iter()
+                    .find(|capture| graph.local_loans.get(*capture) == Some(&parent)),
+                None if loan.source.projection.is_empty() => closure.captures.iter().find(|capture| *capture == root),
+                None => None,
+            };
+            let Some(source) = source else {
+                return Err(InvalidGraph("closure loan borrows no captured place"));
             };
             if loan.span != *span
                 || loan.kind != LoanKind::Shared
                 || loan.writable
-                || loan.parent.is_some()
-                || !loan.source.projection.is_empty()
                 || graph.local_loans.get(&closure.local) != Some(&id)
-                || !closure.captures.contains(source)
             {
                 return Err(InvalidGraph("closure loan differs from its shared captured borrow"));
             }

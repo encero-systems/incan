@@ -219,7 +219,7 @@ def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
 
 ## Closures
 
-An input-checked body can bind a closure to a new local and call that local. A closure reads the locals it captures when it is built, and holds what it reads by value. A captured Copy value is read there. A captured shared input must be of a Copy value: the closure reads it by copy, and the input stays borrowed for as long as the local is called. Calls take Copy arguments.
+An input-checked body can bind a closure to a new local and call that local. A closure reads the locals it captures when it is built, and holds what it reads by value. A captured Copy value is read there. A captured shared input or local declared `Borrowed[T]` must be of a Copy value: the closure reads it by copy, and the place it borrows stays borrowed for as long as the local is called. Changing that place before the closure's last call is refused with `INCAN-T0126`. Calls take Copy arguments.
 
 ```incan
 # accepted by source checking
@@ -227,13 +227,22 @@ def total(amount: Borrowed[int], extra: int) -> int:
     base = 10
     add: (int) -> int = (step) => amount + step + base
     return add(extra) + add(1)
+
+
+def after_last_call(start: int) -> int:
+    mut owned = start + 1
+    view: Borrowed[int] = owned
+    read: () -> int = () => view + 1
+    seen = read()
+    owned += 10  # after the closure's last call
+    return seen + owned
 ```
 
 The following are refused with `INCAN-T0123`, each naming its reason:
 
 - Returning, storing or passing the closure local.
 - A closure that reads the receiver.
-- A closure that captures an owned value that is not Copy, a shared input whose value is not Copy, a borrowed local or an exclusive input.
+- A closure that captures a value that is not Copy, owned or borrowed, a view a call returned, or an exclusive input or local.
 - A closure that captures more than one shared input.
 
 ## Source conflict diagnostics
