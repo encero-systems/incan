@@ -2,13 +2,83 @@
 //! carrier or on a local still holding a carried view. Other place scrutinees, guards and other patterns need their
 //! own checked binding access.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_semantics_core::CanonicalSymbolId;
 
 use super::{Builder, Event, Path, Place, Unavailable};
 use crate::ast::{CallArg, Expr, Literal, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned};
 
+/// A local still holding a carried call: the payload carrying its view, and how many loops enclose its binding.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct BoundCarrier {
+    pub(super) payload: usize,
+    pub(super) loop_depth: usize,
+}
+
+/// The carrier bookkeeping at a branch point: the locals still holding a carried call, each with its alias, and the
+/// locals whose view was already taken out. Each branch starts from it, and the paths that continue join after.
+#[derive(Clone)]
+pub(super) struct CarrierState {
+    bound: BTreeMap<CanonicalSymbolId, (BoundCarrier, Path)>,
+    taken: BTreeSet<CanonicalSymbolId>,
+}
+
 impl Builder<'_> {
+    /// The carrier bookkeeping as it stands, for a branch point.
+    pub(super) fn carrier_state(&self) -> CarrierState {
+        CarrierState {
+            bound: self
+                .carriers
+                .iter()
+                .filter_map(|(identity, carrier)| {
+                    Some((identity.clone(), (*carrier, self.aliases.get(identity)?.clone())))
+                })
+                .collect(),
+            taken: self.taken_carriers.clone(),
+        }
+    }
+
+    /// Start a branch from `state`: carriers bound in an earlier branch are dropped, and those it took out return.
+    pub(super) fn restore_carrier_state(&mut self, state: &CarrierState) {
+        let stale: Vec<CanonicalSymbolId> = self
+            .carriers
+            .keys()
+            .chain(&self.taken_carriers)
+            .filter(|identity| !state.bound.contains_key(*identity))
+            .cloned()
+            .collect();
+        for identity in stale {
+            self.aliases.remove(&identity);
+        }
+        self.carriers.clear();
+        for (identity, (carrier, path)) in &state.bound {
+            self.carriers.insert(identity.clone(), *carrier);
+            self.aliases.insert(identity.clone(), path.clone());
+        }
+        self.taken_carriers = state.taken.clone();
+    }
+
+    /// Join the branches that continue: a local whose view any of them took out is taken after the join, and the
+    /// others stay bound. With no continuing branch, the code after is unreachable and keeps the entry state.
+    pub(super) fn join_carrier_states(&mut self, entry: &CarrierState, ends: &[CarrierState]) {
+        if ends.is_empty() {
+            self.restore_carrier_state(entry);
+            return;
+        }
+        let taken: BTreeSet<CanonicalSymbolId> = ends.iter().flat_map(|state| state.taken.iter().cloned()).collect();
+        let mut bound = BTreeMap::new();
+        for state in ends {
+            for (identity, carrier) in &state.bound {
+                if !taken.contains(identity) {
+                    bound.entry(identity.clone()).or_insert_with(|| carrier.clone());
+                }
+            }
+        }
+        self.restore_carrier_state(&CarrierState { bound, taken });
+    }
+
     /// A bare `Ok`, `Err` or `Some` that resolves to the builtin constructor, through the shared admission definition.
     pub(super) fn carrier_constructor(&self, callee: &Spanned<Expr>) -> bool {
         super::super::builtins::carrier_constructor(&self.checker.type_info, callee).is_some()
@@ -72,7 +142,11 @@ impl Builder<'_> {
             });
         };
         let mut outgoing = Vec::new();
+        // Each arm starts from the carriers as the scrutinee left them; the arms that continue join after the match.
+        let entry = self.carrier_state();
+        let mut ends = Vec::new();
         for arm in arms {
+            self.restore_carrier_state(&entry);
             if let Some(guard) = &arm.node.guard {
                 return Err(Unavailable {
                     span: guard.span,
@@ -86,11 +160,16 @@ impl Builder<'_> {
                 Some((path, (name, span))) => self.view_arm_binding(name, span, path)?,
                 None => self.arm_binding(&arm.node.pattern)?,
             }
-            outgoing.extend(match &arm.node.body {
+            let continuing = match &arm.node.body {
                 MatchBody::Expr(value) => self.expression(value, evaluated.clone(), false)?,
                 MatchBody::Block(body) => self.block(body, evaluated.clone())?,
-            });
+            };
+            if !continuing.is_empty() {
+                ends.push(self.carrier_state());
+            }
+            outgoing.extend(continuing);
         }
+        self.join_carrier_states(&entry, &ends);
         Ok(outgoing)
     }
 
@@ -157,14 +236,24 @@ impl Builder<'_> {
 
     /// Take the view out of a local still holding a carried call, for a `match` or `?` on it. The local's read
     /// through its loan keeps the loan live until here, and taking the view consumes the local. The view reborrows
-    /// that loan, keyed to the same call, so each loan keeps one local destination.
+    /// that loan, keyed to the same call, so each loan keeps one local destination. Inside a loop the local's binding
+    /// does not enclose, every iteration would take the view out of the same local, so that is refused.
     pub(super) fn take_bound_view(
         &mut self,
         carrier: &Spanned<Expr>,
         identity: CanonicalSymbolId,
         incoming: Vec<usize>,
     ) -> Result<(Vec<usize>, Path), Unavailable> {
-        self.carriers.remove(&identity);
+        let bound = self.carriers.remove(&identity).ok_or(Unavailable {
+            span: carrier.span,
+            reason: "bound carried view has no carrier".into(),
+        })?;
+        if bound.loop_depth < self.loops.len() {
+            return Err(Unavailable {
+                span: carrier.span,
+                reason: "a carried result bound outside this loop would be taken out on every iteration".into(),
+            });
+        }
         let path = self.aliases.get(&identity).cloned().ok_or(Unavailable {
             span: carrier.span,
             reason: "bound carried view has no source place".into(),
@@ -211,8 +300,8 @@ impl Builder<'_> {
             Expr::Paren(inner) => self.bound_carrier(inner),
             Expr::Ident(_) => {
                 let identity = self.checker.type_info.resolved_identity(expression.span)?;
-                let payload = self.carriers.get(identity)?;
-                Some((identity.clone(), *payload))
+                let carrier = self.carriers.get(identity)?;
+                Some((identity.clone(), carrier.payload))
             }
             _ => None,
         }

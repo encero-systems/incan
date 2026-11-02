@@ -10,7 +10,7 @@ use super::flow::{
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, MethodDecl, Param, Receiver, Span, Spanned, Statement,
+    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -91,10 +91,9 @@ struct Builder<'a> {
     graph: Graph,
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
-    /// Locals bound to a call that carries a view, not yet consumed, with the payload carrying it. Each aliases the
-    /// view's place under the call's result loan, which it holds until a `match` or `?` takes the view out; any other
-    /// use of it is refused.
-    carriers: BTreeMap<CanonicalSymbolId, usize>,
+    /// Locals bound to a call that carries a view, not yet consumed. Each aliases the view's place under the call's
+    /// result loan, which it holds until a `match` or `?` takes the view out; any other use of it is refused.
+    carriers: BTreeMap<CanonicalSymbolId, matches::BoundCarrier>,
     /// Locals a `match` or `?` already took a carried view out of; any later use of them is refused.
     taken_carriers: BTreeSet<CanonicalSymbolId>,
     constrained: BTreeSet<Root>,
@@ -575,6 +574,39 @@ impl Builder<'_> {
         self.checker.input_copy_value(ty)
     }
 
+    /// A statement `if` evaluates each condition on the path where the previous ones were false, and its branches,
+    /// including an absent `else`, join after it. Each branch starts from the carriers as that path left them.
+    fn if_statement(&mut self, branch: &IfStmt, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
+        let mut remaining = self.condition(&branch.condition, incoming)?;
+        let mut fallthrough = self.carrier_state();
+        let mut ends = Vec::new();
+        let mut outgoing = self.block(&branch.then_body, remaining.clone())?;
+        if !outgoing.is_empty() {
+            ends.push(self.carrier_state());
+        }
+        for (condition, body) in &branch.elif_branches {
+            self.restore_carrier_state(&fallthrough);
+            remaining = self.expression(condition, remaining, false)?;
+            fallthrough = self.carrier_state();
+            let continuing = self.block(body, remaining.clone())?;
+            if !continuing.is_empty() {
+                ends.push(self.carrier_state());
+            }
+            outgoing.extend(continuing);
+        }
+        self.restore_carrier_state(&fallthrough);
+        let continuing = match &branch.else_body {
+            Some(body) => self.block(body, remaining)?,
+            None => remaining,
+        };
+        if !continuing.is_empty() {
+            ends.push(self.carrier_state());
+        }
+        outgoing.extend(continuing);
+        self.join_carrier_states(&fallthrough, &ends);
+        Ok(outgoing)
+    }
+
     /// Patterns need binding-specific dependency transfer and are unavailable until their checked projection exists.
     fn condition(&mut self, condition: &Condition, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
         match condition {
@@ -718,7 +750,9 @@ impl Builder<'_> {
                 });
             }
             self.aliases.insert(root.clone(), path);
-            self.carriers.insert(root, payload);
+            let loop_depth = self.loops.len();
+            self.carriers
+                .insert(root, matches::BoundCarrier { payload, loop_depth });
             return Ok(incoming);
         }
         let source = self.optional_place(&assignment.value)?;
@@ -1029,10 +1063,14 @@ impl Builder<'_> {
                 node: Expr::Match(scrutinee, arms),
                 ..
             }) => self.match_statement(scrutinee, arms, incoming),
-            // A discarded returned view still borrows its source for the call; its result loan is never used.
+            // A discarded returned view still borrows its source for the call; its result loan is never used. A
+            // discarded call that carries a view drops its carrier the same way, with its view and its error.
             Statement::Expr(value) => match self.view_source(value)? {
                 Some(view) => Ok(self.evaluate_view_source(value, view, incoming)?.0),
-                None => self.expression(value, incoming, false),
+                None => match self.call_relation(value)?.filter(|relation| relation.carried.is_some()) {
+                    Some(relation) => Ok(self.evaluate_view_call(value, relation, incoming)?.0),
+                    None => self.expression(value, incoming, false),
+                },
             },
             Statement::Assert(assertion) => {
                 let crate::ast::AssertKind::Condition(condition) = &assertion.kind else {
@@ -1084,19 +1122,7 @@ impl Builder<'_> {
             Statement::Assignment(assignment) => self.assignment(assignment, statement.span, incoming),
             Statement::FieldAssignment(assignment) => self.field_assignment(assignment, incoming),
             Statement::CompoundAssignment(assignment) => self.compound_assignment(assignment, statement.span, incoming),
-            Statement::If(branch) => {
-                let mut remaining = self.condition(&branch.condition, incoming)?;
-                let mut outgoing = self.block(&branch.then_body, remaining.clone())?;
-                for (condition, body) in &branch.elif_branches {
-                    remaining = self.expression(condition, remaining, false)?;
-                    outgoing.extend(self.block(body, remaining.clone())?);
-                }
-                outgoing.extend(match &branch.else_body {
-                    Some(body) => self.block(body, remaining)?,
-                    None => remaining,
-                });
-                Ok(outgoing)
-            }
+            Statement::If(branch) => self.if_statement(branch, incoming),
             Statement::While(loop_) => {
                 let header = self.event(incoming, Event::Nothing, statement.span)[0];
                 let condition = self.condition(&loop_.condition, vec![header])?;
