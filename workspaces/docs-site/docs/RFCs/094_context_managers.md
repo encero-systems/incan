@@ -1,6 +1,6 @@
 # RFC 094: Context managers
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
