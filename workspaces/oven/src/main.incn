@@ -16,7 +16,7 @@ from home import TOOLCHAIN, dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
 from unit import describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
-from incan_units import check_unit, compile_unit, make_unit, program_binary, run_program
+from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
 from rust_units import RustBuild, build_rust, read_registry_units, rust_facet
 from rust_testing import build_rust_tests
@@ -143,6 +143,11 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command == "owner":
         owner(rest)
+        return
+    if command == "inspect" and len(rest) > 0 and rest[0] == "dependencies":
+        match parse_options(rest[1:]):
+            Err(reason) => syntax_error("inspect", reason)
+            Ok(options) => finish("inspect", inspected_dependencies(validated("inspect", options)))
         return
     if command == "inspect":
         match graph_options(rest):
@@ -440,6 +445,18 @@ def checked(options: Options, format: str) -> Result[i32, str]:
     """Describe an ordinary unit, then let checking prepare its dependencies and exact native inputs once."""
     unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
     return check_unit(unit, toolchain_for(unit)?, format)
+
+
+def inspected_dependencies(options: Options) -> Result[i32, str]:
+    """
+    Describe the unit a build of PATH compiles, then let the compiler settle and print the dependency closure that
+    build links. As for `build`, a `lib.incn` source is a library unit.
+    """
+    source = Path(options.path)
+    mut unit = describe(source, options.profile, options.request, options.manifests)?
+    if source.name() == "lib.incn":
+        unit.kind = "library"
+    return report_dependencies(unit, toolchain_for(unit)?)
 
 
 def finish(command: str, result: Result[i32, str]) -> None:

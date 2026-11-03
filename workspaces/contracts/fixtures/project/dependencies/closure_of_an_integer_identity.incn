@@ -1,0 +1,20 @@
+# behavior: an integer identity reaches only the runtime operations its program performs, and no standard package
+# cli-commands:
+#   inspect dependencies src/main.incn
+# expect-stdout:
+#   program `closure_of_an_integer_identity` reaches 1 package
+#   incan_native_runtime
+#     function pub::incan_native_runtime::main::format_int
+#       requested by runtime operation `incan_native_runtime::format_int` at src/main.incn:20:5
+#     function pub::incan_native_runtime::main::initialize_panic_hook
+#       requested by runtime operation `incan_native_runtime::initialize_panic_hook` at src/main.incn:19:1
+#     function pub::incan_native_runtime::main::println_text
+#       requested by runtime operation `incan_native_runtime::println_text` at src/main.incn:20:5
+# expect-exit: 0
+
+def identity(value: int) -> int:
+    return value
+
+
+def main() -> None:
+    println(identity(3))

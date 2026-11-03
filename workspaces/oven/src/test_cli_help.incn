@@ -22,6 +22,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
         ("fmt", "incan fmt [--check] PATH..."),
         ("owner stop", "incan owner stop"),
         ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
+        ("inspect dependencies", "incan inspect dependencies PATH [UNIT OPTIONS]"),
         ("mcp", "incan mcp PATH"),
         ("toolchain pack", "incan toolchain pack OUT"),
         ("toolchain install", "incan toolchain install ARCHIVE"),

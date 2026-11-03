@@ -31,6 +31,7 @@ mod command_format;
 mod comparison_bridges;
 mod coroutines;
 mod declarations;
+mod dependency_report;
 mod derived_display;
 mod error;
 mod fallible_bridges;
@@ -84,15 +85,16 @@ use incan_driver::unit::UnitDescription;
 const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
-                     --source-interface UNIT SYSROOT DIRECTORY | \
+                     --source-interface UNIT SYSROOT DIRECTORY | --dependencies UNIT SYSROOT [OPTIONS] | \
                      --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --shared-native DIR (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
-/// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), or write the ABI cache
-/// of Rust crates (`--rust-abi`), format source with the unit's vocabulary (`--fmt`), discover authored files
-/// (`--source-files`), explain a stable diagnostic (`--explain`), or export and read checked graphs (`--codegraph`,
-/// `--read-codegraph`, `--rust-codegraph` and `--rust-compile-codegraph`).
+/// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
+/// settled dependency closure (`--dependencies`), or write the ABI cache of Rust crates (`--rust-abi`), format source
+/// with the unit's vocabulary (`--fmt`), discover authored files (`--source-files`), explain a stable diagnostic
+/// (`--explain`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--rust-codegraph` and
+/// `--rust-compile-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 /// A command that fails prints its error as [`report`] does and exits with that status.
@@ -112,6 +114,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Some("--resident") => worker::serve(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--source-interface") => frontend::source_interface(&args[1..]),
+        Some("--dependencies") => frontend::dependency_report(&args[1..]),
         Some("--check") => exit_with(check(&args[1..])?),
         Some("--explain") => exit_with(command_diagnostics::explain(&args[1..])?),
         Some("--fmt") => exit_with(format(&args[1..])?),

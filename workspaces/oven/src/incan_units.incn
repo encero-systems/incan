@@ -68,6 +68,20 @@ pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> 
     return check_or_replay(ready, toolchain, path, format, bakery()?, key)
 
 
+pub def report_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
+    """
+    Print the unit's settled dependency closure, which the compiler checks and plans exactly as a build would. Returns
+    the exit code.
+
+    1. Prepare the dependencies and exact native inputs.
+    2. Publish the prepared unit's description.
+    3. Ask the compiler for the closure. The report is never retained, so it always describes the current inputs.
+    """
+    ready = prepare_native(unit, toolchain)?
+    path = write_unit(ready, crate_name(ready))?
+    return run_compiler(toolchain, ["--dependencies", path.0, toolchain.sysroot])
+
+
 pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, check: bool) -> Result[i32, str]:
     """Ask the compiler to format one source with its unit's vocabulary, preserving its exit status."""
     path = write_unit(unit, crate_name(unit))?
