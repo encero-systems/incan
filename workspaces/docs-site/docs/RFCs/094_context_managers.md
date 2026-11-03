@@ -14,11 +14,15 @@
     - RFC 081 (language-shaped DSL embeddings)
     - RFC 093 (`std.telemetry`)
     - RFC 095 (`span` vocabulary blocks)
+    - RFC 098 (`infer` members in trait headers)
     - RFC 122 (scoped validation policy)
     - RFC 129 (binding, borrowing, and ownership rules)
     - RFC 131 (typed error values and propagation)
     - RFC 134 (exiting pattern bindings inside resource scopes)
+    - RFC 142 (async iteration, task ownership and cancellation)
     - RFC 147 (independent local Result matching)
+    - RFC 164 (explicit ownership and borrowing; entered views declared `from self`)
+    - RFC 165 (`std.db` lazy scope descriptors)
 - **Issue:** [#560](https://github.com/encero-systems/incan/issues/560)
 - **RFC PR:** —
 - **Written against:** v0.3
@@ -51,8 +55,8 @@ Rust gives useful prior art here without requiring Rust syntax. Rust uses lexica
 
 ## Goals
 
-- Add with statement syntax for scoped context managers.
-- Define a typed `ContextManager[T]` protocol.
+- Add with statement syntax for scoped context managers, and `async with` for managers whose entry or exit suspends.
+- Define the typed `ContextManager` and `AsyncContextManager` protocols.
 - Define `ScopeExit` as the informational outcome passed to context-manager cleanup.
 - Guarantee cleanup after successful entry on all block exit paths.
 - Prohibit context managers from suppressing the body's failure or arbitrarily rewriting control flow, while allowing declared typed finalization failure to prevent successful completion.
@@ -108,6 +112,35 @@ with temporary_env({"INCAN_LOG_LEVEL": "DEBUG"}):
 
 The block activates the manager for its duration, then restores the previous state.
 
+### Test drive: a database transaction
+
+A transaction is the case where cleanup has a real outcome. Here `Pool`, `Connection`, `DbError` and their methods stand for an application's database client:
+
+```incan
+from std.scope import ContextManager, ScopeExit
+
+class Transaction with ContextManager[Result[Borrowed[Connection], DbError], Result[None, DbError]]:
+    connection: Connection
+
+    def __enter__(mut self) -> Result[Borrowed[Connection], DbError] from self:
+        self.connection.begin()?
+        return Ok(self.connection)
+
+    def __exit__(mut self, exit: ScopeExit) -> Result[None, DbError]:
+        match exit:
+            ScopeExit.Success | ScopeExit.Return => self.connection.commit()
+            _ => self.connection.rollback()
+
+
+def transfer(pool: Pool, source: int, target: int, amount: int) -> Result[None, DbError]:
+    with Transaction(connection=pool.connect()?) as db:
+        db.debit(account=source, amount=amount)?
+        db.credit(account=target, amount=amount)?
+    return Ok(None)
+```
+
+`pool.connect()?` acquires a connection before the context exists; a failure there returns before anything is entered. Entering then begins the transaction. If that fails, the block does not run and `transfer` returns the error, as `?` would. If the debit or credit fails, its `?` leaves the block, exit observes `ScopeExit.Error` and rolls back, and `transfer` returns that failure. If both succeed, exit commits. A rejected commit becomes `transfer`'s error, so the caller never sees `Ok(None)` for work that was not saved. If the credit and the rollback both fail, `transfer` returns both under `ScopeFailure.Multiple`. `db` is a view tied to the transaction, so it cannot be returned or stored past the block.
+
 Multiple resources can be nested explicitly:
 
 ```incan
@@ -159,16 +192,29 @@ Successful persistence disables automatic removal of that directory. Context exi
 
 ### Test drive: locks and suspension
 
-The current async mutex releases its guard when the guard is dropped. A proposed integration could make a short critical section visible:
+The current async mutex releases its guard when the guard is dropped. A proposed integration could make a short critical section visible, with the guard as the manager and its `__enter__` returning `Reference[Counter] from self`:
 
 ```incan
-with await shared_counter.lock() as guard:
-    guard.set(guard.get() + 1)
-
-await publish_update()
+async def bump(shared_counter: Mutex[Counter]) -> Counter:
+    with await shared_counter.lock() as counter:
+        counter.increment()
+        return counter      # refused: `counter` borrows the guard, which exits here
 ```
 
-The lock acquisition suspends before context entry. The intended guard scope ends before publication suspends. This requires an adaptation that actually releases the held guard at the boundary. Whether an `await` is also permitted inside the suite depends on the manager's selected async-safety contract. The current async mutex supports guards held across await; the context protocol must not assume that every guard is unsafe or that every resource is safe to suspend.
+The lock acquisition suspends before context entry. `counter` is exclusive access tied to the guard, so the checker refuses returning it, storing it, or capturing it in a closure or task; the guard's exit releases the lock with no live view left behind. Returning `counter.value()`, an owned copy of the count, is fine. An `await` inside the suite is permitted only when the guard and `counter` satisfy the ordinary checked suspension proof. The current async mutex supports guards held across await; the context protocol must not assume that every guard is unsafe or that every resource is safe to suspend.
+
+### Test drive: cleanup that suspends
+
+Some cleanup has to wait, such as committing over the network. Such a manager adopts `AsyncContextManager`, whose hooks are async, and is used with `async with` inside an async function:
+
+```incan
+async def save(client: Client, report: Report) -> Result[None, UploadError]:
+    async with client.upload("reports/latest.json") as upload:
+        await upload.write(report.to_json())?
+    return Ok(None)
+```
+
+Entering opens the upload and the exit awaits its completion. A failed completion becomes `save`'s error under the same fallible-exit rules as `with`. A plain `with` over an async manager, or `async with` over a synchronous one, is refused with a diagnostic naming the other form.
 
 ### Test drive: the body's exit reason
 
@@ -211,45 +257,57 @@ with expression:
 
 with expression as name:
     suite
+
+async with expression as name:
+    suite
 ```
 
 Local Result-matching syntax is outside this RFC and belongs to RFC 147.
 
-The `with` token is a statement introducer. It must not change the meaning of `with` in type-parameter bounds or type conformance positions that already use the spelling.
+The `with` token is a statement introducer. It must not change the meaning of `with` in type-parameter bounds or type conformance positions that already use the spelling. `async with` is permitted only inside an async function.
 
-The context expression must typecheck to `ContextManager[T]` or another type accepted by an explicitly defined context-manager adaptation rule. If an `as name` binding is present, `name` has type `T` only inside the suite. If no binding is present, no entered value is exposed by a binding; the manager must remain alive until exit. Omitting `as` must not release the manager early or skip its exit call.
+The context expression of `with` must typecheck to `ContextManager[Entry, ExitOutcome]`, and that of `async with` to `AsyncContextManager[Entry, ExitOutcome]`, or to another type accepted by an explicitly defined context-manager adaptation rule. A `with` over a type that adopts only the async protocol, or an `async with` over a type that adopts only the synchronous one, must be refused with a diagnostic naming the form that applies. If an `as name` binding is present, `name` has the bound type defined under fallible entry below, only inside the suite. If no binding is present, no entered value is exposed by a binding; the manager must remain alive until exit. Omitting `as` must not release the manager early or skip its exit call.
 
 ### Protocol
 
-The protocol is one trait whose exit outcome is chosen by each implementation, using RFC 098's `infer` members:
+The synchronous protocol is one trait in `std.scope` whose exit outcome is chosen by each implementation, using RFC 098's `infer` members:
 
 ```incan
-pub trait ContextManager[T, infer ExitOutcome]:
-    def __enter__(self) -> T
-    def __exit__(self, exit: ScopeExit) -> Self.ExitOutcome
+pub trait ContextManager[Entry, infer ExitOutcome]:
+    def __enter__(mut self) -> Entry
+    def __exit__(mut self, exit: ScopeExit) -> Self.ExitOutcome
 ```
 
-`__enter__` starts the scoped lifetime and returns the value exposed to the block. `__exit__` ends the scoped lifetime and receives the exit outcome. A successful cleanup preserves the original control flow. A manager must not suppress the body's failure, but a declared typed finalization failure may prevent otherwise successful completion.
+`__enter__` starts the scoped lifetime and returns what entering produces. `__exit__` ends the scoped lifetime and receives the exit outcome. The two type arguments therefore read as what entering gives and what exiting gives. A successful cleanup preserves the original control flow. A manager must not suppress the body's failure, but a declared typed finalization failure may prevent otherwise successful completion.
 
-An adopting type supplies its exit outcome explicitly, and the checker must accept only `None` or `Result[None, E]`, where E satisfies RFC 131's common Error contract:
+An adopting type supplies both arguments explicitly. For the exit outcome the checker must accept only `None` or `Result[None, E]`, where E satisfies RFC 131's common Error contract:
 
 ```incan
 class CapturedOutput with ContextManager[CapturedOutput, None]:
     ...
 
-class Transaction with ContextManager[Connection, Result[None, DbError]]:
+class ReadScope with ContextManager[Result[Reader, DbError], None]:
+    ...
+
+class Transaction with ContextManager[Result[Borrowed[Connection], DbError], Result[None, DbError]]:
     ...
 ```
 
 `None` declares infallible cleanup. For `Result[None, E]`, `Ok(None)` means cleanup succeeded and `Err(error)` reports its typed failure. Fallibility is therefore part of the checked public contract, known statically wherever the manager is used. Independent local Result matching belongs to RFC 147.
 
-A manager may also declare typed fallible entry:
+The entry argument declares fallible entry the same way. When `Entry` is `Result[T, E]`, with E satisfying the Error contract, successful entry binds T, not Result[T, E]; for any other `Entry`, `as` binds `Entry` itself. An entry failure does not execute the suite and must propagate into the enclosing function's Result, as `?` would. The checker must refuse a `with` over a manager with fallible entry in a function whose declared result cannot carry that failure; there is no implicit unwrap or panic conversion. This interpretation is specific to context entry and is not general Result method forwarding.
+
+The `with` statement holds the manager exclusively for the whole scope, so both hooks take `mut self`. When the context expression is a temporary, the scope owns the manager. When it is an existing place, such as `with captured:`, the scope exclusively borrows that place and the place remains usable after the block; it is neither moved nor copied.
+
+`Entry` declares what the binding may outlive, using RFC 164's ownership modes. An owned `T` is independent of the manager and may escape the suite under ordinary ownership rules, as a `Path` may. An entered value of `Borrowed[T]` or `Reference[T]`, alone or inside the Result of fallible entry, must be declared `from self` or from a field path of `self` on the adopting `__enter__`, and is then tied to the retained manager:
 
 ```incan
-def __enter__(self) -> Result[T, E]
+class Guard with ContextManager[Reference[Counter], None]:
+    def __enter__(mut self) -> Reference[Counter] from self:
+        ...
 ```
 
-For this declared protocol form, successful entry binds T, not Result[T, E]. An entry failure does not execute the suite and must propagate through a compatible enclosing error contract or an explicitly supported handling boundary. The typechecker must diagnose a missing boundary; there is no implicit unwrap or panic conversion. This protocol interpretation is specific to context entry and is not general Result method forwarding. Infallible entry keeps its T-returning form. The complete generic binding of entry and exit error types and receiver ownership remains part of the protocol question below.
+The checker must refuse returning such a binding, storing it, or capturing it in a closure or task, and the binding's borrow must end before `__exit__` runs. An implementation of `__enter__` must not declare a borrowed source other than its receiver.
 
 A lazy scope descriptor can therefore be used directly in a header such as `with db.open(path).read() as reader:`. RFC 165 owns that library adaptation: header evaluation constructs the descriptor, while entry performs the database acquisition and starts the read. A fallible eager acquisition still uses its explicit Result handling before entry, as in the earlier file examples.
 
@@ -265,11 +323,12 @@ pub enum ScopeExit:
     Continue
     Error
     Panic
+    Cancelled
 ```
 
-ScopeExit is a reason-only enum owned by std.scope. Error includes both question-mark error propagation and a return whose evaluated Result is Err. Return denotes other explicit returns, including an Ok result. The failure outcome takes precedence over the return spelling for cleanup classification. Detailed originals, diagnostic provenance and the exit mechanism remain separate from these reason tags.
+ScopeExit is a reason-only enum owned by std.scope. Error includes both question-mark error propagation and a return whose evaluated Result is Err. Return denotes other explicit returns, including an Ok result. The failure outcome takes precedence over the return spelling for cleanup classification. Cancelled denotes a synchronous manager exiting because its enclosing task was cancelled while the suite was suspended. Detailed originals, diagnostic provenance and the exit mechanism remain separate from these reason tags.
 
-The reason tags must not carry a Python-style exception triple or acquire payload-dependent suppression behavior. Panic remains distinct from a recoverable Error value.
+The reason tags must not carry a Python-style exception triple or acquire payload-dependent suppression behavior. Panic remains distinct from a recoverable Error value, and Cancelled remains distinct from both, as RFC 142 requires of cancellation and application failure.
 
 ### Entry and exit
 
@@ -291,7 +350,7 @@ Every failure produced by the body or attempted finalization must be retained. I
 
 When only one work or finalization path fails, the original typed failure must propagate through a compatible enclosing error contract. When multiple paths fail, std.scope.ScopeFailure.Multiple must retain an immutable tuple of the original typed failures and per-member scope and phase provenance. The aggregate belongs to resource scopes, not to every Error. Reports must present work failure first, followed by attempted cleanup failures in actual inside-out order. An enclosing manager must still attempt cleanup and retain any additional failure. Independent members must not acquire a caused_by relationship merely because they are reported together. A single failure or the aggregate propagates under the exit-outcome rule above.
 
-A panic in cleanup retains its ordinary runtime significance. Panic precedence and its carrier remain unresolved, but must preserve available failure diagnostics where the runtime can execute cleanup and reporting. Retaining diagnostics does not make a panic recoverable through Result. Fallible cleanup must not be described as error suppression or as proof that cleanup always succeeds.
+A panic always takes precedence over typed failures. When the body panics, each successfully entered manager's exit runs with `ScopeExit.Panic` and the scope exits by panicking. When a cleanup panics, the scope exits by panicking even if the body succeeded or a typed failure was pending. In both cases every typed failure that already existed, from the body or from an exit, must be attached to the panic's report with its original identity and provenance under RFC 131; a panic never becomes a Result, and no typed failure is discarded because a panic occurred. Enclosing managers still exit with `ScopeExit.Panic` and attach their own failures. A cleanup that panics while a panic is already unwinding aborts the process after both panics are reported, since the runtime cannot unwind twice; the cleanup guarantee does not cover enclosing managers in that case. Fallible cleanup must not be described as error suppression or as proof that cleanup always succeeds.
 
 The cleanup guarantee applies to exits for which the runtime can execute cleanup, including panic/assert unwinding. It cannot promise execution of user cleanup during immediate process abort or external process termination. This boundary must not introduce a catchable exception model.
 
@@ -301,7 +360,7 @@ The manager must remain available for its required exit call. The compiler must 
 
 Borrowed values that would be invalidated by context exit must not escape the suite through return values, storage, closures, or tasks. Independently owned results may escape when ordinary ownership rules permit it. An owned path string or `Path` value must not be treated as a lifetime guarantee for the resource it names.
 
-An adaptation promising resource release at exit must establish that retained handles or aliases cannot silently keep that same resource active beyond the promised boundary. A resource-specific operation such as temporary-directory persistence may transfer ownership deliberately; exit must respect that operation without double cleanup. The exact receiver and borrowing contract for entered values remains open below.
+An adaptation promising resource release at exit must establish that retained handles or aliases cannot silently keep that same resource active beyond the promised boundary. Such a manager must enter with a `from self` view, never an owned clone of a shared handle to the live resource. A resource-specific operation such as temporary-directory persistence may transfer ownership deliberately through an explicit method; exit must respect that operation without double cleanup.
 
 ### Control flow
 
@@ -323,7 +382,19 @@ Diagnostics for a vocabulary block must use the authored block, its header or th
 
 A synchronous context manager's suite may contain `await` only when the retained manager, the entered value and any state they borrow satisfy the ordinary checked suspension proof, the same proof that governs any value held across `await`. When the proof fails, the compiler must diagnose the resource and the `await`; it must not silently clone or move state to make suspension legal. There is no unchecked await-safe marker.
 
-Awaited acquisition happens before entry, as in `with await shared_counter.lock() as guard:`. An exit that itself needs to suspend requires a distinct, explicit async protocol; a synchronous `__exit__` must never hide an await. The same rules apply to vocabulary blocks that lower through context managers.
+Awaited acquisition happens before entry, as in `with await shared_counter.lock() as counter:`. A synchronous `__exit__` must never hide an await. An entry or exit that itself needs to suspend uses the async protocol, also in `std.scope`:
+
+```incan
+pub trait AsyncContextManager[Entry, infer ExitOutcome]:
+    async def __enter__(mut self) -> Entry
+    async def __exit__(mut self, exit: ScopeExit) -> Self.ExitOutcome
+```
+
+`async with` awaits `__enter__` before the suite and awaits `__exit__` after it. Every rule above for `with` applies unchanged: the entry and exit outcomes, the bound type, borrowed views, failure retention, panic precedence and exit order. The ordinary checked suspension proof still governs the manager and entered value across any `await` in the suite and across both awaited hooks. A type may adopt both protocols.
+
+A synchronous manager whose suite is suspended when its enclosing task is cancelled still exits, with `ScopeExit.Cancelled`. An async manager's `__exit__` cannot be awaited once its task has been cancelled, because nothing remains to drive it: it is not called, and the manager is released under its ordinary ownership contract. An async manager whose resource needs release on cancellation must therefore make that release part of dropping the manager, as a connection rolls back an uncommitted transaction when it is dropped. A fallible exit that fails during cancellation has no caller to receive the failure; it must be reported through runtime diagnostics rather than discarded silently. This does not introduce a recoverable cancellation model, which remains RFC 142's concern.
+
+The same rules apply to vocabulary blocks that lower through context managers.
 
 ## Design details
 
@@ -343,11 +414,15 @@ Context managers are explicit source-level scoped lifetimes. They do not require
 
 Existing source resources already own drop-based runtime handles. Merely adding a no-op `__exit__` to such a wrapper does not establish scoped release if the live handle can survive elsewhere. Conversely, forcing a raw close through one alias while another valid owner still uses the handle would violate ordinary ownership expectations. The adaptation must connect the promised boundary to checked ownership or an explicit resource-state transition; that choice must be visible in its public contract.
 
-The candidate `__enter__(self) -> T` signature is not evidence that this integration is already solved. Returning a guard or resource view while retaining a manager for exit requires a defined receiver, borrowing, and escape contract. This RFC must resolve that contract consistently with RFC 129 before moving beyond Draft.
+The receiver and entry rules above supply that contract: the scope holds the manager exclusively, and an entered view declared `from self` cannot outlive it. A resource adaptation still has to choose which kind of entered value it returns, and that choice is visible in its adopted `Entry`.
 
 ### Interaction with `Result` and `?`
 
 The `?` operator remains ordinary error propagation. A context manager observes `ScopeExit.Error` and then the original propagation continues. An explicit return whose evaluated Result is Err has the same failure classification, and its original return continues after cleanup. There is no `__exit__ -> bool` hook because suppression would blur cleanup with error handling.
+
+### Why `std.scope`
+
+`ContextManager`, `AsyncContextManager`, `ScopeExit` and `ScopeFailure` describe resource scopes in general: files, locks, transactions, captured output and spans all use them. Scoped validation policy (RFC 122) is one user of the module rather than its owner, so the protocol lives beside the scope vocabulary instead of under a validation or resource module.
 
 ### Interaction with vocabulary DSLs
 
@@ -372,7 +447,8 @@ Context managers are not a macro system. A vocabulary block that lowers to a con
 - `with` adds another statement form and must coexist cleanly with existing `with` usage in type positions.
 - Context managers can hide meaningful side effects at block boundaries if APIs are poorly named.
 - Cleanup failure precedence is subtle when a body is already exiting with another error.
-- Async safety requires real design work; copying synchronous guard behavior into async code would be a correctness bug.
+- Two protocols and two statement forms exist because an exit that suspends cannot hide inside a synchronous hook.
+- An async exit cannot run after its task is cancelled; an async manager's resource release on cancellation depends on its ordinary drop.
 - Vocabulary desugaring through context managers adds power that must remain descriptor-gated and visible to tooling.
 
 ## Implementation architecture
@@ -383,7 +459,7 @@ Vocabulary blocks that lower through context managers can use the same internal 
 
 ## Layers affected
 
-- **Parser / AST**: new with statement syntax and a scoped statement representation are needed.
+- **Parser / AST**: new `with` and `async with` statement syntax and a scoped statement representation are needed.
 - **Typechecker / Symbol resolution**: context expressions must satisfy the context-manager protocol, `as` bindings must receive the entered type and suite scope, declared finalization fallibility must be checked, and ownership, escape, and async-safety constraints must be enforced.
 - **IR Lowering**: all suite exit edges must carry cleanup, preserve original control flow on successful cleanup, and retain every body and finalization failure without skipping required outer cleanup.
 - **Emission**: generated code must guarantee exactly-once cleanup after successful entry without relying on user-written cleanup calls.
@@ -394,7 +470,10 @@ Vocabulary blocks that lower through context managers can use the same internal 
 ## Design Decisions
 
 - Retain `__enter__` and `__exit__` as the protocol hook names.
-- Permit declared fallible entry through `__enter__ -> Result[T, E]`. Successful entry binds T; failure skips the body, requires checked propagation or handling, and does not call that manager's exit hook. Composite acquisition cleans up its own partial resources and preserves all failures. Lazy descriptors support fluent library resource scopes without general Result unwrapping.
+- Permit declared fallible entry through the adopted `Entry` argument: `ContextManager[Result[T, E], ExitOutcome]`. Successful entry binds T; failure skips the body, propagates into the enclosing Result as `?` would, is refused where that Result cannot carry it, and does not call that manager's exit hook. Composite acquisition cleans up its own partial resources and preserves all failures. Lazy descriptors support fluent library resource scopes without general Result unwrapping.
+- The scope holds the manager exclusively, so both hooks take `mut self`; a place used as the context expression is borrowed for the scope, not moved. `Entry` uses RFC 164 modes to declare what the binding may outlive: an owned value may escape, while `Borrowed[T]` or `Reference[T]` declared `from self` is tied to the manager and cannot be returned, stored or captured past the block. A manager promising release must enter with such a view, never an owned clone of a shared live handle; deliberate transfers such as `persist()` stay explicit methods.
+- A panic always takes precedence: the scope exits by panicking and every existing typed failure is attached to the panic's report. A cleanup that panics during unwinding aborts after both panics are reported.
+- An entry or exit that suspends uses `AsyncContextManager` with async hooks, through `async with` inside async functions, under the same rules as `with`. A synchronous manager exits with `ScopeExit.Cancelled` when its task is cancelled; an async manager's exit cannot be awaited then, so its release on cancellation belongs to its ordinary drop.
 - RFC 122's active validation policy belongs to the current execution context and survives suspension there. Cleanup restores the previous policy on every exit where cleanup executes, including return, propagation and cancellation. Independent execution contexts must not leak policy into one another. This rule does not choose inheritance for explicitly spawned tasks, which belongs to RFC 142, or permit every synchronous manager to suspend safely.
 - `as` accepts ordinary irrefutable binding patterns. A refutable extraction requires an explicit failure path rather than an implicit panic; no new starred pattern syntax is introduced.
 - Entered borrowed views invalidated by exit cannot escape through returns, storage, closures or tasks. Independently owned results may escape under ordinary ownership rules; explicit resource-specific checked transfer can preserve a resource beyond the scope. Retaining an owned path does not keep its resource alive. Receiver and protocol details must enforce these rules without changing them.
@@ -403,20 +482,11 @@ Vocabulary blocks that lower through context managers can use the same internal 
 
 - Separate local except matching into RFC 147. The preferred single match-arm block is retained there as an independent Result-handling direction; it is not part of the with grammar specified here. Resource lifetime and finalization must remain complete without that extension.
 
-- Always retain failures from the body and every attempted cleanup, including nested cleanup failures. Preserve original typed identities and diagnostic provenance under RFC 131; reporting or propagation precedence must never discard another failure. Independent failures remain distinct aggregate members rather than invented upstream causes. ScopeFailure.Multiple and work-before-inside-out-cleanup presentation are selected. Propagation follows the protocol decision above; the panic carrier remains open.
+- Always retain failures from the body and every attempted cleanup, including nested cleanup failures. Preserve original typed identities and diagnostic provenance under RFC 131; reporting or propagation precedence must never discard another failure. Independent failures remain distinct aggregate members rather than invented upstream causes. ScopeFailure.Multiple and work-before-inside-out-cleanup presentation are selected. Propagation follows the protocol decision above; under a panic, the retained failures travel on the panic's report.
 
 - Permit declared typed fallible finalization. If the body succeeds but finishing the resource fails, the caller must receive a failure rather than false success. The fallible `__exit__` returns `Result[None, E]`: Ok(None) completes cleanup, while Err retains its typed failure. Keep fallibility visible and checked without making every manager fallible. Propagation through pending returns and loop control follows the protocol decision above; simultaneous body/finalization failures must all be retained. Local Result matching is explored independently in RFC 147.
 
-- One protocol, `ContextManager[T, infer ExitOutcome]`, with the exit outcome supplied explicitly at adoption. The checker accepts only `None` or `Result[None, E]` with E satisfying Error. A fallible exit propagates into a compatible enclosing Result; a failed cleanup overrides a pending success, return, break or continue as failure while retaining every existing failure; a function whose declared result cannot carry the failure is refused. `with` syntax is unchanged.
-- `await` inside a synchronous manager's suite is allowed only when the manager, entered value and borrowed state satisfy the ordinary checked suspension proof; otherwise the resource and the `await` are diagnosed, without silent cloning. Awaited acquisition happens before entry. An exit that suspends needs a distinct explicit async protocol.
+- One synchronous protocol, `ContextManager[Entry, infer ExitOutcome]`, with both arguments supplied explicitly at adoption. The checker accepts only `None` or `Result[None, E]` with E satisfying Error. A fallible exit propagates into a compatible enclosing Result; a failed cleanup overrides a pending success, return, break or continue as failure while retaining every existing failure; a function whose declared result cannot carry the failure is refused. `with` syntax is unchanged.
+- `await` inside a synchronous manager's suite is allowed only when the manager, entered value and borrowed state satisfy the ordinary checked suspension proof; otherwise the resource and the `await` are diagnosed, without silent cloning. Awaited acquisition happens before entry. An exit that suspends uses the async protocol above.
 - Diagnostics use the authored vocabulary block, header or responsible body expression as the primary span, with the vocabulary identity and entry/exit lowering chain as structured secondary evidence. Work and cleanup failures are both shown, and the generated `with` is not presented as handwritten.
-- Cleanup must observe failure for both question-mark error propagation and an explicit return whose evaluated Result is Err. Diagnostic metadata may additionally preserve the exit mechanism, but the return spelling must not hide failure or change cleanup into error suppression. ScopeExit uses the six reason-only cases Success, Return, Break, Continue, Error and Panic; detailed failure evidence remains separate.
-
-## Unresolved questions
-
-- Panic interaction: when the body or a cleanup panics while other failures exist, what is the panic's precedence and how are the retained failures carried? Original typed failures, aggregate membership, presentation order and distinct panic significance are settled.
-- Fallible entry: how does `ContextManager` bind the entry error type for the `__enter__ -> Result[T, E]` form, alongside the settled `infer ExitOutcome`?
-- What receiver, borrowed-view, and ownership-transfer rules connect the retained manager to its entered value, especially for existing reference-counted handles and guards? The protocol must prevent invalid escape and make promised resource release enforceable.
-- What is the explicit async protocol for an exit that must suspend, and how is it spelled at the use site?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Cleanup must observe failure for both question-mark error propagation and an explicit return whose evaluated Result is Err. Diagnostic metadata may additionally preserve the exit mechanism, but the return spelling must not hide failure or change cleanup into error suppression. ScopeExit uses the reason-only cases Success, Return, Break, Continue, Error, Panic and Cancelled; detailed failure evidence remains separate.
