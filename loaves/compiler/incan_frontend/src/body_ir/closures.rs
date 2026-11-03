@@ -154,7 +154,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // yielding a global place for a `const`/`static` or an explicit unsupported operand for an identity
             // Body IR cannot represent.
             // A captured `Borrowed[T]` local of an explicit body has no local of its own: the closure copies the Copy
-            // value of the place it borrows, while the checker keeps that place borrowed.
+            // value of the place it borrows, or borrows any other value, while the checker keeps that place borrowed.
             let (outer_place, outer_ty, fact, last_use, identity, previous) = match self.bindings.get(name) {
                 Some(&outer_local) => {
                     let ty = self.locals[outer_local.index()].ty.clone();
@@ -164,18 +164,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     (place, ty, fact, last_use, identity, Some(outer_local))
                 }
                 None => match self.closure_alias_capture(name, expr_span) {
-                    Some((identity, place, referent)) if referent.abi_v0_facts().ownership.is_trivially_copy() => {
-                        (place, referent, bir::OwnershipFact::Copy, false, Some(identity), None)
-                    }
-                    Some(_) => {
-                        self.restore_local_bindings(std::mem::take(&mut saved_bindings));
-                        self.identity_bindings = enclosing_identity_bindings;
-                        return self.unsupported_operand(
-                            "closure capture of a borrowed value that is not Copy".into(),
-                            scope,
-                            hir_span_value,
-                            out,
-                        );
+                    Some((identity, place, referent)) => {
+                        let fact = if referent.abi_v0_facts().ownership.is_trivially_copy() {
+                            bir::OwnershipFact::Copy
+                        } else {
+                            bir::OwnershipFact::Borrow
+                        };
+                        (place, referent, fact, false, Some(identity), None)
                     }
                     None => continue,
                 },

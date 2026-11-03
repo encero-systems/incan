@@ -108,6 +108,8 @@ struct Builder<'a> {
     /// Locals bound to a closure, with the place and loan of the borrow each holds. A closure local can only be
     /// called.
     closures: BTreeMap<CanonicalSymbolId, Option<Path>>,
+    /// Closure locals whose borrow is of a value that is not Copy, which the closure holds by reference.
+    reference_closures: BTreeSet<CanonicalSymbolId>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
@@ -246,6 +248,7 @@ fn build_graph(
         carriers: BTreeMap::new(),
         taken_carriers: BTreeSet::new(),
         closures: BTreeMap::new(),
+        reference_closures: BTreeSet::new(),
         loops: Vec::new(),
         view: None,
         view_carried: None,

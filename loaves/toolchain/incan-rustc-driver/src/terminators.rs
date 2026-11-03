@@ -148,6 +148,14 @@ pub(crate) fn call_instance<'tcx>(
         arguments.push(crate::types::callable_object_type(tcx, signature)?.into());
         arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
     }
+    if let crate::plan::CalleeKind::CallBorrowingClosure(signature) = &callee.kind {
+        let (_, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+            function: "borrowing callable object".into(),
+            reason: "callable signature has no return type".into(),
+        })?;
+        arguments.push(crate::types::borrowing_callable_object_type(tcx, signature)?.into());
+        arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
+    }
     if let crate::plan::CalleeKind::CallClosureOnce(signature) = &callee.kind {
         let (_, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
             function: "consuming callable object".into(),

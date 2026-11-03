@@ -238,7 +238,7 @@ At a call site, unpacking the call into new names takes the view out: the name i
 
 ## Closures
 
-An input-checked body can bind a closure to a new local and call that local. A closure reads the locals it captures when it is built, and holds what it reads by value. A captured Copy value is read there. A captured shared input or local declared `Borrowed[T]` must be of a Copy value: the closure reads it by copy, and the place it borrows stays borrowed for as long as the local is called. Changing that place before the closure's last call is refused with `INCAN-T0126`. Calls take Copy arguments. The closure local can also be passed to a parameter that its callee only calls: the callee borrows the closure for the call, and the body can call or pass it again afterwards.
+An input-checked body can bind a closure to a new local and call that local. A closure reads the locals it captures when it is built. A captured Copy value is read there and held by value. A captured shared input or local declared `Borrowed[T]` is read by copy when its value is Copy; otherwise the closure holds a shared reference to the place it borrows. Either way, that place stays borrowed for as long as the local is called, and changing it before the closure's last call is refused with `INCAN-T0126`. Calls take Copy arguments. The closure local can also be passed to a parameter that its callee only calls: the callee borrows the closure for the call, and the body can call or pass it again afterwards.
 
 ```incan
 # accepted by source checking
@@ -255,14 +255,20 @@ def after_last_call(start: int) -> int:
     seen = read()
     owned += 10  # after the closure's last call
     return seen + owned
+
+
+def label_width(name: Borrowed[str], pad: int) -> int:
+    width: (int) -> int = (extra) => len(name) + pad + extra  # holds a reference to name
+    return width(1) + width(2)
 ```
 
 The following are refused with `INCAN-T0123`, each naming its reason:
 
 - Returning or storing the closure local.
 - A closure that reads the receiver.
-- A closure that captures a value that is not Copy, owned or borrowed, a view a call returned, or an exclusive input or local.
+- A closure that captures an owned value that is not Copy, a view a call returned, or an exclusive input or local.
 - A closure that captures more than one shared input.
+- Passing a closure that holds a reference to another callable.
 
 ## Source conflict diagnostics
 

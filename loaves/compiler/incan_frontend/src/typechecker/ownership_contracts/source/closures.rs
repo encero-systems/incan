@@ -1,9 +1,9 @@
 //! Closures bound to a local of an explicit body. A closure reads the locals it captures when it is built, so a
 //! captured Copy value is read there and a captured borrow becomes a shared loan the local holds; every call of the
 //! local is a use of that borrow; a captured `Borrowed[T]` local is reborrowed through its own loan. The native closure
-//! holds its captures by value, so a captured borrow must be of a Copy value. A closure that escapes, reads the
-//! receiver, or captures a value that is not Copy, a view a call returned, an exclusive borrow or more than one borrow
-//! is refused.
+//! copies a borrowed Copy value and holds a reference to a borrowed value that is not Copy. A closure that escapes,
+//! reads the receiver, or captures an owned value that is not Copy, a view a call returned, an exclusive borrow or more
+//! than one borrow is refused, and so is passing on a closure that holds a reference.
 
 use super::super::flow::{ClosureCaptures, InputEvaluation, InvocationArgument};
 use super::{Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Unavailable};
@@ -59,10 +59,9 @@ impl Builder<'_> {
                 if self.exclusive_path(&path) {
                     return Err(refuse("a closure capturing an exclusive borrow"));
                 }
-                // The native closure holds its captures by value, so a captured borrow is read by copy; a value
-                // that is not Copy would need the closure to hold the reference itself.
+                // The native closure copies a borrowed Copy value; it holds a reference to any other borrowed value.
                 if !self.copy_value(&capture.ty) {
-                    return Err(refuse("a closure capturing a borrowed value that is not Copy"));
+                    self.reference_closures.insert(local.clone());
                 }
                 if borrowed.replace(path).is_some() {
                     return Err(refuse("a closure capturing more than one borrow"));
@@ -173,6 +172,14 @@ impl Builder<'_> {
         mut incoming: Vec<usize>,
     ) -> Result<(Vec<usize>, InvocationArgument), Unavailable> {
         let (slot, written_position) = position;
+        // A callee's closure parameter holds a closure that borrows nothing, so one holding a reference cannot reach
+        // it.
+        if self.reference_closures.contains(closure) {
+            return Err(Unavailable {
+                span: expression.span,
+                reason: "a closure holding a reference passed to another callable".into(),
+            });
+        }
         if !self.checker.closure_parameter_only_called(callee, slot) {
             return Err(Unavailable {
                 span: expression.span,

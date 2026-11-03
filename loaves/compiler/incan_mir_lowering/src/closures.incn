@@ -387,12 +387,33 @@ pub def closure_capture_type(ty: PlanType, consumes_environment: bool) -> bool:
     Admit captures according to the retained reusable or consuming environment contract.
 
     Reusable environments copy scalars and clone owned text, collection, model, and enum snapshots for every call.
-    Checking forbids changes to captured values and aliases of their storage.
+    A reusable environment can also hold one shared reference, copied into every call, while checking keeps its source
+    borrowed. Checking forbids changes to captured values and aliases of their storage.
     A proven consuming environment instead transfers its canonical zip into the lifted body once.
     """
     match ty:
         PlanType.ZipIterator(_left, _right) => return consumes_environment
-        _ => return owned_capture(ty) or (closure_value_type(ty) and ty != PlanType.Unit)
+        _ =>
+            return (
+                owned_capture(ty)
+                or (closure_value_type(ty) and ty != PlanType.Unit)
+                or (not consumes_environment and reference_capture(ty))
+            )
+
+
+pub def reference_capture(ty: PlanType) -> bool:
+    """Select a shared reference to borrowed text, a collection, a model, an enum, a tuple or a scalar."""
+    match ty:
+        PlanType.StringRef => return true
+        PlanType.StrRef => return true
+        PlanType.ListRef(_leaf, _depth) => return true
+        PlanType.SetRef(_leaf) => return true
+        PlanType.DictRef(_key, _value) => return true
+        PlanType.ModelRef(_owner, _name) => return true
+        PlanType.EnumRef(_owner, _name) => return true
+        PlanType.TupleRef(_elements) => return true
+        PlanType.ScalarRef(_elements) => return true
+        _ => return false
 
 
 pub def owned_capture(ty: PlanType) -> bool:
@@ -423,17 +444,21 @@ pub def closure_constructor(
     span: SourceSpan,
     native_send: bool = false,
     native_sync: bool = false,
+    borrowing: bool = false,
 ) -> Function:
     """
     Declare the constructor whose native body boxes one environment holding the captures in order.
 
-    Its plan body is the validated reusable or consuming call contract returning the corresponding boxed object.
+    Its plan body is the validated reusable or consuming call contract returning the corresponding boxed object; an
+    environment holding a shared reference returns the borrowing object, which lives no longer than that borrow.
     The driver supplies the native closure, whose body forwards the captures and then its own inputs to `lifted`.
     """
     mut object_type = PlanType.Closure(signature)
     mut body_call = CalleeKind.ClosureBody(lifted, len(captures))
     if native_send or native_sync:
         object_type = PlanType.NativeClosure(signature, native_send, native_sync)
+    if borrowing:
+        object_type = PlanType.BorrowingClosure(signature)
     if consumes_environment:
         object_type = PlanType.ClosureOnce(signature)
         body_call = CalleeKind.ClosureBodyOnce(lifted, len(captures))
@@ -512,6 +537,8 @@ pub def callable_signature(ty: PlanType) -> Result[list[PlanType], str]:
         PlanType.NativeClosure(signature, _send, _sync) => return Ok(signature)
         PlanType.ClosureOnce(signature) => return Ok(signature)
         PlanType.ClosureRef(signature) => return Ok(signature)
+        PlanType.BorrowingClosure(signature) => return Ok(signature)
+        PlanType.BorrowingClosureRef(signature) => return Ok(signature)
         _ => return Err("unsupported Body IR local callable representation")
 
 
