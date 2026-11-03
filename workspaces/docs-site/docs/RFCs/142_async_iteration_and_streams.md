@@ -19,6 +19,7 @@
     - RFC 131 (first-class typed errors)
     - RFC 153 (async closures and async callable types)
     - RFC 164 (explicit ownership and borrowing)
+    - RFC 168 (`std.primitives`)
 - **Issue:** [#2585](https://github.com/encero-systems/incan/issues/2585)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -28,7 +29,7 @@
 
 Add Python-familiar `async for` loops, lazy async mapping, and async consumers for individual values and batches. Sources await advancement; consumers await application callbacks without implicitly spawning tasks. A fallible source uses `async for item in source?:`, extending RFC 115's explicit error propagation. Separately, streams of `Result` items support independent `ErrorPolicy` choices for item failures and callback failures: stop, report and continue, or ignore and continue. Terminal outcomes preserve progress and pending successful values when processing stops. Native async protocols use RFC 098's proposed `infer` headers. The syntax and APIs in this document are proposals, not implemented functionality.
 
-The broader composition scope adds plain and policy-aware `join`, task groups, cooperative cancellation tokens, bounded concurrent consumption, watch, broadcast and notification primitives, shared deadlines, intervals, and a virtual test clock. Each sits in a `std.async` module next to the existing task, channel, lock and time primitives, reuses `std.datetime`'s monotonic `Instant`, and shares RFC 122's single `ErrorPolicy`.
+The broader composition scope adds plain and policy-aware `join`, task groups, cooperative cancellation tokens, bounded concurrent consumption, watch, broadcast and notification primitives, shared deadlines, intervals, and a virtual test clock. Following RFC 168, the iteration protocols with their consumers and outcome types, `ErrorPolicy`, cancellation tokens, the watch, broadcast and notification primitives, timers, and the monotonic `Instant` are `std.primitives` declarations, so compiler and platform code can use them without the higher-level library. Joins, task groups and deadline conveniences are `std.async` compositions. Applications import every name from a `std.async` module, which re-exports the foundations with the same identity.
 
 ## Core model
 
@@ -42,7 +43,7 @@ The broader composition scope adds plain and policy-aware `join`, task groups, c
 8. **Policies have separate owners:** an item error and a consumer callback error can use different policies. Neither grants permission to retry a failed source advancement.
 9. **Progress survives failure:** stopping does not discard previously delivered values or a pending batch. A partially processed batch is not automatically committed, retried, or rolled back.
 10. **Composition and task ownership are distinct:** joining concurrent operations does not implicitly spawn tasks. Owning spawned tasks, cancelling them, and awaiting shutdown require explicit contracts.
-11. **New surfaces build on the existing primitives:** they extend the existing `std.async` modules and reuse their types, such as `JoinHandle`, `TaskJoinError`, `SendError`, `RecvError`, `TimeoutError` and `std.datetime.Instant`, rather than introducing parallel versions with different meanings.
+11. **Foundations below, compositions above:** under RFC 168, the async protocols, the consumer methods they provide, and every type those methods use are `std.primitives` declarations; `std.async` re-exports them with the same identity and composes joins and task groups on top. Existing types such as `SendError`, `RecvError`, `TimeoutError`, `TaskJoinError` and the monotonic `Instant` are reused, never redefined.
 
 ## Motivation
 
@@ -71,7 +72,7 @@ The same source should support incremental processing without an application fir
 - Add explicit bounded concurrent consumption that reports failures immediately and stops in-flight work as a separate step.
 - Add watch, broadcast, and notification primitives with distinct delivery promises.
 - Add shared deadlines, intervals with an explicit missed-tick policy, and a virtual clock for async tests.
-- Place every new name in a `std.async` module beside the existing primitives, with one shared `ErrorPolicy`.
+- Place foundations in `std.primitives` and compositions in `std.async` under RFC 168, with every name importable from `std.async` and one `ErrorPolicy`.
 
 ## Non-Goals
 
@@ -400,7 +401,7 @@ async def process(
     println(outcome)
 ```
 
-`Receiver.recv()`, `Sender.send()`, and the JSON operations follow existing stdlib APIs. `IncomingMessages`, `BatchQueue`, `parse_message`, and `process` belong to the application. `AsyncIterator`, its async-source `map`, and the policy-aware consumer are proposed `std.async.iter` functionality. `ErrorPolicy` is RFC 122's `std.validation` enum, which `std.async.iter` re-exports rather than defining a second one.
+`Receiver.recv()`, `Sender.send()`, and the JSON operations follow existing stdlib APIs. `IncomingMessages`, `BatchQueue`, `parse_message`, and `process` belong to the application. `AsyncIterator`, its async-source `map`, and the policy-aware consumer are proposed `std.primitives` declarations, imported here through their `std.async.iter` re-exports. `ErrorPolicy` is the same enum that RFC 122 imports from `std.validation`, defined once in `std.primitives`.
 
 `map` is provided by the async iterator protocol, analogous to RFC 088's synchronous iterator method. It constructs an adapter without reading a message. Its synchronous callback returns a `Result`, so the adapter's item type is `Result[JsonValue, JsonError]`. Mapping does not itself choose what a parsing error means.
 
@@ -527,7 +528,7 @@ async def audit(events: BroadcastReceiver[Event]) -> None:
 - `broadcast(capacity)` gives every subscriber every message through a bounded buffer. A subscriber that falls more than `capacity` messages behind receives `Lagged(missed)` with the count, then continues from the oldest message still buffered, instead of silently losing messages.
 - `Notify()` wakes a waiter without carrying data. A `notify_one()` with nobody waiting is remembered as one permit, so several such calls merge into a single wake-up.
 
-`watch` and `broadcast` sit with the existing channels in `std.async.channel`; `Notify` sits with `Semaphore` and `Barrier` in `std.async.sync`.
+All three are `std.primitives` foundations. Applications import `watch` and `broadcast` from `std.async.channel`, next to the existing channels, and `Notify` from `std.async.sync`, next to `Semaphore` and `Barrier`.
 
 ### Share one deadline and test time without waiting
 
@@ -601,7 +602,7 @@ An explicitly spawned task must capture the RFC 122 validation policy active at 
 
 ### Syntax and activation
 
-The statement forms must be `async for pattern in expression:` and `async for pattern in expression?:`, using the ordinary loop body indentation and binding-pattern rules. The existing `std.async` import activation must govern the async syntax. The statement must be rejected outside an async function or method.
+The statement forms must be `async for pattern in expression:` and `async for pattern in expression?:`, using the ordinary loop body indentation and binding-pattern rules. The existing `std.async` import activation must govern the async syntax; under RFC 168 the foundational async import activates the same vocabulary, as specified under Layers, modules, and prelude. The statement must be rejected outside an async function or method.
 
 The source expression must be evaluated once on entry. The loop must not implicitly await that expression, acquire a resource, or invoke an async factory on the caller's behalf. Asynchronous acquisition must remain explicit, as in the separate local in the guide.
 
@@ -748,6 +749,8 @@ The consumer must own each input until its callback has finished with it. Whethe
 
 `collect` must be an explicit materializing terminal. It must return the collected values on normal exhaustion and preserve the partial collection when stopping, through `Collected`. This is the new async collection contract; it must not silently change RFC 115's implemented synchronous `collect`, which returns the first source error without returning its partial list.
 
+Non-materializing consumers must not silently retain all successful values or all errors. They may retain a pending value or batch and the inputs in-flight callbacks borrow, plus progress and terminal failure information. Source buffering, error payloads, reporters, and callbacks may retain additional memory under their own contracts. On an unbounded source, CollectAll must report incrementally and may never reach a terminal summary.
+
 ### Concurrent consumption
 
 `for_each_concurrent(callback, limit=n, ...)` must accept an async callback and a positive `limit`, checked before the first source advancement, plus the options of `for_each`. A synchronous callback must be refused with a diagnostic pointing to `for_each`. It must return a `ConcurrentRun[T, S, E, F]` without advancing the source.
@@ -760,7 +763,7 @@ The async `shutdown()` must stop the callbacks still in flight and complete once
 
 ### Watch, broadcast, and notification primitives
 
-`std.async.channel` must expose `watch[T with Clone](initial)` returning `Tuple[WatchSender[T], WatchReceiver[T]]`, and `broadcast[T with Clone](capacity)` returning `Tuple[BroadcastSender[T], BroadcastReceiver[T]]`. `std.async.sync` must expose `Notify`. These must remain distinct types with distinct promises; a bounded channel must not be renamed to provide them.
+The foundation must provide `watch[T with Clone](initial)` returning `Tuple[WatchSender[T], WatchReceiver[T]]`, `broadcast[T with Clone](capacity)` returning `Tuple[BroadcastSender[T], BroadcastReceiver[T]]`, and `Notify`. `std.async.channel` must re-export the first two with their endpoint and error types, and `std.async.sync` must re-export `Notify`. These must remain distinct types with distinct promises; a bounded channel must not be renamed to provide them.
 
 A watch must hold exactly one current value. `send(value)` must replace it and return `Err(SendError)` when no receiver remains. `latest()` must return a copy of the current value. The async `changed()` must complete once a value newer than the one this receiver last saw is available, coalescing intermediate values, and must return `Err(RecvError)` once the sender is gone. `sender.subscribe()` must create another receiver that starts at the current value.
 
@@ -772,17 +775,29 @@ Dropping a pending `changed()`, `recv()` or `notified()` must lose no value, cha
 
 ### Deadlines, intervals, and the virtual test clock
 
-Deadlines must use the existing monotonic `std.datetime.Instant`; this RFC must not add a second instant type. `std.async.time` must expose `deadline_after(seconds)` and `deadline_after_ms(milliseconds)` returning an `Instant`, the async `sleep_until(deadline)`, and the async `timeout_at(deadline, task)` returning `Result[T, TimeoutError]` with the existing `TimeoutError`. A deadline already past must time out without starting the task. Every operation given the same deadline must share that one absolute budget.
+Deadlines must use the existing monotonic `Instant` that `std.datetime` exposes; this RFC must not add a second instant type. Because consumers accept `deadline=`, that `Instant` must be a `std.primitives` declaration that `std.datetime` re-exports with the same identity. The foundation must provide the async `sleep_until(deadline)` and the async `timeout_at(deadline, task)` returning `Result[T, TimeoutError]` with the existing `TimeoutError`; `std.async.time` must re-export both and add the conveniences `deadline_after(seconds)` and `deadline_after_ms(milliseconds)` returning an `Instant`. A deadline already past must time out without starting the task. Every operation given the same deadline must share that one absolute budget.
 
 `interval(seconds, missed=MissedTick.Skip)` and `interval_ms(milliseconds, missed=...)` must require a positive period and return an `Interval` whose async `tick()` returns the `Instant` of the tick. The first tick must complete immediately; later ticks are due at whole multiples of the period after creation. When a tick is late by more than one period, `MissedTick.Skip` must wait for the next due multiple and drop the missed ticks, `MissedTick.Burst` must deliver the missed ticks immediately until caught up, and `MissedTick.Delay` must schedule the next tick one period after the late one. Skip is the default.
 
-`std.testing` must expose a `virtual_clock` fixture providing a `VirtualClock`. It must be available only in test code. Under the fixture, `Instant.now()` and every `std.async.time` timer must read the test's virtual clock; the wall clock (`SystemTime`) must not be affected. Virtual time must not move on its own until every task of the test is waiting on a timer, and must then jump to the earliest due timer. The async `advance(seconds)` must move it forward explicitly, completing due timers in deadline order. A test whose runtime cannot provide virtual time must be rejected with a diagnostic when the test is built, rather than silently use real time. Virtual time must not simulate external I/O or make task scheduling deterministic.
+`std.testing` must expose a `virtual_clock` fixture providing a `VirtualClock`. It must be available only in test code. It must act on the foundational clock: under the fixture, `Instant.now()` and every timer, including consumer deadlines, must read the test's virtual clock; the wall clock (`SystemTime`) must not be affected. Virtual time must not move on its own until every task of the test is waiting on a timer, and must then jump to the earliest due timer. The async `advance(seconds)` must move it forward explicitly, completing due timers in deadline order. A test whose runtime cannot provide virtual time must be rejected with a diagnostic when the test is built, rather than silently use real time. Virtual time must not simulate external I/O or make task scheduling deterministic.
 
-### Modules and prelude
+### Layers, modules, and prelude
 
-New names must live in `std.async` modules beside the existing primitives:
+Under RFC 168, `std.primitives` must not depend on a higher-level standard package, including through methods a trait provides. The consumers are methods of the async iteration protocols, so the protocols and every type those methods use must be foundations:
 
-- `std.async.iter` (new): `AsyncIterable`, `AsyncIterator`, `AsyncFallibleIterator`, `Consumption`, `Collected`, `ConsumptionFailure`, `Attempted`, `Progress`, `ConcurrentRun`, and a re-export of `ErrorPolicy`.
+- **Foundations in `std.primitives`:**
+    - `AsyncIterable`, `AsyncIterator` and `AsyncFallibleIterator`, with `map`, `for_each`, `for_each_batch`, `for_each_concurrent` and `collect`;
+    - `ErrorPolicy`, `Consumption`, `Collected`, `ConsumptionFailure`, `Attempted`, `Progress` and `ConcurrentRun`;
+    - `CancellationToken` and `Run`;
+    - `Notify`, and `watch` and `broadcast` with their endpoints and `BroadcastRecvError`;
+    - `sleep_until`, `timeout_at`, `interval`, `interval_ms`, `Interval` and `MissedTick`;
+    - the monotonic `Instant` and the clock that timers and the virtual clock act on;
+    - the errors these return: `SendError`, `RecvError` and `TimeoutError`.
+- **Compositions in `std.async`:** `join` and `JoinSlot`; `TaskGroup`, `TaskOutcome`, `ShutdownReport` and `TaskGroupFailure`; `deadline_after` and `deadline_after_ms`; and the prelude. `std.testing` adds the `virtual_clock` fixture and `VirtualClock`.
+
+The grouping of foundations into `std.primitives` modules follows RFC 168. Applications import every name from `std.async`:
+
+- `std.async.iter` (new): the protocols, the consumer outcome types, `ConcurrentRun` and `ErrorPolicy`.
 - `std.async.join` (new, beside `std.async.race`): `join`, `JoinSlot`.
 - `std.async.cancel` (new): `CancellationToken`, `Run`.
 - `std.async.task` (existing): adds `TaskGroup`, `TaskOutcome`, `ShutdownReport`, `TaskGroupFailure`.
@@ -791,9 +806,11 @@ New names must live in `std.async` modules beside the existing primitives:
 - `std.async.time` (existing): adds `deadline_after`, `deadline_after_ms`, `sleep_until`, `timeout_at`, `interval`, `interval_ms`, `Interval`, `MissedTick`.
 - `std.testing` (existing): adds `virtual_clock` and `VirtualClock`.
 
-`ErrorPolicy` must have one definition, RFC 122's `std.validation.ErrorPolicy`; `std.async.iter` and the prelude must re-export it, and no consumer may define a parallel policy enum. `std.async.prelude` must re-export, beside its existing names, `join`, `JoinSlot`, `TaskGroup`, `TaskOutcome`, `CancellationToken`, `Run`, `AsyncIterable`, `AsyncIterator`, `AsyncFallibleIterator`, `Consumption`, `Collected`, `ErrorPolicy`, `deadline_after`, `sleep_until`, `timeout_at`, `interval`, `Notify`, and the watch and broadcast constructors with their endpoint and error types, as it already does for the existing channels. Progress, failure-detail, run, report and missed-tick types are imported from their modules. `async for` must resolve its protocols without an import, under the existing `std.async` activation.
+A `std.async` module must re-export a foundation with its identity and must not redefine it. The existing `SendError`, `RecvError`, `TimeoutError` and `std.datetime.Instant` must become re-exports of their foundations rather than parallel types. `ErrorPolicy` must have one definition, in `std.primitives`; `std.validation` must re-export it for RFC 122, as `std.async.iter` and the prelude do, and no consumer may define a parallel policy enum.
 
-Non-materializing consumers must not silently retain all successful values or all errors. They may retain a pending value or batch and the recovery copy needed for an in-flight callback, plus progress and terminal failure information. Source buffering, error payloads, reporters, and callbacks may retain additional memory under their own contracts. On an unbounded source, CollectAll must report incrementally and may never reach a terminal summary.
+`std.async.prelude` must re-export, beside its existing names, `join`, `JoinSlot`, `TaskGroup`, `TaskOutcome`, `CancellationToken`, `Run`, `AsyncIterable`, `AsyncIterator`, `AsyncFallibleIterator`, `Consumption`, `Collected`, `ErrorPolicy`, `deadline_after`, `sleep_until`, `timeout_at`, `interval`, `Notify`, and the watch and broadcast constructors with their endpoint and error types, as it already does for the existing channels. Progress, failure-detail, run, report and missed-tick types are imported from their modules.
+
+`async for` must resolve its protocols without an import. The `std.async` import and the foundational async import must activate the same vocabulary, without competing definitions; importing an unrelated primitive must not activate it or require an async runtime. Compiler and platform code must be able to author an async source, loop over it, and consume it under any policy using `std.primitives` alone.
 
 ### Control flow, ownership, and cancellation
 
@@ -819,7 +836,7 @@ Adapter and consumer diagnostics must also distinguish a synchronous mapping cal
 
 ### Existing async foundation and prior art
 
-The existing public `std.async` surface already includes spawning, blocking-task offload, task handles, yielding, sleep and relative timeouts, race, bounded and unbounded channels, one-shot channels, mutexes, read/write locks, semaphores, and barriers. `timeout_join` already distinguishes deadline expiry from cancellation by returning a live handle. `std.datetime` already provides a monotonic `Instant`. These are foundations to compose, not functionality this RFC claims to introduce, and the additions reuse their types and modules rather than defining parallel versions.
+The existing public `std.async` surface already includes spawning, blocking-task offload, task handles, yielding, sleep and relative timeouts, race, bounded and unbounded channels, one-shot channels, mutexes, read/write locks, semaphores, and barriers. `timeout_join` already distinguishes deadline expiry from cancellation by returning a live handle. `std.datetime` already provides a monotonic `Instant`. These are foundations to compose, not functionality this RFC claims to introduce, and the additions reuse their types and modules rather than defining parallel versions. RFC 168 places the foundational parts, including the iteration protocols and their consumers, in `std.primitives` beneath these modules.
 
 The sections below give the prior art for each addition specified above.
 
@@ -865,7 +882,7 @@ Incan keeps its `Option` exhaustion and typed `Result` failure conventions. It d
 
 The protocol declares an async method whose source-level result is an `Option` or `Result`. Loop lowering awaits that method according to Incan's existing direct-call rules. This avoids introducing a user-visible future storage field, a second `Awaitable` adoption model, or a requirement that library authors write a backend polling API themselves.
 
-The protocols are exported from `std.async.iter` for authors who adopt them; `async for` resolves them without an import.
+The protocols are `std.primitives` declarations, re-exported from `std.async.iter` for authors who adopt them; `async for` resolves them without an import.
 
 ### Composition and generators
 
@@ -906,7 +923,8 @@ This proposal is additive. Existing synchronous iteration, generator types, fall
 - **A concurrent consumer that drains every callback before reporting:** simpler, but it turns FailFast into wait-for-all. The run reports first and stops in-flight work as a separate step.
 - **Restore source order in concurrent delivery:** holds finished work behind a slow early item and can buffer without bound.
 - **One generic broadcast channel for every fan-out pattern:** hides whether readers may miss values. Watch, broadcast and Notify each state their own promise.
-- **A second `Instant` in `std.async.time`:** would give two monotonic clocks with different meanings. Deadlines reuse `std.datetime.Instant`.
+- **A second `Instant` in `std.async.time`:** would give two monotonic clocks with different meanings. Deadlines reuse the existing `Instant`, whose definition becomes the foundational one.
+- **Consumers as `std.async.iter` functions over policy-free primitive protocols:** keeps `ErrorPolicy` and the outcome types above the foundation, but replaces `source.map(f).for_each(...)` chains with `for_each(source.map(f), ...)` calls. A `std.async` sub-trait that adds the consumer methods fails differently: `map` returns a primitive adapter, so the chain still breaks. Placing the consumers and their types in the foundation keeps the chain and gives compiler and platform code the same consumers.
 - **A separate `ErrorPolicy` per consumer or per module:** the same three choices would drift apart. RFC 122's enum is the single definition.
 - **A separate `map_async` operation:** names the effect, but splits one familiar operation in two. The async overload is selected from the callback's declared type instead.
 
@@ -928,7 +946,7 @@ The library grows by several primitives at once. After `for_each_concurrent` rep
 - **Typechecker / Symbol resolution:** async protocol selection, inferred item and error members, async method and callback validation, result-item consumer overloads, reporter requirements, and error compatibility.
 - **Ownership / async checking:** suspended iterator and callback receiver access, prevention of overlapping advancement, retained callback input, control-flow exits, and existing execution capability requirements.
 - **IR Lowering / Emission:** sequential async advancement and callback invocation with ordinary exhaustion, typed propagation, and policy-aware terminal outcomes, preserving existing await and cleanup semantics.
-- **Stdlib / Runtime:** the new `std.async.iter`, `std.async.join` and `std.async.cancel` modules; `TaskGroup` and its outcome types in `std.async.task`; watch and broadcast in `std.async.channel`; `Notify` in `std.async.sync`; deadlines and intervals in `std.async.time`; the `virtual_clock` fixture in `std.testing`; and prelude re-exports, including RFC 122's `ErrorPolicy`.
+- **Stdlib / Runtime:** `std.primitives` foundations for the async protocols and their consumers, `ErrorPolicy` and the outcome types, cancellation tokens, watch, broadcast and `Notify`, timers, the monotonic `Instant` and its clock, and their errors; the new `std.async.iter`, `std.async.join` and `std.async.cancel` modules; `TaskGroup` and its outcome types in `std.async.task`; re-exports in the existing `std.async` modules, `std.datetime` and `std.validation`; deadline conveniences in `std.async.time`; the `virtual_clock` fixture in `std.testing`; and the prelude.
 - **Formatter:** stable formatting for async loop headers and proposed protocol declarations.
 - **Library manifests / LSP / Tooling:** async advancement and callback contracts, selected source protocols, inferred types, consumer policies, propagation boundaries, and diagnostics.
 
@@ -946,8 +964,9 @@ The library grows by several primitives at once. After `for_each_concurrent` rep
 - Cooperative cancellation uses `CancellationToken` with `child_token()`, `cancel()`, `is_cancelled()`, async `cancelled()` and async `run(operation)` returning `Run.Completed(value)` or `Run.Cancelled`, following tokio-util's CancellationToken. Deadlines and application failures stay separate outcomes, and tokens never own or abort tasks.
 - Bounded concurrency is `for_each_concurrent(callback, limit=n, ...)`, returning a run. `outcome()` reports at once, including a FailFast failure while other callbacks are in flight; `shutdown()` stops those callbacks and returns the inputs they borrowed. Callbacks run on the consumer's task, start in source order, finish in completion order, and are never reordered by buffering.
 - Message patterns use three distinct primitives: `watch` for the latest value with coalescing, bounded `broadcast` with a typed `Lagged(missed)` result, and payload-free `Notify` whose stored permits coalesce. Watch and broadcast join the existing channels; Notify joins `Semaphore` and `Barrier`.
-- Deadlines use the existing `std.datetime.Instant`, with `deadline_after`, `sleep_until` and `timeout_at` returning the existing `TimeoutError`. Intervals take an explicit `MissedTick` policy defaulting to Skip. The test-only `virtual_clock` fixture jumps to the next timer when every task waits, and an unsupported runtime is a test-build error rather than a fall-back to real time.
-- New names live in `std.async.iter`, `std.async.join`, `std.async.cancel`, and the existing `std.async.task`, `channel`, `sync` and `time` modules, plus `std.testing` for the clock fixture. `ErrorPolicy` has one definition, RFC 122's, re-exported by `std.async.iter` and the prelude.
+- Deadlines use the existing monotonic `Instant`, with `deadline_after`, `sleep_until` and `timeout_at` returning the existing `TimeoutError`. Intervals take an explicit `MissedTick` policy defaulting to Skip. The test-only `virtual_clock` fixture jumps to the next timer when every task waits, and an unsupported runtime is a test-build error rather than a fall-back to real time.
+- Under RFC 168, the async protocols keep their consumer methods, so the protocols, the consumers, `ErrorPolicy`, the outcome types, cancellation tokens, watch, broadcast, `Notify`, timers, the monotonic `Instant` and their errors are `std.primitives` foundations. Joins, task groups, deadline conveniences and the prelude are `std.async` compositions. `std.validation`, `std.datetime` and the `std.async` modules re-export foundations with their identity, so `ErrorPolicy` and `Instant` each have one definition.
+- Applications import from `std.async.iter`, `std.async.join`, `std.async.cancel`, and the existing `std.async.task`, `channel`, `sync` and `time` modules, plus `std.testing` for the clock fixture. Compiler and platform code can use the foundations without `std.async`.
 - Consumers return `Consumption.Completed(progress)` or `Consumption.Stopped(progress, failure, pending, attempted)`, and `collect` returns `Collected` with its values. `ConsumptionFailure` names the source, item, callback, cancellation or deadline stage with the original typed error; a stage that cannot fail uses `None`. `Progress` counts seen, delivered, item failures and callback failures. Every consumer accepts `stop=` and `deadline=`.
 - Async callbacks use RFC 153's `Callable[async (A) -> R]`, and overloads are selected from that declared type, never from a returned value.
 - Consumers keep each input while the callback borrows it, so items need not be `Clone`. An `Owned[T]` callback takes its input, which is then reported as `Attempted.Consumed`.
