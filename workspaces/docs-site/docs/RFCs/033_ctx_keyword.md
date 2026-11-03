@@ -683,7 +683,7 @@ The restriction on cloning applies to resolved context values as well as declara
 
 ### Test with `ctx_override`
 
-`std.testing.ctx_override` gives a test its own context values, in the way a time-freezing helper fixes the clock for a test. It works as a decorator on a test or as a `with` block:
+`std.testing.ctx_override` gives a test its own context values, in the way a time-freezing helper fixes the clock for a test. It works as a decorator on a test, as a `with` block, or as a fixture:
 
 ```incan
 from std.testing import test, ctx_override
@@ -704,9 +704,56 @@ def test_workers_follow_env():
 @ctx_override(Database, pool=seeded_test_pool())
 def test_loads_user():
     assert load_user(1).name == "Ada"
+
+@test
+def test_switches_mid_test(mut ctx_override: CtxOverride):
+    ctx_override.set(AppConfig, env="prod")
+    assert AppConfig.workers == 8
 ```
 
 `seeded_test_pool` is an application test helper. Override values are checked against the context's field names and types, as `contribute` is, so a misspelled field is a compile error. Inside the scope the context starts fresh: it resolves on its first read with the override values as contributions, stays frozen for the rest of the scope, and is discarded at exit, after which the enclosing state returns. The two `with` blocks above therefore resolve independently. Overriding a factory field supplies its value, so `test_loads_user` never opens a real pool. `explain()` reports override values with the test's source location. The `with` form uses RFC 094's context-manager protocol.
+
+The fixture form is the built-in `ctx_override` fixture, injected by name like `tmp_path` and `env`. Each `set` call starts a fresh scope for the named context that lasts until the next `set` for that context or the end of the test.
+
+`ctx_override` in every form is test-only. It is accepted only in a test context, meaning a conventional test file, a `conftest.incn`, or an inline `module tests:` block, and refused anywhere else with a diagnostic. Because `incan build` and `incan run` strip test contexts, override code never reaches a production artifact.
+
+### Write your own fixtures
+
+User fixtures compose with `ctx_override` under RFC 019's ordinary fixture rules:
+
+```incan
+# tests/conftest.incn
+from std.testing import fixture, ctx_override
+
+@fixture
+def prod_config():
+    with ctx_override(AppConfig, env="prod"):
+        yield
+
+@fixture(scope="session")
+def shared_pool() -> Pool:
+    pool = seeded_test_pool()
+    yield pool
+    pool.close()
+
+@fixture
+def fake_database(shared_pool: Pool):
+    with ctx_override(Database, pool=shared_pool):
+        yield
+
+@fixture
+def api_client(prod_config) -> Client:
+    return Client(base_url=AppConfig.api_url)
+
+def test_prod_client(api_client: Client, fake_database):
+    assert api_client.base_url.startswith("https://")
+```
+
+- An override entered in a fixture lasts from that fixture's setup to its teardown and covers the tests it serves, although their bodies are not lexically inside the `with`. Its scope follows the running test, not the source block.
+- In a function-scoped fixture the override covers one test. In a module- or session-scoped fixture its values apply to every test in that scope, and each test still resolves its own context from them. A resource built by a session fixture, such as `shared_pool`, is shared by those tests deliberately.
+- A fixture that reads configuration declares the override fixture as a parameter, as `api_client` does, so RFC 019's dependency order puts the override in place first. A read before an override is not an error; the override starts a fresh scope.
+- Whoever builds a value tears it down. `shared_pool` closes its pool after `yield`; a context never cleans up a value it was given.
+- `autouse` and `conftest.incn` work unchanged: an autouse override fixture in `tests/integrations/conftest.incn` gives that whole subtree a fake database.
 
 ### Test the environment path
 
@@ -971,6 +1018,9 @@ A field or condition whose required dependency failed must be identified as bloc
 8. **Dependencies** between contexts must be permitted during resolution. A reached dependency must supply a completed value before its dependent resolution uses it. Cyclic dependencies, including cycles across concurrent attempts, must produce typed configuration failures rather than deadlock or expose partial state. The diagnostic must retain the observed dependency chain and available source locations. A preflight must return a cycle encountered by its resolution as a failure; unchecked first use must follow the fatal diagnostic rule. Dependency evidence must describe actual reached resolution relationships rather than treating an unused declaration as an active dependency.
 9. **Test isolation** must give each test case fresh ctx resolution state through RFC 019's runner lifecycle, including before its function-scoped fixture setup. Ordinary application calls within the test must use that test's state. Within one test, first use, preflight, coordinated initialization, retained successful values, and failure behavior must follow the normal contracts. Neither a later case in a reused worker process nor a case running concurrently in another thread may observe another case's contributions or resolved value.
     - `std.testing.ctx_override(Context, field=value, ...)` must be usable as a test decorator and as a `with` block under RFC 094. Its arguments must be checked as `contribute` arguments are. Within its scope the named context must start from fresh state with the override values as contributions, resolve on its first read, and remain frozen for the rest of the scope. On exit the scope's state must be discarded and the enclosing state restored. Nested scopes must follow the same rule.
+    - The runner must provide a built-in `ctx_override` fixture of type `std.testing.CtxOverride`. Its `set(Context, field=value, ...)` must take the same checked arguments and start a fresh scope for that context lasting until the next `set` for it or the end of the test.
+    - An override scope entered during fixture setup must last until that fixture's teardown and apply to the tests the fixture serves, independently of lexical nesting. For module- and session-scoped fixtures the override values must apply to every test in the fixture's scope, while each test still resolves its own context state from them. Values contributed by a fixture follow that fixture's lifetime and teardown; a context must not tear down a contributed value.
+    - `ctx_override` and `CtxOverride` must be accepted only in a test context: a conventional test file, a `conftest.incn`, or an inline `module tests:` block. Any other use must be refused with a diagnostic, so override code cannot reach a production artifact.
     - Tests that exercise environment inputs configure them through existing fixtures. Neither form requires a production resolution or reset API. Process-environment fixture concurrency and restoration remain governed by RFC 019; per-test ctx state must not be mistaken for isolation of the underlying process environment. Shared fixture lifetimes and ordinary retained values must follow RFC 019 rather than introduce a ctx-specific restriction, automatic refresh, or fixture rebuild.
 10. **Factory fields.** A field whose value comes from `default_factory` and on which no other field, condition or source depends must be built on its first read, from the resolved settings, rather than during whole-context resolution. Concurrent first reads must share one build. A failed build must follow the unchecked failure rule for a plain read. `preflight()` must build every such field before it returns, and return a build failure as its `ConfigError`. A contributed or overridden value must replace the factory, which then must not run.
 
@@ -1152,7 +1202,7 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - Any thread or task may read a published context without locks. The compiler checks that every field type is safe for concurrent reads, without an author annotation: data is safe, a type that synchronizes its own state is safe, and a type whose reads change unsynchronized state is refused with a diagnostic. The rule is stated in terms of types, so other shared storage can adopt it.
 - A context is open until its first resolution succeeds. While open, `contribute` adds the highest-priority, compile-time-checked contributions, such as parsed command-line arguments. Afterward it returns `ConfigError.AlreadyResolved` naming the read or preflight that resolved the context. A failed resolution leaves the context open.
 - A context may hold resources built from its settings through `default_factory`. A factory field that nothing else depends on is built on first read, once, from the frozen settings; `preflight()` builds every such field, and a contributed value replaces the factory.
-- Tests configure contexts with `std.testing.ctx_override`, as a decorator or a `with` block, in the way a time-freezing helper fixes the clock. Its values are checked like `contribute`. Each scope starts from fresh state, resolves on first read, stays frozen for the scope, and is discarded at exit. Tests that exercise environment inputs keep using RFC 019's fixtures. Each test case has its own ctx state, including under parallel execution in one process. Successful initialization remains fixed within each scope. Ordinary data retained by shared fixtures follows normal fixture lifetimes; ctx introduces no special shared-fixture prohibition, automatic refresh, or fixture rebuilding. No production reset API is required for testing.
+- Tests configure contexts with `std.testing.ctx_override`, as a decorator, a `with` block, or the built-in `ctx_override` fixture, in the way a time-freezing helper fixes the clock. Its values are checked like `contribute`. Each scope starts from fresh state, resolves on first read, stays frozen for the scope, and is discarded at exit. User fixtures may enter an override that lasts from their setup to their teardown, under RFC 019's scopes and dependency order. `ctx_override` is accepted only in test contexts, which production builds strip. Tests that exercise environment inputs keep using RFC 019's fixtures. Each test case has its own ctx state, including under parallel execution in one process. Successful initialization remains fixed within each scope. Ordinary data retained by shared fixtures follows normal fixture lifetimes; ctx introduces no special shared-fixture prohibition, automatic refresh, or fixture rebuilding. No production reset API is required for testing.
 - Declared types remain authoritative, including RFC 133 Literal constraints. Shared field metadata and structured type information are reused rather than introducing a parallel configuration type system.
 - Required fields may rely entirely on declared runtime sources, without source defaults or exhaustive condition coverage. Missing required input produces a typed resolution failure; no partial application value is published. A provably unsourceable required field is rejected statically, but compilation does not depend on deployment environment values.
 - `env_prefix` is required and explicit. Renaming a context declaration must not implicitly change its environment-variable namespace; per-field explicit environment names remain authoritative.
