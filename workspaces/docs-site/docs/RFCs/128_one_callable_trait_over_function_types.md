@@ -1,6 +1,6 @@
 # RFC 128: One `Callable[(A, B) -> R]` trait over function types
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
