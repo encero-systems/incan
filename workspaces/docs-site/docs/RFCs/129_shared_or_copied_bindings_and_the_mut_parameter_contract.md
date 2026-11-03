@@ -1,6 +1,6 @@
 # RFC 129: Shared or copied bindings and the `mut` parameter contract
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
