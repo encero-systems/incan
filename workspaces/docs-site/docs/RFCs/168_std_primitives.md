@@ -105,7 +105,7 @@ For this example, the positive bound limits each read, short reads are permitted
 | Byte-level hashing and encoding algorithms | Algorithm selection, whole-file hashing and source/sink conveniences |
 | Crumb typed value encoding and reconstruction | Database records, field indexes, sharing policy, transactions and retention |
 | Precise environment observations | Defaults, typed configuration conversion and configuration policy |
-| Async mechanisms and vocabulary | Task groups, deadlines, concurrency limits and error policies |
+| Async mechanisms and vocabulary, iteration protocols with their consumers, `ErrorPolicy`, cancellation tokens, timers and the monotonic clock | Task groups, policy-aware joins, deadline conveniences and preludes |
 | Vocabulary descriptors and structured transformation contracts | Convenient vocabulary authoring and compiler-owned provider execution |
 
 The algorithm boundary is not restricted to SHA-256 or hexadecimal conversion. Supported algorithms can have foundational implementations without pulling file processing or application defaults down with them. Existing native libraries remain valid dependencies; implementations are not duplicated merely to move their ownership.
@@ -137,6 +137,8 @@ Crumb must be usable independently for encoded values, files, messages or compil
 ### Async and vocabulary
 
 Foundational async vocabulary and contracts belong alongside primitive async mechanisms. `std.async` must continue to expose the same vocabulary and higher-level behavior. Importing both entry points must not create competing syntax definitions. Importing an unrelated primitive must not itself activate async vocabulary or require an async runtime.
+
+Methods that a foundational protocol provides are part of the foundation, together with every type they use. RFC 142's async iteration consumers are such methods, so they live in primitives with `ErrorPolicy`, their outcome types, cancellation tokens, timers and the monotonic `Instant`; `std.async`, `std.validation` and `std.datetime` re-export those declarations with their identity.
 
 Vocabulary-definition contracts also belong in the foundation, with `std.vocab` supplying re-exports and authoring conveniences. The compiler consumes these contracts; primitives must not depend on the compiler implementation to describe syntax. Provider admission, execution, validation and semantic compilation remain compiler/toolchain responsibilities under the relevant RFCs.
 
@@ -183,6 +185,7 @@ Separating existing modules requires compatibility work where types currently co
 - **Algorithms below orchestration:** foundational algorithms are not restricted to SHA-256 and hex; file processing and application policy stay above them.
 - **Shared contracts:** foundational errors and traits retain identity through higher-level re-exports.
 - **Async and vocabulary foundations:** async mechanisms and vocabulary use foundational vocabulary-authoring contracts; higher-level entry points remain available.
+- **Protocol methods stay with their protocol:** a foundational protocol's provided methods and the types they use are foundational, so RFC 142's async consumers, `ErrorPolicy` and their outcome types live in primitives rather than becoming higher-level functions.
 - **Crumb foundation:** typed model encoding and reconstruction live in `std.primitives.crumb`, independently of database storage and transaction policy.
 - **Grouped modules:** common root re-exports are supported; platform backend layout is an implementation choice.
 - **Native boundary ownership:** shared low-level interop boundaries do not make all native-backed domain behavior primitive.
