@@ -1,14 +1,16 @@
-# RFC 152: Verified stack-safe self-recursion
+# RFC 152: Recursion that never overflows the stack
 
 - **Status:** Draft
 - **Created:** 2026-10-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
-    - RFC 036 (declaration decorators)
     - RFC 094 (scoped cleanup obligations)
     - RFC 126 (investigation evidence)
-    - RFC 129 (binding and ownership)
+    - RFC 103 (secret non-disclosure)
     - RFC 131 (diagnostic provenance)
+    - RFC 142 (task groups and task panics)
+    - RFC 146 (typed JSON decoding)
+    - RFC 158 (incremental XML records)
 - **Issue:** [#1290](https://github.com/encero-systems/incan/issues/1290)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -16,92 +18,177 @@
 
 ## Summary
 
-Propose `@stack_safe` for direct self-recursive functions and methods. Every recursive call must be verifiably in tail position, and accepted recursion must execute through explicit loop semantics without recursive stack growth. A non-tail call is a compile-time error, not an optimization silently skipped. This guarantee is local to the annotated recursion and does not promise termination or bounded behavior in arbitrary callees.
+Recursive Incan code gets the stack it needs. The compiler knows which calls can recurse, checks the remaining stack at those calls, and continues on a fresh heap-allocated stack segment when the current one runs low, so recursion depth is limited by memory rather than by a fixed thread stack. When a task exceeds its stack budget, it panics cleanly with the recursion cycle and depth, runs its cleanup, and never segfaults. Parsers of untrusted input add a typed depth limit, so hostile nesting produces an ordinary error instead of unbounded memory use. No annotation is needed.
+
+## Core model
+
+1. **Recursion is ordinary:** any function may call itself or take part in mutual recursion, with no annotation.
+2. **The stack grows on demand:** at every call that can recurse, the compiler checks the remaining stack and, when it is low, continues on a new heap segment that is released on return.
+3. **Each task has a stack budget:** exhausting it is a panic with a report of the recursion cycle, never a crash of the whole process.
+4. **Untrusted input has typed limits:** a standard parser of external data declares a depth limit and reports exceeding it as a typed error.
 
 ## Motivation
 
-A recursive traversal may work on a small fixture and overflow on production input. Backend optimization is insufficient as a language contract. Authors need a declaration that either guarantees the bounded recursive frame behavior or explains exactly which call prevents it.
+Deep recursion is how real programs walk real data: compilers walk syntax trees, query engines walk plans, decoders walk nested documents, and user-interface frameworks walk component trees. None of these walks is a tail call, because each node is revisited after its children. On a fixed thread stack, a deep enough input crashes the process. In Rust that is an abort with "has overflowed its stack"; in Python it is a `RecursionError` at depth 1000 by default.
+
+The problem shows up in production rather than in tests, because test fixtures are shallow. It is also an attack: a client that sends `[[[[...]]]]` nested a million deep can take down a service that decodes it recursively.
+
+Mature systems already work around it by hand. rustc wraps its recursive passes in `ensure_sufficient_stack`, which uses the `stacker` crate to move to a new heap-allocated stack segment when fewer than 100 KiB remain. serde_json refuses input nested more than 128 levels by default. Go grows goroutine stacks automatically, up to 1 GB on 64-bit systems. Incan can make the first of these automatic and the last two standard.
+
+Tail-call-only schemes, such as Scala's `@tailrec` or Rust's unstable `become`, do not help these cases: tree walks are not tail calls, and a self-call that is a tail call is already a plain loop.
 
 ## Goals
 
-- Check direct self-recursion at Incan source locations.
-- Guarantee bounded stack use for the accepted recursive transitions.
-- Preserve evaluation order, effects, parameter binding, and cleanup.
-- Explain unsupported recursive shapes before execution.
+- Let recursive Incan code, including mutual recursion and recursion through function values, run to the depth its memory allows.
+- Make running out of stack a clean, diagnosable panic instead of a process crash.
+- Keep the cost to code that does not recurse at zero, and the cost to recursive calls to one comparison in the common case.
+- Give parsers of untrusted input a standard, typed depth limit.
 
 ## Non-Goals
 
-- Mutual recursion, recursion through function values, or dynamic dispatch optimization.
-- Automatically decorating every recursive function.
-- Proving termination, numeric safety, or bounded heap use.
-- Discarding pending resource cleanup to manufacture a tail position.
+- Turning recursion into loops, or guaranteeing tail calls between functions.
+- Bounding the memory of code that legitimately needs deep recursion, beyond the task's budget.
+- Making foreign code safe: a C or Rust library that recurses on its own stack is outside this guarantee.
+- Proving termination.
 
 ## Guide-level explanation
 
-The decorator is proposed. This complete application function computes a greatest common divisor for non-negative inputs:
+### Test drive: the Incan compiler checks a deeply nested expression
+
+The type checker walks expressions recursively, as any compiler does:
 
 ```incan
-@stack_safe
-def gcd(a: int, b: int) -> int:
-    if b == 0:
-        return a
-    return gcd(b, a % b)
+# compiler/check.incn
+def check_expr(expr: Expr, scope: Scope) -> Result[Type, TypeError]:
+    match expr:
+        Expr.Binary(left, op, right) =>
+            left_type = check_expr(left, scope)?
+            right_type = check_expr(right, scope)?
+            return binary_result(op, left_type, right_type)
+        Expr.Call(callee, args) =>
+            callee_type = check_expr(callee, scope)?
+            return check_call(callee_type, args, scope)
+        Expr.Name(name) => return scope.lookup(name)
 ```
 
-The recursive transition first evaluates both new arguments using the current values, then starts the next iteration. It must not assign `a = b` before computing `a % b`.
+Generated source, such as a code generator's sum `x0 + x1 + ... + x199999`, parses into a left-nested tree 200,000 levels deep, so `check_expr` recurses 200,000 times. At a few hundred bytes a frame, that is tens of megabytes of stack. On an 8 MiB thread stack the compiler crashes today, and the user sees an abort with no hint of which input caused it.
 
-This related shape must be rejected:
+With this RFC the same code compiles the file. Each time the stack runs low, execution continues on a fresh 1 MiB segment taken from the heap, and the segments are released as the recursion unwinds. The source of `check_expr` does not change.
+
+### Test drive: a runaway recursion stops cleanly
+
+A bug can make recursion endless, for example a symbol that resolves to itself:
 
 ```incan
-@stack_safe
-def recursive_sum(n: int) -> int:
-    if n <= 0:
-        return 0
-    return n + recursive_sum(n - 1)
+def resolve(name: str, scope: Scope) -> Type:
+    match scope.lookup(name):
+        Binding.Alias(target) => return resolve(target, scope)   # an alias cycle never ends
+        Binding.Type(found) => return found
 ```
 
-Addition remains after the call returns. The diagnostic should point to that recursive call and explain the pending operation. It must not accept the decorator while leaving stack growth unchanged.
+Instead of eating all memory, the task stops at its stack budget, 1 GiB by default, and reports what was repeating:
+
+```text
+panic: task main exceeded its 1 GiB stack budget
+  repeating: resolve (compiler/resolve.incn:3), 4,194,304 calls deep
+  entered from: check_module (compiler/check.incn:40)
+  first argument at the deepest call: name = "Config"
+```
+
+The panic follows RFC 094, so open `with` blocks still exit. Inside an RFC 142 task group, it is that task's own `Panicked` outcome. A compiler server or an HTTP service therefore loses one request, not the process.
+
+### Test drive: hostile JSON gets a typed error
+
+A service decoding client input never needs a million levels of nesting:
+
+```incan
+async def create_order(request: Request) -> Response:
+    match Order.from_json(request.text()?):
+        Ok(order) => return Response.created(save(order))
+        Err(JsonError.TooDeep(path, max_depth)) =>
+            return Response.bad_request(f"nesting deeper than {max_depth} at {path}")
+        Err(error) => return Response.bad_request(error.message())
+```
+
+`from_json` stops at 128 levels by default, the same default as serde_json, and returns `JsonError.TooDeep` before allocating anything for the deeper levels. A trusted internal format can raise the limit with `max_depth=`. The stack growth above would also survive the input, but the typed limit stops an attacker from turning deep nesting into memory use.
 
 ## Reference-level explanation
 
-- Every direct recursive call to the resolved annotated declaration must be checked. Spelling an alias must not evade the check.
-- Each accepted transition must have no required work after its callee completes, except behavior the compiler proves equivalent without retaining recursive frames.
-- Successful verification must guarantee execution without stack growth caused by those self-calls, independently of optimization level.
-- Recursive argument expressions must evaluate exactly once in ordinary call order, before parameter rebinding.
-- Default arguments, keyword binding, ownership transfers, and effects must retain ordinary call semantics.
-- A call with pending scoped cleanup must not be treated as tail merely because it appears in a return statement.
-- Unsupported or ambiguous recursion must be rejected when it prevents establishing the guarantee; the compiler must not silently weaken it.
-- Diagnostics and investigation metadata must identify the verified loop transformation without fabricating a physical recursive stack trace.
+### Which calls are checked
+
+The compiler must determine, from the whole program's call graph, every call that can lead back to a function already on the stack: calls within a strongly connected component of the call graph, including direct self-calls and mutual recursion. It must also treat every call through a function value, closure, or dynamically dispatched method as a call that can recurse. Every such call must be preceded by a stack check. Calls the call graph proves cannot recurse must not be checked.
+
+### Growing the stack
+
+A stack check must compare the remaining stack of the current thread with a red zone of at least 100 KiB. When the remaining stack is smaller, the call must run on a new stack segment of at least 1 MiB allocated from the heap, and must return to the previous segment when it returns, normally or by panic. A released segment may be kept for reuse by the same thread, so a call that repeatedly crosses one segment boundary does not repeatedly allocate. Stack growth must preserve the semantics of the call: evaluation order, ownership, cleanup, and the values returned.
+
+Async functions follow the same rule for the stack used while they run or are polled; their suspended states live on the heap and are unaffected.
+
+### Stack budget
+
+Each task, including the main task and each spawned task, must have a stack budget covering its original stack and every segment it has added. The default must be 1 GiB. A program may set a different default, and spawning a task may set that task's budget.
+
+When a check would exceed the budget, the task must panic with a `StackBudgetExceeded` report. The report must include the budget, the depth reached, the repeating cycle of functions with source locations, and the function that entered the cycle. Values in the report must follow RFC 103 redaction. The panic must follow RFC 094 cleanup and RFC 142 task-panic rules; it must not abort the process unless the panic itself is not caught anywhere in the process, as for any other panic.
+
+Stack exhaustion in Incan code must never be reported as a segmentation fault or an abort without a report.
+
+### Foreign code
+
+Before calling foreign code, the compiler must ensure at least the red zone of remaining stack. Recursion inside the foreign code is outside this guarantee.
+
+### Depth limits for untrusted input
+
+A standard parser of external data must expose a `max_depth` option with a documented default and must report exceeding it as a typed error of its own error family, raised before allocating for the deeper levels. `std.json` decoding defaults to 128 and reports `JsonError.TooDeep`, as RFC 146 specifies; the same convention applies to XML under RFC 158 and to other standard parsers of external formats.
+
+### Diagnostics and tooling
+
+Investigation tooling under RFC 126 must show segment switches as ordinary call frames, so a stack trace lists source calls rather than segment boundaries. Profiles should report the number of segments a task allocated.
 
 ## Design details
 
-Scala's [tail-recursion annotation](https://docs.scala-lang.org/tour/annotations.html) provides the relevant prior art: the annotation requests verification of a guarantee, rather than a suggestion to an optimizer. The candidate name `stack_safe` emphasizes the user outcome; `tail_recursive` is an alternative with a narrower apparent promise.
+### Why this is not the segmented stacks Rust removed
 
-The recommendation is to reject active resource scopes whose per-frame cleanup cannot be preserved with bounded storage. A syntactic `return self_call(...)` inside such a scope can still have cleanup after the call, as RFC 094 makes explicit. Async functions and overridable method recursion need separate eligibility rules before this draft can be accepted.
+Early Rust and early Go used segmented stacks for every function, and both abandoned them because of the "hot split": a loop calling a function right at a segment boundary allocated and freed a segment on every iteration. This design checks only calls that can recurse, uses large segments, and keeps a released segment for reuse, so the common path is one comparison and a boundary crossing does not allocate repeatedly. It is the approach rustc applies by hand with `stacker`, made automatic.
+
+### Why a panic and not a `Result`
+
+Exhausting a 1 GiB stack budget means a runaway recursion or a missing input limit, both of which are bugs. A `Result` would force every recursive function to carry an error it cannot meaningfully handle. A panic with a precise report, isolated to its task, is the right signal for a bug; typed input limits are the right signal for bad input.
+
+### Prior art
+
+- rustc's `ensure_sufficient_stack`, built on the `stacker` crate, with a 100 KiB red zone and 1 MiB segments.
+- Go's growable goroutine stacks and their 1 GB default maximum.
+- serde_json's default recursion limit of 128.
+- Python's `RecursionError`, a fixed depth limit that refuses legitimate deep inputs.
 
 ## Alternatives considered
 
-- Rely on backend tail-call optimization: does not supply the declaration's guarantee.
-- Rewrite all recursion without annotation: loses the explicit contract and still needs proof of semantic equivalence.
-- Offer only a warning: reports risk without establishing bounded recursive stack growth.
+- **`@stack_safe` for tail-recursive self-calls:** covers only calls that are already loops and misses the tree walks that overflow in practice.
+- **Guaranteed tail calls between functions, like Rust's `become`:** helps interpreters and state machines, which Incan writes idiomatically as a loop over a `match`, and would rest on an unstable Rust feature or a whole-program rewrite.
+- **A fixed recursion depth limit, like Python:** refuses legitimate deep inputs and still needs each program to tune it.
+- **Grow every function's stack:** reintroduces the hot-split cost for code that never recurses.
+- **Report stack exhaustion as a `Result`:** adds an unhandleable error to every recursive signature.
+- **Leave it to the platform:** keeps the crash.
 
 ## Drawbacks
 
-The accepted subset can be narrower than an author expects. The name may imply that unrelated helper calls are safe; diagnostics and documentation must state the exact guarantee. Investigation views need to distinguish source recursion from physical loop execution.
+- Recursive and indirect calls pay one comparison each, and a deep recursion pays for heap segments.
+- A program with a genuine need beyond 1 GiB of stack must raise its budget.
+- The call graph must be whole-program to find mutual recursion, which constrains separate compilation to publishing each unit's call-graph facts.
+- Foreign code keeps its own stack limits.
 
 ## Layers affected
 
-- **Typechecker / control-flow analysis:** recursive identity and tail-position verification.
-- **IR / execution:** explicit loop behavior preserving argument and cleanup semantics.
-- **Diagnostics / investigation tooling:** proof boundaries and truthful execution presentation.
+- **Call-graph analysis:** whole-program recursion detection, including indirect calls, with call-graph facts published per unit.
+- **Lowering / native runtime:** stack checks at recursive call sites, segment switching, segment reuse, per-task budgets, and the `StackBudgetExceeded` panic report.
+- **Async runtime and task spawning:** per-task budgets and the poll path.
+- **Stdlib:** the `max_depth` convention for parsers of external data, starting with `std.json`.
+- **Diagnostics / investigation tooling:** cycle-compressed panic reports and stack traces without segment noise.
 
-## Unresolved questions
+## Design Decisions
 
-- Is `stack_safe` or `tail_recursive` the clearer public name?
-- Should annotating a function with no recursive calls be an error or a warning?
-- Which methods qualify when overrides or receiver changes can affect dispatch?
-- Are async functions excluded, or can a bounded future-state guarantee be stated and verified?
-- Which cleanup-bearing scopes can be proven equivalent, and which must be refused?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Recursion needs no annotation; `@stack_safe` and guaranteed cross-function tail calls are not part of this design.
+- Every call that can recurse, determined from the whole-program call graph and including indirect calls, checks the remaining stack against a red zone of at least 100 KiB and continues on a heap segment of at least 1 MiB when it is low, with segment reuse to avoid hot splits.
+- Each task has a stack budget, 1 GiB by default, set per program and per spawned task. Exceeding it is a `StackBudgetExceeded` panic that reports the repeating cycle, depth, and entry point, follows RFC 094 cleanup and RFC 142 task-panic isolation, and never segfaults.
+- Standard parsers of external data expose a typed `max_depth` limit; `std.json` defaults to 128 with `JsonError.TooDeep`.
+- Foreign code gets at least the red zone and is otherwise outside the guarantee.
