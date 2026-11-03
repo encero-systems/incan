@@ -64,7 +64,7 @@ The same source should support incremental processing without an application fir
 - Allow Incan-authored sources without requiring a custom native backend for each source.
 - Preserve ordinary iteration, existing async syntax activation, and existing `Result` semantics.
 - Provide small pagination and source-authoring examples before more advanced composition.
-- Define lazy `map` and async `for_each`, `for_each_batch`, and explicit `collect` consumers.
+- Define lazy `map` and `for_each`, `for_each_batch`, and explicit `collect` consumers, on async sources and with the same contract on synchronous iterators of `Result` items.
 - Distinguish source advancement failures, yielded `Result` item failures, and consumer callback failures.
 - Allow independent FailFast, CollectAll, and Ignore policies for item and callback failures, including runtime-selected policies.
 - Preserve pending values and typed failure information when a consumer stops.
@@ -480,7 +480,7 @@ Under CollectAll or Ignore, the malformed item does not count toward the batch s
 
 The consumer keeps each input while the callback borrows it, so no copy is needed and the item type does not have to be `Clone`. A callback whose parameter is `Owned[T]` takes the input instead; its failed input is then reported as `Attempted.Consumed`, and a callback that wants it back returns it inside its own error value.
 
-`for_each` uses the same model for one successful value at a time, with `callback_errors` and `report_callback_error` in place of the batch options. `collect` explicitly materializes values and returns them with `Collected.Completed(values, progress)`, or keeps the partial collection with `Collected.Stopped(values, progress, failure)`.
+`for_each` uses the same model for one successful value at a time, with `callback_errors` and `report_callback_error` in place of the batch options. `collect` explicitly materializes values and returns them with `Collected.Completed(values, failures, progress)`, or keeps the partial collection with `Collected.Stopped(values, failures, progress, failure)`. Under CollectAll without a reporter, `failures` holds every failed item in order, so a caller can see all the good and all the bad records at once. A protective `max_items=` stops with `ConsumptionFailure.Limit` and keeps what was read. The same consumers exist on synchronous iterators of `Result` items, so JSONL decoding or any other synchronous source uses this vocabulary too.
 
 Every consumer also accepts `stop=` with a `CancellationToken` and `deadline=` with an `Instant`. When either fires, the consumer stops its pending read or callback and returns `Stopped` with `ConsumptionFailure.Cancelled` or `ConsumptionFailure.Deadline`, still holding what it had read. Dropping the consumer itself returns nothing, as with any dropped operation.
 
@@ -692,14 +692,17 @@ The option names must distinguish these boundaries:
 - `batch_errors` and `report_batch_error` apply to a failed `for_each_batch` callback.
 - `collect` has an item policy and reporter, but no application delivery callback.
 - `stop` takes a `CancellationToken` and `deadline` takes an `Instant`; both apply to every consumer and are stop conditions, not failure policies.
+- `max_items` takes a positive integer and applies to every consumer as a protective limit on the number of source items consumed.
 
 When the `stop` token is cancelled or the `deadline` passes, the consumer must drop its pending source advancement or callback, as `CancellationToken.run` drops its operation, request nothing further, and return `Stopped` with `ConsumptionFailure.Cancelled` or `ConsumptionFailure.Deadline`. A token already cancelled, or a deadline already past, on entry must stop before the first advancement. Dropping the consumer's own future must still return no outcome.
+
+When `max_items` items have been consumed and the source has not yet reported exhaustion, the consumer must request nothing further and return `Stopped` with `ConsumptionFailure.Limit`, keeping everything already consumed. A limit is not evidence that more items exist. Selecting a prefix with an adapter such as `take(n)` is different: it defines the input, and consuming that prefix to its end completes normally without claiming anything about the rest of the source.
 
 An omitted policy must default to FailFast. Policy options that have no corresponding failure channel must be rejected rather than silently affecting some other stage. Policies may be chosen independently and may be runtime enum values. Selecting a runtime policy must not change a consumer's static outcome type or require a policy-dependent union of materialized containers.
 
 FailFast must stop on the first failure observed by sequential consumption. If a corresponding reporter was supplied, it must run before the stopped outcome is returned. CollectAll must report every failure at that boundary and continue after reporting completes. Ignore must continue without invoking a reporter or retaining the error payload; it may count the failure without formatting or logging it. Neither continuation policy must retry the failed callback or reinsert its input automatically.
 
-CollectAll must require a corresponding reporter. A runtime policy that can select CollectAll must also require one unless static checking proves that case impossible. A supplied reporter must be checked even when the selected policy is Ignore. Item reporters must receive `E`; callback reporters must receive the attempted input and `F`. Reporters must return `None`, either synchronously or asynchronously. Async reporting must complete before another item is requested or callback is invoked. Fallible reporters are not part of this design: a `Result`-returning reporter must be refused, so its error is never silently ignored.
+For `for_each` and `for_each_batch`, CollectAll must require a corresponding reporter, and a runtime policy that can select CollectAll must also require one unless static checking proves that case impossible. For `collect`, which materializes by request, CollectAll without `report_item_error` must retain every item failure in source order in the outcome's `failures`; with a reporter, failures go to the reporter and `failures` stays empty. There is no hidden cap on retained failures; `max_items` is the explicit protective limit. A supplied reporter must be checked even when the selected policy is Ignore. Item reporters must receive `E`; callback reporters must receive the attempted input and `F`. Reporters must return `None`, either synchronously or asynchronously. Async reporting must complete before another item is requested or callback is invoked. Fallible reporters are not part of this design: a `Result`-returning reporter must be refused, so its error is never silently ignored.
 
 Item policies must not govern source advancement failures. Any outer source failure must stop the consumer, preserve pending values, and return a typed source failure. Generic consumers must not repoll after that failure. A source may implement recovery internally according to its documented cursor and cancellation contracts, consistent with RFC 115. Explicit result items are how a source exposes independent, recoverable records to a policy-aware consumer.
 
@@ -724,6 +727,7 @@ pub enum ConsumptionFailure[S, E, F]:
     Callback(error: F)           # a failed callback under FailFast
     Cancelled                    # the stop token was cancelled
     Deadline                     # the deadline passed
+    Limit(max_items: int)        # the protective item limit was reached
 
 pub enum Attempted[T]:
     Nothing                      # no callback held an input when consumption stopped
@@ -735,8 +739,8 @@ pub enum Consumption[T, S, E, F]:
     Stopped(progress: Progress, failure: ConsumptionFailure[S, E, F], pending: list[T], attempted: Attempted[T])
 
 pub enum Collected[T, S, E]:
-    Completed(values: list[T], progress: Progress)
-    Stopped(values: list[T], progress: Progress, failure: ConsumptionFailure[S, E, None])
+    Completed(values: list[T], failures: list[E], progress: Progress)
+    Stopped(values: list[T], failures: list[E], progress: Progress, failure: ConsumptionFailure[S, E, None])
 ```
 
 `S` is the source's advancement error, `E` the item error and `F` the callback error. A stage that cannot fail, such as the source of an infallible iterator or the callback of `collect`, must use `None` as its type argument, and its case must never be produced.
@@ -747,7 +751,11 @@ pub enum Collected[T, S, E]:
 
 The consumer must own each input until its callback has finished with it. Whether a callback borrows or takes its input must follow its checked parameter contract under RFC 129 and RFC 164. A callback that borrows the input, through duckborrowing or an explicit `Borrowed[T]`, must leave it with the consumer, which returns it as `Attempted.Retained` when the callback fails or is stopped. A callback declaring `Owned[T]`, or whose use requires ownership, takes the input; its failure must be reported as `Attempted.Consumed`, and a callback that needs the input back must return it inside its own error value. The consumer must not require `T with Clone` or add a hidden copy. A borrowing callback that would retain the input beyond its call must be refused with a diagnostic naming the ownership conflict.
 
-`collect` must be an explicit materializing terminal. It must return the collected values on normal exhaustion and preserve the partial collection when stopping, through `Collected`. This is the new async collection contract; it must not silently change RFC 115's implemented synchronous `collect`, which returns the first source error without returning its partial list.
+`collect` must be an explicit materializing terminal. It must return the collected values on normal exhaustion and preserve the partial collection when stopping, through `Collected`.
+
+### Synchronous sources
+
+The same consumers and outcome types must be available on synchronous sources: an `Iterator` of `Result` items and a `FallibleIterator`. `for_each`, `for_each_batch`, and `collect` there must take the same options, follow the same policy, progress, pending, attempted, and limit rules, and return the same `Consumption` and `Collected` types, with synchronous callbacks and no `stop` or `deadline` suspension. `for_each_concurrent` stays asynchronous. On a synchronous source, a call without any consumer option keeps RFC 115's existing meaning, so a plain `collect()` still returns the first error; passing any consumer option, such as `item_errors=`, selects the policy-aware form. One consumption vocabulary therefore serves both kinds of source, and a library such as `std.json` uses it rather than defining its own collector.
 
 Non-materializing consumers must not silently retain all successful values or all errors. They may retain a pending value or batch and the inputs in-flight callbacks borrow, plus progress and terminal failure information. Source buffering, error payloads, reporters, and callbacks may retain additional memory under their own contracts. On an unbounded source, CollectAll must report incrementally and may never reach a terminal summary.
 
@@ -967,7 +975,8 @@ The library grows by several primitives at once. After `for_each_concurrent` rep
 - Deadlines use the existing monotonic `Instant`, with `deadline_after`, `sleep_until` and `timeout_at` returning the existing `TimeoutError`. Intervals take an explicit `MissedTick` policy defaulting to Skip. The test-only `virtual_clock` fixture jumps to the next timer when every task waits, and an unsupported runtime is a test-build error rather than a fall-back to real time.
 - Under RFC 168, the async protocols keep their consumer methods, so the protocols, the consumers, `ErrorPolicy`, the outcome types, cancellation tokens, watch, broadcast, `Notify`, timers, the monotonic `Instant` and their errors are `std.primitives` foundations. Joins, task groups, deadline conveniences and the prelude are `std.async` compositions. `std.validation`, `std.datetime` and the `std.async` modules re-export foundations with their identity, so `ErrorPolicy` and `Instant` each have one definition.
 - Applications import from `std.async.iter`, `std.async.join`, `std.async.cancel`, and the existing `std.async.task`, `channel`, `sync` and `time` modules, plus `std.testing` for the clock fixture. Compiler and platform code can use the foundations without `std.async`.
-- Consumers return `Consumption.Completed(progress)` or `Consumption.Stopped(progress, failure, pending, attempted)`, and `collect` returns `Collected` with its values. `ConsumptionFailure` names the source, item, callback, cancellation or deadline stage with the original typed error; a stage that cannot fail uses `None`. `Progress` counts seen, delivered, item failures and callback failures. Every consumer accepts `stop=` and `deadline=`.
+- Consumers return `Consumption.Completed(progress)` or `Consumption.Stopped(progress, failure, pending, attempted)`, and `collect` returns `Collected` with its values and, under CollectAll without a reporter, every failure. `ConsumptionFailure` names the source, item, callback, cancellation, deadline, or limit stage with the original typed error; a stage that cannot fail uses `None`. `Progress` counts seen, delivered, item failures and callback failures. Every consumer accepts `stop=`, `deadline=`, and the protective `max_items=`; a `take(n)` prefix completes normally.
+- Synchronous iterators of `Result` items and `FallibleIterator` sources get the same consumers and outcome types when a consumer option is passed; a plain call keeps RFC 115's meaning. Libraries such as `std.json` reuse this vocabulary instead of defining collectors.
 - Async callbacks use RFC 153's `Callable[async (A) -> R]`, and overloads are selected from that declared type, never from a returned value.
 - Consumers keep each input while the callback borrows it, so items need not be `Clone`. An `Owned[T]` callback takes its input, which is then reported as `Attempted.Consumed`.
 - `map` accepts a synchronous or an async callback; the async one is awaited once per item, and an ordinary closure never becomes async from its surroundings.
