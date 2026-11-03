@@ -1,7 +1,9 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
 use crate::ast_build::ident;
-use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
+use crate::plan::{
+    Carrier, Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type,
+};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::RuntimeCarrier;
 use rustc_ast as ast;
@@ -26,7 +28,7 @@ fn standard_path(segments: &[&str], span: Span) -> ast::Path {
 
 /// The standard enum a native Option/Result carrier aliases, below `std`, and its type arguments in variant order.
 pub(crate) fn standard_carrier(carrier: &crate::plan::EnumDeclaration) -> ([&'static str; 2], Vec<PlanType>) {
-    let path = if carrier.carrier == "Option" {
+    let path = if carrier.carrier == Carrier::Option {
         ["option", "Option"]
     } else {
         ["result", "Result"]
@@ -1323,7 +1325,7 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
 
 /// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
 pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
-    if !value.carrier.is_empty() || !value.library_item.is_empty() {
+    if value.carrier != Carrier::Declared || !value.library_item.is_empty() {
         return library_alias(&value.name, value.public, span);
     }
     let variants = value

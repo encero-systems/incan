@@ -279,8 +279,8 @@ def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
         RustType.Named(name) =>
             if str(name) not in result:
                 result.append(str(name))
-        RustType.Generic(base=base, args=arguments) =>
-            if base == "Union":
+        RustType.Generic(base=_base, args=arguments) =>
+            if ty.is_union():
                 return Err("unsupported Body IR serde derive propagation through a union field")
             for argument in arguments:
                 result = reached_names(argument, result)?

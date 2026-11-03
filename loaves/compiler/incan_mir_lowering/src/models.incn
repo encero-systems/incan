@@ -13,6 +13,7 @@ from rust::incan_semantics_core::body_ir import (
     EnumDeclaration as RustEnumDeclaration,
     nominal_carrier_key,
 )
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     ListLeaf,
     PlanType,
@@ -421,7 +422,7 @@ def field_projection(
                     carrier = borrowed_at(intrinsics, owner - len(enums))
                     ty = retained_type(constructors, declarations, enums, unions, payload, intrinsics)?
                     if (
-                        carrier.carrier != "Option"
+                        carrier.carrier != Carrier.Option
                         or len(carrier.variants) != 2
                         or len(carrier.variants[1].fields) != 1
                         or carrier.variants[1].fields[0] != ty

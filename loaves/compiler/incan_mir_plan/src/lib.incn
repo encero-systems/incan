@@ -1023,6 +1023,18 @@ pub def block(statements: list[Statement], exit: TerminatorKind, span: SourceSpa
 
 
 @derive(Clone, PartialEq)
+pub enum Carrier:
+    """
+    Which standard enum a retained layout instantiates. `Option` lays out `None` then `Some`, and `Result` lays out `Ok`
+    then `Err`; any other enum is `Declared`, with its variants in source declaration order.
+    """
+
+    Declared
+    Option
+    Result
+
+
+@derive(Clone, PartialEq)
 pub model EnumDeclaration:
     """Checked normal enum layout; variant indices follow source declaration order."""
 
@@ -1032,7 +1044,7 @@ pub model EnumDeclaration:
     pub derives: list[str]
     pub span: SourceSpan
     # Standard carriers use their concrete type arguments from the variant fields.
-    pub carrier: str = ""
+    pub carrier: Carrier = Carrier.Declared
     # The exact checked carrier witness is used for identity; source_type remains diagnostic presentation only.
     pub semantic_key: Option[SemanticType] = None
     pub source_type: str = ""

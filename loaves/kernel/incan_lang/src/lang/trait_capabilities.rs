@@ -93,6 +93,10 @@ pub struct PrimitiveSourceAdapterInfo {
     pub decode_slot: &'static str,
     /// Associated source method returning the primitive payload of a decoded adapter.
     pub decoded_value: &'static str,
+    /// Structured error the decoder returns, declared in `package` at `decode_error_module`.
+    pub decode_error: &'static str,
+    /// Source module declaring `decode_error`.
+    pub decode_error_module: &'static [&'static str],
 }
 
 impl PrimitiveSourceAdapterInfo {
@@ -143,6 +147,8 @@ const fn ordinal_source_adapter(
         payload_field: "value",
         decode_slot: "from_ordinal_bytes",
         decoded_value: "decoded_value",
+        decode_error: "OrdinalMapError",
+        decode_error_module: &["collections"],
     }
 }
 

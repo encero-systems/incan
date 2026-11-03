@@ -179,14 +179,10 @@ def checked_result_layout(mut builder: Builder, ty: PlanType) -> Result[EnumDecl
             if builder.intrinsics[owner - len(builder.enums)].name != name:
                 return Err("unsupported Body IR checked Deserialize Result name")
         _ => return Err("unsupported Body IR checked Deserialize Result carrier")
+    # A Result carrier lays out Ok then Err; its variant spellings are presentation only.
     _owner, declaration = result_layout(builder, ty)?
     if len(declaration.variants) != 2:
         return Err("unsupported Body IR checked Deserialize Result variants")
-    if (
-        declaration.variants[0].name != "Ok"
-        or declaration.variants[1].name != "Err"
-        or len(declaration.variants[0].fields) != 1
-        or len(declaration.variants[1].fields) != 1
-    ):
+    if len(declaration.variants[0].fields) != 1 or len(declaration.variants[1].fields) != 1:
         return Err("unsupported Body IR checked Deserialize Result payloads")
     return Ok(declaration)

@@ -19,6 +19,7 @@ The file reads top to bottom:
 """
 
 # ---- The plan, re-exported so the driver reads one surface ----
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import source_span as plan_span
 from pub::incan_mir_plan import (
     semantic_type_matches,
@@ -81,6 +82,7 @@ from layout_types import (
     stored_field_type,
     native_alias_boundary,
     native_source_type,
+    carrier_name,
 )
 from native_call_keys import native_result_mismatch
 from text_ownership import drop_borrowed_text_temporaries
@@ -1130,7 +1132,7 @@ def external_enum_equality_kind(mut builder: Builder, owner: int) -> Result[Opti
         if index >= len(builder.intrinsics):
             return Err("invalid Body IR intrinsic enum comparison owner")
         carrier = builder.intrinsics[index].carrier
-        if carrier == "Option" or carrier == "Result":
+        if carrier != Carrier.Declared:
             return Ok(Some(true))
         return Ok(None)
     declaration = builder.enums[owner]
@@ -1257,7 +1259,7 @@ def optional_none_comparison(
     if place_type(builder.locals, source) == PlanType.Unit:
         return Ok(Some(RvalueKind.Use(literal(Constant.Bool(operator == BinOp.Eq or operator == BinOp.Is), span))))
     _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
-    if declaration.carrier != "Option":
+    if declaration.carrier != Carrier.Option:
         return Err("invalid Body IR None comparison carrier")
     tag = enum_comparison_tag(builder, source, span)
     mut comparison = BinaryOp.Equal
@@ -3718,7 +3720,11 @@ def lower_value_enum_from_value(
     output = call_destination(builder, destination, PlanType.Unit, span)?
     carrier, declaration = carrier_layout(builder, place_type(builder.locals, output))?
     element = PlanType.Enum(layout, str(builder.enums[layout].name))
-    if declaration.carrier != "Option" or declaration.variants[1].fields != [element] or output.local in builder.owned:
+    if (
+        declaration.carrier != Carrier.Option
+        or declaration.variants[1].fields != [element]
+        or output.local in builder.owned
+    ):
         return Err("unsupported Body IR value enum from_value destination")
     join = builder.new_block(span)
     owners = builder.owned
@@ -5489,7 +5495,7 @@ def carrier_callable_operand(
         return Ok(value)
     declaration = builder.intrinsics[owner - len(builder.enums)]
     source = operand_type(builder, value)?
-    if declaration.carrier != "" or not callable_copy_type(source):
+    if declaration.carrier != Carrier.Declared or not callable_copy_type(source):
         return Ok(value)
     signature = callable_signature(source)?
     for variant in declaration.variants:
@@ -6464,7 +6470,7 @@ def lower_file_builtin(
         Some(place) => output = scalar_place(builder, place, span)?
     result = place_type(builder.locals, output)
     _owner, declaration = carrier_layout(builder, result)?
-    if declaration.carrier != "Result" or len(declaration.variants) != 2:
+    if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
         return Err("unsupported Body IR file builtin result carrier")
     if declaration.variants[0].fields != [success_type] or declaration.variants[1].fields != [PlanType.String]:
         return Err("unsupported Body IR file builtin result payloads")
@@ -7392,7 +7398,10 @@ def display_value_operand(
                 PlanType.ValidationError => return display_validation_error(builder, place, span)
                 PlanType.ValidationErrorRef => return display_validation_error(builder, place, span)
                 PlanType.Enum(owner, name) =>
-                    if owner >= len(builder.enums) and builder.intrinsics[owner - len(builder.enums)].carrier != "":
+                    if (
+                        owner >= len(builder.enums)
+                        and builder.intrinsics[owner - len(builder.enums)].carrier != Carrier.Declared
+                    ):
                         result = format_carrier(builder, place, span)?
                         if read.fact == OwnershipFact.Move:
                             drop_owned(builder, place.local, span)
@@ -7548,7 +7557,7 @@ def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: Sou
         return debug_plan_operand(builder, copied, span)
     if owner >= len(builder.enums) and owner < len(builder.enums) + len(builder.intrinsics):
         declaration = builder.intrinsics[owner - len(builder.enums)]
-        if declaration.carrier == "Option" or declaration.carrier == "Result":
+        if declaration.carrier == Carrier.Option or declaration.carrier == Carrier.Result:
             return borrowed_enum_debug(builder, place, owner, declaration.name, span)
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")
 
@@ -8827,7 +8836,7 @@ def test_return_type(ty: PlanType, enums: list[EnumDeclaration]) -> bool:
             if owner < 0 or owner >= len(enums):
                 return false
             declaration = enums[owner]
-            if declaration.carrier != "Result" or len(declaration.variants) != 2:
+            if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
                 return false
             return declaration.variants[0].fields == [PlanType.Unit] and len(declaration.variants[1].fields) == 1
         _ => return false
@@ -9808,7 +9817,7 @@ def entry_result(module: &BodyIrModule, ty: PlanType, mut intrinsics: list[EnumD
             if index < 0 or index >= len(intrinsics):
                 return false
             declaration = intrinsics[index]
-            if declaration.carrier != "Result" or len(declaration.variants) != 2:
+            if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
                 return false
             success = declaration.variants[0].fields
             failure = declaration.variants[1].fields
@@ -11426,7 +11435,7 @@ def lower_text_codec_method(
                 result = place_type(builder.locals, output)
             None => return Err("unsupported Body IR discarded codec result without a checked carrier")
         _owner, declaration = carrier_layout(builder, result)?
-        if declaration.carrier != "Result" or declaration.variants[0].fields != [PlanType.String]:
+        if declaration.carrier != Carrier.Result or declaration.variants[0].fields != [PlanType.String]:
             return Err("unsupported Body IR decode result carrier")
         if len(declaration.variants[1].fields) != 1:
             return Err("unsupported Body IR decode error carrier")
@@ -12951,7 +12960,7 @@ def optional_dictionary_get(
     types = collection_arguments(ty)
     result = borrowed_at(builder.locals, output.local).ty
     _owner, declaration = carrier_layout(builder, result)?
-    if declaration.carrier != "Option" or declaration.variants[1].fields != [types[1]]:
+    if declaration.carrier != Carrier.Option or declaration.variants[1].fields != [types[1]]:
         return Err("unsupported Body IR optional dictionary get carrier")
     key = argument_value(builder, arguments, 1, span)?
     reference = borrow_collection(builder, receiver, false, span)?
@@ -14479,7 +14488,10 @@ pub def boundary_plan_operand(
     if operand_type(builder, operand)? == PlanType.FrozenStr:
         match target:
             PlanType.Enum(owner, _name) =>
-                if owner >= len(builder.enums) and builder.intrinsics[owner - len(builder.enums)].carrier == "":
+                if (
+                    owner >= len(builder.enums)
+                    and builder.intrinsics[owner - len(builder.enums)].carrier == Carrier.Declared
+                ):
                     mut convert = false
                     for union in builder.unions:
                         if not semantic_type_matches(builder.intrinsics[owner - len(builder.enums)], union):
@@ -14546,10 +14558,10 @@ def converted_carrier_operand(
         return Ok(None)
     before = builder.intrinsics[source_owner - len(builder.enums)]
     after = builder.intrinsics[target_owner - len(builder.enums)]
-    if before.carrier not in ["Option", "Result"] or before.carrier != after.carrier:
+    if before.carrier == Carrier.Declared or before.carrier != after.carrier:
         return Ok(None)
     # An existing optional payload lifts as a whole, including None inside Some(None).
-    if after.carrier == "Option" and after.variants[1].fields == [source_type]:
+    if after.carrier == Carrier.Option and after.variants[1].fields == [source_type]:
         return Ok(None)
     mut source = plan_place(-1, span)
     match value.kind:
@@ -14604,7 +14616,7 @@ def option_payload_operand(
             if owner < len(builder.enums):
                 return Ok(value)
             declaration = builder.intrinsics[owner - len(builder.enums)]
-            if declaration.carrier != "Option":
+            if declaration.carrier != Carrier.Option:
                 return Ok(value)
             payload = declaration.variants[1].fields[0]
         _ => return Ok(value)
@@ -14675,7 +14687,7 @@ def isinstance_source_type(
     """Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing."""
     match checked:
         RustType.Generic(base=base, args=_arguments) =>
-            if base == "Union" or collection_type(str(base)) == Some(CollectionTypeId.Option):
+            if checked.is_union() or collection_type(str(base)) == Some(CollectionTypeId.Option):
                 source = isinstance_place(builder, value, span)?
                 return Ok(place_type(builder.locals, source))
         _ => pass
@@ -14797,7 +14809,7 @@ def moved_native_enum_payload(
                 return enum_payload_read(builder, payload, fact, span)
     else:
         carrier = builder.intrinsics[owner - len(builder.enums)].carrier
-        if carrier != "Option" and carrier != "Result":
+        if carrier == Carrier.Declared:
             return enum_payload_read(builder, payload, fact, span)
     if len(fields) != 1 or source.projection != Projection.Whole:
         return Err("unsupported Body IR native enum payload move outside a whole owned single-field carrier")
@@ -15289,7 +15301,7 @@ def lower_result_construction(
     if owner < len(builder.enums):
         return Err("invalid Body IR Result destination")
     declaration = builder.intrinsics[owner - len(builder.enums)]
-    if declaration.carrier != "Result" or not variant.has_complete_canonical_types():
+    if declaration.carrier != Carrier.Result or not variant.has_complete_canonical_types():
         return Err("invalid Body IR Result payload identity")
     mut slot = 0
     if variant.kind == ResultVariantKind.Err:
@@ -15309,7 +15321,7 @@ def lower_option_construction(
     owner = enum_owner(place_type(builder.locals, target))?
     if (
         owner < len(builder.enums)
-        or builder.intrinsics[owner - len(builder.enums)].carrier != "Option"
+        or builder.intrinsics[owner - len(builder.enums)].carrier != Carrier.Option
         or len(elements) != 1
     ):
         return Err("invalid Body IR Some destination or payload")
@@ -15349,7 +15361,7 @@ def lower_carrier_method(
     """Materialize intrinsic call arguments, then delegate the carrier's branch and ownership operations."""
     source = carrier_receiver(builder, arguments, span)?
     _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
-    if method.intrinsic_carrier != Some(declaration.carrier):
+    if method.intrinsic_carrier != carrier_name(declaration.carrier):
         return Err("invalid Body IR intrinsic carrier method identity")
     name = str(method.name)
     mut ty = PlanType.Bool
@@ -15360,7 +15372,7 @@ def lower_carrier_method(
             arity = 2
         # The present payload lives in Option's `Some` slot one and Result's `Ok` slot zero.
         mut slot = 0
-        if declaration.carrier == "Option":
+        if declaration.carrier == Carrier.Option:
             slot = 1
         ty = declaration.variants[slot].fields[0]
     if len(arguments) != arity:

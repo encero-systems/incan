@@ -8,6 +8,7 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     PlanType,
     EnumDeclaration,
@@ -326,7 +327,7 @@ pub def async_entry(
                 if index < 0 or index >= len(intrinsics):
                     return Err("unsupported Body IR async main outside a standard Result")
                 declaration = intrinsics[index]
-                if declaration.carrier != "Result" or len(declaration.variants) != 2:
+                if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
                     return Err("unsupported Body IR async main outside a standard Result")
                 errors = declaration.variants[1].fields
                 if len(errors) != 1:
