@@ -1,6 +1,6 @@
 # RFC 074: template rendering and boilerplate provenance
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-25
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
