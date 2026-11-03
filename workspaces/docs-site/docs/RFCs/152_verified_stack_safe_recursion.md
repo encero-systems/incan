@@ -4,13 +4,17 @@
 - **Created:** 2026-10-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
+    - RFC 033 (`ctx` and YAML configuration sources)
     - RFC 094 (scoped cleanup obligations)
+    - RFC 100 (`std.re`)
     - RFC 126 (investigation evidence)
     - RFC 103 (secret non-disclosure)
     - RFC 131 (diagnostic provenance)
     - RFC 142 (task groups and task panics)
     - RFC 146 (typed JSON decoding)
+    - RFC 117 (`loaf.toml`)
     - RFC 158 (incremental XML records)
+    - RFC 165 (Crumb encoding)
 - **Issue:** [#1290](https://github.com/encero-systems/incan/issues/1290)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -18,14 +22,14 @@
 
 ## Summary
 
-Recursive Incan code gets the stack it needs. The compiler knows which calls can recurse, checks the remaining stack at those calls, and continues on a fresh heap-allocated stack segment when the current one runs low, so recursion depth is limited by memory rather than by a fixed thread stack. When a task exceeds its stack budget, it panics cleanly with the recursion cycle and depth, runs its cleanup, and never segfaults. Parsers of untrusted input add a typed depth limit, so hostile nesting produces an ordinary error instead of unbounded memory use. No annotation is needed.
+Recursive Incan code gets the stack it needs. The compiler knows which calls can recurse, checks the remaining stack at those calls, and continues on a fresh heap-allocated stack segment when the current one runs low, so recursion depth is limited by memory rather than by a fixed thread stack. When a task exceeds its stack budget, it panics cleanly with the recursion cycle and depth, runs its cleanup, and never segfaults. Every standard parser of external data has the same typed depth limit, lifted only on explicit request, so hostile nesting produces an ordinary error instead of unbounded memory use. No annotation is needed.
 
 ## Core model
 
 1. **Recursion is ordinary:** any function may call itself or take part in mutual recursion, with no annotation.
 2. **The stack grows on demand:** at every call that can recurse, the compiler checks the remaining stack and, when it is low, continues on a new heap segment that is released on return.
 3. **Each task has a stack budget:** exhausting it is a panic with a report of the recursion cycle, never a crash of the whole process.
-4. **Untrusted input has typed limits:** a standard parser of external data declares a depth limit and reports exceeding it as a typed error.
+4. **Untrusted input has typed limits:** every standard parser of external data, from JSON and XML to regular expressions and IncQL queries, has a `max_depth` limit, 128 by default, reports exceeding it as a typed error, and lifts it only on explicit request.
 
 ## Motivation
 
@@ -42,7 +46,7 @@ Tail-call-only schemes, such as Scala's `@tailrec` or Rust's unstable `become`, 
 - Let recursive Incan code, including mutual recursion and recursion through function values, run to the depth its memory allows.
 - Make running out of stack a clean, diagnosable panic instead of a process crash.
 - Keep the cost to code that does not recurse at zero, and the cost to recursive calls to one comparison in the common case.
-- Give parsers of untrusted input a standard, typed depth limit.
+- Give every standard parser of untrusted input the same typed depth limit, lifted only on explicit request.
 
 ## Non-Goals
 
@@ -110,7 +114,30 @@ async def create_order(request: Request) -> Response:
         Err(error) => return Response.bad_request(error.message())
 ```
 
-`from_json` stops at 128 levels by default, the same default as serde_json, and returns `JsonError.TooDeep` before allocating anything for the deeper levels. A trusted internal format can raise the limit with `max_depth=`. The stack growth above would also survive the input, but the typed limit stops an attacker from turning deep nesting into memory use.
+`from_json` stops at 128 levels by default, the same default as serde_json, and returns `JsonError.TooDeep` before allocating anything for the deeper levels. The stack growth above would also survive the input, but the typed limit stops an attacker from turning deep nesting into memory use.
+
+The same rule holds for every standard parser of external data, each through its own error family: a TOML document, an XML record, a YAML configuration source, a Crumb payload, a regular expression pattern supplied by a user, a form posted to `std.web`, or an IncQL query received by a server.
+
+### Test drive: parsing deep input on purpose
+
+A program that really does need extreme nesting says so, and never gets it by default:
+
+```incan
+value = JsonValue.parse(text, max_depth=2_000_000)?   # a higher limit
+value = JsonValue.parse(text, max_depth=None)?        # no limit, only ever on purpose
+```
+
+The dynamic parsers, such as `JsonValue.parse`, never recurse: they keep their own work stack on the heap, so a million levels costs a few megabytes and never touches the call stack. Typed decoding into a recursive model, such as `Node(next: Option[Node])`, does recurse, so it relies on the stack growth above, and a task that needs more than its budget raises it:
+
+```toml
+# loaf.toml: the default for every task of the program
+[runtime]
+stack-budget = "4 GiB"
+```
+
+```incan
+handle = spawn(import_archive(text), stack_budget="4 GiB")   # this task only
+```
 
 ## Reference-level explanation
 
@@ -126,7 +153,7 @@ Async functions follow the same rule for the stack used while they run or are po
 
 ### Stack budget
 
-Each task, including the main task and each spawned task, must have a stack budget covering its original stack and every segment it has added. The default must be 1 GiB. A program may set a different default, and spawning a task may set that task's budget.
+Each task, including the main task and each spawned task, must have a stack budget covering its original stack and every segment it has added. The default must be 1 GiB. A program must be able to set its default with `[runtime] stack-budget` in `loaf.toml`, and spawning a task must accept `stack_budget=` for that task. Both take a byte size such as `"512 MiB"` or `"4 GiB"`; an unbounded budget is not offered, so a runaway recursion always ends in a report rather than in exhausting the machine's memory.
 
 When a check would exceed the budget, the task must panic with a `StackBudgetExceeded` report. The report must include the budget, the depth reached, the repeating cycle of functions with source locations, and the function that entered the cycle. Values in the report must follow RFC 103 redaction. The panic must follow RFC 094 cleanup and RFC 142 task-panic rules; it must not abort the process unless the panic itself is not caught anywhere in the process, as for any other panic.
 
@@ -138,7 +165,13 @@ Before calling foreign code, the compiler must ensure at least the red zone of r
 
 ### Depth limits for untrusted input
 
-A standard parser of external data must expose a `max_depth` option with a documented default and must report exceeding it as a typed error of its own error family, raised before allocating for the deeper levels. `std.json` decoding defaults to 128 and reports `JsonError.TooDeep`, as RFC 146 specifies; the same convention applies to XML under RFC 158 and to other standard parsers of external formats.
+Every standard parser or decoder that builds nested structure from external data must follow one convention:
+
+- It must accept `max_depth: Option[int]`. The default must be 128 levels unless the format's own RFC sets another; `None` must lift the limit, and only an explicit `None` may do so.
+- Exceeding the limit must produce a `TooDeep` case in that format's own error family, carrying the format's structured location of the point where the limit was reached and the limit itself, and must be reported before allocating for the deeper levels.
+- A parser that produces a dynamic value, such as `JsonValue`, must not recurse on the call stack; it must keep its nesting on a heap work stack, so its depth costs memory proportional to the input and nothing else. Typed decoding into recursive models may recurse and relies on stack growth and the task budget.
+
+The convention covers at least `std.json` (RFC 146), `std.toml`, XML (RFC 158), YAML configuration sources (RFC 033), Crumb decoding (RFC 165), `std.re` pattern parsing (RFC 100), where the default is 250 levels of group nesting as in Rust's `regex` crate, `std.web` request bodies such as forms and multipart payloads, and IncQL query text. A parser of source code the program's own author wrote, such as the Incan compiler parsing a project, is not external data in this sense: it relies on stack growth and the budget instead of a depth limit. The same parser fed text from outside, such as an IncQL query from a network client, applies the limit.
 
 ### Diagnostics and tooling
 
@@ -182,7 +215,8 @@ Exhausting a 1 GiB stack budget means a runaway recursion or a missing input lim
 - **Call-graph analysis:** whole-program recursion detection, including indirect calls, with call-graph facts published per unit.
 - **Lowering / native runtime:** stack checks at recursive call sites, segment switching, segment reuse, per-task budgets, and the `StackBudgetExceeded` panic report.
 - **Async runtime and task spawning:** per-task budgets and the poll path.
-- **Stdlib:** the `max_depth` convention for parsers of external data, starting with `std.json`.
+- **Stdlib:** the `max_depth` convention and iterative dynamic parsers across `std.json`, `std.toml`, XML, YAML sources, Crumb, `std.re`, `std.web` request bodies, and IncQL query text; `spawn(..., stack_budget=)`.
+- **Manifest schema:** `[runtime] stack-budget` in `loaf.toml`.
 - **Diagnostics / investigation tooling:** cycle-compressed panic reports and stack traces without segment noise.
 
 ## Design Decisions
@@ -190,5 +224,6 @@ Exhausting a 1 GiB stack budget means a runaway recursion or a missing input lim
 - Recursion needs no annotation; `@stack_safe` and guaranteed cross-function tail calls are not part of this design.
 - Every call that can recurse, determined from the whole-program call graph and including indirect calls, checks the remaining stack against a red zone of at least 100 KiB and continues on a heap segment of at least 1 MiB when it is low, with segment reuse to avoid hot splits.
 - Each task has a stack budget, 1 GiB by default, set per program and per spawned task. Exceeding it is a `StackBudgetExceeded` panic that reports the repeating cycle, depth, and entry point, follows RFC 094 cleanup and RFC 142 task-panic isolation, and never segfaults.
-- Standard parsers of external data expose a typed `max_depth` limit; `std.json` defaults to 128 with `JsonError.TooDeep`.
+- Every standard parser of external data accepts `max_depth: Option[int]`, 128 by default (250 for regular-expression group nesting), lifted only by an explicit `None`, and reports a `TooDeep` case in its own error family with a structured location. Dynamic parsers keep nesting on a heap work stack and never recurse. Source code a program's own author wrote relies on stack growth instead.
+- The stack budget is set with `[runtime] stack-budget` in `loaf.toml` and `spawn(..., stack_budget=)` per task; there is no unbounded budget.
 - Foreign code gets at least the red zone and is otherwise outside the guarantee.
