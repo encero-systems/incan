@@ -6134,8 +6134,9 @@ impl TypeChecker {
     }
 
     /// Resolve an annotation whose outer ownership mode, when `defer` selects it, is checked by its declaration's
-    /// contract instead of being refused here. With `carried`, the mode of one `Result` or `Option` payload is
-    /// deferred the same way, for a view carried in the result. Other nested modes are always refused.
+    /// contract instead of being refused here. With `carried`, the mode of one `Result` or `Option` payload, or of one
+    /// tuple element, is deferred the same way, for a view carried in the result. Other nested modes are always
+    /// refused.
     fn resolve_type_checked_deferring(
         &mut self,
         ty: &Spanned<Type>,
@@ -6150,17 +6151,13 @@ impl TypeChecker {
             {
                 self.refuse_unimplemented_ownership_annotation(&arguments[0]);
             } else if carried
-                && let Type::Generic(carrier, arguments) = &ty.node
-                && matches!(
-                    incan_lang::lang::types::collections::from_str(carrier),
-                    Some(CollectionTypeId::Result | CollectionTypeId::Option)
-                )
+                && let Some(arguments) = carried_view_components(&ty.node)
                 && let Some(index) = arguments.iter().position(|argument| {
                     matches!(&argument.node, Type::Generic(name, payload)
                         if payload.len() == 1 && self.explicit_ownership_mode(name).is_some_and(&defer))
                 })
             {
-                // One payload carries the view; every other payload stays an ordinary type.
+                // One component carries the view; every other component stays an ordinary type.
                 for (position, argument) in arguments.iter().enumerate() {
                     match &argument.node {
                         Type::Generic(_, payload) if position == index => {
@@ -10097,6 +10094,35 @@ fn preset_private_root(expr: &Spanned<Expr>, public_decls: &HashMap<String, bool
             .get(name)
             .is_some_and(|is_public| !*is_public)
             .then(|| name.clone()),
+        _ => None,
+    }
+}
+
+/// The components of a result annotation that can carry a returned view: a `Result` or `Option` annotation's
+/// payloads, or a tuple annotation's elements.
+fn carried_view_components(ty: &Type) -> Option<&[Spanned<Type>]> {
+    match ty {
+        Type::Generic(carrier, arguments)
+            if matches!(
+                incan_lang::lang::types::collections::from_str(carrier),
+                Some(CollectionTypeId::Result | CollectionTypeId::Option)
+            ) =>
+        {
+            Some(arguments)
+        }
+        _ => written_tuple_elements(ty),
+    }
+}
+
+/// The elements of a tuple annotation, written `(A, B)` or `tuple[A, B]`.
+pub(in crate::typechecker) fn written_tuple_elements(ty: &Type) -> Option<&[Spanned<Type>]> {
+    match ty {
+        Type::Tuple(elements) => Some(elements),
+        Type::Generic(name, elements)
+            if incan_lang::lang::types::collections::from_str(name) == Some(CollectionTypeId::Tuple) =>
+        {
+            Some(elements)
+        }
         _ => None,
     }
 }

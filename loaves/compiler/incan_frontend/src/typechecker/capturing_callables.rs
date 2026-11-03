@@ -50,10 +50,19 @@ pub(super) struct CapturingCallables {
     capturing_closures: HashSet<crate::ast::Span>,
     /// Declaration spans of the locals bound to a capturing callable.
     capturing_bindings: HashSet<crate::ast::Span>,
-    /// Captured names and checked value types, frozen before a closure shadows its enclosing scope.
-    pub(super) captures: HashMap<crate::ast::Span, Vec<(String, ResolvedType)>>,
+    /// Captured names, checked value types and declarations, frozen before a closure shadows its enclosing scope.
+    pub(super) captures: HashMap<crate::ast::Span, Vec<Capture>>,
     /// Originating closure spans for locally retained callable values.
     pub(super) origins: HashMap<crate::ast::Span, crate::ast::Span>,
+}
+
+/// One local of an enclosing callable that a closure reads, resolved in the scope the closure is built in.
+#[derive(Debug, Clone)]
+pub(super) struct Capture {
+    pub(super) name: String,
+    pub(super) ty: ResolvedType,
+    /// The captured declaration; `None` only for a local the symbol table gives no canonical identity.
+    pub(super) identity: Option<CanonicalSymbolId>,
 }
 
 /// One function or method whose parameters and return this module may spell as `impl Fn(...) -> R`.
@@ -273,11 +282,15 @@ impl TypeChecker {
         let captures = free_vars_in_closure_body(params, body)
             .iter()
             .filter_map(|name| {
-                let symbol = self.lookup_symbol(name)?;
-                let SymbolKind::Variable(info) = &symbol.kind else {
+                let binding = self.check_environment().lookup(name)?;
+                let SymbolKind::Variable(info) = &binding.symbol.kind else {
                     return None;
                 };
-                Some((name.clone(), info.ty.clone()))
+                Some(Capture {
+                    name: name.clone(),
+                    ty: info.ty.clone(),
+                    identity: binding.canonical.cloned(),
+                })
             })
             .collect();
         self.capturing_callables.captures.insert(span, captures);
@@ -289,6 +302,20 @@ impl TypeChecker {
         if reads_self || captures_local {
             self.capturing_callables.capturing_closures.insert(span);
         }
+    }
+
+    /// Whether the function or method `callee` of this module only calls the callable its parameter at `slot`
+    /// receives, so a closure passed there is not kept beyond the call.
+    pub(super) fn closure_parameter_only_called(&self, callee: &CanonicalSymbolId, slot: usize) -> bool {
+        self.capturing_callables
+            .admitting_params
+            .get(callee)
+            .is_some_and(|slots| slots.contains(&slot))
+    }
+
+    /// The locals the closure at `span` captures, each resolved in the scope the closure is built in.
+    pub(super) fn closure_captures(&self, span: crate::ast::Span) -> Option<&[Capture]> {
+        self.capturing_callables.captures.get(&span).map(Vec::as_slice)
     }
 
     /// Return whether the module being checked is a module of the standard library, whose function-typed slots,

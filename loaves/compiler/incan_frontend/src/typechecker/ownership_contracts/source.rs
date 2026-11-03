@@ -10,7 +10,7 @@ use super::flow::{
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement,
+    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -18,6 +18,7 @@ use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod calls;
+mod closures;
 mod matches;
 mod operations;
 mod values;
@@ -62,6 +63,14 @@ impl<'a> CallableSource<'a> {
         }
     }
 
+    /// The declared result type as written.
+    pub(in crate::typechecker) fn return_type(self) -> &'a Spanned<Type> {
+        match self {
+            Self::Function(function) => &function.return_type,
+            Self::Method(method) => &method.return_type,
+        }
+    }
+
     /// A method's receiver binding token with its mode; functions have no receiver.
     pub(in crate::typechecker) fn receiver(self) -> Option<(&'a Spanned<crate::ast::Ident>, Receiver)> {
         match self {
@@ -96,13 +105,24 @@ struct Builder<'a> {
     carriers: BTreeMap<CanonicalSymbolId, matches::BoundCarrier>,
     /// Locals a `match` or `?` already took a carried view out of; any later use of them is refused.
     taken_carriers: BTreeSet<CanonicalSymbolId>,
+    /// Locals bound to a closure, with the place and loan of the borrow each holds. A closure local can only be
+    /// called.
+    closures: BTreeMap<CanonicalSymbolId, Option<Path>>,
+    /// Closure locals whose borrow is of a value that is not Copy, which the closure holds by reference.
+    reference_closures: BTreeSet<CanonicalSymbolId>,
+    /// Calls an `await` suspends on directly. A call to an async callable anywhere else would leave a future holding
+    /// its loans, which is not modeled.
+    awaited: BTreeSet<Span>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
     /// The declared returned view: whether it is exclusive, and the exact source place every return borrows.
     view: Option<(bool, Place)>,
-    /// The `Result` or `Option` payload carrying the returned view, or `None` for a view returned whole.
+    /// The `Result` or `Option` payload or the tuple element carrying the returned view, or `None` for a view returned
+    /// whole.
     view_carried: Option<usize>,
+    /// Whether the declared result is a tuple, so `view_carried` names one of its elements.
+    view_in_tuple: bool,
     /// Returns that do not borrow the declared view source. These are program errors, reported by the caller.
     view_errors: Vec<crate::diagnostics::CompileError>,
 }
@@ -171,14 +191,19 @@ fn build_graph(
         span,
         reason: reason.into(),
     })?;
-    if is_async
-        || contract.is_some_and(|contract| {
-            contract.modes.iter().any(|mode| {
-                mode.component.parameter.is_some()
-                    && (!mode.component.children.is_empty() || mode.mode == OwnershipMode::Reference)
-            })
+    // An async body is checked like a synchronous one; its future returns no view, which would outlive a suspension.
+    if is_async && view.is_some() {
+        return Err(Unavailable {
+            span,
+            reason: "a returned view of an async body".into(),
+        });
+    }
+    if contract.is_some_and(|contract| {
+        contract.modes.iter().any(|mode| {
+            mode.component.parameter.is_some()
+                && (!mode.component.children.is_empty() || mode.mode == OwnershipMode::Reference)
         })
-    {
+    }) {
         return Err(Unavailable {
             span,
             reason: "escaping or nested ownership contract".into(),
@@ -217,6 +242,7 @@ fn build_graph(
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
+            closures: BTreeMap::new(),
             nodes: vec![Node {
                 event: Event::Nothing,
                 successors: Vec::new(),
@@ -229,9 +255,13 @@ fn build_graph(
         aliases: BTreeMap::new(),
         carriers: BTreeMap::new(),
         taken_carriers: BTreeSet::new(),
+        closures: BTreeMap::new(),
+        reference_closures: BTreeSet::new(),
+        awaited: BTreeSet::new(),
         loops: Vec::new(),
         view: None,
         view_carried: None,
+        view_in_tuple: false,
         view_errors: Vec::new(),
     };
     builder.inputs(parameters, identity)?;
@@ -273,6 +303,7 @@ fn build_graph(
         };
         builder.view = Some((view.access == incan_semantics_core::IncanInputAccess::Exclusive, place));
         builder.view_carried = view.carried;
+        builder.view_in_tuple = super::super::written_tuple_elements(&callable.return_type().node).is_some();
     }
     let result = builder.block(body, vec![0]);
     view_errors.append(&mut builder.view_errors);
@@ -397,6 +428,14 @@ impl Builder<'_> {
                 }
                 if self.taken_carriers.contains(&identity) {
                     return Err(taken_carrier(expression.span));
+                }
+                if self.closures.contains_key(&identity) {
+                    return Err(Unavailable {
+                        span: expression.span,
+                        reason: "a closure local that is returned, stored or \
+                                 passed"
+                            .into(),
+                    });
                 }
                 match self.aliases.get(&identity) {
                     Some(path) => Ok(path.clone()),
@@ -526,7 +565,7 @@ impl Builder<'_> {
             {
                 Err(Unavailable {
                     span: expression.span,
-                    reason: "a carried view needs `?` or a returned carried view position".into(),
+                    reason: "a carried view needs `?`, a match, unpacking or a returned carried view position".into(),
                 })
             }
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
@@ -560,6 +599,27 @@ impl Builder<'_> {
                     outgoing,
                 )
             }
+            // `await` on a call suspends this body until the call's future completes, and the call's loans end there as
+            // a synchronous call's do. Awaiting a stored future needs task facts of its own.
+            Expr::Surface(surface) if super::builtins::awaited(surface).is_some() => {
+                let awaited = super::builtins::awaited(surface).ok_or(Unavailable {
+                    span: expression.span,
+                    reason: "await has no awaited expression".into(),
+                })?;
+                let call = super::builtins::view_call(awaited);
+                if !matches!(call.node, Expr::Call(..) | Expr::MethodCall(..)) {
+                    return Err(Unavailable {
+                        span: awaited.span,
+                        reason: "await on a stored future needs checked task facts".into(),
+                    });
+                }
+                self.awaited.insert(call.span);
+                self.expression(awaited, incoming, consume)
+            }
+            Expr::Closure(..) => Err(Unavailable {
+                span: expression.span,
+                reason: "a closure needs a local binding before it is called".into(),
+            }),
             _ => Err(Unavailable {
                 span: expression.span,
                 reason: "expression needs checked call or dependency access facts".into(),
@@ -635,50 +695,49 @@ impl Builder<'_> {
 
     /// A returned view borrows exactly its declared source place, with the view's access; the borrow checks the
     /// source permission, so a shared input cannot back an exclusive view. Any other value is a program error.
-    fn view_return(
+    /// Returns the nodes after the borrow, for the elements of a tuple evaluated after it.
+    pub(super) fn view_return(
         &mut self,
         value: &Spanned<Expr>,
         exclusive: bool,
         source: &Place,
         incoming: Vec<usize>,
-    ) -> Result<(), Unavailable> {
+    ) -> Result<Vec<usize>, Unavailable> {
         // A call returning a view of exactly the declared source satisfies the relation through its result loan.
         if let Some(view) = self.view_source(value)? {
             let (incoming, path) = self.evaluate_view_source(value, view, incoming)?;
-            if path.place == *source {
-                let loan = self.call_loan(path, exclusive, exclusive, value.span);
-                self.event(incoming, Event::Borrow(loan), value.span);
-            } else {
+            if path.place != *source {
                 self.view_errors.push(view_error(
                     "A returned view must return its declared source place; this call returns a view of a \
                      different place",
                     value.span,
                 ));
+                return Ok(incoming);
             }
-            return Ok(());
+            let loan = self.call_loan(path, exclusive, exclusive, value.span);
+            return Ok(self.event(incoming, Event::Borrow(loan), value.span));
         }
         match self.optional_place(value)? {
             Some(path) if path.place == *source => {
                 let incoming = self.evaluate_place(value, incoming)?;
                 let loan = self.call_loan(path, exclusive, exclusive, value.span);
-                self.event(incoming, Event::Borrow(loan), value.span);
+                Ok(self.event(incoming, Event::Borrow(loan), value.span))
             }
             Some(_) => {
                 self.view_errors.push(view_error(
                     "A returned view must return its declared source place; this returns a different place",
                     value.span,
                 ));
-                self.expression(value, incoming, true)?;
+                self.expression(value, incoming, true)
             }
             None => {
                 self.view_errors.push(view_error(
                     "A returned view cannot borrow a value created in this body; return its declared source place",
                     value.span,
                 ));
-                self.expression(value, incoming, true)?;
+                self.expression(value, incoming, true)
             }
         }
-        Ok(())
     }
 
     /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
@@ -710,6 +769,14 @@ impl Builder<'_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.checker.type_info.protocols.explicit_local_modes.get(&root))
             .flatten();
+        // A new local initialized by a closure holds the closure's captured borrow, if it has one.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && root.kind == SemanticSourceTargetKind::Local
+            && matches!(assignment.value.node, Expr::Closure(..))
+        {
+            return self.bind_closure(root, &assignment.value, incoming);
+        }
         // A new local initialized by a returned view aliases its substituted place under the call's result loan.
         if mode.is_none()
             && root.declaration_span == assignment.name_span
@@ -738,6 +805,13 @@ impl Builder<'_> {
             && let Some(relation) = self.call_relation(&assignment.value)?
             && let Some(payload) = relation.carried
         {
+            // A tuple's elements are taken apart only by unpacking; nothing takes the view out of a bound tuple.
+            if self.tuple_carrier(&assignment.value) {
+                return Err(Unavailable {
+                    span: assignment.value.span,
+                    reason: "a tuple carrying a view needs unpacking into new names".into(),
+                });
+            }
             let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
             let loan = path.through.ok_or(Unavailable {
                 span: assignment.value.span,
@@ -1106,7 +1180,9 @@ impl Builder<'_> {
                 match (value, self.view.clone()) {
                     (Some(value), Some((exclusive, source))) => match self.view_carried {
                         Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
-                        None => self.view_return(value, exclusive, &source, incoming)?,
+                        None => {
+                            self.view_return(value, exclusive, &source, incoming)?;
+                        }
                     },
                     (None, Some(_)) => self.view_errors.push(view_error(
                         "A returned view must return its declared source place",
@@ -1120,6 +1196,7 @@ impl Builder<'_> {
                 Ok(Vec::new())
             }
             Statement::Assignment(assignment) => self.assignment(assignment, statement.span, incoming),
+            Statement::TupleUnpack(unpack) => self.tuple_unpack(unpack, incoming),
             Statement::FieldAssignment(assignment) => self.field_assignment(assignment, incoming),
             Statement::CompoundAssignment(assignment) => self.compound_assignment(assignment, statement.span, incoming),
             Statement::If(branch) => self.if_statement(branch, incoming),

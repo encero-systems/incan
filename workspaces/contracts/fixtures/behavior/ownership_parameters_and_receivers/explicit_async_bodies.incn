@@ -1,0 +1,43 @@
+# behavior: an async body can declare explicit inputs and await calls that borrow them; a borrowed input stays borrowed across each suspension, and an exclusive input's edits reach the caller (#2500).
+# expect-stdout:
+#   16
+#   4
+
+"""Async bodies with explicit inputs."""
+
+import std.async
+
+
+class Buffer:
+    pub items: list[int]
+    pub label: str
+
+    async def size_plus(self, extra: Borrowed[int]) -> int:
+        return len(self.items) + extra
+
+
+async def measure(buffer: Borrowed[Buffer]) -> int:
+    return len(buffer.items)
+
+
+async def label_length(label: Borrowed[str]) -> int:
+    return len(label)
+
+
+async def grow(mut buffer: BorrowedMut[Buffer], item: int) -> int:
+    buffer.items.append(item)
+    return len(buffer.items)
+
+
+async def total(mut buffer: BorrowedMut[Buffer]) -> int:
+    first = await measure(buffer)
+    grown = await grow(buffer, 4)
+    named = await label_length(buffer.label)
+    sized = await buffer.size_plus(first)
+    return first + grown + named + sized
+
+
+async def main() -> None:
+    mut buffer = Buffer(items=[1, 2, 3], label="ab")
+    println(await total(buffer))
+    println(len(buffer.items))

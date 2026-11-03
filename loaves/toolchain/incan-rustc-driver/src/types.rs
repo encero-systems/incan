@@ -162,6 +162,12 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ClosureRef(signature) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
         }
+        PlanType::BorrowingClosure(signature) => Ty::new_box(tcx, borrowing_callable_object_type(tcx, signature)?),
+        PlanType::BorrowingClosureRef(signature) => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            borrowing_callable_object_type(tcx, signature)?,
+        ),
         PlanType::FunctionItem(name, _) => function_item_type(tcx, name)?,
         PlanType::Unit => tcx.types.unit,
         PlanType::Never => tcx.types.never,
@@ -487,7 +493,19 @@ fn callable_object_type_for_kind<'tcx>(
     signature: &[PlanType],
     consumes_environment: bool,
 ) -> Result<Ty<'tcx>, PlanError> {
-    bounded_callable_object_type(tcx, signature, consumes_environment, false, false)
+    bounded_callable_object_type(
+        tcx,
+        signature,
+        consumes_environment,
+        false,
+        false,
+        tcx.lifetimes.re_static,
+    )
+}
+
+/// Build the shared Fn object of an environment holding a borrowed reference; borrowck infers the region it lives for.
+pub fn borrowing_callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    bounded_callable_object_type(tcx, signature, false, false, false, tcx.lifetimes.re_erased)
 }
 
 /// Retain the exact auto traits admitted by checking on a native owned callback object.
@@ -497,16 +515,17 @@ fn native_callable_object_type<'tcx>(
     send: bool,
     sync: bool,
 ) -> Result<Ty<'tcx>, PlanError> {
-    bounded_callable_object_type(tcx, signature, false, send, sync)
+    bounded_callable_object_type(tcx, signature, false, send, sync, tcx.lifetimes.re_static)
 }
 
-/// Construct one Fn-family object with structural inputs, output, and checked native auto traits.
+/// Construct one Fn-family object with structural inputs, output, and checked native auto traits, outliving `region`.
 fn bounded_callable_object_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     signature: &[PlanType],
     consumes_environment: bool,
     send: bool,
     sync: bool,
+    region: rustc_middle::ty::Region<'tcx>,
 ) -> Result<Ty<'tcx>, PlanError> {
     let (result, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
         function: "callable object".into(),
@@ -554,7 +573,7 @@ fn bounded_callable_object_type<'tcx>(
     }
     predicates.sort_by(|left, right| left.skip_binder().stable_cmp(tcx, &right.skip_binder()));
     let predicates = tcx.mk_poly_existential_predicates(&predicates);
-    Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_static))
+    Ok(Ty::new_dynamic(tcx, predicates, region))
 }
 
 /// The tuple a callable object's call takes, holding each checked input in order.

@@ -159,13 +159,15 @@ pub(crate) fn direct_input_access(
 
 /// A result that is a view of exactly one source place: the declared parameter or receiver with its stored field
 /// path. The access is shared for `Borrowed[T]` and exclusive for `Reference[T]`. A carried view is one payload of a
-/// `Result` or `Option` result rather than the whole result; the declaration's header check confirms the carrier.
+/// `Result` or `Option` result, or one element of a tuple result, rather than the whole result; the declaration's
+/// header check confirms the carrier.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReturnedView<'a> {
     pub mode: &'a AccessMode<crate::symbols::ResolvedType>,
     pub access: incan_semantics_core::IncanInputAccess,
     pub source: &'a ResultDependency<incan_semantics_core::CanonicalSymbolId>,
-    /// The carrier payload holding the view: `0` for `Ok` or `Some`, `1` for `Err`; `None` for a view returned whole.
+    /// The result component holding the view: `0` for `Ok` or `Some`, `1` for `Err`, or a tuple element's index;
+    /// `None` for a view returned whole.
     pub carried: Option<usize>,
 }
 
@@ -188,11 +190,12 @@ pub(crate) fn returned_view(
         (Some(mode), Some(source)) => {
             let carried = match mode.component.children.as_slice() {
                 [] => None,
-                [payload @ (0 | 1)] => Some(*payload),
+                [component] => Some(*component),
                 _ => return Err("returned access inside another type requires aggregate dependency facts"),
             };
+            // The one `from` clause names one source, so one component of the result carries the view.
             if results.next().is_some() {
-                return Err("returned access inside another type requires aggregate dependency facts");
+                return Err("a result with more than one view needs a separate source for each view");
             }
             let access = match mode.mode {
                 OwnershipMode::Reference => IncanInputAccess::Exclusive,
@@ -211,7 +214,8 @@ pub(crate) fn returned_view(
 }
 
 /// Expose a returned view's value type only when its canonical declaration authorizes the result mode, as for inputs:
-/// `T` for a direct view and `Result[T, E]` or `Option[T]` for a carried one. An ordinary result is returned unchanged.
+/// `T` for a direct view, `Result[T, E]` or `Option[T]` for a carried one, and the tuple of value types for a view
+/// carried in a tuple element. An ordinary result is returned unchanged.
 pub(crate) fn result_value_type(
     contract: Option<&CheckedOwnershipContract>,
     result: &crate::symbols::ResolvedType,
@@ -230,8 +234,20 @@ pub(crate) fn result_value_type(
     let Some(payload) = view.carried else {
         return underlying(result);
     };
+    if let Some(elements) = result.tuple_elements() {
+        let mut values = elements.to_vec();
+        let element = values
+            .get(payload)
+            .ok_or("a view carried in a tuple names an element the tuple lacks")?;
+        values[payload] = underlying(element)?;
+        // The result keeps its own tuple spelling.
+        return Ok(match result {
+            ResolvedType::Generic(name, _) => ResolvedType::Generic(name.clone(), values),
+            _ => ResolvedType::Tuple(values),
+        });
+    }
     let ResolvedType::Generic(carrier, arguments) = result else {
-        return Err("a carried returned view requires a Result or Option result");
+        return Err("a carried returned view requires a Result, Option or tuple result");
     };
     if !(result.is_result() || result.is_option()) || payload >= arguments.len() {
         return Err("a carried returned view requires a Result or Option payload");

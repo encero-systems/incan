@@ -153,24 +153,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // captured. The closure body resolves that source reference independently from its canonical identity,
             // yielding a global place for a `const`/`static` or an explicit unsupported operand for an identity
             // Body IR cannot represent.
-            let Some(&outer_local) = self.bindings.get(name) else {
-                continue;
+            // A captured `Borrowed[T]` local of an explicit body has no local of its own: the closure copies the Copy
+            // value of the place it borrows, or borrows any other value, while the checker keeps that place borrowed.
+            let (outer_place, outer_ty, fact, last_use, identity, previous) = match self.bindings.get(name) {
+                Some(&outer_local) => {
+                    let ty = self.locals[outer_local.index()].ty.clone();
+                    let place = bir::Place::from_local(outer_local);
+                    let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
+                    let identity = self.locals[outer_local.index()].identity.clone();
+                    (place, ty, fact, last_use, identity, Some(outer_local))
+                }
+                None => match self.closure_alias_capture(name, expr_span) {
+                    Some((identity, place, referent)) => {
+                        let fact = if referent.abi_v0_facts().ownership.is_trivially_copy() {
+                            bir::OwnershipFact::Copy
+                        } else {
+                            bir::OwnershipFact::Borrow
+                        };
+                        (place, referent, fact, false, Some(identity), None)
+                    }
+                    None => continue,
+                },
             };
-            let outer_ty = self.locals[outer_local.index()].ty.clone();
-            let outer_place = bir::Place::from_local(outer_local);
-            let (fact, last_use) = self.ownership_fact_for_place(&outer_place, &outer_ty);
             captured_operands.push(bir::Operand::place(outer_place, fact, last_use));
 
             let total_reads = count_reads_in_expr(name, &body_expr.node);
             let capture_local =
                 self.declare_new_local_with_reads(name.clone(), outer_ty, closure_scope, hir_span_value, total_reads);
             self.locals[capture_local.index()].origin = bir::LocalOrigin::Captured;
-            if let Some(identity) = self.locals[outer_local.index()].identity.clone() {
+            if let Some(identity) = identity {
                 self.locals[capture_local.index()].identity = Some(identity.clone());
                 self.identity_bindings.insert(identity, capture_local);
             }
             capture_locals.push(capture_local);
-            saved_bindings.push((name.clone(), Some(outer_local)));
+            saved_bindings.push((name.clone(), previous));
         }
 
         // ---- Bind the closure's own parameters, shadowing any outer binding of the same name ----
@@ -239,6 +255,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// A `Borrowed[T]` local of an explicit body that the closure at `span` captures, as the body's ownership graph
+    /// records the capture: its declaration, the place it borrows and its referent type.
+    fn closure_alias_capture(&self, name: &str, span: ast::Span) -> Option<(CanonicalSymbolId, bir::Place, IncanType)> {
+        let proof = self.input_body.as_ref().ok()?.as_ref()?;
+        let identity = proof
+            .closure_captures(hir_span(span))?
+            .iter()
+            .find(|identity| identity.declaration_name == name)?;
+        let alias = self.input_alias(identity)?;
+        let referent = self.checked_type(proof.local_value_type(identity)?);
+        Some((identity.clone(), alias.place.clone(), referent))
     }
 
     /// Retain the checked closure parameter surface after its invocation-frame locals have been declared.

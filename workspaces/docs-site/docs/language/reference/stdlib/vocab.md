@@ -358,9 +358,9 @@ pub enum VocabFragmentTypeKind:
 | `DesugarResponse` | Required `output: DesugarOutput`; `schema_version: int = VOCAB_SYNTAX_VERSION`. |
 | `DesugarOutput` | `Statements(list[IncanStatement])`, `Expression(IncanExpr)`, `Declarations(list[IncanDeclaration])`. |
 | `DesugarError` | Required `span: Span`, `message: str`; `at(span: Span, message: str) -> Self`. The span must lie inside the requesting node, or the reply is refused. |
-| `DesugarBatchRequest` | Required `requests: list[DesugarRequest]`. |
+| `DesugarBatchRequest` | Required `batch: int`, `requests: list[DesugarRequest]`. |
 | `DesugarReply` | `Ok(DesugarResponse)`, `Err(DesugarError)`. |
-| `DesugarBatchResponse` | Required `responses: list[DesugarReply]`. |
+| `DesugarBatchResponse` | Required `batch: int`, `responses: list[DesugarReply]`. |
 
 ```incan
 pub def run_desugar_worker(
@@ -368,7 +368,7 @@ pub def run_desugar_worker(
 ) -> Result[None, str]
 ```
 
-The service reads one JSON batch per stdin line, invokes the callback independently for each request, and flushes one response line in the same order. End of input returns `Ok(None)`. Input decoding, I/O and output flushing failures return an error string. The generated worker entry calls this service; a vocabulary author's callback returns one typed response or diagnostic per node.
+The service reads one JSON batch per stdin line, invokes the callback independently for each request, and flushes one response line in the same order, carrying the batch's `batch` number. The compiler numbers each batch and refuses a line that does not carry the number of the batch it sent, so output the provider writes for no batch retires its worker. End of input returns `Ok(None)`. Input decoding, I/O and output flushing failures return an error string. The generated worker entry calls this service; a vocabulary author's callback returns one typed response or diagnostic per node.
 
 ## Low-level keyword registration
 

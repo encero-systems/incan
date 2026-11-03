@@ -1,5 +1,5 @@
-# behavior: A borrowed result nested in a tuple is refused for execution; only a payload of a `Result` or `Option` carries a view (#2500).
+# behavior: A result whose tuple holds more than one borrowed element is refused for execution; the one `from` clause names the source of a single view (#2500).
 # expect-diagnostic: INCAN-T0123
 
-def inspect(value: Borrowed[str]) -> tuple[Borrowed[str], int] from value:
-    return (value, 1)
+def inspect(value: Borrowed[str]) -> tuple[Borrowed[str], Borrowed[str]] from value:
+    return (value, value)

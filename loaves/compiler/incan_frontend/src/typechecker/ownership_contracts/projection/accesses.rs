@@ -8,7 +8,7 @@ use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 use super::{CheckedInputBody, flow};
 use crate::ast::{
     AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, Literal,
-    MatchBody, Spanned, Statement,
+    MatchBody, Spanned, Statement, TupleUnpackStmt,
 };
 use crate::typechecker::ownership_contracts::CallableSource;
 
@@ -39,6 +39,12 @@ impl CheckedInputBody<'_> {
                     .operations
                     .values()
                     .flat_map(|operation| operation.operands.iter().map(|operand| operand.final_access)),
+            )
+            .chain(
+                self.graph
+                    .closures
+                    .values()
+                    .flat_map(|closure| closure.reads.iter().copied()),
             )
         {
             if !coverage.claimed.insert(index) {
@@ -135,6 +141,21 @@ impl SourceAccesses<'_, '_> {
         Ok(place)
     }
 
+    /// The loan a closure local holds, when the callee names a closure local: `Some(None)` for one that borrows
+    /// nothing.
+    fn closure_callee(&self, callee: &Spanned<Expr>) -> Option<Option<flow::LoanId>> {
+        if !matches!(callee.node, Expr::Ident(_)) {
+            return None;
+        }
+        let identity = self.proof.facts.resolved_identity(callee.span)?;
+        self.proof
+            .graph
+            .closures
+            .values()
+            .find(|closure| &closure.local == identity)
+            .map(|closure| closure.loan)
+    }
+
     /// Copy semantics use the same checked value projection as explicit argument and initializer validation.
     fn copy_value(&self, expression: &Spanned<Expr>) -> Result<bool, &'static str> {
         let ty = self
@@ -159,6 +180,19 @@ impl SourceAccesses<'_, '_> {
                 Some(CallArg::Positional(value) | CallArg::Named(_, value)) => value,
                 _ => return Err("source access call has no fixed written argument"),
             };
+            // A closure local passed on first uses the borrow it holds, then is read itself.
+            if argument.access == IncanInputAccess::Inferred
+                && let Some(Some(id)) = self.closure_callee(value)
+            {
+                let loan = self
+                    .proof
+                    .graph
+                    .loans
+                    .get(id.0)
+                    .ok_or("closure local has no captured loan")?;
+                let source = loan.source.clone();
+                self.access(value.span, &source, Some(id), flow::Access::Read)?;
+            }
             let source = self.place(value)?;
             match argument.access {
                 IncanInputAccess::Owned => {
@@ -263,6 +297,25 @@ impl SourceAccesses<'_, '_> {
                 }
                 self.invocation_arguments(invocation, arguments)?;
             }
+            // A closure local's call evaluates its arguments, then uses the borrow the closure holds.
+            Expr::Call(callee, _, arguments) if self.closure_callee(callee).is_some() => {
+                for argument in arguments {
+                    let CallArg::Positional(value) = argument else {
+                        return Err("source access closure call needs positional arguments");
+                    };
+                    self.expression(value, false)?;
+                }
+                if let Some(Some(id)) = self.closure_callee(callee) {
+                    let loan = self
+                        .proof
+                        .graph
+                        .loans
+                        .get(id.0)
+                        .ok_or("closure local has no captured loan")?;
+                    let source = loan.source.clone();
+                    self.access(expression.span, &source, Some(id), flow::Access::Read)?;
+                }
+            }
             Expr::Call(_, _, arguments) => {
                 if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
                     self.invocation_arguments(invocation, arguments)?;
@@ -277,7 +330,45 @@ impl SourceAccesses<'_, '_> {
                     }
                 }
             }
+            // `await` suspends on its call, which is evaluated as written.
+            Expr::Surface(surface) if super::super::builtins::awaited(surface).is_some() => {
+                if let Some(awaited) = super::super::builtins::awaited(surface) {
+                    self.expression(awaited, consume)?;
+                }
+            }
             _ => return Err("source access coverage requires the supported expression profile"),
+        }
+        Ok(())
+    }
+
+    /// Unpacking a call that carries a view in one tuple element evaluates the call; the view's name takes a borrow
+    /// keyed to it, as a view local does, and the other names are new owners of their elements.
+    fn tuple_unpack(&mut self, unpack: &TupleUnpackStmt) -> Result<(), &'static str> {
+        self.expression(&unpack.value, false)?;
+        let call = self.proof.view_call_span(&unpack.value);
+        for (name, &span) in unpack.names.iter().zip(&unpack.name_spans) {
+            let identity = self
+                .proof
+                .facts
+                .resolved_write_identity(span, name)
+                .ok_or("source unpacking lacks a canonical target")?
+                .clone();
+            match self.proof.graph.local_loans.get(&identity) {
+                Some(id) => {
+                    let loan = self
+                        .proof
+                        .graph
+                        .loans
+                        .get(id.0)
+                        .ok_or("unpacked view has no result loan")?;
+                    if loan.span != call {
+                        return Err("unpacked view differs from its initializer call");
+                    }
+                }
+                None => {
+                    self.known.insert(flow::Root::Binding(identity));
+                }
+            }
         }
         Ok(())
     }
@@ -293,6 +384,27 @@ impl SourceAccesses<'_, '_> {
         let mode = (root.declaration_span == assignment.name_span)
             .then(|| self.proof.facts.protocols.explicit_local_modes.get(&root))
             .flatten();
+        // A closure binding reads or borrows its captures where it is built; those events are its retained record's.
+        if let Expr::Closure(params, body) = &assignment.value.node {
+            let closure = self
+                .proof
+                .graph
+                .closures
+                .get(&assignment.value.span)
+                .ok_or("source closure binding has no checked captures")?;
+            if closure.local != root {
+                return Err("source closure binding differs from its checked local");
+            }
+            let free = crate::body_ir::free_vars::free_vars_in_closure_body(params, body);
+            if closure
+                .captures
+                .iter()
+                .any(|capture| !free.contains(&capture.declaration_name))
+            {
+                return Err("source closure capture is not read by its closure");
+            }
+            return Ok(());
+        }
         // A new unannotated local whose loan is its initializer call's result aliases a returned view: the call is
         // evaluated, and the binding takes a borrow rather than a value. `?` takes a carried view out of its call.
         if mode.is_none()
@@ -410,6 +522,7 @@ impl SourceAccesses<'_, '_> {
                     return Ok(false);
                 }
                 Statement::Assignment(assignment) => self.assignment(assignment)?,
+                Statement::TupleUnpack(unpack) => self.tuple_unpack(unpack)?,
                 Statement::CompoundAssignment(assignment) => {
                     let identity = self
                         .proof
@@ -517,8 +630,19 @@ impl SourceAccesses<'_, '_> {
 
     /// A carried view's return: the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the
     /// error) of the declared place is a view return, another variant is an owned value, `None` evaluates nothing, and
-    /// a carried view call of the same source is evaluated.
+    /// a carried view call of the same source is evaluated. A tuple's carrying element is a view return and its other
+    /// elements are owned values, in order.
     fn carried_return(&mut self, value: &Spanned<Expr>, carried: usize) -> Result<(), &'static str> {
+        if let Expr::Tuple(elements) = &value.node {
+            for (index, element) in elements.iter().enumerate() {
+                if index == carried {
+                    self.view_return(element)?;
+                } else {
+                    self.expression(element, true)?;
+                }
+            }
+            return Ok(());
+        }
         match super::super::builtins::carrier_construction(self.proof.facts, value) {
             Some((variant, [CallArg::Positional(payload)]))
                 if super::super::builtins::variant_carries_view(variant, carried) =>

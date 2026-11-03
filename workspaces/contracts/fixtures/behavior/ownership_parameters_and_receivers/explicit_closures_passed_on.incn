@@ -1,0 +1,38 @@
+# behavior: an explicit body can pass a closure local to a parameter its callee only calls; the callee borrows the closure for the call, so the body can call or pass it again afterwards (#2500).
+# expect-stdout:
+#   7
+#   12
+#   9
+
+"""Closures passed on to parameters that only call them."""
+
+
+def apply(read: (int) -> int, value: int) -> int:
+    return read(value)
+
+
+def twice(read: (int) -> int, value: int) -> int:
+    return read(read(value))
+
+
+def total(amount: Borrowed[int], extra: int) -> int:
+    add: (int) -> int = (step) => amount + step
+    return apply(add, extra)
+
+
+def again(amount: Borrowed[int]) -> int:
+    add: (int) -> int = (step) => amount + step
+    first = apply(add, 3)
+    return first + add(3)
+
+
+def nested(amount: Borrowed[int]) -> int:
+    add: (int) -> int = (step) => amount + step
+    return twice(add, 3)
+
+
+def main() -> None:
+    amount = 3
+    println(total(amount, 4))
+    println(again(amount))
+    println(nested(amount))

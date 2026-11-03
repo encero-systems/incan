@@ -8,7 +8,10 @@ use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_semantics_core::CanonicalSymbolId;
 
 use super::{Builder, Event, Path, Place, Unavailable};
-use crate::ast::{CallArg, Expr, Literal, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned};
+use crate::ast::{
+    BindingKind, CallArg, Expr, Literal, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned, TupleUnpackStmt,
+};
+use crate::symbols::ResolvedType;
 
 /// A local still holding a carried call: the payload carrying its view, and how many loops enclose its binding.
 #[derive(Debug, Clone, Copy)]
@@ -175,7 +178,9 @@ impl Builder<'_> {
 
     /// A carried view's body returns the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the
     /// error) of its declared source place, a carried view of the same source from another call, or another variant
-    /// or `None`, which carries no view. Any other value is a program error.
+    /// or `None`, which carries no view. A tuple result returns a tuple whose carrying element is its declared source
+    /// place and whose other elements are owned values, or a carried view of the same source. Any other value is a
+    /// program error.
     pub(super) fn carried_return(
         &mut self,
         value: &Spanned<Expr>,
@@ -184,6 +189,20 @@ impl Builder<'_> {
         source: &Place,
         incoming: Vec<usize>,
     ) -> Result<(), Unavailable> {
+        // The elements are evaluated in order, so a later element cannot give up the source the view borrows.
+        if self.view_in_tuple
+            && let Expr::Tuple(elements) = &value.node
+        {
+            let mut incoming = incoming;
+            for (index, element) in elements.iter().enumerate() {
+                incoming = if index == carried {
+                    self.view_return(element, exclusive, source, incoming)?
+                } else {
+                    self.expression(element, incoming, true)?
+                };
+            }
+            return Ok(());
+        }
         match self.carrier_value(value) {
             Some((variant, arguments)) if super::super::builtins::variant_carries_view(variant, carried) => {
                 let [CallArg::Positional(payload)] = arguments else {
@@ -192,7 +211,7 @@ impl Builder<'_> {
                         reason: "carrier construction needs one positional payload".into(),
                     });
                 };
-                return self.view_return(payload, exclusive, source, incoming);
+                return self.view_return(payload, exclusive, source, incoming).map(|_| ());
             }
             Some(_) => {
                 self.expression(value, incoming, true)?;
@@ -221,7 +240,10 @@ impl Builder<'_> {
             return Ok(());
         }
         self.view_errors.push(super::view_error(
-            if carried == 0 {
+            if self.view_in_tuple {
+                "A returned tuple carrying a view must hold its declared source place in the view's element, or be a \
+                 carried view of the same source"
+            } else if carried == 0 {
                 "A returned carried view must return Ok of its declared source place, an error, or a carried view of \
                  the same source"
             } else {
@@ -331,6 +353,60 @@ impl Builder<'_> {
         }
         self.aliases.insert(identity, path.clone());
         Ok(())
+    }
+
+    /// Unpack a call that carries a view in one element of its tuple: that element's name is a view local of the
+    /// caller's place under the call's result loan, as a match arm binds it, and every other name is a fresh owner of
+    /// its element. Unpacking any other value needs checked aggregate dependency facts.
+    pub(super) fn tuple_unpack(
+        &mut self,
+        unpack: &TupleUnpackStmt,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let unavailable = |reason: &str| Unavailable {
+            span: unpack.value.span,
+            reason: reason.into(),
+        };
+        let relation = self
+            .call_relation(&unpack.value)?
+            .filter(|_| self.tuple_carrier(&unpack.value))
+            .ok_or_else(|| unavailable("tuple unpacking needs checked aggregate dependency facts"))?;
+        let carried = relation
+            .carried
+            .ok_or_else(|| unavailable("tuple unpacking needs checked aggregate dependency facts"))?;
+        if unpack.binding == BindingKind::Reassign || unpack.names.len() != unpack.name_spans.len() {
+            return Err(unavailable("unpacking a carried view needs new names"));
+        }
+        let (incoming, path) = self.evaluate_view_call(&unpack.value, relation, incoming)?;
+        for (index, (name, &span)) in unpack.names.iter().zip(&unpack.name_spans).enumerate() {
+            let identity = self
+                .checker
+                .type_info
+                .resolved_write_identity(span, name)
+                .cloned()
+                .ok_or(Unavailable {
+                    span,
+                    reason: "missing checked unpacked name".into(),
+                })?;
+            if identity.declaration_span != span {
+                return Err(unavailable("unpacking a carried view needs new names"));
+            }
+            if index == carried {
+                self.view_arm_binding(name, span, &path)?;
+            } else {
+                self.root(&identity, span)?;
+            }
+        }
+        Ok(incoming)
+    }
+
+    /// Whether a call's checked result is a tuple, so the payload carrying its view is one of its elements.
+    pub(super) fn tuple_carrier(&self, call: &Spanned<Expr>) -> bool {
+        self.checker
+            .type_info
+            .expr_type(call.span)
+            .and_then(ResolvedType::tuple_elements)
+            .is_some()
     }
 
     /// Register the one fresh owner a carrier pattern binds, as a loop item is registered: a root, no write event.

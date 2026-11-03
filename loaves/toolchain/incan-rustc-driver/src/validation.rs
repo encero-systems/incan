@@ -144,6 +144,8 @@ enum Scalar {
     SharedCallable(Vec<Scalar>),
     ClosureOnce(Vec<Scalar>),
     ClosureRef(Vec<Scalar>),
+    BorrowingClosure(Vec<Scalar>),
+    BorrowingClosureRef(Vec<Scalar>),
     Future(Vec<Scalar>),
 }
 
@@ -317,6 +319,8 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::SharedCallable(signature) => Scalar::SharedCallable(signature.iter().map(scalar).collect()),
         PlanType::ClosureOnce(signature) => Scalar::ClosureOnce(signature.iter().map(scalar).collect()),
         PlanType::ClosureRef(signature) => Scalar::ClosureRef(signature.iter().map(scalar).collect()),
+        PlanType::BorrowingClosure(signature) => Scalar::BorrowingClosure(signature.iter().map(scalar).collect()),
+        PlanType::BorrowingClosureRef(signature) => Scalar::BorrowingClosureRef(signature.iter().map(scalar).collect()),
         PlanType::FunctionItem(name, signature) => {
             Scalar::FunctionItem(name.clone(), signature.iter().map(scalar).collect())
         }
@@ -999,6 +1003,7 @@ fn owns_values(ty: &Scalar) -> bool {
         | Scalar::ClosureOnce(_)
         | Scalar::Closure(_)
         | Scalar::NativeClosure(..)
+        | Scalar::BorrowingClosure(_)
         | Scalar::SharedCallable(_)
         | Scalar::ValidationError
         | Scalar::Boxed(_)
@@ -1077,6 +1082,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         RvalueKind::FunctionItem(callee) => function_item_result(plan, function, callee),
         RvalueKind::ClosureObject(value) => match place(plan, function, value)? {
             Scalar::Closure(signature) => Ok(Scalar::ClosureRef(signature)),
+            Scalar::BorrowingClosure(signature) => Ok(Scalar::BorrowingClosureRef(signature)),
             _ => Err(invalid(
                 function,
                 "callable-object borrow requires an owned closure payload",
@@ -1586,6 +1592,7 @@ fn shared_reference(ty: &Scalar) -> bool {
             | Scalar::ZipIteratorRef(_, _)
             | Scalar::GeneratorYieldRef(_, _)
             | Scalar::ClosureRef(_)
+            | Scalar::BorrowingClosureRef(_)
     )
 }
 
@@ -1650,6 +1657,8 @@ fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::Closure(signature)
     | Scalar::ClosureOnce(signature)
     | Scalar::ClosureRef(signature)
+    | Scalar::BorrowingClosure(signature)
+    | Scalar::BorrowingClosureRef(signature)
     | Scalar::NativeClosure(signature, _, _) = ty
     {
         return callable_object_signature(signature);
@@ -1886,7 +1895,10 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
         || !matches!(second.terminator.kind, TerminatorKind::Return)
         || !matches!(
             function.return_type,
-            PlanType::Closure(_) | PlanType::ClosureOnce(_) | PlanType::NativeClosure(..)
+            PlanType::Closure(_)
+                | PlanType::ClosureOnce(_)
+                | PlanType::NativeClosure(..)
+                | PlanType::BorrowingClosure(_)
         )
         || usize::try_from(count).ok() != Some(function.parameters.len())
     {
@@ -2156,6 +2168,12 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
         )),
         CalleeKind::CallClosure(signature) => closure_call_signature(function, signature, false),
         CalleeKind::CallClosureOnce(signature) => closure_call_signature(function, signature, true),
+        CalleeKind::CallBorrowingClosure(signature) => {
+            // The same call through the shared view of an environment that holds a borrowed reference.
+            let (mut inputs, result) = closure_call_signature(function, signature, false)?;
+            inputs[0] = Scalar::BorrowingClosureRef(signature.iter().map(scalar).collect());
+            Ok((inputs, result))
+        }
         CalleeKind::CloneClosure(signature) => closure_clone_signature(function, signature),
         CalleeKind::ClosureBody(name, count) | CalleeKind::ClosureBodyOnce(name, count) => {
             lifted_closure_signature(plan, function, callee, name, *count)
@@ -2376,6 +2394,8 @@ fn lifted_closure_signature(
         Scalar::ClosureOnce(object)
     } else if let PlanType::NativeClosure(_, send, sync) = &function.return_type {
         Scalar::NativeClosure(object, *send, *sync)
+    } else if let PlanType::BorrowingClosure(_) = &function.return_type {
+        Scalar::BorrowingClosure(object)
     } else {
         Scalar::Closure(object)
     };
@@ -2897,6 +2917,8 @@ fn validate_retained_type_declaration(plan: &Plan, ty: &PlanType) -> Result<(), 
     | PlanType::NativeClosure(signature, _, _)
     | PlanType::ClosureOnce(signature)
     | PlanType::ClosureRef(signature)
+    | PlanType::BorrowingClosure(signature)
+    | PlanType::BorrowingClosureRef(signature)
     | PlanType::SharedCallable(signature) = ty
         && !callable_object_signature(&signature.iter().map(scalar).collect::<Vec<_>>())
     {
@@ -2909,6 +2931,8 @@ fn validate_retained_type_declaration(plan: &Plan, ty: &PlanType) -> Result<(), 
     | PlanType::NativeClosure(signature, _, _)
     | PlanType::ClosureOnce(signature)
     | PlanType::ClosureRef(signature)
+    | PlanType::BorrowingClosure(signature)
+    | PlanType::BorrowingClosureRef(signature)
     | PlanType::SharedCallable(signature) = ty
     {
         for component in signature {
@@ -3255,7 +3279,13 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                     reason: "invalid model field declaration".into(),
                 });
             }
-            if matches!(field.ty, PlanType::ClosureOnce(_) | PlanType::ClosureRef(_)) {
+            if matches!(
+                field.ty,
+                PlanType::ClosureOnce(_)
+                    | PlanType::ClosureRef(_)
+                    | PlanType::BorrowingClosure(_)
+                    | PlanType::BorrowingClosureRef(_)
+            ) {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "unsupported callable model field declaration".into(),
@@ -3647,6 +3677,8 @@ fn library_argument_models(
         | PlanType::Closure(signature)
         | PlanType::NativeClosure(signature, _, _)
         | PlanType::ClosureOnce(signature)
+        | PlanType::BorrowingClosure(signature)
+        | PlanType::BorrowingClosureRef(signature)
         | PlanType::SharedCallable(signature)
         | PlanType::Future(signature)
         | PlanType::FrozenCollection(_, signature)
@@ -3759,6 +3791,8 @@ fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &mut BTreeSet
         | PlanType::NativeClosure(elements, _, _)
         | PlanType::ClosureOnce(elements)
         | PlanType::ClosureRef(elements)
+        | PlanType::BorrowingClosure(elements)
+        | PlanType::BorrowingClosureRef(elements)
         | PlanType::SharedCallable(elements)
         | PlanType::FrozenCollection(_, elements)
         | PlanType::FrozenCollectionRef(_, elements)
@@ -3821,6 +3855,8 @@ fn library_argument_is_borrowed(ty: &PlanType) -> bool {
             | PlanType::GeneratorMutRef(..)
             | PlanType::GeneratorYieldRef(..)
             | PlanType::ClosureRef(..)
+            | PlanType::BorrowingClosure(..)
+            | PlanType::BorrowingClosureRef(..)
     )
 }
 

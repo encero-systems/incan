@@ -72,8 +72,9 @@ impl TypeChecker {
         let is_kind = |ty: &ResolvedType| {
             (Self::list_element_type(literal).is_some() && Self::list_element_type(ty).is_some())
                 || (Self::dict_entry_types(literal).is_some() && Self::dict_entry_types(ty).is_some())
-                || Self::tuple_element_types(literal)
-                    .is_some_and(|items| Self::tuple_element_types(ty).is_some_and(|other| items.len() == other.len()))
+                || literal
+                    .tuple_elements()
+                    .is_some_and(|items| ty.tuple_elements().is_some_and(|other| items.len() == other.len()))
         };
         self.collection_literal_destination(template, &is_kind)
     }
@@ -98,12 +99,11 @@ impl TypeChecker {
         }
         let is_list = Self::list_element_type(literal_ty).is_some();
         let is_dict = Self::dict_entry_types(literal_ty).is_some();
-        let tuple_arity = Self::tuple_element_types(literal_ty).map(<[ResolvedType]>::len);
+        let tuple_arity = literal_ty.tuple_elements().map(<[ResolvedType]>::len);
         let is_kind = |ty: &ResolvedType| {
             (is_list && Self::list_element_type(ty).is_some())
                 || (is_dict && Self::dict_entry_types(ty).is_some())
-                || tuple_arity
-                    .is_some_and(|arity| Self::tuple_element_types(ty).is_some_and(|items| items.len() == arity))
+                || tuple_arity.is_some_and(|arity| ty.tuple_elements().is_some_and(|items| items.len() == arity))
         };
         let Some(kinds) = self.collection_literal_kinds(expected, &is_kind) else {
             return;
@@ -184,19 +184,6 @@ impl TypeChecker {
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
             {
                 Some((&args[0], &args[1]))
-            }
-            _ => None,
-        }
-    }
-
-    /// Return the element types of a tuple type, spelled either `tuple[...]` or as a tuple literal's own type.
-    fn tuple_element_types(ty: &ResolvedType) -> Option<&[ResolvedType]> {
-        match ty {
-            ResolvedType::Tuple(items) => Some(items.as_slice()),
-            ResolvedType::Generic(name, items)
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
-            {
-                Some(items.as_slice())
             }
             _ => None,
         }
@@ -448,9 +435,9 @@ impl TypeChecker {
         let arity = elems.len();
         let Some(expected_elems) = self
             .collection_literal_destination(expected, &|ty| {
-                Self::tuple_element_types(ty).is_some_and(|items| items.len() == arity)
+                ty.tuple_elements().is_some_and(|items| items.len() == arity)
             })
-            .and_then(Self::tuple_element_types)
+            .and_then(ResolvedType::tuple_elements)
             .map(<[ResolvedType]>::to_vec)
         else {
             return self.check_tuple(elems);

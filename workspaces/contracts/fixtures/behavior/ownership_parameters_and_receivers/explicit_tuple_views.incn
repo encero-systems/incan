@@ -1,0 +1,60 @@
+# behavior: a tuple result can carry a returned view in one element: the body returns the source place in that element and owned values in the others, and the caller unpacks the call into a view of its own place and fresh owners of the other elements (#2500).
+# expect-stdout:
+#   7
+#   2
+#   Rotterdam 2
+#   ada 6
+
+"""Return a view paired with owned values in a tuple, and unpack it at the call."""
+
+
+class Tag:
+    pub name: str
+    pub hits: int
+
+    def label(self) -> Tuple[int, Borrowed[str]] from self.name:
+        return (self.hits, self.name)
+
+
+class Address:
+    pub city: str
+    pub visits: int
+
+    def edit_city(mut self) -> tuple[Reference[str], int] from self.city:
+        self.visits += 1
+        return (self.city, self.visits)
+
+
+class Entry:
+    pub key: str
+    pub size: int
+
+
+def pick(entry: Borrowed[Entry], extra: int) -> Tuple[Borrowed[str], int] from entry.key:
+    return (entry.key, entry.size + extra)
+
+
+def show(tag: Borrowed[Tag]) -> int:
+    hits, name = tag.label()
+    return hits + len(name)
+
+
+def relabel(mut address: BorrowedMut[Address]) -> int:
+    mut city, visits = address.edit_city()
+    city = "Rotterdam"
+    return visits
+
+
+def describe(entry: Borrowed[Entry]) -> str:
+    key, total = pick(entry, 3)
+    return f"{key} {total}"
+
+
+def main() -> None:
+    tag = Tag(name="seven", hits=2)
+    println(show(tag))
+    mut address = Address(city="Utrecht", visits=1)
+    println(relabel(address))
+    println(f"{address.city} {address.visits}")
+    entry = Entry(key="ada", size=3)
+    println(describe(entry))

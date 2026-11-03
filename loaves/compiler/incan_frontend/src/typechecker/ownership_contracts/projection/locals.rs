@@ -94,7 +94,14 @@ impl<'a> CheckedInputBody<'a> {
         destination: &CanonicalSymbolId,
         initializer: &Spanned<Expr>,
     ) -> Result<Option<IncanInputAccess>, &'static str> {
-        if self.facts.protocols.explicit_local_modes.contains_key(destination) {
+        // A closure local holds its closure value; its loan is the closure's captured borrow, not a view.
+        if self.facts.protocols.explicit_local_modes.contains_key(destination)
+            || self
+                .graph
+                .closures
+                .values()
+                .any(|closure| &closure.local == destination)
+        {
             return Ok(None);
         }
         let Some(id) = self.graph.local_loans.get(destination) else {
@@ -112,6 +119,24 @@ impl<'a> CheckedInputBody<'a> {
             super::flow::LoanKind::Exclusive => IncanInputAccess::Exclusive,
             super::flow::LoanKind::Shared => IncanInputAccess::Shared,
         }))
+    }
+
+    /// The declarations the closure at `span` captures, as this body's ownership graph records them.
+    pub(crate) fn closure_captures(&self, span: HirSourceSpan) -> Option<&'a [CanonicalSymbolId]> {
+        self.graph
+            .closures
+            .get(&span)
+            .map(|closure| closure.captures.as_slice())
+    }
+
+    /// The checked referent type of a local this body declares `Borrowed[T]` or `BorrowedMut[T]`.
+    pub(crate) fn local_value_type(&self, local: &CanonicalSymbolId) -> Option<&'a ResolvedType> {
+        self.facts
+            .protocols
+            .explicit_local_modes
+            .get(local)
+            .filter(|mode| mode.owner == self.owner)
+            .map(|mode| &mode.value_type)
     }
 
     /// Select the exact declaration and initializer whose loan this body already authenticated. A matching name,

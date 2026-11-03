@@ -65,12 +65,13 @@ use crate::body_ir::{
 /// through `?` instead of taking the carrier as an owned value.
 /// Version 46 records which payload carries a returned view, so a view may travel in a `Result` error as well as in
 /// its success payload.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 46;
+/// Version 47 lets a tuple element carry a returned view, so a result can pair a view with owned values.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 47;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
-/// views, conditional profiles or the payload carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 46;
+/// views, conditional profiles or the component carrying a view.
+const OLDEST_SUPPORTED_VERSION: u32 = 47;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]

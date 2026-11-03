@@ -4,7 +4,6 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::ast::{self, Declaration, Program, Span, Spanned};
 use crate::symbols::{CallableParam, ResolvedType};
-use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 use super::selection::{MethodFrame, OwnerFrame, TargetDomain, collect_owners, selected_method};
@@ -485,7 +484,7 @@ impl BodyFactsBuilder<'_> {
     /// Retain only a checked in-bounds constant tuple projection, including the existing negative-index rule.
     fn index_value(&mut self, base: &Spanned<ast::Expr>, index: &Spanned<ast::Expr>) -> Option<NativeValue> {
         let receiver = self.expression(base)?;
-        let elements = tuple_elements(&receiver.ty)?;
+        let elements = receiver.ty.tuple_elements()?;
         if self.info.expr_type(index.span) != Some(&ResolvedType::Int) {
             return None;
         }
@@ -688,23 +687,12 @@ impl BodyFactsBuilder<'_> {
     }
 }
 
-/// Both checked tuple encodings denote the same structural slots; nominal generic owners remain distinct.
-fn tuple_elements(ty: &ResolvedType) -> Option<&[ResolvedType]> {
-    match ty {
-        ResolvedType::Tuple(elements) => Some(elements),
-        ResolvedType::Generic(name, elements) if collections::from_str(name) == Some(CollectionTypeId::Tuple) => {
-            Some(elements)
-        }
-        _ => None,
-    }
-}
-
 /// Compare declared returns without changing the original checked representation retained by guards.
 fn same_signature_type(left: &ResolvedType, right: &ResolvedType) -> bool {
     if left == right {
         return true;
     }
-    let (Some(left), Some(right)) = (tuple_elements(left), tuple_elements(right)) else {
+    let (Some(left), Some(right)) = (left.tuple_elements(), right.tuple_elements()) else {
         return false;
     };
     left.len() == right.len()
@@ -810,7 +798,7 @@ fn refines_checked_type(checked: &ResolvedType, native: &NativeValue, info: &Typ
         if old == new {
             return true;
         }
-        if let (Some(old), Some(new)) = (tuple_elements(old), tuple_elements(new)) {
+        if let (Some(old), Some(new)) = (old.tuple_elements(), new.tuple_elements()) {
             return slots_agree(old, new, value, info, path);
         }
         match (old, new) {

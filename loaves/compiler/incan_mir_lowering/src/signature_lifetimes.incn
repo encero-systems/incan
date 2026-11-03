@@ -89,13 +89,21 @@ pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[li
 
 
 def payload_reference(result: &RustType, payload: int, names: list[str], arguments: list[RustType]) -> int:
-    """The position of a carried view's reference among its result's references: after every earlier payload's."""
-    mut position = 0
+    """
+    The position of a carried view's reference among its result's references: after every earlier payload's, or
+    every earlier tuple element's.
+    """
     match result:
-        RustType.Generic(base=_base, args=elements) =>
-            for index in range(payload):
-                position += len(type_lifetimes(elements[index], names, arguments, ""))
-        _ => pass
+        RustType.Generic(base=_base, args=elements) => return references_before(elements, payload, names, arguments)
+        RustType.Tuple(elements) => return references_before(elements, payload, names, arguments)
+        _ => return 0
+
+
+def references_before(elements: &list[RustType], payload: int, names: list[str], arguments: list[RustType]) -> int:
+    """Count the references of the components before the one carrying a view."""
+    mut position = 0
+    for index in range(payload):
+        position += len(type_lifetimes(elements[index], names, arguments, ""))
     return position
 
 

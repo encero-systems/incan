@@ -863,6 +863,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(reason, span, out);
             return;
         }
+        if let Some((_, payload)) = self.carried_view_call(&tuple_unpack.value)
+            && tuple_type_elements(&value_ty).is_some()
+        {
+            if let Err(reason) = self.lower_carried_unpack(tuple_unpack, payload, remaining, scope, span, out) {
+                self.push_unsupported_stmt(reason, span, out);
+            }
+            return;
+        }
         let value_operand = self.lower_expr_to_operand(&tuple_unpack.value, scope, out);
         let value_ty = self.retained_operand_type(&value_operand).unwrap_or(value_ty);
         let consumes_tuple = matches!(&value_operand, bir::Operand::Place(read)

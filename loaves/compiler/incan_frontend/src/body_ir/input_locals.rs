@@ -165,6 +165,93 @@ impl BodyBuilder<'_, '_> {
         Some(identity)
     }
 
+    /// Unpack a call that carries a view in one element of its tuple. The call's tuple is materialized once and every
+    /// other name takes its element as `a, b = value` does; the view's name aliases the call's substituted place, as a
+    /// local bound to a returned view does, and the tuple's own reference is never read.
+    pub(super) fn lower_carried_unpack(
+        &mut self,
+        unpack: &ast::TupleUnpackStmt,
+        payload: usize,
+        remaining: &[ast::Spanned<ast::Statement>],
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(), String> {
+        let value = self.lower_expr_to_operand(&unpack.value, scope, out);
+        let (place, access, carried) = self
+            .carried_view_of(&unpack.value)
+            .ok_or("unpacked carried view has no substituted place")?;
+        let ty = self
+            .retained_operand_type(&value)
+            .ok_or("unpacked carried view has no tuple")?;
+        if carried != payload || unpack.names.len() != unpack.name_spans.len() {
+            return Err("unpacked carried view differs from its checked call".into());
+        }
+        let tuple = self.materialize_operand_to_place(value, ty.clone(), scope, span, out);
+        let element_types = super::refusals::tuple_element_types(&ty, unpack.names.len());
+        for (index, ((name, &target_span), element_ty)) in unpack
+            .names
+            .iter()
+            .zip(&unpack.name_spans)
+            .zip(element_types)
+            .enumerate()
+        {
+            if index != payload {
+                let mut element = tuple.clone();
+                element
+                    .projection
+                    .push(bir::PlaceElem::structural_field(index.to_string()));
+                let (fact, last_use) = if element_ty.abi_v0_facts().ownership.is_trivially_copy() {
+                    self.ownership_fact_for_place(&element, &element_ty)
+                } else {
+                    (bir::OwnershipFact::Move, true)
+                };
+                let target =
+                    self.bind_multi_target_name(name, element_ty, unpack.binding, scope, target_span, remaining)?;
+                out.push(bir::Statement {
+                    kind: bir::StatementKind::Assign {
+                        place: target,
+                        rvalue: bir::Rvalue::Use(bir::Operand::place(element, fact, last_use)),
+                    },
+                    span,
+                });
+                continue;
+            }
+            let identity = self
+                .type_info
+                .resolved_write_identity(target_span, name)
+                .ok_or("unpacked view has no checked identity")?
+                .clone();
+            let checked = self
+                .input_body
+                .as_ref()
+                .map_err(|reason| reason.to_string())?
+                .as_ref()
+                .ok_or("unpacked view has no owning source body proof")?
+                .view_local(&identity, &unpack.value)?;
+            if checked != Some(access) {
+                return Err("unpacked view differs from its checked loan".into());
+            }
+            if self.identity_bindings.contains_key(&identity) || self.input_aliases.contains_key(&identity) {
+                return Err("unpacked view already has an owner or another source place".into());
+            }
+            self.input_local_bindings.push(bir::ExplicitInputBinding {
+                declaration: hir_span(target_span),
+                identity: Some(identity.clone()),
+                access,
+            });
+            let writable = access == IncanInputAccess::Exclusive && unpack.binding == ast::BindingKind::Mutable;
+            self.input_aliases.insert(
+                identity,
+                LocalInputAlias {
+                    place: place.clone(),
+                    writable,
+                },
+            );
+        }
+        Ok(())
+    }
+
     /// Record the binding's obligation before lowering it, so a body that later refuses still names every explicit
     /// local it declared.
     fn retain_input_local_binding(

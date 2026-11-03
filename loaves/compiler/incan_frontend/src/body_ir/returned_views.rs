@@ -1,7 +1,7 @@
 //! Returned views: a view body returns a borrow of its declared source place, and a caller aliases the
 //! substituted place of a view call rather than holding the returned reference. A carried view travels as one payload
-//! of a `Result` or `Option`; `?` on a success-carried view continues on the substituted place without reading the
-//! carrier's reference.
+//! of a `Result` or `Option`, or as one element of a tuple; `?` on a success-carried view, and unpacking a tuple,
+//! continue on the substituted place without reading the carrier's reference.
 
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, IncanType};
@@ -67,7 +67,8 @@ impl BodyBuilder<'_, '_> {
 
     /// A carried view's body returns its carrier: the variant holding the view (`Ok` or `Some`, or `Err` for a view
     /// carried in the error) holds a borrow of exactly the declared source place, the other variant holds its owned
-    /// payload, and a carried view call or `None` is returned as lowered.
+    /// payload, and a carried view call or `None` is returned as lowered. A tuple holds the borrow in its carrying
+    /// element.
     pub(super) fn lower_carried_return(
         &mut self,
         value: &ast::Spanned<ast::Expr>,
@@ -77,6 +78,16 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Result<(), String> {
         let carrier = self.owner_return_type.clone();
+        if let ast::Expr::Tuple(elements) = &value.node
+            && super::refusals::tuple_type_elements(&carrier).is_some()
+        {
+            let operand = self.carried_tuple(elements, carried, value.span, &carrier, scope, out)?;
+            out.push(bir::Statement {
+                kind: bir::StatementKind::Return { value: Some(operand) },
+                span,
+            });
+            return Ok(());
+        }
         // The same constructor authentication every other Body IR construction uses.
         let constructed = match &value.node {
             ast::Expr::Call(callee, type_args, arguments) if type_args.is_empty() => match arguments.as_slice() {
@@ -124,6 +135,45 @@ impl BodyBuilder<'_, '_> {
             span,
         });
         Ok(())
+    }
+
+    /// Build the body's reference-carrying tuple in element order, as any tuple is built: the `carried` element is a
+    /// borrow of exactly the declared source place and every other element is its owned value.
+    fn carried_tuple(
+        &mut self,
+        elements: &[ast::Spanned<ast::Expr>],
+        carried: usize,
+        span: ast::Span,
+        carrier: &IncanType,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        let pending_start = self.pending_argument_reads.len();
+        let mut operands = Vec::with_capacity(elements.len());
+        for (index, element) in elements.iter().enumerate() {
+            let value = if index == carried {
+                match self.authenticated_view_place(element, scope, out) {
+                    Ok((place, access)) => bir::Operand::place(place, view_fact(access), false),
+                    Err(reason) => {
+                        self.pending_argument_reads.truncate(pending_start);
+                        return Err(reason);
+                    }
+                }
+            } else {
+                let value = self.lower_expr_to_operand(element, scope, out);
+                self.retain_evaluated_value_read(element, value, scope, out)
+            };
+            self.retain_pending_operand_read(&value);
+            operands.push(value);
+        }
+        self.pending_argument_reads.truncate(pending_start);
+        Ok(self.push_assign_temp(
+            bir::Rvalue::Aggregate(bir::AggregateKind::Tuple, super::args::fixed_elements(operands)),
+            carrier.clone(),
+            scope,
+            hir_span(span),
+            out,
+        ))
     }
 
     /// Construct one variant of the body's reference-carrying `Result`, whose `carried` payload type is the view's
@@ -311,19 +361,26 @@ fn substituted_place(
     Ok((place, access))
 }
 
-/// A carrier type whose `payload` argument is the view's reference: `Result[&mut T, E]` for `Result[T, E]` with an
-/// exclusive view in the success payload, `Result[T, &E]` with a shared view in the error. Other types are returned
-/// unchanged.
+/// A carrier type whose `payload` argument or element is the view's reference: `Result[&mut T, E]` for `Result[T, E]`
+/// with an exclusive view in the success payload, `Result[T, &E]` with a shared view in the error, `(int, &T)` for
+/// `(int, T)` with a shared view in its second element. Other types are returned unchanged.
 pub(super) fn reference_carrier(carrier: IncanType, access: IncanInputAccess, payload: usize) -> IncanType {
+    let reference = |value: &IncanType| {
+        let value = Box::new(value.clone());
+        if access == IncanInputAccess::Exclusive {
+            IncanType::RefMut(value)
+        } else {
+            IncanType::Ref(value)
+        }
+    };
     match carrier {
         IncanType::Generic { base, mut args } if payload < args.len() => {
-            let value = Box::new(args[payload].clone());
-            args[payload] = if access == IncanInputAccess::Exclusive {
-                IncanType::RefMut(value)
-            } else {
-                IncanType::Ref(value)
-            };
+            args[payload] = reference(&args[payload]);
             IncanType::Generic { base, args }
+        }
+        IncanType::Tuple(mut elements) if payload < elements.len() => {
+            elements[payload] = reference(&elements[payload]);
+            IncanType::Tuple(elements)
         }
         other => other,
     }

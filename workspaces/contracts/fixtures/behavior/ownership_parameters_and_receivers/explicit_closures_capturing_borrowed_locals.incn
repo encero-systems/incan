@@ -1,0 +1,27 @@
+# behavior: a closure in an explicit body can capture a local declared `Borrowed[T]` of a Copy value; the closure reads it by copy and the owner can change again once the closure's last call is over (#2500).
+# expect-stdout:
+#   19
+#   9
+
+"""Closures that capture a borrowed local, then the owner changes after their last call."""
+
+
+def after_last_call(start: int) -> int:
+    mut owned = start + 1
+    view: Borrowed[int] = owned
+    read: () -> int = () => view + 1
+    seen = read()
+    owned += 10
+    return seen + owned
+
+
+def twice(start: int) -> int:
+    owned = start * 2
+    view: Borrowed[int] = owned
+    add: (int) -> int = (step) => view + step
+    return add(1) + add(2) - owned
+
+
+def main() -> None:
+    println(after_last_call(3))
+    println(twice(3))
