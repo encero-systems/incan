@@ -1,6 +1,6 @@
 # RFC 079: `incan.pub` artifact graph
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
