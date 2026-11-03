@@ -1,0 +1,78 @@
+"""Rust ABI extractions are baked once, indexed, registered and expired when a newer run replaces them."""
+
+from std.fs import Path
+from bakery import Fact, collect, find
+from files import make_directory, read, write as write_file
+from rust_facts import refresh
+from scratch import scratch_directory
+
+
+pub def test_a_staged_extraction_is_baked_indexed_and_expires_when_replaced() -> Result[None, str]:
+    """
+    A run's staged extraction becomes a bakery record its index names, a run that used nothing keeps the index, a
+    reused extraction stays however often collection runs, and one a newer run no longer uses expires.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    project = scratch.path().joinpath("project")
+    facts = project.joinpath("target/incan/units/app.rust-facts")
+    staging = facts.joinpath("staging")
+    identity = request_identity("4b")
+    write(staging.joinpath(f"{identity}.rustabi"), "facts")?
+    write(staging.joinpath("used"), f"{identity}\n{identity}\n")?
+    # The first refresh bakes the staged file, roots it and indexes its read-only payload.
+    refresh(store, facts, project.0)?
+    assert found(find(store, identity)?), "the staged extraction was not baked"
+    index = read(facts.joinpath("index"))?
+    payload = indexed_payload(index, identity)?
+    assert read(payload)? == "facts", "the index does not name the extraction's payload"
+    assert not staging.joinpath(f"{identity}.rustabi").exists(), "a baked extraction stayed staged"
+    assert not staging.joinpath("used").exists(), "the used list was kept"
+    # A run that used nothing, such as a replayed check, keeps the index.
+    refresh(store, facts, project.0)?
+    assert read(facts.joinpath("index"))? == index, "a run that used nothing changed the index"
+    # A reused extraction keeps its record and index line.
+    write(staging.joinpath("used"), f"{identity}\n")?
+    refresh(store, facts, project.0)?
+    assert read(facts.joinpath("index"))? == index and found(find(store, identity)?)
+    kept = collect(store, 0)?
+    assert kept.removed == 0 and found(find(store, identity)?), "an extraction the current run uses expired"
+    # A newer run that uses another extraction replaces the registration, and the replaced one leaves the bakery.
+    newer = request_identity("5c")
+    write(staging.joinpath(f"{newer}.rustabi"), "newer facts")?
+    write(staging.joinpath("used"), f"{newer}\n")?
+    refresh(store, facts, project.0)?
+    expired = collect(store, -1)?
+    assert expired.removed == 1 and not found(find(store, identity)?), "a replaced extraction was kept"
+    assert found(find(store, newer)?), "the current extraction expired"
+    return Ok(None)
+
+
+def request_identity(prefix: str) -> str:
+    """A 64-character request identity that starts with `prefix`."""
+    mut text = prefix
+    while len(text) < 64:
+        text += "0"
+    return text
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Create or replace a file, creating its directory."""
+    make_directory(path.parent())?
+    return write_file(path, text)
+
+
+def indexed_payload(index: str, identity: str) -> Result[Path, str]:
+    """The payload the index names for `identity`."""
+    for line in index.split("\n"):
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[0] == identity:
+            return Ok(Path(parts[1]))
+    return Err(f"the index names no payload for {identity[:12]}")
+
+
+def found(fact: Option[Fact]) -> bool:
+    """Whether a lookup found a record."""
+    match fact:
+        Some(_) => return true
+        None => return false

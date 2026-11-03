@@ -10,6 +10,7 @@ from compiler_worker import compile_resident, served_resident
 from files import open_stream, read
 from observation import trace_boundary
 from publication import publish
+from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
 from unit import UnitDescription
@@ -38,7 +39,7 @@ pub def compile_prepared_unit(
         None => key = unit_key(unit, toolchain)?
     compiled = crate_name(unit)
     trace_boundary("unit_write_begin")
-    path = write_unit(unit, compiled, None, described_by(key))?
+    path = write_unit(unit, compiled, None, described_by(key), true)?
     trace_boundary("unit_written")
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     # 2. Native flags match the profile and the caller's explicit linkage request.
@@ -61,13 +62,16 @@ pub def write_unit(
     compiled: str,
     owner: Option[Path] = None,
     described: str = "",
+    rust_facts: bool = false,
 ) -> Result[Path, str]:
     """
     Publish a description, retaining its generation only while the exact description witness remains valid.
 
     1. Select a description-specific path under the project or explicit owner.
-    2. Reuse only a complete unchanged generation of that description.
-    3. Otherwise publish the complete JSON and its new witness atomically.
+    2. For a compile or check (`rust_facts`), bake the Rust ABI extractions its last run staged and index them in
+       the `<name>.rust-facts` directory beside the description, where the compiler finds them.
+    3. Reuse only a complete unchanged generation of that description.
+    4. Otherwise publish the complete JSON and its new witness atomically.
     """
     # 1. An explicit owner controls only where the description is stored.
     mut root = Path(unit.project_root)
@@ -80,10 +84,16 @@ pub def write_unit(
         name = described
     path = directory.joinpath(f"{name}.unit.json")
     witness = Path(f"{path.0}.oven-description")
-    # 2. This witness grants descriptor reuse, never source acceptance or artifact reuse.
+    # 2. The compiler finds the directory by the description's location, so the description itself is unchanged and
+    #    a compiler that predates it reads the same description.
+    if rust_facts:
+        facts = directory.joinpath(f"{name}.rust-facts")
+        facts.mkdir(true, true).map_err((error) => f"{facts.0}: {error.message()}")?
+        refresh_rust_facts(bakery()?, facts, unit.project_root)?
+    # 3. This witness grants descriptor reuse, never source acceptance or artifact reuse.
     if described != "" and description_current(path, witness, described):
         return Ok(path)
-    # 3. Missing, changed and unwitnessed descriptions are published again.
+    # 4. Missing, changed and unwitnessed descriptions are published again.
     text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
     publish(path, text)?
     if described != "":
