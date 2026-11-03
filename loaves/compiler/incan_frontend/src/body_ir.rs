@@ -1152,16 +1152,19 @@ impl ReadCountdown {
     }
 }
 
-/// A block outside every loop that ends by returning, such as a match arm that refuses its input. Only its own
-/// statements follow a read in it, so the reads it holds decide whether a read is an enclosing owner's last on this
-/// path. Outside a loop, no `break` or `continue` can leave the block for later statements.
+/// A block that ends by returning, such as a match arm that refuses its input. Only its own statements follow a read
+/// in it, so the reads it holds decide whether a read is an enclosing owner's last on this path. Inside a loop the
+/// block qualifies only when no `break` or `continue` in it can leave for the statements after the loop.
 struct TerminalPath {
     /// The block's scope; owners declared inside it keep their ordinary countdown.
     scope: bir::ScopeId,
     /// Conditional depth when the block was entered. A read in a branch nested inside the block can leave the owner
     /// live on a sibling path, and a read in a loop nested inside it can repeat, so only a read at this depth and
-    /// outside every loop transfers.
+    /// this loop depth transfers.
     conditionals: usize,
+    /// Loop depth when the block was entered. A read deeper than this is inside a loop nested in the block and can
+    /// repeat; a `return` lowers its value outside every loop it leaves, so a shallower read is still on this path.
+    loops: usize,
     /// Source reads the block still holds of each non-Copy owner declared before it.
     reads: HashMap<bir::LocalId, usize>,
 }
@@ -2016,6 +2019,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.terminal_paths.push(TerminalPath {
             scope,
             conditionals: self.conditional_scopes.len(),
+            loops: self.loop_scopes.len(),
             reads,
         });
     }
@@ -2025,7 +2029,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     fn last_read_on_terminal_path(&self, local: bir::LocalId) -> bool {
         self.terminal_paths.last().is_some_and(|path| {
             path.reads.get(&local) == Some(&0)
-                && self.loop_scopes.is_empty()
+                && self.loop_scopes.len() <= path.loops
                 && path.conditionals == self.conditional_scopes.len()
                 && self.local_is_outside_scope(local, path.scope)
         })

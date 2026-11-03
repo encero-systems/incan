@@ -21,10 +21,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let enclosing_aliases = self.static_aliases.clone();
         let enclosing_handles = self.static_binding_locals.clone();
 
-        // ---- Context: source-order statements, on a path that ends here when a block outside loops returns ----
+        // ---- Context: source-order statements, on a path that ends here when the block returns ----
+        // Inside a loop the block is terminal only when nothing in it can break or continue out of that loop first.
         let terminal = nested
-            && self.loop_scopes.is_empty()
-            && matches!(stmts.last().map(|stmt| &stmt.node), Some(ast::Statement::Return(_)));
+            && matches!(stmts.last().map(|stmt| &stmt.node), Some(ast::Statement::Return(_)))
+            && (self.loop_scopes.is_empty() || !may_leave_enclosing_loop(stmts));
         if terminal {
             self.enter_terminal_path(stmts, scope);
         }
@@ -1349,4 +1350,29 @@ fn same_container_kind(left: &IncanType, right: &IncanType) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a block can leave the loop that encloses it before its last statement: a `break` or `continue` that no loop
+/// nested in the block owns. A statement whose nested bodies this does not inspect counts as leaving, so a read is
+/// only transferred on a path that is proved to return.
+fn may_leave_enclosing_loop(stmts: &[ast::Spanned<ast::Statement>]) -> bool {
+    stmts.iter().any(|stmt| match &stmt.node {
+        ast::Statement::Break(_) | ast::Statement::Continue => true,
+        ast::Statement::If(branch) => {
+            may_leave_enclosing_loop(&branch.then_body)
+                || branch
+                    .elif_branches
+                    .iter()
+                    .any(|(_, body)| may_leave_enclosing_loop(body))
+                || branch.else_body.as_deref().is_some_and(may_leave_enclosing_loop)
+        }
+        // A nested loop owns its own `break` and `continue`.
+        ast::Statement::Loop(_) | ast::Statement::While(_) | ast::Statement::For(_) => false,
+        ast::Statement::Expr(expr) => matches!(expr.node, ast::Expr::Match(..)),
+        ast::Statement::Unsafe(_)
+        | ast::Statement::Surface(_)
+        | ast::Statement::VocabBlock(_)
+        | ast::Statement::VocabExpressionItem(_) => true,
+        _ => false,
+    })
 }
