@@ -2070,7 +2070,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .cloned()
                 .unwrap_or(checked_return)
         };
-        let ty = if bound.is_async {
+        let mut ty = if bound.is_async {
             IncanType::Generic {
                 base: "Awaitable".to_string(),
                 args: vec![returned],
@@ -2078,23 +2078,32 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         } else {
             returned
         };
-        self.push_call_temp(
-            bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
-                receiver_type: self.checked_nominal_factory_owner(callee.span, span),
-                name: bound.name,
-                direct_call_id: bound.direct_call_id,
-                canonical: bound.canonical,
-                builtin: bound.builtin,
-                type_args: bound.type_args,
-                binding: bound.binding,
-            })),
-            bound.arguments,
-            ty,
-            scope,
-            hir_span_value,
-            false,
-            out,
-        )
+        let target = bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+            receiver_type: self.checked_nominal_factory_owner(callee.span, span),
+            name: bound.name,
+            direct_call_id: bound.direct_call_id,
+            canonical: bound.canonical,
+            builtin: bound.builtin,
+            type_args: bound.type_args,
+            binding: bound.binding,
+        }));
+        // A call returning a view of a parameter's place runs for its effects and continues on the substituted place;
+        // a call carrying one holds its carrier, as a method call's does.
+        if let Some(view) = self.view_call_place(span, None, &bound.arguments) {
+            return match view {
+                Ok((place, access)) => self.push_view_call(target, bound.arguments, place, access, hir_span_value, out),
+                Err(description) => self.unsupported_operand(description, scope, hir_span_value, out),
+            };
+        }
+        match self.carried_view_place(span, None, &bound.arguments) {
+            Some(Ok((place, access, payload))) => {
+                self.carried_view_places.insert(span, (place, access, payload));
+                ty = super::returned_views::reference_carrier(ty, access, payload);
+            }
+            Some(Err(description)) => return self.unsupported_operand(description, scope, hir_span_value, out),
+            None => {}
+        }
+        self.push_call_temp(target, bound.arguments, ty, scope, hir_span_value, false, out)
     }
 
     /// Replace only operands whose source display method was already selected by the accepting checker.

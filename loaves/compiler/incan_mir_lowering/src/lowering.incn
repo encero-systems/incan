@@ -7031,6 +7031,14 @@ def checked_aggregate(
                 element = elements[slot]
                 match element.as_one():
                     Some(value) =>
+                        # A tuple carrying a view holds the view's loan in its reference element.
+                        if slot < len(element_types) and builder.carries_view and borrowed_payload(value):
+                            field = tuple_element_type(element_types[slot])
+                            match reference_contract(field):
+                                Ok(_contract) =>
+                                    operands.append(carrier_payload(builder, value, field, span)?)
+                                    continue
+                                Err(_reason) => pass
                         # A list or carrier element takes the destination element's exact carrier, `None` included.
                         if (
                             slot < len(element_types)

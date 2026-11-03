@@ -118,7 +118,7 @@ The grammar is `from parameter` followed by zero or more `.field` projections. M
 
 An explicit borrowed result requires a source even if there is only one parameter. This also applies to an explicit borrowed component inside an outcome or tuple. Missing sources and roots outside the callable's parameters or receiver produce `INCAN-T0124`. Every projected field must be a stored model or class field; generic fields use their declared type arguments. Computed properties are not valid source fields.
 
-An `Owned` result can declare a source relationship. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage. An `Owned` result with a source, and a borrowed result nested in a tuple or another type, are refused for execution with `INCAN-T0123`. A borrowed payload of a `Result` or `Option` is a [carried view](#carried-views).
+An `Owned` result can declare a source relationship. Neither the source clause nor `Owned` implicitly copies, pins, retains or acquires a lease on storage. An `Owned` result with a source, and a borrowed result nested in another type, are refused for execution with `INCAN-T0123`. A borrowed payload of a `Result` or `Option`, or a borrowed element of a tuple, is a [carried view](#carried-views).
 
 ## Returned views
 
@@ -216,6 +216,25 @@ def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
             buffer.capacity += 1  # the error arm holds no view
             return 0
 ```
+
+A tuple result with a source clause, such as `Tuple[int, Borrowed[str]]`, carries the view in its one borrowed element. Every return builds the tuple with exactly the source place, or an alias of it, in that element and owned values in the others, or returns a call that carries a view of the same place in the same element. The elements are evaluated in order. A tuple with more than one borrowed element is refused with `INCAN-T0123`, because the one source clause names the source of a single view.
+
+```incan
+# accepted by source checking
+class Tag:
+    pub name: str
+    pub hits: int
+
+    def label(self) -> Tuple[int, Borrowed[str]] from self.name:
+        return (self.hits, self.name)
+
+
+def score(tag: Borrowed[Tag]) -> int:
+    hits, name = tag.label()
+    return hits + len(name)
+```
+
+At a call site, unpacking the call into new names takes the view out: the name in the borrowed position is a view of the caller's substituted place, and the call's loan lasts while that name is used, as for a view bound to a new local. Each other name owns its element. Binding the whole tuple to one local, or any other use of the call, is refused with `INCAN-T0123`.
 
 ## Closures
 

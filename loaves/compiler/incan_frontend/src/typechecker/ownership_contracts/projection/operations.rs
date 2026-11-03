@@ -76,6 +76,9 @@ impl CheckedInputBody<'_> {
                 Statement::Assignment(value) => {
                     self.visit_operation_expression(&value.value, parameters, execution, seen)?
                 }
+                Statement::TupleUnpack(value) => {
+                    self.visit_operation_expression(&value.value, parameters, execution, seen)?
+                }
                 Statement::CompoundAssignment(value) => {
                     self.visit_operation_expression(&value.value, parameters, execution, seen)?
                 }
@@ -315,6 +318,11 @@ impl CheckedInputBody<'_> {
                         return Err("operation coverage cannot infer list-spread access");
                     };
                     self.visit_operation_expression(value, parameters, execution, seen)?;
+                }
+            }
+            Expr::Tuple(elements) => {
+                for element in elements {
+                    self.visit_operation_expression(element, parameters, execution, seen)?;
                 }
             }
             // A bound closure's body runs in its own frame when the closure is called; building it reads or borrows

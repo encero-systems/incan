@@ -10,7 +10,7 @@ use super::flow::{
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement,
+    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -63,6 +63,14 @@ impl<'a> CallableSource<'a> {
         }
     }
 
+    /// The declared result type as written.
+    pub(in crate::typechecker) fn return_type(self) -> &'a Spanned<Type> {
+        match self {
+            Self::Function(function) => &function.return_type,
+            Self::Method(method) => &method.return_type,
+        }
+    }
+
     /// A method's receiver binding token with its mode; functions have no receiver.
     pub(in crate::typechecker) fn receiver(self) -> Option<(&'a Spanned<crate::ast::Ident>, Receiver)> {
         match self {
@@ -105,8 +113,11 @@ struct Builder<'a> {
     loops: Vec<LoopEdges>,
     /// The declared returned view: whether it is exclusive, and the exact source place every return borrows.
     view: Option<(bool, Place)>,
-    /// The `Result` or `Option` payload carrying the returned view, or `None` for a view returned whole.
+    /// The `Result` or `Option` payload or the tuple element carrying the returned view, or `None` for a view returned
+    /// whole.
     view_carried: Option<usize>,
+    /// Whether the declared result is a tuple, so `view_carried` names one of its elements.
+    view_in_tuple: bool,
     /// Returns that do not borrow the declared view source. These are program errors, reported by the caller.
     view_errors: Vec<crate::diagnostics::CompileError>,
 }
@@ -238,6 +249,7 @@ fn build_graph(
         loops: Vec::new(),
         view: None,
         view_carried: None,
+        view_in_tuple: false,
         view_errors: Vec::new(),
     };
     builder.inputs(parameters, identity)?;
@@ -279,6 +291,7 @@ fn build_graph(
         };
         builder.view = Some((view.access == incan_semantics_core::IncanInputAccess::Exclusive, place));
         builder.view_carried = view.carried;
+        builder.view_in_tuple = super::super::written_tuple_elements(&callable.return_type().node).is_some();
     }
     let result = builder.block(body, vec![0]);
     view_errors.append(&mut builder.view_errors);
@@ -540,7 +553,7 @@ impl Builder<'_> {
             {
                 Err(Unavailable {
                     span: expression.span,
-                    reason: "a carried view needs `?` or a returned carried view position".into(),
+                    reason: "a carried view needs `?`, a match, unpacking or a returned carried view position".into(),
                 })
             }
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
@@ -653,50 +666,49 @@ impl Builder<'_> {
 
     /// A returned view borrows exactly its declared source place, with the view's access; the borrow checks the
     /// source permission, so a shared input cannot back an exclusive view. Any other value is a program error.
-    fn view_return(
+    /// Returns the nodes after the borrow, for the elements of a tuple evaluated after it.
+    pub(super) fn view_return(
         &mut self,
         value: &Spanned<Expr>,
         exclusive: bool,
         source: &Place,
         incoming: Vec<usize>,
-    ) -> Result<(), Unavailable> {
+    ) -> Result<Vec<usize>, Unavailable> {
         // A call returning a view of exactly the declared source satisfies the relation through its result loan.
         if let Some(view) = self.view_source(value)? {
             let (incoming, path) = self.evaluate_view_source(value, view, incoming)?;
-            if path.place == *source {
-                let loan = self.call_loan(path, exclusive, exclusive, value.span);
-                self.event(incoming, Event::Borrow(loan), value.span);
-            } else {
+            if path.place != *source {
                 self.view_errors.push(view_error(
                     "A returned view must return its declared source place; this call returns a view of a \
                      different place",
                     value.span,
                 ));
+                return Ok(incoming);
             }
-            return Ok(());
+            let loan = self.call_loan(path, exclusive, exclusive, value.span);
+            return Ok(self.event(incoming, Event::Borrow(loan), value.span));
         }
         match self.optional_place(value)? {
             Some(path) if path.place == *source => {
                 let incoming = self.evaluate_place(value, incoming)?;
                 let loan = self.call_loan(path, exclusive, exclusive, value.span);
-                self.event(incoming, Event::Borrow(loan), value.span);
+                Ok(self.event(incoming, Event::Borrow(loan), value.span))
             }
             Some(_) => {
                 self.view_errors.push(view_error(
                     "A returned view must return its declared source place; this returns a different place",
                     value.span,
                 ));
-                self.expression(value, incoming, true)?;
+                self.expression(value, incoming, true)
             }
             None => {
                 self.view_errors.push(view_error(
                     "A returned view cannot borrow a value created in this body; return its declared source place",
                     value.span,
                 ));
-                self.expression(value, incoming, true)?;
+                self.expression(value, incoming, true)
             }
         }
-        Ok(())
     }
 
     /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
@@ -764,6 +776,13 @@ impl Builder<'_> {
             && let Some(relation) = self.call_relation(&assignment.value)?
             && let Some(payload) = relation.carried
         {
+            // A tuple's elements are taken apart only by unpacking; nothing takes the view out of a bound tuple.
+            if self.tuple_carrier(&assignment.value) {
+                return Err(Unavailable {
+                    span: assignment.value.span,
+                    reason: "a tuple carrying a view needs unpacking into new names".into(),
+                });
+            }
             let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
             let loan = path.through.ok_or(Unavailable {
                 span: assignment.value.span,
@@ -1132,7 +1151,9 @@ impl Builder<'_> {
                 match (value, self.view.clone()) {
                     (Some(value), Some((exclusive, source))) => match self.view_carried {
                         Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
-                        None => self.view_return(value, exclusive, &source, incoming)?,
+                        None => {
+                            self.view_return(value, exclusive, &source, incoming)?;
+                        }
                     },
                     (None, Some(_)) => self.view_errors.push(view_error(
                         "A returned view must return its declared source place",
@@ -1146,6 +1167,7 @@ impl Builder<'_> {
                 Ok(Vec::new())
             }
             Statement::Assignment(assignment) => self.assignment(assignment, statement.span, incoming),
+            Statement::TupleUnpack(unpack) => self.tuple_unpack(unpack, incoming),
             Statement::FieldAssignment(assignment) => self.field_assignment(assignment, incoming),
             Statement::CompoundAssignment(assignment) => self.compound_assignment(assignment, statement.span, incoming),
             Statement::If(branch) => self.if_statement(branch, incoming),

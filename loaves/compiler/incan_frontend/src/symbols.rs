@@ -2293,6 +2293,20 @@ impl ResolvedType {
         )
     }
 
+    /// The element types of a tuple type, spelled `tuple[...]` or as a tuple literal's own type: both checked
+    /// encodings denote the same structural slots.
+    pub fn tuple_elements(&self) -> Option<&[ResolvedType]> {
+        match self {
+            ResolvedType::Tuple(elements) => Some(elements),
+            ResolvedType::Generic(name, elements)
+                if collections::from_str(name.as_str()) == Some(CollectionTypeId::Tuple) =>
+            {
+                Some(elements)
+            }
+            _ => None,
+        }
+    }
+
     /// Check if this is an anonymous union type.
     pub fn is_union(&self) -> bool {
         matches!(self, ResolvedType::Generic(name, _) if name == UNION_TYPE_NAME)

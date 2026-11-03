@@ -8,7 +8,7 @@ use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 use super::{CheckedInputBody, flow};
 use crate::ast::{
     AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, Literal,
-    MatchBody, Spanned, Statement,
+    MatchBody, Spanned, Statement, TupleUnpackStmt,
 };
 use crate::typechecker::ownership_contracts::CallableSource;
 
@@ -335,6 +335,38 @@ impl SourceAccesses<'_, '_> {
         Ok(())
     }
 
+    /// Unpacking a call that carries a view in one tuple element evaluates the call; the view's name takes a borrow
+    /// keyed to it, as a view local does, and the other names are new owners of their elements.
+    fn tuple_unpack(&mut self, unpack: &TupleUnpackStmt) -> Result<(), &'static str> {
+        self.expression(&unpack.value, false)?;
+        let call = self.proof.view_call_span(&unpack.value);
+        for (name, &span) in unpack.names.iter().zip(&unpack.name_spans) {
+            let identity = self
+                .proof
+                .facts
+                .resolved_write_identity(span, name)
+                .ok_or("source unpacking lacks a canonical target")?
+                .clone();
+            match self.proof.graph.local_loans.get(&identity) {
+                Some(id) => {
+                    let loan = self
+                        .proof
+                        .graph
+                        .loans
+                        .get(id.0)
+                        .ok_or("unpacked view has no result loan")?;
+                    if loan.span != call {
+                        return Err("unpacked view differs from its initializer call");
+                    }
+                }
+                None => {
+                    self.known.insert(flow::Root::Binding(identity));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validate a declaration or whole binding replacement only after its actual initializer has been evaluated.
     fn assignment(&mut self, assignment: &AssignmentStmt) -> Result<(), &'static str> {
         let root = self
@@ -484,6 +516,7 @@ impl SourceAccesses<'_, '_> {
                     return Ok(false);
                 }
                 Statement::Assignment(assignment) => self.assignment(assignment)?,
+                Statement::TupleUnpack(unpack) => self.tuple_unpack(unpack)?,
                 Statement::CompoundAssignment(assignment) => {
                     let identity = self
                         .proof
@@ -591,8 +624,19 @@ impl SourceAccesses<'_, '_> {
 
     /// A carried view's return: the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the
     /// error) of the declared place is a view return, another variant is an owned value, `None` evaluates nothing, and
-    /// a carried view call of the same source is evaluated.
+    /// a carried view call of the same source is evaluated. A tuple's carrying element is a view return and its other
+    /// elements are owned values, in order.
     fn carried_return(&mut self, value: &Spanned<Expr>, carried: usize) -> Result<(), &'static str> {
+        if let Expr::Tuple(elements) = &value.node {
+            for (index, element) in elements.iter().enumerate() {
+                if index == carried {
+                    self.view_return(element)?;
+                } else {
+                    self.expression(element, true)?;
+                }
+            }
+            return Ok(());
+        }
         match super::super::builtins::carrier_construction(self.proof.facts, value) {
             Some((variant, [CallArg::Positional(payload)]))
                 if super::super::builtins::variant_carries_view(variant, carried) =>

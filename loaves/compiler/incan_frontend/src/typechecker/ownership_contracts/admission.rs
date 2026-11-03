@@ -63,6 +63,7 @@ fn input_statements_supported(body: &[Spanned<Statement>], conditionals: bool) -
         | Statement::CompoundAssignment(_)
         | Statement::Expr(_)
         | Statement::Return(_)
+        | Statement::TupleUnpack(_)
         | Statement::Assert(_) => true,
         Statement::If(branch) if conditionals => {
             matches!(branch.condition, Condition::Expr(_))
