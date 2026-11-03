@@ -85,7 +85,7 @@ Static checking validates authored field references, defaults, and overrides. It
 - A configuration-only type system, Literal validator, secret wrapper, or capability authority.
 - Dotenv files, automatic file discovery, or CLI override syntax; command-line values reach a context through `contribute`.
 - Implicit transport of configuration between an orchestrator and worker processes.
-- Defining cleanup or shutdown for the resources a context holds, or managed resource entry, exit and ownership transfer; that design is deferred to RFC 094.
+- Defining cleanup or shutdown for the resources a context holds, or managed resource entry, exit and ownership transfer; RFC 094 owns that design.
 
 Multiple selectors, compound Boolean conditions, nested `if` blocks, and dotted field contributions are included. Selected blocks compose in source order; recursive merging preserves unspecified fields and dictionary entries and appends list contributions. Environment-specific entries belong in their corresponding conditional blocks or selected YAML files. Explicit collection replacement and removal are out of scope; explicit factories govern external work, and declared collection types select checked JSON environment decoding.
 
@@ -533,7 +533,7 @@ ctx ContractConfig(env_prefix="CONTRACT_"):
 
 Development receives `["sandbox"]`; production receives `["live"]`. Only one block contributes, so ordinary recursive composition is sufficient. The YAML equivalent puts environment-specific entries in `dev.yaml` and `prod.yaml`, with universal entries in `common.yaml`.
 
-Common contributions survive subsequent composition. An empty list contributes no elements, and an empty dictionary contributes no entries; neither clears lower-priority contents. This RFC introduces no `replace(...)` marker, clearing operator, removal marker, or YAML replacement tag. A future requirement to subtract genuinely shared entries would need its own concrete design case.
+Common contributions survive subsequent composition. An empty list contributes no elements, and an empty dictionary contributes no entries; neither clears lower-priority contents. This RFC introduces no `replace(...)` marker, clearing operator, removal marker, or YAML replacement tag.
 
 ### Per-field env var customization
 
@@ -658,7 +658,7 @@ ctx SnowflakeSession(env_prefix="SF_"):
 
 These are session configuration declarations, not claims that the example opens either database. Each declaration has its own retained value, environment namespace, resolution attempt, and preflight. `PG_RETRY__ATTEMPTS` and `SF_RETRY__ATTEMPTS` can select different values while both contexts reuse the same model contract. Reusing a model definition does not implicitly share one mutable model instance or duplicate a live resource.
 
-Multiple contexts can be active together. A shared declaration is resolved once; it is not a factory for arbitrarily many runtime sessions. Applications needing such factories may define them through ordinary application types and APIs. Resource initialization and cleanup remain subject to the checked ownership and effect contracts; separately naming a context does not grant authority or thread safety. Managed resource lifetimes and any ctx integration with them are deferred to RFC 094. These configuration examples establish no new entry, exit, ownership-transfer, cleanup, or shutdown protocol and must not imply public cleanup guarantees based solely on backend destruction.
+Multiple contexts can be active together. A shared declaration is resolved once; it is not a factory for arbitrarily many runtime sessions. Applications needing such factories may define them through ordinary application types and APIs. Resource initialization and cleanup remain subject to the checked ownership and effect contracts; separately naming a context does not grant authority or thread safety. RFC 094 owns managed resource lifetimes and any ctx integration with them. These configuration examples establish no new entry, exit, ownership-transfer, cleanup, or shutdown protocol and must not imply public cleanup guarantees based solely on backend destruction.
 
 ### Read-only, non-cloneable and safe to share
 
@@ -890,7 +890,7 @@ An explicitly supplied compatible `TryFrom[str]` for the destination must take p
 
 The resolver must preserve the selected converter's actual failure contract. The current `TryFrom[T]` trait returns `Result[Self, str]`: that rejection must be classified as explicitly textual conversion failure under `ConfigError.InvalidInput`, without inventing an original domain Error identity or a foreign stack. Where an owning checked conversion or validation contract returns a typed error, the configuration umbrella must retain that original hierarchy and available diagnostics under RFC 131. Sensitive text must be redacted or omitted at capture, including before secret wrapping. General migration of TryFrom/TryInto error signatures is outside this RFC.
 
-For example, an application may deliberately accept word-valued retry counts through its explicit `TryFrom[str]`: `once` maps to 1 and `twice` maps to 2. Supplying `JOB_RETRIES=2` must then fail that declared conversion rather than silently retry ordinary integer parsing. Without the explicit text converter, the same integer-backed newtype uses checked integer decoding and `from_underlying`. Resource-lifetime rules remain deferred to RFC 094.
+For example, an application may deliberately accept word-valued retry counts through its explicit `TryFrom[str]`: `once` maps to 1 and `twice` maps to 2. Supplying `JOB_RETRIES=2` must then fail that declared conversion rather than silently retry ordinary integer parsing. Without the explicit text converter, the same integer-backed newtype uses checked integer decoding and `from_underlying`. RFC 094 owns resource-lifetime rules.
 
 ### Nested environment mapping
 
@@ -1092,7 +1092,7 @@ ctx InfraConfig(env_prefix="INFRA_"):
 
 Nested access works naturally: `InfraConfig.cluster.node_type`. The external model defines the data contract; ctx assembles and validates its pending inputs lazily. Neither nested type declarations nor explicit constructor calls are required for this grouping. Reusable application data may also remain outside the ctx.
 
-A ctx declaration is not itself an ordinary instance field value. Its resolved configuration can be passed to application code under the eventual checked value API. Ordinary data types need not acquire an implicit dependency on globally published configuration.
+A ctx declaration is not itself an ordinary instance field value. Its resolved configuration can be passed to application code under the checked value API. Ordinary data types need not acquire an implicit dependency on globally published configuration.
 
 ### Interaction with existing features
 
@@ -1106,13 +1106,13 @@ A ctx declaration is not itself an ordinary instance field value. Its resolved c
 
 **Field metadata and secrets:** `ctx` reuses model field metadata and RFC 090's shared `env` and `secret` meanings. RFC 103's SecretStr and SecretBytes remain typed secret values, and their ingress and storage failures propagate through the configuration error boundary. A secret marker is not permission to retain raw sensitive input in provenance or failure reports.
 
-**Context managers and resource lifetimes:** the design of managed resource entry, exit, ownership transfer, cleanup after partial initialization, retained lifetimes, and shutdown is deferred to RFC 094. RFC 033 does not introduce a parallel lifecycle protocol or promise managed cleanup solely from backend destruction. Its frozen configuration, source composition, preflight, and publication contracts do not settle context-manager integration. Resource-lifetime design is not an outstanding decision owned by this RFC.
+**Context managers and resource lifetimes:** RFC 094 owns the design of managed resource entry, exit, ownership transfer, cleanup after partial initialization, retained lifetimes, and shutdown. RFC 033 does not introduce a parallel lifecycle protocol or promise managed cleanup solely from backend destruction. Its frozen configuration, source composition, preflight, and publication contracts do not settle context-manager integration. Resource-lifetime design is not an outstanding decision owned by this RFC.
 
 **Clone and Copy:** resolved ctx values are excluded from whole-value copying and RFC 143 clone-with-overrides generation. The exclusion must hold through imports, aliases, and generic APIs. Ordinary models and resource handles keep their own capabilities; referencing their contracts from ctx must not make them non-cloneable elsewhere.
 
 ### Compatibility / migration
 
-This is a new feature, so there is no migration path to manage. `ctx` does become a reserved keyword, which is a breaking change for anyone already using it as an identifier. Pre-1.0, that is acceptable.
+This is a new feature, so there is no migration path to manage. `ctx` does become a reserved keyword, which is a breaking change for anyone already using it as an identifier.
 
 ## Alternatives considered
 
@@ -1215,7 +1215,7 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - Dependent defaults and conditions observe resolved field values, including conditional contributions and direct environment inputs. Field declaration order does not affect dependency results. Replaced scalar defaults are not evaluated solely for construction; contributing collection fragments remain part of recursive composition. Reached cycles produce typed dependency diagnostics without fixed-point recalculation. Defaults are construction inputs, and successful context resolution is retained rather than recalculated on reads.
 - Explicit YAML sources use the proposed `std.config.yaml` adapter and an ordered `sources` tuple. Their recursive contributions apply above conditional settings and below direct environment inputs. A common file may be followed by `yaml(f"config/{env}.yaml")`, with the filename selector resolved independently before that selected file is read. Header source expressions may refer to checked ctx fields. Files are required by default; `required=false` permits absence without hiding malformed or unreadable present inputs. Loading is lazy, successful values are retained, unknown field paths receive diagnostics, and source evidence retains file locations under redaction. No YAML-root selection API or automatic cross-process transport is required by this decision.
 - Environment-specific collection entries belong in their respective `if` blocks or selected environment files, with unconditional defaults and common files reserved for universal contributions. Empty collections do not clear lower-priority contents. Explicit replacement, clearing, and removal markers are out of scope.
-- Cleanup and shutdown of resources a context holds are deferred to RFC 094, including cleanup after partial initialization and at the end of a test scope. RFC 033 introduces no separate resource lifecycle or destructor-only public cleanup guarantee. This is a scope deferral, not an unresolved question for RFC 033.
+- RFC 094 owns cleanup and shutdown of resources a context holds, including cleanup after partial initialization and at the end of a test scope. RFC 033 introduces no separate resource lifecycle or destructor-only public cleanup guarantee. This is not an unresolved question for RFC 033.
 - An absent override preserves the previously selected value; an explicit optional clear replaces it with None. Nested absence must not be flattened during layer resolution. Ordinary optional defaults may be None. An application selector may contribute None, and YAML null may clear an inherited present value. No __CLEAR, __NONE, empty-string sentinel or literal-text sentinel is added to the environment contract.
 - `ContextName.explain()` returns a structured report of resolution state and available retained evidence without initializing or retrying the context, reading runtime sources, or evaluating initializers. It supports passive interactive inspection before first use, clearly distinguishes unresolved, in-progress, failed, and successfully resolved state, and does not present failure evidence as a published value. Resolution retains the full observed, ordered contribution history, including superseded scalar and surviving collection contributions, with RFC 103 redaction and RFC 104 authority checks and receipts. Missing or omitted evidence is explicit rather than silently truncating the explanation to the winning source; evidence retention does not require whole-file copies, raw secrets, or evaluating otherwise skipped expressions. Inspection does not reread sources and misrepresent current values as historical evidence. Typed ContextReport records expose these facts independently of rendering.
 - The standard configuration umbrella is `std.config.ConfigError`, with MissingInput, InvalidInput, SourceFailure, DependencyCycle, Multiple and AlreadyResolved categories. Checked paths, source identities, retained originals and blocked dependencies remain structured and secret-safe. Single failures retain their category; independent failures aggregate without evaluating blocked expressions. Preflight returns `Result[None, ConfigError]`; unchecked reads report the same attempt facts and terminate unsuccessfully.

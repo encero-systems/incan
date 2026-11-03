@@ -56,7 +56,7 @@ Incan source also has no way to express platform differences. `when feature("nam
 
 ## Non-Goals
 
-- Running cross-built programs through emulators, simulators, remote devices or user-declared runners. Execution on an incompatible host is refused; a runner contract is future work.
+- Running cross-built programs through emulators, simulators, remote devices or user-declared runners. Execution on an incompatible host is refused; a runner contract is not part of this design.
 - Cross-building the toolchain's compiler. The compiler links the Rust compiler's own libraries, which Rust publishes per host; it is built on the host it runs on.
 - Defining new carriers or delivery policies. RFC 117 owns targets, carriers and delivery policy; this RFC uses them.
 - Publishing Apple or Windows SDKs. RFC 159's rule stands: those platform files are used where licensed and recorded by identity, never distributed.
@@ -409,6 +409,6 @@ Every installation would hold every supported target's standard library and stan
 
 - **One active editor target:** explicit editor selection, then workspace target policy, then a permitted host fallback. Missing valid selection is diagnosed; declaration order and an implicit all-target analysis do not choose the editor surface.
 - **Omitted target tables add no restriction:** an undeclared project target matrix permits selection from the active toolchain's supported targets, while installed support, dependency restrictions and ordinary compile/link checks remain required. This is not a tested-portability claim.
-- **One literal triple per invocation:** `--target` does not expand a named target block or introduce implicit fan-out. A separately specified matrix operation may add that behavior later.
+- **One literal triple per invocation:** `--target` does not expand a named target block or introduce implicit fan-out. A separately specified matrix operation may add that behavior.
 - **Skipped execution is unsuccessful:** a successful build with unavailable execution exits with status `3`, retains separate build/execution facts and contributes no passing-test result. Build failure takes precedence. Compatibility requires checked host/target and runtime prerequisites, not trial execution.
 - **Compile-only preserves real prerequisites:** `--no-link` omits the selected carrier's final link; required host tools and target compile inputs remain necessary. RFC 124's portable and machine-local identity restrictions remain intact.

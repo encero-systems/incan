@@ -202,7 +202,7 @@ The formatter should retain a compact parenthesized form for short chains and us
 - **Use exiting fallback bindings.** Appropriate for prerequisites, but changes cases that should continue after failed extraction unless authors introduce another control-flow wrapper.
 - **Recognize chains in every existing `if let`.** More compact, but can reinterpret an existing boolean initializer. Required parentheses preserve compatibility.
 - **Allow bindings in every boolean expression.** Makes binding availability difficult to explain across assignments, negation, and alternatives. Statement conditions provide a bounded scope and explicit success body.
-- **Allow `or` between binding terms.** Requires additional rules for names introduced by different successful alternatives. Pattern alternation already serves alternatives sharing one matched value; cross-expression binding alternatives are deferred.
+- **Allow `or` between binding terms.** Requires additional rules for names introduced by different successful alternatives. Pattern alternation already serves alternatives sharing one matched value.
 
 ## Drawbacks
 
@@ -226,5 +226,5 @@ The formatter should retain a compact parenthesized form for short chains and us
 - Pattern-bearing chains require outer parentheses; existing unparenthesized single-pattern conditions retain their initializer parsing.
 - Terms combine through top-level `and`, evaluated once each from left to right.
 - Successful bindings are available to later terms and the body, with no escape into subsequent statements.
-- Pattern-bearing `if` statements retain RFC 049's single-arm rule. Adding `else` or `elif` requires separate design work.
+- Pattern-bearing `if` statements retain RFC 049's single-arm rule.
 - Earlier side effects and ownership transfers are not rolled back when a later term fails.

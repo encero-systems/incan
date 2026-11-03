@@ -55,7 +55,7 @@ def describe_payment(method: PaymentMethod) -> str:
         _ => return "another supported payment method"
 ```
 
-For a caller outside the eventual ownership boundary, the wildcard is required even if the two known cases cover today's declaration. Such a caller may still construct `PaymentMethod.Card`. The wildcard does not permit values that violate the enum's checked representation.
+For a caller outside the ownership boundary, the wildcard is required even if the two known cases cover today's declaration. Such a caller may still construct `PaymentMethod.Card`. The wildcard does not permit values that violate the enum's checked representation.
 
 For a model, an author-owned factory can preserve the public entry point while the record gains fields:
 

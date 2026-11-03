@@ -23,17 +23,17 @@ This RFC defines the intended end-state for `std.web`: Incan's standard-library 
 
 The developer experience should be native to Incan rather than shaped by backend interop constraints. The primary server-side experience is FastAPI-like: `app = App()`, `@app.get(...)`, typed parameters, plain return values, framework-owned serialization, and first-class platform features such as auth, middleware, validation, lifecycle, and docs. The platform should also support a Django-style organization layer and a declarative DSL when those provide real ergonomic value.
 
-This RFC is intentionally an umbrella design RFC for the serving side. It defines the product shape, semantics direction, capability boundaries, and migration goals for `std.web`. If a sub-area later proves deep enough to require its own precise RFC, that follow-up RFC should refine this design rather than replace it.
+This RFC is intentionally an umbrella design RFC for the serving side. It defines the product shape, semantics direction, capability boundaries, and migration goals for `std.web`. A sub-area deep enough to require its own precise RFC refines this design rather than replacing it.
 
 ## Motivation
 
-The current `std.web` proves that Incan can compile web programs, but it does not yet provide a native, coherent API platform experience.
+The current `std.web` proves that Incan can compile web programs, but it does not provide a native, coherent API platform experience.
 
 Current problems:
 
 - Users still encounter backend leakage such as explicit wrapper types and backend-oriented handoff details.
 - Routing behavior is split across compiler logic, macros, and runtime helpers.
-- The platform does not yet present one complete framework story for auth, middleware, validation, docs, and lifecycle.
+- The platform does not present one complete framework story for auth, middleware, validation, docs, and lifecycle.
 
 The goal is not just "web works." The goal is that Incan developers can expose networked applications and APIs with one coherent server-side mental model.
 
@@ -49,13 +49,13 @@ This means:
 - Center the server model on `App`-owned routing, typed handlers, request extraction, response conversion, middleware, lifecycle, auth, validation, and docs metadata.
 - Make backend framework details an implementation concern rather than the public API contract.
 - Keep `std.web` compatible with RFC 066 where server and client concepts overlap, without making RFC 037 responsible for the `std.http` client surface.
-- Leave room for Django-style organization, declarative route DSLs, and future transport facades as secondary surfaces over the same serving model.
+- Leave room for Django-style organization, declarative route DSLs, and other transport facades as secondary surfaces over the same serving model.
 
 ## Non-Goals
 
 - Defining the `std.http` client API, retry model, redirect behavior, timeout policy, or response decoding surface; those belong to RFC 066.
-- Defining exact grammar for every future DSL form.
-- Defining wire-level details for gRPC, Arrow-oriented data transports, or other future protocols.
+- Defining exact grammar for every DSL form.
+- Defining wire-level details for gRPC, Arrow-oriented data transports, or other protocols.
 - Mandating the exact implementation strategy inside the compiler, stdlib runtime, or backend framework bridge.
 
 ## Guide-level explanation (how users think about it)
@@ -103,7 +103,7 @@ The serving side should still align with `std.http` where that improves the user
 - shared error and serialization conventions
 - compatible request/response vocabulary where appropriate
 
-Alignment does not require identical syntax or a shared implementation schedule. It requires that `std.web` does not make choices that block `std.http` from providing a coherent client-side model later.
+Alignment does not require identical syntax or a shared implementation schedule. It requires that `std.web` does not make choices that block `std.http` from providing a coherent client-side model.
 
 ### Optional organizational surfaces
 
@@ -124,16 +124,16 @@ In scope:
 
 - `std.web` for serving HTTP applications and APIs
 - shared web-serving concepts for schemas, auth, middleware, validation, docs, and lifecycle
-- the extension boundary for future transports such as gRPC and Arrow-oriented data/RPC scenarios
+- the extension boundary for other transports such as gRPC and Arrow-oriented data/RPC scenarios
 
 Out of scope for this RFC:
 
 - `std.http` client APIs, timeout/retry semantics, redirect behavior, and response decoding; these belong to RFC 066
-- exact grammar for every future DSL form
+- exact grammar for every DSL form
 - exact wire-level details for gRPC or Arrow integrations
 - exact implementation strategy inside the compiler/runtime
 
-Those may be refined later if needed, but the end-state described here is the target they must fit.
+Any refinement of those must fit the end-state described here.
 
 ### Design constraints
 
@@ -239,12 +239,12 @@ The platform must support:
 
 HTTP serving is the primary target of this RFC.
 
-However, the platform should be designed so that future RFCs can extend it toward:
+However, the platform should be designed so that other transport RFCs can extend it toward:
 
 - gRPC-style service transports
 - Arrow-oriented data and RPC transports
 
-The intent is not to force all transports into one fake-HTTP abstraction. The intent is to avoid designing the `std.web` platform in a way that blocks adjacent transports later.
+The intent is not to force all transports into one fake-HTTP abstraction. The intent is to avoid designing the `std.web` platform in a way that blocks adjacent transports.
 
 ### Compatibility and migration
 
@@ -271,7 +271,7 @@ Secondary surfaces:
 
 - Django-style organizational layers
 - declarative DSLs
-- future transport-specific facades
+- transport-specific facades
 
 The primary surface should be the reference mental model. Secondary surfaces should lower to it or align tightly with it, rather than growing independent semantics.
 
@@ -280,8 +280,8 @@ The primary surface should be the reference mental model. Secondary surfaces sho
 - **RFC 023** establishes the current stdlib/runtime handoff baseline, but this RFC aims to remove more user-facing interop leakage from the final experience.
 - **RFC 035** is important because function values are a natural part of handler, middleware, and decorator systems.
 - **RFC 036** is foundational because proper decorators are central to the desired `@app.get(...)` model.
-- **RFC 027** matters because future DSL forms should prefer vocab/desugaring over new compiler special-cases.
-- **RFC 031** matters because long-term framework growth should live comfortably in the library ecosystem.
+- **RFC 027** matters because DSL forms should prefer vocab/desugaring over new compiler special-cases.
+- **RFC 031** matters because framework growth should live comfortably in the library ecosystem.
 
 ### Why this is one RFC
 
@@ -289,21 +289,21 @@ This RFC is broad on purpose because the problem is broad on purpose.
 
 Splitting "routing," "auth," and "docs" into separate RFCs too early would risk designing them in isolation and then stitching together a platform after the fact. That is exactly what this RFC is trying to avoid for `std.web`.
 
-At the same time, follow-up RFCs are still appropriate when a sub-area needs deeper precision. The rule should be:
+At the same time, a dedicated sub-area RFC is appropriate when a sub-area needs deeper precision. The rule should be:
 
 - do not split merely to split
 - do split when a sub-area needs a real semantic deep dive
 
-### Follow-up RFC boundary
+### Sub-area RFC boundary
 
-If follow-up RFCs are needed later, they should refine one of these areas:
+A sub-area RFC refines one of these areas:
 
 - auth/security semantics
 - docs/schema generation rules
 - transport-specific integrations such as gRPC
 - declarative DSL syntax and desugaring
 
-They should inherit this RFC's product direction rather than reopen it from scratch.
+It should inherit this RFC's product direction rather than reopen it from scratch.
 
 ## Alternatives considered
 
@@ -316,12 +316,12 @@ They should inherit this RFC's product direction rather than reopen it from scra
 ## Drawbacks
 
 - This RFC is intentionally broad, which means some sub-areas remain directional rather than fully specified.
-- The end-state is ambitious and will take time to reach.
+- The end-state is ambitious.
 - Maintaining compatibility while reshaping the developer experience will require care.
 
-## Outcome phases
+## Outcomes
 
-These phases describe user-visible outcomes, not mandated implementation sequences.
+These describe user-visible outcomes, not implementation sequences.
 
 ### Outcome A — Native API serving
 
@@ -372,15 +372,15 @@ The platform can extend beyond HTTP without redesigning the foundations.
 
 This includes:
 
-- future gRPC integrations built on compatible concepts
-- future Arrow-oriented data and RPC integrations built on compatible concepts
+- gRPC integrations built on compatible concepts
+- Arrow-oriented data and RPC integrations built on compatible concepts
 
 ## Layers affected
 
 - **Stdlib / runtime**: must provide the HTTP-serving surface that this redesign standardizes, without leaking backend crate APIs as the primary contract.
 - **Language surface**: the web-platform surface must be recognized and validated coherently across serving, routing, and request/response types.
 - **Execution handoff**: implementations must preserve the language-level web semantics while mapping onto the chosen runtime substrate underneath.
-- **Docs / tooling**: the relationship between platform primitives, decorators, routing, validation, and future transport extensions must be explained clearly.
+- **Docs / tooling**: the relationship between platform primitives, decorators, routing, validation, and transport extensions must be explained clearly.
 
 ## Design Decisions
 
@@ -388,4 +388,4 @@ This includes:
 2. Validation should be split by responsibility: compile-time validation should cover names, signatures, decorator shape, metadata shape, and other statically knowable contracts; runtime validation should handle request payloads, path/query values, auth decisions, and serialization/deserialization failures that depend on incoming data.
 3. Docs and schema generation should infer contracts from checked handler signatures, models, auth metadata, and response declarations. Explicit metadata should be available for summaries, tags, examples, security requirements, and cases where inference would be ambiguous or misleading.
 4. Django-style organization is a secondary surface, not the primary model. `std.web` should own the serving primitives and any lightweight grouping concepts needed by the core platform; larger project-layout conventions may live in higher-level libraries unless they prove necessary as standard-library facades over the same `App` model.
-5. RFC 037 owns HTTP serving. Future gRPC, Arrow-oriented, or other transport RFCs may reuse concepts such as `App`, `Route`, `Schema`, `Guard`, and lifecycle hooks, but must not be forced into a fake-HTTP abstraction or make RFC 037 responsible for their wire-level details.
+5. RFC 037 owns HTTP serving. gRPC, Arrow-oriented, or other transport RFCs may reuse concepts such as `App`, `Route`, `Schema`, `Guard`, and lifecycle hooks, but must not be forced into a fake-HTTP abstraction or make RFC 037 responsible for their wire-level details.

@@ -37,7 +37,7 @@ The governing policy is: **store as little as possible, recover cheaply.** Just 
 
 ## Motivation
 
-This RFC addresses a current delivery gap in Oven: the intended JEC reuse and bounded-storage experience is not yet delivered at the scale of Incan compiler and toolchain development. Compatible prepared closures can be retained in separate stores, repeated work can produce additional generations, and historical build state can outlive its useful role. The solution must make ordinary Oven workflows do less compilation, reuse baked Loaves directly and retain less derived state. A one-time cleanup or additional storage capacity does not establish that behavior.
+This RFC addresses a gap in Oven: the intended JEC reuse and bounded-storage experience is not delivered at the scale of Incan compiler and toolchain development. Compatible prepared closures can be retained in separate stores, repeated work can produce additional generations, and historical build state can outlive its useful role. The solution must make ordinary Oven workflows do less compilation, reuse baked Loaves directly and retain less derived state. A one-time cleanup or additional storage capacity does not establish that behavior.
 
 A large project may contain application libraries, host generators, native dependencies, tests and several target configurations. Rebuilding after small edits, switching profiles and running concurrent commands can create many generations of individually valid artifacts. A single large workspace can encounter this pressure; it does not require dozens of compiler checkouts.
 

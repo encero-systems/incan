@@ -364,7 +364,7 @@ Matching must use checked Incan type structure and identity, not display strings
 
 Type constructors must resolve through ordinary type lookup. A typo or inaccessible type must produce a diagnostic. Only `infer` may introduce a new capture. Capture names must not be selected by capitalization or by failure to resolve a type.
 
-Union and optional forms must use RFC 029's canonicalization. An exact union pattern must compare canonical member sets rather than source order. This RFC does not introduce ambiguous partition captures such as `int | infer rest`; that pattern must be rejected pending a defined partition contract. Capturing an entire union through `infer whole` remains valid.
+Union and optional forms must use RFC 029's canonicalization. An exact union pattern must compare canonical member sets rather than source order. This RFC does not introduce ambiguous partition captures such as `int | infer rest`; that pattern must be rejected. Capturing an entire union through `infer whole` remains valid.
 
 Type-pattern alternatives must use `or`; `|` must continue to form a union type rather than alternate between patterns. Union formation binds within an alternative, so `int | str or bool` means the union `int | str` as one alternative and `bool` as the other. Parentheses may group alternatives. Alternatives must be checked independently and introduce the same binding names with agreeing kinds under RFC 071's binding-agreement principle. Agreement concerns the capture kind, not identical captured values across different alternatives: a type capture may receive whichever checked type the selected alternative matched. A parameter-pack capture must not agree with an ordinary type or full-signature capture. Bindings introduced solely by one alternative must not become available in a sibling alternative. Alternatives must be considered in source order, and an unresolved earlier alternative must not be bypassed to select a later one speculatively. This rule applies in reflection matches and compile-time operations without changing ordinary expression or value-pattern syntax.
 
@@ -441,7 +441,7 @@ RFC 029's union normalization remains authoritative for optional and union type 
 
 RFC 086 owns schema descriptors, metadata overlays, adapter consumption, and extraction. This RFC owns the type-pattern and type-operation language used to inspect or transform their checked types. It gives the existing structured-descriptor requirement an inspectable surface without defining SQL, Arrow, JSON Schema, or other target mappings.
 
-The proposal requires an additive structured field type surface. It does not remove `type_name`, reinterpret descriptive metadata as types, or change schema merge rules. Public reflection documentation must identify which structured surfaces exist when implementation ships; a Draft RFC is not evidence that those surfaces are available.
+The proposal requires an additive structured field type surface. It does not remove `type_name`, reinterpret descriptive metadata as types, or change schema merge rules. Public reflection documentation must identify which structured surfaces exist; a Draft RFC is not evidence that those surfaces are available.
 
 ### Fit with RFC 107
 
@@ -485,7 +485,7 @@ Type operations add a new reduction and diagnostic problem to the typechecker. P
 
 The same `infer` notation has different binding kinds in static operations and reflection matches. Tooling and documentation must make that distinction visible. A reflected capture does not automatically provide the static capabilities developers may expect from Scala's staged type evidence.
 
-Exact identity matching may require more explicit cases than subtype-oriented matching. Preserving that boundary avoids silently erasing newtype or constraint semantics, but future constrained patterns may still be useful.
+Exact identity matching may require more explicit cases than subtype-oriented matching. Preserving that boundary avoids silently erasing newtype or constraint semantics; constrained patterns are not part of this design.
 
 ## Layers affected
 

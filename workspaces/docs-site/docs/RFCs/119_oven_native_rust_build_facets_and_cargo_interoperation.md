@@ -19,7 +19,6 @@
 - **Issue:** [#1012](https://github.com/encero-systems/incan/issues/1012)
 - **RFC PR:** —
 - **Written against:** v0.5
-- **Target scope:** v0.6 design and implementation planning; this is not a shipment claim.
 - **Shipped in:** —
 
 ## Summary

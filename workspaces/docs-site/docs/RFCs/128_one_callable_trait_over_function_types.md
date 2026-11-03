@@ -38,7 +38,7 @@ The callable vocabulary stops at two parameters. `Callable2[A, B, R]` is the lar
 
 The marker spelling has a second gap. `Fn[int]` names the parameters and leaves the return type to the call that passes the value. A function has such a call; a model does not. `model Holder[F with Fn[int]]` therefore has no return type anywhere, and the checker refuses it. The workaround is `Callable1[int, R]` with an extra type parameter for `R`, which stops at two parameters and makes the author count arguments to pick a trait name.
 
-Both gaps close when the bound spells a function signature. The existing arrow form `(A, B, C) -> R` supplies the signature component: it has no arity limit, it names the return type, and it gains every future feature of function types without further work, for example the `mut` parameter marker proposed in #1790. `Callable[(A, B, C) -> R]` puts that function type inside a capability, so it works as a bound, as an adoption, and on a nominal owner.
+Both gaps close when the bound spells a function signature. The existing arrow form `(A, B, C) -> R` supplies the signature component: it has no arity limit, it names the return type, and it gains every feature of function types without further work, for example the `mut` parameter marker proposed in #1790. `Callable[(A, B, C) -> R]` puts that function type inside a capability, so it works as a bound, as an adoption, and on a nominal owner.
 
 ## Goals
 
@@ -438,7 +438,7 @@ A source trait declares its methods with fixed parameter lists. `Callable`'s one
 - **Decorators (RFC 036).** Decorator call shapes retain their shared signature semantics; annotations spelling those callable values must use `Callable[...]`.
 - **Fallible iteration (RFC 115).** The combinators keep their behavior; their bounds change spelling, for example `Callable[(T) -> U]` for `map` and `Callable[(U, T) -> U]` for `fold`.
 - **Rust interop (RFC 041).** The markers keep their spelling and meaning, without the parameter limit.
-- **Function-type features.** Anything a function type gains later, `Callable` gains with it, because the argument is a function type and the checker derives `__call__` from it rather than from a list of its own.
+- **Function-type features.** Anything a function type gains, `Callable` gains with it, because the argument is a function type and the checker derives `__call__` from it rather than from a list of its own.
 
 ### Supersession of closed RFC decisions
 
@@ -451,13 +451,13 @@ Closed RFCs remain historical records and are not edited. This RFC replaces the 
 
 ### Compatibility and migration
 
-The fixed-arity trait replacement was drafted against the 0.6 line. The mandatory callable-signature annotation spelling is a breaking 0.7 amendment; this RFC does not claim either change has shipped or retarget its existing implementation issue. The removed names get no aliases and no deprecation period; the diagnostics carry the exact replacement, so the trait-name migration is mechanical. Call sites and generic helpers must also satisfy the receiver permissions and invocation guarantees specified above:
+The fixed-arity trait replacement and the mandatory callable-signature annotation spelling are breaking changes; this RFC does not claim either change has shipped. The removed names get no aliases and no deprecation period; the diagnostics carry the exact replacement, so the trait-name migration is mechanical. Call sites and generic helpers must also satisfy the receiver permissions and invocation guarantees specified above:
 
 - `Callable0[R]` to `Callable[() -> R]`, `Callable1[A, R]` to `Callable[(A) -> R]`, `Callable2[A, B, R]` to `Callable[(A, B) -> R]`, and `from std.traits.callable import Callable1, Callable2` to `from std.traits.callable import Callable`.
 - In the standard library: `std.traits.callable` itself, the standard and trait preludes, the feature inventory in `std.features`, and the `FallibleIterator` combinators and their state models in `std.derives.collection`.
 - Examples, test programs, and documentation that name the old traits, including the callable, traits, and collection-protocol reference pages, the Rust interop how-to, the CLI reference entry for `INCAN-T0106`, and the release notes.
 
-Uses of the retired function-type shorthand in standard-library signatures, examples, tests, documentation, and active RFCs must migrate to `Callable[(...) -> R]` annotations. Bare-arrow callable-value annotations must also migrate to that wrapped spelling for the 0.7 amendment. Compiler-internal signature representations are not subject to this source-spelling rule. Closed RFC 035 remains unchanged as a historical record; its first-class named function behavior remains valid.
+Uses of the retired function-type shorthand in standard-library signatures, examples, tests, documentation, and active RFCs must migrate to `Callable[(...) -> R]` annotations. Bare-arrow callable-value annotations must also migrate to that wrapped spelling. Compiler-internal signature representations are not subject to this source-spelling rule. Closed RFC 035 remains unchanged as a historical record; its first-class named function behavior remains valid.
 
 Published library artifacts whose metadata names the old traits must be rebuilt against a toolchain that implements this RFC.
 

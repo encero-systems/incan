@@ -77,7 +77,7 @@ The key design constraint is usability. This RFC must not turn ordinary Incan in
 - This RFC does not require every function type to include a capability parameter or effect row.
 - This RFC does not make imports fail merely because the current run has not granted a capability.
 - This RFC does not define a complete operating-system sandbox.
-- This RFC does not define no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Capability and receipt metadata may inform those later RFCs, but this RFC is not the freestanding/kernel RFC.
+- This RFC does not define no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Capability and receipt metadata may inform those RFCs, but this RFC is not the freestanding/kernel RFC.
 - This RFC does not guarantee perfect deterministic replay for external systems.
 - This RFC does not replace `std.telemetry`, `std.logging`, diagnostics, or semantic inspection.
 - This RFC does not require every package to publish capability metadata.
@@ -380,7 +380,7 @@ This diagnostic must be available through the same channel as any other typechec
 
 ### Replay classification
 
-Each receipt and run report must classify replayability. This RFC requires four classifications for the first implementation, each motivated by an operation this RFC already describes:
+Each receipt and run report must classify replayability. This RFC requires four classifications, each motivated by an operation this RFC already describes:
 
 - `deterministic`: the operation can be replayed from recorded local inputs, such as a filesystem write whose output is fully determined by its recorded arguments.
 - `external`: replay depends on an external system and cannot be exact without a recording, such as an HTTP call to a partner API whose response can change between calls.
@@ -485,7 +485,7 @@ Stdlib APIs that already perform authority-bearing operations should be updated 
 
 ### Full algebraic effects
 
-Rejected for now. Algebraic effects or effect rows may become useful later, but they would fight Incan's Python-shaped ergonomics if introduced as the first user-facing authority model.
+Rejected. Algebraic effects or effect rows would fight Incan's Python-shaped ergonomics as the user-facing authority model.
 
 ### Stdlib-only auditing
 
@@ -511,7 +511,7 @@ Capability names can sprawl if packages publish overly fine-grained or inconsist
 
 Receipts can create overhead and sensitive metadata risk. Implementations must make reporting configurable, preserve redaction, and avoid accidental remote export.
 
-Governed mode can frustrate users if diagnostics are vague or if common operations require too many grants. The initial capability set should stay coarse and understandable until real usage proves finer scope is needed.
+Governed mode can frustrate users if diagnostics are vague or if common operations require too many grants. The capability set should stay coarse and understandable.
 
 ## Implementation architecture
 
@@ -536,23 +536,23 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 
 ## Implementation Plan
 
-### Phase 1: Compiler-owned declarations and decision facts
+### Compiler-owned declarations and decision facts
 
 - Resolve capability declarations and provider-operation requirements as canonical semantic identities.
 - Preserve capability, operation, source span, execution mode, effective grant or denial, ceiling, and denial reason in one generic authority decision.
 - Apply authority only when an admitted authority-bearing operation is invoked, never when its module is imported.
 
-### Phase 2: Project policy and execution boundaries
+### Project policy and execution boundaries
 
 - Let a Loaf project declare target selection, execution policy, and environment grants without allowing source to grant host authority to itself.
 - Have Oven enforce the selected project policy and link each execution to the stable authority decision.
 
-### Phase 3: Receipts and report consumers
+### Receipts and report consumers
 
 - Extend the #1028 operation-receipt, redaction, replay, and report work across stdlib and package boundaries.
 - Keep receipts linked to authority decisions rather than duplicating authority or policy semantics.
 
-### Phase 4: Remaining language and tooling integration
+### Language and tooling integration
 
 - Add typed-action declaration alignment, standard-library host capability families, diagnostics, semantic inspection, and user-facing documentation.
 
@@ -587,7 +587,7 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 - **No implicit host-capability grants:** a package capability's `requires` list documents which host capabilities its implementation needs, for tooling and policy to inspect, but granting the package capability never automatically grants what it requires. Those must always be listed and granted separately.
 - **Receipt/report schema versioning is not this RFC's decision to make** -- it is already established product convention. Receipts and run reports use a numeric `schema_version`, matching `incan check`, `incan build`, and other existing JSON report surfaces exactly. There is no starting version number for this RFC to bless.
 - **Report output reuses `incan build`'s existing `--report`/`--report-output` contract** rather than defining a new one.
-- **Four required replay classifications** for the first implementation: `deterministic`, `external`, `fixture-required`, `redacted`. `unavailable` remains a trivial fallback needing no further design.
+- **Four required replay classifications:** `deterministic`, `external`, `fixture-required`, `redacted`. `unavailable` remains a trivial fallback needing no further design.
 - **Telemetry export is confirmed orthogonal** to receipt generation, per this RFC's existing text: receipts remain available to local reports and policy regardless of whether `std.telemetry` is configured; telemetry is a second consumer of the same stream, not a dependency of producing it.
 - **Authority-bearing operations are receipt-required, not result-required:** in reporting modes, the runtime retains evidence for each attempted operation even when user code ignores its ordinary return value. `permissive` is explicitly receipt-free and may report only `authority_reporting: disabled`; `observe` and `governed` retain receipts, including denials.
 - **Report-anchor authentication and execution attestation are distinct:** a report anchor is either locally recorded or host-signed and covers its ordered receipt set. Each receipt is separately locally recorded or boundary-attested, covering its exact boundary, normalized inputs, outcome, issuer, and verification material where applicable. A report must not aggregate those facts into a strongest attestation or upgrade a local receipt.

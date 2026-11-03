@@ -17,7 +17,6 @@
 - **Issue:** [#1010](https://github.com/encero-systems/incan/issues/1010)
 - **RFC PR:** —
 - **Written against:** v0.5
-- **Target scope:** v0.7 design and implementation planning; this is not a shipment claim.
 - **Shipped in:** —
 
 ## Summary
@@ -154,7 +153,7 @@ oven mix diff cli --to 1.6.0
 oven mix update cli --to 1.6.0
 ```
 
-Only `dependency` gets the bare-verb shortcut; `mix` and future nouns do not collapse into `oven add`/`oven update`, because a mix id and a package name could otherwise collide under one ambiguous bare verb. This mirrors Docker's `docker run`/`docker ps` shortcuts coexisting with the full `docker container run`/`docker container ls` form: one proven, real-world precedent for "simple shorthand plus full explicit form, both valid, no runtime ambiguity about what a bare verb operates on."
+Only `dependency` gets the bare-verb shortcut; `mix` and other nouns do not collapse into `oven add`/`oven update`, because a mix id and a package name could otherwise collide under one ambiguous bare verb. This mirrors Docker's `docker run`/`docker ps` shortcuts coexisting with the full `docker container run`/`docker container ls` form: one proven, real-world precedent for "simple shorthand plus full explicit form, both valid, no runtime ambiguity about what a bare verb operates on."
 
 ### Inspecting semantic and operational facts
 
@@ -249,13 +248,7 @@ The distribution must report compatible component versions and reject an unsuppo
 
 ### Relationship to RFC 090
 
-RFC 090 owns `std.cli`, the framework for applications authored in Incan. It does not own project lifecycle behavior. The native Incan CLI should dogfood `std.cli` when its surface is ready, but RFC 118 does not make the Incan/Oven command contract contingent on a particular parser implementation. Oven's command semantics must remain defined by the Oven API rather than by a second application-level command model.
-
-### Release boundaries
-
-- **v0.5:** retains the current bounded RFC 116 interop release work and its existing `incan.toml` contract; this RFC does not backport a Loaf transition into that release.
-- **v0.6:** RFC 117 introduces `loaf.toml`, `oven.lock`, hierarchical sub-Loaves, and the language-neutral project model. The distribution ships one `incan` executable, implemented by Oven, with `run`, `check`, `test`, `build`, `fmt`, `describe-unit`, `owner stop`, `inspect codegraph`, `mcp`, and `toolchain install`/`pack`. The language server ships as the separate `incan-lsp` executable.
-- **v0.7:** this RFC introduces the canonical command-surface split over the v0.6 Oven API and project model. The v0.6 commands keep their behavior under the owners the command ownership table assigns.
+RFC 090 owns `std.cli`, the framework for applications authored in Incan. It does not own project lifecycle behavior. The native Incan CLI should dogfood `std.cli`, but RFC 118 does not make the Incan/Oven command contract contingent on a particular parser implementation. Oven's command semantics must remain defined by the Oven API rather than by a second application-level command model.
 
 ## Compatibility and migration
 

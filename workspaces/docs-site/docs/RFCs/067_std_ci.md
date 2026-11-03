@@ -55,7 +55,7 @@ Today, each of those usually gets reinvented with ad hoc shell behavior or backe
 
 - Shipping a GitHub-specific, GitLab-specific, or provider-specific SDK as part of `std.ci`.
 - Replacing `std.http`, `std.fs`, or `std.process`; `std.ci` should compose with them, not duplicate them.
-- Defining a full JWT or cryptography story here beyond whatever minimal hooks later prove necessary.
+- Defining a full JWT or cryptography story here.
 - Defining a workflow YAML format or a hosted-runner orchestration system.
 - Making CI automation a language feature rather than a stdlib surface.
 
@@ -159,7 +159,7 @@ The CI surface must support the common workflow pattern of reading payload files
 - explicit helpers such as `set_output(...)`, or
 - a smaller primitive model built on environment variables and append-safe file helpers
 
-This RFC does not require one exact spelling yet, but it does require the capability.
+This RFC does not require one exact spelling, but it does require the capability.
 
 ### Exit behavior
 
@@ -205,14 +205,14 @@ It is a small bridge between hosted automation environments and ordinary Incan c
 
 ### Compatibility / migration
 
-This feature is additive. Existing bash, shell, or JavaScript-based CI steps remain valid. The design claim is that Incan should offer a better standard path for new automation scripts once the module exists.
+This feature is additive. Existing bash, shell, or JavaScript-based CI steps remain valid. The design claim is that Incan should offer a better standard path for new automation scripts.
 
 ## Alternatives considered
 
 - **Keep shell and JavaScript glue only**
     - Rejected because it leaves automation brittle, weakly typed, and difficult to test.
 - **Make GitHub a builtin**
-    - Rejected because it introduces too much provider policy too early.
+    - Rejected because it introduces too much provider policy.
 - **Push everything into `std.http` plus `std.fs`**
     - Rejected because CI environments do have a small amount of distinct execution-context behavior worth standardizing.
 
@@ -224,7 +224,7 @@ This feature is additive. Existing bash, shell, or JavaScript-based CI steps rem
 
 ## Implementation architecture
 
-*(Non-normative.)* A sensible rollout starts with `env`, `fs`, and `process` primitives plus fixture-driven examples that demonstrate local testing against payload files. Once `std.http` is available, real CI automation flows can compose on top without needing any provider-specific builtin APIs.
+*(Non-normative.)* The module builds on `env`, `fs`, and `process` primitives, with fixture-driven examples that demonstrate local testing against payload files. Real CI automation flows compose on top of `std.http` without needing any provider-specific builtin APIs.
 
 ## Layers affected
 

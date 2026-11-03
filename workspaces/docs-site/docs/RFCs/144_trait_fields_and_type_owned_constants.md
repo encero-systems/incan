@@ -49,7 +49,7 @@ A transfer operation may also need two different configurations with the same sh
 ## Non-Goals
 
 - Allocating trait-owned instance storage or injecting fields into adopters.
-- Trait field initializers, trait constructors, mutable type-owned state, or default trait constant values in this revision.
+- Trait field initializers, trait constructors, mutable type-owned state, or default trait constant values.
 - Treating a computed property or method as a stored field requirement.
 - Adding const generic parameters, arbitrary compile-time function execution, or runtime reflection dispatch.
 - Replacing RFC 025 method dispatch or RFC 098 associated-type ownership rules.
@@ -303,7 +303,7 @@ The alias is optional: `pub const LIMIT from ReaderDefaults: int = 100` supplies
 
 ### Field requirements
 
-1. A trait body must accept `name: Type` as a stored instance field requirement. Field initializers and field visibility modifiers must be rejected in that position in this revision.
+1. A trait body must accept `name: Type` as a stored instance field requirement. Field initializers and field visibility modifiers must be rejected in that position.
 2. This declaration must use the same conformance, generic substitution, access, and mutation rules as the corresponding `@requires(name: Type)` entry. It must not allocate storage, supply constructor defaults, or synthesize an adopter field.
 3. Models and classes must satisfy required fields with compatible declared stored fields. Properties, constants, methods, and inferred type members must not satisfy the requirement. Existing restrictions on enum and newtype adopters must remain in force.
 4. Identical requirements combined through `@requires` and the body must be deduplicated. A repeated direct body declaration must be rejected as a duplicate declaration. Incompatible declarations of the same canonical requirement must produce a conflict diagnostic; distinct owners must retain separate obligations even when their member names match.
@@ -330,7 +330,7 @@ This rule also governs RFC 098 type projections, including inside generic argume
 
 ### Constants and evaluation
 
-1. Models and classes must accept `const NAME [: Type] = expression`, with normal member visibility. Trait bodies must accept `const NAME: Type` as a required type-owned constant; the type is mandatory and an initializer is unsupported in this revision.
+1. Models and classes must accept `const NAME [: Type] = expression`, with normal member visibility. Trait bodies must accept `const NAME: Type` as a required type-owned constant; the type is mandatory and an initializer is unsupported.
 2. Constant initialization must obey RFC 008. Existing frozen representations of strings, bytes, and collections must be preserved; a `str` annotation in const context must not produce a mutable string capability. Explicit `FrozenStr` in the guide makes that representation visible.
 3. Constants must be excluded from instance layout, constructor inputs, stored-field reflection, instance field cloning, and ordinary model serialization. This RFC does not add a reflection API for constants.
 4. Constant reads must accept concrete type, checked type-parameter, and instance member access, such as `JsonCodec.MEDIA_TYPE`, `C.MEDIA_TYPE`, and `codec.MEDIA_TYPE`. An instance read must resolve through its statically checked receiver type and available trait contracts; it must not create instance storage, dynamic dispatch, or new visibility permissions. Its receiver expression must be evaluated once under ordinary member-access rules even if the constant's value can be folded.
@@ -371,7 +371,7 @@ Member identities must include their declaring owner and, for generic traits, th
 | Unqualified generic constant projection has distinct possible owners              | Reject as ambiguous, even when their types or values agree.                                                 |
 | Unqualified generic field access has distinct possible owners                     | Require owner qualification; matching types alone do not prove a shared slot.                               |
 | Concrete type has one explicit constant satisfying several traits                 | Its direct type-qualified read selects that concrete declaration.                                           |
-| Subtrait redeclares an inherited constant name                                    | Reject; this revision provides no constant override mechanism.                                              |
+| Subtrait redeclares an inherited constant name                                    | Reject; there is no constant override mechanism.                                                            |
 | Class redeclares an inherited ordinary constant or the same trait-owned constant  | Reject; no implicit shadowing or constant override.                                                         |
 | Alias and original expose the same declaration                                    | Treat as one owner when they resolve to the same canonical identity and instantiation.                      |
 
@@ -399,9 +399,9 @@ For a targeted field, identifier `as source` supplies the adopter's ordinary fie
 
 Generic code must not assume that two compatible field requirements share a slot. A body checked under both owners may need explicit qualification even where older name-based reasoning would have treated compatible requirements as interchangeable. Diagnostics must identify both contracts and suggest the corresponding `from` reads. Existing concrete shared-field declarations and ordinary access to those concrete fields retain their meaning.
 
-### No default values in traits yet
+### No default values in traits
 
-Requiring values in implementing types avoids a precedence rule for competing defaults and keeps traits storage-free. Adding trait constant defaults later would need an explicit override and diamond policy. Field initializers would additionally require a construction contract; this RFC does not infer one from declaration order.
+Requiring values in implementing types avoids a precedence rule for competing defaults and keeps traits storage-free. Trait constant defaults would need an explicit override and diamond policy. Field initializers would additionally require a construction contract; this RFC does not infer one from declaration order.
 
 ### Prior art
 
@@ -445,4 +445,4 @@ Conservative cross-kind collision rejection limits some combinations of independ
 - Each requirement has one implementation source. Duplicate targeted declarations, ordinary-plus-targeted implementations of the same requirement, and colliding alias names are rejected rather than resolved by declaration order.
 
 - Type and value owner-qualified projections share the primary member-projection rule with RFC 098. Delimited uses stay compact; further postfix access and actual attachment ambiguities require explicit parentheses. Comprehension `for` keeps its existing role.
-- Generic constants obey the same compile-time compatibility rules as ordinary constants. Checked dependencies may remain symbolic in a generic definition but must resolve and evaluate for the required concrete use; unsupported or runtime-dependent evaluation is diagnosed without a runtime fallback. No separate initial evaluator subset or arbitrary compile-time function execution is introduced.
+- Generic constants obey the same compile-time compatibility rules as ordinary constants. Checked dependencies may remain symbolic in a generic definition but must resolve and evaluate for the required concrete use; unsupported or runtime-dependent evaluation is diagnosed without a runtime fallback. No separate evaluator subset or arbitrary compile-time function execution is introduced.

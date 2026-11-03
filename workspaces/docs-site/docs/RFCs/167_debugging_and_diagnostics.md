@@ -520,7 +520,7 @@ Stack capture for assertions and panics must follow RFC 131's policy for errors:
 
 A debugging session must offer, for a stopped execution, a namespace view of the selected frame's parameters, locals and captured closure values, and of the values of the modules it uses. Each entry must carry its declared type and an availability state from the set above.
 
-Collections and models must support bounded tabular views: rows for list and map entries, columns for model fields, with paging rather than complete materialization. Typed datasets (RFC 169) should use the same view when that RFC lands. A table must show its total size when known and must say when it shows only part of a collection.
+Collections and models must support bounded tabular views: rows for list and map entries, columns for model fields, with paging rather than complete materialization. Typed datasets (RFC 169) should use the same view. A table must show its total size when known and must say when it shows only part of a collection.
 
 An evaluation must be an explicit request. Its expression language is the selected frame's language. It must be checked against the selected frame's scope and types, as source written at that location would be, and must be refused with an ordinary diagnostic when it does not check. An evaluation that only reads values must run no code in the stopped process. An evaluation that calls program code must be requested as such; it runs in the stopped process, using code produced by the same compiler identity that built the artifact, and its result must say that code ran. A result must identify the frame and execution it was evaluated in. Evaluation must never rerun the program or reconstruct a value from current source.
 
@@ -720,6 +720,6 @@ Source debugging and observer integration require a maintained platform and tool
 
 ## Design Decisions
 
-- Linux, macOS and Windows are supported with one contract. LLDB is the proposed engine on every platform; platform-specific limitations are dealt with during implementation and do not change the contract.
+- Linux, macOS and Windows are supported with one contract. LLDB is the proposed engine on every platform; platform-specific limitations do not change the contract.
 - Debug information, source maps and layout facts live with the Loaf in the local store. The session asks the Loaf for them and makes no network request at debug time; a Loaf published without source still carries its debug information.
 - A recording keeps what the execution cannot recompute: host-operation results, the clock, randomness, the environment, arguments, foreign-call results and the order of thread synchronization. Values are recomputed by replay, which builds the provenance index once. Answers stay in the project's own code and go into a dependency only on request.

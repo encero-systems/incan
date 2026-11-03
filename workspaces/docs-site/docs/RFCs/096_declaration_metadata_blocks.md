@@ -19,7 +19,7 @@
 
 ## Summary
 
-This RFC adds optional braced metadata blocks to declaration surfaces that already carry checked static metadata, starting with model fields and constrained primitive newtype underlyings. The goal is to preserve the compact `name as "wire": Type = default` field line while moving growing metadata and dense type options into nearby structured blocks that normalize to the same checked descriptors defined by RFC 021, RFC 085, RFC 086, and RFC 091.
+This RFC adds optional braced metadata blocks to declaration surfaces that already carry checked static metadata: model fields and constrained primitive newtype underlyings. The goal is to preserve the compact `name as "wire": Type = default` field line while moving growing metadata and dense type options into nearby structured blocks that normalize to the same checked descriptors defined by RFC 021, RFC 085, RFC 086, and RFC 091.
 
 ## Core model
 
@@ -60,7 +60,7 @@ The same pressure appears in constrained primitive syntax. RFC 017 and RFC 091 u
 - This RFC does not define every adapter namespace or validate every adapter-specific key.
 - This RFC does not introduce field-local executable code blocks.
 - This RFC does not change the semantic boundary that type constraints belong to types and field metadata belongs to fields.
-- This RFC does not require immediate migration of existing code that uses inline metadata.
+- This RFC does not require migration of existing code that uses inline metadata.
 
 ## Guide-level explanation
 
@@ -270,7 +270,7 @@ Alias sugar remains the preferred spelling for wire names. A braced metadata blo
 
 Metadata block values must use the safe metadata value set defined by RFC 085 and RFC 086. Values must be compile-time metadata values, not runtime expressions. A metadata block must not evaluate user code.
 
-A key followed directly by a nested block, such as `deprecated { since = "0.7" }`, gives that key a structured value. Only an unqualified key whose contract defines named entries may take one; RFC 150's `deprecated` is the first. Each nested entry must be one of the key's defined entries and must follow the same safe-value, duplicate-key, and no-execution rules as the enclosing block. The structured value fills the same checked descriptor as the key's compact spellings, so consumers see one descriptor however it was written. A namespaced key must not take a nested block.
+A key followed directly by a nested block, such as `deprecated { since = "0.7" }`, gives that key a structured value. Only an unqualified key whose contract defines named entries may take one, such as RFC 150's `deprecated`. Each nested entry must be one of the key's defined entries and must follow the same safe-value, duplicate-key, and no-execution rules as the enclosing block. The structured value fills the same checked descriptor as the key's compact spellings, so consumers see one descriptor however it was written. A namespaced key must not take a nested block.
 
 Metadata blocks reuse RFC 085 and RFC 086 key identity, safe-value checks, and explicit adapter/tooling activation rules. Unknown namespaced metadata remains inert under baseline compilation and is preserved for an explicit consumer; changing brackets to braces must not enable a namespace or grant it language semantics. An invoked adapter retains its own key and compatibility validation. Unqualified keys remain governed by the standard/compiler-owned key contracts.
 
@@ -426,9 +426,9 @@ The compiler should provide targeted messages for these cases:
 2. **Move all rich metadata into `schema:` blocks** — Rejected as the only local answer because some metadata is declaration-owned and should remain beside the field.
 3. **Use hanging indentation without braces** — Rejected because it makes alignment carry semantic weight and introduces a field continuation form without an explicit block opener.
 4. **Use decorators before fields** — Rejected because decorators create vertical noise, split the field's metadata from its type, and make repeated field metadata look like executable modifiers.
-5. **Use `key: value` inside metadata blocks** — Rejected for this draft because it visually collides with object literals and with the `name: Type` field annotation pattern.
+5. **Use `key: value` inside metadata blocks** — Rejected because it visually collides with object literals and with the `name: Type` field annotation pattern.
 6. **Make constrained primitive blocks the only spelling** — Rejected because bracket syntax remains useful for short constraints and already exists in implemented and drafted RFCs.
-7. **Allow metadata blocks on every declaration immediately** — Rejected for this RFC because the semantics should be proven first on fields and constrained newtype underlyings before expanding the surface.
+7. **Allow metadata blocks on every declaration** — Rejected because each additional declaration target needs its own applicability contract.
 
 ## Drawbacks
 
@@ -461,4 +461,4 @@ The constrained primitive block form should normalize into the same constrained 
 - Constrained primitive options use the drafted `int { ... }` form without an extra `where` keyword. The block belongs to the newtype underlying, while a following colon opens an actual newtype body. Default-expression braces and field metadata braces remain distinct; parser/formatter acceptance must exercise the collisions rather than claim proof from a sketch.
 - Default formatting preserves authored metadata and alias spelling. An explicit fix or project-level opt-in may normalize layout during ordinary formatting; exact-spelling modes retain their guarantee. No implicit whole-project migration is selected.
 - Metadata blocks reuse RFC 085/086 checked keys, safe values, provenance and explicit adapter activation. Inert namespaced data does not become executable or compiler-semantic through braced spelling.
-- A compiler-known key whose contract defines named entries may take a nested block, starting with RFC 150's `deprecated { ... }`. It is another spelling of that key's one descriptor, not a second metadata authority.
+- A compiler-known key whose contract defines named entries may take a nested block, such as RFC 150's `deprecated { ... }`. It is another spelling of that key's one descriptor, not a second metadata authority.

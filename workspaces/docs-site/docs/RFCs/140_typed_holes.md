@@ -21,7 +21,7 @@
 
 ## Summary
 
-Introduce `???` as an explicit missing expression that the compiler can parse and analyze without pretending the program is complete. Checking reports the hole's required type or remaining constraints, their origins, available local bindings, and checked in-scope callable candidates where compatible, while continuing to report independent errors in completed code. Holes remain distinct from valid values, bottom types, and runtime panic stubs. Every unresolved hole in the selected compilation graph blocks executable or distributable artifact production, including holes in unreachable code. The initial contract provides grounded implementation feedback, not automatic program synthesis.
+Introduce `???` as an explicit missing expression that the compiler can parse and analyze without pretending the program is complete. Checking reports the hole's required type or remaining constraints, their origins, available local bindings, and checked in-scope callable candidates where compatible, while continuing to report independent errors in completed code. Holes remain distinct from valid values, bottom types, and runtime panic stubs. Every unresolved hole in the selected compilation graph blocks executable or distributable artifact production, including holes in unreachable code. The contract provides grounded implementation feedback, not automatic program synthesis.
 
 ## Motivation
 

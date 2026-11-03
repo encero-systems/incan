@@ -36,7 +36,7 @@ This RFC defines an Incan-owned agent context graph: a deterministic, compiler-b
 6. **Risk is evidence, not vibes:** process signals such as churn, ownership concentration, co-change, coverage gaps, stale decisions, and recent volatility may influence agent context and architecture advice, but they must be deterministic records with cited evidence and visible limitations.
 7. **Task context is a product surface:** the primary agent workflow is not raw graph browsing; it is task-ranked, budgeted context packing that returns the most useful symbols, relationships, diagnostics, risk signals, architecture signals, and source anchors for a concrete change.
 8. **LSP and CLI share one fact model:** live editor features, command-line graph export, MCP context tools, and architecture-advice tools should reuse the same source-analysis substrate instead of building parallel extractors with different semantics.
-9. **Identity and content are distinct:** graph objects have durable logical identities; separate semantic or content digests expose changes. Content-addressed snapshots and context packs are follow-up consumers of those facts, not replacements for declaration identity.
+9. **Identity and content are distinct:** graph objects have durable logical identities; separate semantic or content digests expose changes. Content-addressed snapshots and context packs are consumers of those facts, not replacements for declaration identity.
 10. **Compact output matters:** graph output intended for agents must be token-aware and deterministic, with a compact textual format in addition to JSON/JSONL.
 11. **Evaluation is part of the feature:** Incan should define a small benchmark harness for agent-context quality so claims are measured on Incan packages and workspaces rather than inherited from generic tool marketing.
 
@@ -66,7 +66,7 @@ Repowise adds a useful adjacent lesson for architecture tooling: structural sour
 - Define CLI and MCP surfaces for raw graph exploration and task-ranked context packing.
 - Make the same graph facts available to LSP/editor features and architecture-advice tooling without requiring separate extraction logic.
 - Define a compact, deterministic agent context format alongside JSON and JSONL.
-- Define durable graph-object identities and separate semantic/content digests, with content-addressed graph snapshots as follow-up work.
+- Define durable graph-object identities, separate semantic/content digests, and content-addressed graph snapshots.
 - Allow optional feedback and task-memory signals while requiring automatic staleness/expiry when the underlying graph changes.
 - Support stdlib, package, workspace, and generated-artifact exploration.
 - Keep external storage, embeddings, hosted services, visualization, and product-specific agent integrations outside the compiler boundary.
@@ -79,11 +79,11 @@ Repowise adds a useful adjacent lesson for architecture tooling: structural sour
 - Requiring embeddings, vector search, hosted indexing, or remote inference.
 - Guaranteeing that an agent will make correct edits after receiving graph context.
 - Claiming defect prediction or risk prioritization without Incan-specific evaluation, visible controls, and caveats.
-- Standardizing every possible edge kind in the first release.
+- Standardizing every possible edge kind.
 - Replacing LSP. The agent context graph complements editor interactions rather than replacing live language-server diagnostics and completions.
 - Matching generic cross-language indexers on language count. Incan may support adapters, but the native value is language-specific precision.
-- Freezing future MCP tool names, storage backend choices, or service command names beyond the v0.4 `incan inspect codegraph` export.
-- Indexing arbitrary non-Incan languages. Mixed-language workspaces may expose foreign artifacts through future adapters. Rust is not one of those languages: Incan compiles through it, interoperates with it, and is written in it, so Rust facts are the same facts under a `language` attribute rather than a foreign-language adapter. See *One graph across Incan and Rust*.
+- Freezing MCP tool names, storage backend choices, or service command names beyond the `incan inspect codegraph` export.
+- Indexing arbitrary non-Incan languages. Mixed-language workspaces may expose foreign artifacts through adapters. Rust is not one of those languages: Incan compiles through it, interoperates with it, and is written in it, so Rust facts are the same facts under a `language` attribute rather than a foreign-language adapter. See *One graph across Incan and Rust*.
 
 ## Guide-level explanation
 
@@ -105,7 +105,7 @@ incan inspect codegraph src --format jsonl --allow-errors
 
 In tolerant mode, parseable modules still produce package, file, module, declaration, import, and source-span facts. Facts that require successful semantic checking are omitted or marked with lower provenance. Diagnostics become graph facts so an agent can see why the graph is partial.
 
-The v0.4 implementation is this checked/tolerant JSONL export only. It does not include MCP serving, task-ranked context packing, process-risk scoring, architecture findings, or first-class Rust records yet; those are consumers or follow-up graph layers that build on the same schema contract.
+MCP serving, task-ranked context packing, process-risk scoring, and architecture findings are consumers or graph layers that build on the same schema contract.
 
 ### Exploring graph structure
 
@@ -299,7 +299,7 @@ Every node and edge must carry a provenance tier. The minimum tiers are:
 - `derived_advisory`: fact derived from graph analysis rather than directly from the compiler, such as an architecture recommendation or impact finding.
 - `process_observed`: fact derived from local process artifacts such as git history, coverage reports, issue/commit metadata, or explicit decision records.
 
-Future implementations may add tiers such as `runtime_observed`, `lsp_resolved`, or `scip_imported`, but they must not collapse into `compiler_checked` unless the Incan compiler itself validated the fact.
+Implementations may add tiers such as `runtime_observed`, `lsp_resolved`, or `scip_imported`, but they must not collapse into `compiler_checked` unless the Incan compiler itself validated the fact.
 
 ### Identity
 
@@ -331,7 +331,7 @@ Diagnostics produced during tolerant export should be emitted as graph records s
 
 The graph should represent user-visible compiler-selected behavior as graph facts when the owning compiler or tooling subsystem can expose them. These records are especially important for agents because they replace guesswork around hidden behavior with source-anchored facts.
 
-Generated behavior records should cover at least these families over time:
+Generated behavior records should cover at least these families:
 
 - derive applications and the generated protocol behavior they provide;
 - decorator applications, preserved callable identity, and decorator-produced metadata;
@@ -339,11 +339,11 @@ Generated behavior records should cover at least these families over time:
 - trait adoption records, generic adoption-family records, and associated type bindings;
 - type-token overload selection and type-directed return mapping;
 - ownership, borrow, move, clone, and materialization plans at checked value-use boundaries where the compiler exposes that decision;
-- generated Rust or future backend artifacts linked back to source declarations, metadata, and diagnostics.
+- generated Rust or other backend artifacts linked back to source declarations, metadata, and diagnostics.
 
-Each generated behavior record must carry provenance and source anchors. It should distinguish source-authored declarations from compiler-provided behavior, package-provided vocabulary descriptors, trait-owned capability families, and backend-generated artifacts. A behavior record may be partial or unsupported in early exports, but it must not masquerade as `compiler_checked` unless the compiler actually validated the relationship.
+Each generated behavior record must carry provenance and source anchors. It should distinguish source-authored declarations from compiler-provided behavior, package-provided vocabulary descriptors, trait-owned capability families, and backend-generated artifacts. A behavior record may be partial or unsupported, but it must not masquerade as `compiler_checked` unless the compiler actually validated the relationship.
 
-Explanation-oriented edges such as `explains`, `resolves_to`, `lowers_to`, `selects_overload`, `binds_associated_type`, `desugars_to`, `borrows_as`, `clones_for`, and `moves_to` let a context pack answer why a call, match, derive, trait method, property read, or generated artifact behaves the way it does. These edges are not required for every source construct in the first release, but the schema should reserve the concept so later consumers do not invent parallel explanation formats.
+Explanation-oriented edges such as `explains`, `resolves_to`, `lowers_to`, `selects_overload`, `binds_associated_type`, `desugars_to`, `borrows_as`, `clones_for`, and `moves_to` let a context pack answer why a call, match, derive, trait method, property read, or generated artifact behaves the way it does. These edges are not required for every source construct, but the schema should reserve the concept so consumers do not invent parallel explanation formats.
 
 ### LSP and architecture consumers
 
@@ -436,9 +436,9 @@ Incan can also expose body-level facts that are meaningful to the language rathe
 
 Incan can expose generated behavior without treating generated output as the source of truth. Derives, decorators, vocabulary desugarings, trait resolution, type-directed overload selection, and ownership planning all affect what code means, but users should be able to inspect those decisions through compiler-backed graph facts rather than by reverse-engineering generated Rust.
 
-Incan can also export graph facts for generated or materialized structures. RFC 048 metadata and future artifact metadata allow packages to expose public contracts even when source is generated, embedded, or inspected from a built artifact.
+Incan can also export graph facts for generated or materialized structures. RFC 048 metadata and artifact metadata allow packages to expose public contracts even when source is generated, embedded, or inspected from a built artifact.
 
-Finally, Incan can make graph context part of the project lifecycle. Workspace roots, lockfiles, manifests, stdlib sources, package artifacts, and future `incan.pub` metadata can all contribute to graph identity and staleness detection.
+Finally, Incan can make graph context part of the project lifecycle. Workspace roots, lockfiles, manifests, stdlib sources, package artifacts, and `incan.pub` metadata can all contribute to graph identity and staleness detection.
 
 The language server is another differentiator. A generic graph system usually indexes a repository out of band and then tries to stay fresh. Incan can share one source-analysis substrate between CLI export, MCP context, architecture advice, and live editor features. That does not make LSP the graph protocol; it means the language server can become a low-latency consumer and producer of the same schema where appropriate.
 
@@ -499,7 +499,7 @@ The compiler already sees both languages. `rust_inspect` loads a Cargo project t
 
 That single-observer position is the substantive advantage over the alternative. Polyglot indexers merge independently-derived per-language indexes and must reconcile their symbol identities afterwards. One compiler observing both languages has nothing to reconcile: the identity an Incan declaration uses to name a Rust one is the identity the Rust side was recorded under.
 
-SCIP remains the reference for symbol naming and for separating definitions from reference occurrences, and remains an export adapter rather than the internal model, consistent with native JSONL being the source of truth. Following its conventions where they fit keeps a future exporter a projection rather than a translation.
+SCIP remains the reference for symbol naming and for separating definitions from reference occurrences, and remains an export adapter rather than the internal model, consistent with native JSONL being the source of truth. Following its conventions where they fit keeps an exporter a projection rather than a translation.
 
 ## Semantic digests
 
@@ -518,7 +518,7 @@ Every graph fact belongs to one of two layers, and only one of them carries iden
 
 This is a rule about anchoring, not a second graph. The schema already separates the layers — `CodegraphFileRecord` and `CodegraphModuleRecord` are distinct node kinds — and a view over the graph is a projection, never a parallel structure. Splitting into multiple graphs would reintroduce the identity-reconciliation problem that one compiler observing every language exists to avoid.
 
-The rule has a consequence the current compiler does not satisfy: a logical module identity must not be derived from a file path. Deriving it that way is ordinary language design, and it is how a reader finds a declaration, but it makes a pure refactor — splitting one module into two files with an unchanged public surface — look like the deletion of every declaration in it. Where a logical module identity cannot yet be established independently of layout, an implementation must report the affected declarations as changed rather than silently reuse them.
+The rule has a consequence: a logical module identity must not be derived from a file path. Deriving it that way is ordinary language design, and it is how a reader finds a declaration, but it makes a pure refactor — splitting one module into two files with an unchanged public surface — look like the deletion of every declaration in it. Where a logical module identity cannot be established independently of layout, an implementation must report the affected declarations as changed rather than silently reuse them.
 
 ### The semantic digest
 
@@ -532,13 +532,13 @@ The digest must be language-neutral. An Incan declaration and a Rust declaration
 
 Where an implementation cannot compute a declaration's semantic digest, it must report the declaration as changed. Erring toward changed costs redundant work; erring the other way yields a wrong build.
 
-### The exported identity does not satisfy this yet
+### Exported identity and provenance
 
-The identity rules above govern what a consumer may key on. The exported schema does not meet them today: the identity carried on declaration, reference, call, import-binding and export records mirrors the compiler's own, span and scope discriminant included. That is correct as *provenance* — it names where a declaration sat in the compilation that produced the record — and wrong as a key.
+The identity rules above govern what a consumer may key on. The identity carried on declaration, reference, call, import-binding and export records mirrors the compiler's own, span and scope discriminant included. That is correct as *provenance* — it names where a declaration sat in the compilation that produced the record — and wrong as a key.
 
-Closing the gap needs a second, span-free identity exported alongside it rather than a change to the existing one, since both jobs are real. It also needs a signature, which a compiler identity does not carry and which comes from the declaration's lowered body; an exported identity without one cannot separate overloads, and publishing it would push the collision this section exists to prevent out to every consumer at once.
+A key therefore needs a second, span-free identity exported alongside it rather than a change to the existing one, since both jobs are real. It also needs a signature, which a compiler identity does not carry and which comes from the declaration's lowered body; an exported identity without one cannot separate overloads, and publishing it would push the collision this section exists to prevent out to every consumer at once.
 
-Until that lands, a consumer must treat the exported identity as provenance and must not cache against it across compilations.
+A consumer must treat the compiler-mirroring identity as provenance and must not cache against it across compilations.
 
 ### The documentation digest
 
@@ -616,7 +616,7 @@ Rejected as the default, but useful as an integration experiment. Knowing has st
 
 ### Emit only SCIP
 
-Rejected as the only format. SCIP is good prior art for code navigation interchange, but the Incan agent graph needs package/workspace facts, diagnostics, checked API metadata, tolerant provenance, compact context packs, and task-context semantics that go beyond ordinary go-to-definition/reference indexing. A future SCIP exporter may still be useful.
+Rejected as the only format. SCIP is good prior art for code navigation interchange, but the Incan agent graph needs package/workspace facts, diagnostics, checked API metadata, tolerant provenance, compact context packs, and task-context semantics that go beyond ordinary go-to-definition/reference indexing. A SCIP exporter may still be useful.
 
 ### Use only LSP
 
@@ -642,7 +642,7 @@ Rejected as the default. Full-repository packing is easy to understand but scale
 
 This feature adds another public machine-readable contract to maintain. Once external tools depend on the graph schema, schema evolution must be careful.
 
-Compiler-backed facts are only as complete as the compiler exposes. Early versions may have excellent module/declaration/import/API facts but limited call/reference edges.
+Compiler-backed facts are only as complete as the compiler exposes.
 
 Tolerant export is easy to misuse. Agents may over-trust unchecked facts unless provenance is visible and compact formats preserve it.
 
@@ -664,7 +664,7 @@ The compiler layer should remain storage-agnostic. It may emit JSONL to stdout o
 
 The LSP should share the same source-analysis services with the exporter where possible. Live editor state may require incremental caches and partial snapshots, but those caches should materialize the same graph records instead of defining parallel fact shapes.
 
-The task-context ranker should start simple: exact identifiers, module/name/doc search, graph expansion over containment/import/reference/call/dispatch/evidence edges, provenance weights, public API boosts, diagnostic and architecture-signal proximity, and deterministic budget packing. Embedding re-ranking, community detection, feedback, and cross-package memory can come later without changing the core graph schema.
+The task-context ranker's baseline is simple: exact identifiers, module/name/doc search, graph expansion over containment/import/reference/call/dispatch/evidence edges, provenance weights, public API boosts, diagnostic and architecture-signal proximity, and deterministic budget packing. Embedding re-ranking, community detection, feedback, and cross-package memory add to that baseline without changing the core graph schema.
 
 ## Layers affected
 
@@ -676,7 +676,7 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - **Generated behavior explanation**: derives, decorators, vocabularies, trait resolution, type-directed mappings, ownership plans, and generated artifacts should contribute source-anchored explanation records when available.
 - **Formatter**: no syntax changes are required by this RFC, but compact graph/context output should have deterministic formatting.
 - **LSP / Tooling**: CLI, MCP, editor integrations, graph export, graph stale checks, live graph snapshots, context packing, architecture-advice tooling, risk scoring, and checked metadata/documentation tooling are directly affected.
-- **Packaging / Workspaces**: package identity, workspace roots, lockfiles, generated artifacts, and future registry metadata contribute to graph identity and staleness.
+- **Packaging / Workspaces**: package identity, workspace roots, lockfiles, generated artifacts, and registry metadata contribute to graph identity and staleness.
 - **VCS / Coverage inputs**: git history, ownership signals, co-change data, coverage reports, and explicit decision records may contribute optional process-risk facts, but they must remain provenance-tagged and absent when inputs are unavailable.
 
 ## Implementation Plan
@@ -722,7 +722,7 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - [x] Per-declaration semantic digest excluding position, formatting, comments and documentation; documentation digest kept apart.
 - [x] Closure digests over codegraph edges and MIR-backed Rust body digests (#1504).
 - [x] Corpus and invariant tests: every standard-library declaration digests; a comment, a docstring, an insertion and a reorder move only what they should.
-- [ ] The exported identity carries the digest as its key (see "The exported identity does not satisfy this yet").
+- [ ] The exported identity carries the digest as its key (see "Exported identity and provenance").
 
 ### Context surfaces
 
@@ -741,12 +741,12 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 ## Design Decisions
 
 - The v0.4 public CLI surface is `incan inspect codegraph`. Higher-level graph service commands, MCP tools, and task-packing commands remain follow-up work and may use a `context`, `agent`, or other namespace once those consumers are designed.
-- The v0.4 stable JSONL contract is the compiler-backed graph export shape implemented for source-backed Incan records: header schema/toolchain/mode/root/language metadata, deterministic record IDs, record kind, `language: "incan"` on source-backed records, provenance, degraded state, source spans where available, containment/import/export/reference/call-syntax facts where available, and diagnostics. Future fields must be additive or guarded by a schema version.
-- Native Incan JSONL is the source of truth for this RFC. A SCIP exporter may be added later as an adapter for external code-intelligence ecosystems, but SCIP does not replace the native graph schema.
+- The stable JSONL contract is the compiler-backed graph export shape for source-backed records: header schema/toolchain/mode/root/language metadata, deterministic record IDs, record kind, `language` on source-backed records, provenance, degraded state, source spans where available, containment/import/export/reference/call-syntax facts where available, and diagnostics. New fields must be additive or guarded by a schema version.
+- Native Incan JSONL is the source of truth for this RFC. A SCIP exporter may be added as an adapter for external code-intelligence ecosystems, but SCIP does not replace the native graph schema.
 - The first release does not require Merkle snapshot roots. Deterministic IDs, schema versions, compiler versions, source roots, and degraded-state markers are sufficient for the v0.4 baseline; content-addressed graph snapshots, context-pack identity, and Merkle-style integrity are follow-up work.
-- The v0.4 edge and body-fact baseline is intentionally smaller than the north-star model: containment, imports, public exports, declaration structure, syntax-level reference and call-site records, spans, and diagnostics. Resolved reference targets, resolved call targets, aliases, implements, test edges, generated-from edges, match-dispatch families, metadata body facts, and richer pattern facts are follow-up graph layers.
+- The edge and body-fact baseline is containment, imports, public exports, declaration structure, syntax-level reference and call-site records, spans, and diagnostics. Resolved reference targets, resolved call targets, aliases, implements, test edges, generated-from edges, match-dispatch families, metadata body facts, and richer pattern facts are graph layers over that baseline.
 - Derived architecture findings and process-risk signals are separate record classes with different jobs. Architecture findings may be emitted as records or reports, but they must cite graph evidence; risk signals may explain priority, but they must not replace architectural evidence.
-- Process-risk records are not part of the v0.4 baseline beyond schema/provenance space for later consumers. Churn, ownership, co-change, coverage, decision staleness, trend snapshots, and predictive evaluation require Incan-specific validation before any prioritization claim is treated as more than evidence.
+- Process-risk records are not part of the baseline export beyond schema/provenance space for their consumers. Churn, ownership, co-change, coverage, decision staleness, trend snapshots, and predictive evaluation require Incan-specific validation before any prioritization claim is treated as more than evidence.
 - Live LSP graph snapshots should materialize the same fact model as persisted or exported graph snapshots. Dirty editor buffers require partial/stale markers and must not be silently mixed with checked persisted facts.
 - Feedback and learned usefulness signals belong in the agent-context or MCP layer rather than the core compiler export. The compiler may expose stable graph identities that make feedback expiry possible, but it should not own agent memory policy.
 - Compact task-context format is a consumer contract layered on top of JSONL. The JSONL graph export is the compatibility-stable contract for Planned status; compact context packing should become stable only when the MCP/task-context layer is implemented and evaluated.
@@ -755,4 +755,3 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - Reachability over Rust is a lower bound, not an exact answer. Unresolved edges count as reachable and affectedness propagates downstream. This binds consumers: anything skipping work on a reachability answer must err toward doing the work, because a missed node is a wrong build while a spurious one is only slow.
 - Rust-side facts should come from what `rust_inspect` already resolves through rust-analyzer before any independent analysis is written. Re-deriving name resolution would reproduce the low-trust rediscovery this RFC exists to avoid.
 - SCIP remains an export adapter rather than the internal model, but its symbol naming and its separation of definitions from reference occurrences should be followed where they fit, so an exporter stays a projection rather than a translation.
-- Planned status does not require proving all retrieval and risk-quality claims. The minimum bar for Planned is a settled architecture, a v0.4 baseline export, and explicit follow-up issues for resolved targets, LSP sharing, MCP/task packing, Architect integration, process-risk evaluation, external importer experiments, and first-class Rust records.

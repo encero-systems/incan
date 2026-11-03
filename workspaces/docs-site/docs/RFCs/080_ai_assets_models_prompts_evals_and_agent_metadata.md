@@ -112,7 +112,7 @@ The eval action can be exposed through RFC 078 typed workflow actions.
 
 ### AI asset kinds
 
-V1 should recognize these AI asset kinds:
+The following AI asset kinds should be recognized:
 
 - `model`
 - `adapter`
@@ -278,9 +278,9 @@ Rejected because model downloads, remote inference, and agent execution are poli
 
 ## Implementation architecture
 
-The recommended implementation shape is to start with descriptive AI asset metadata and typed action integration rather than runtime execution. Packages and capabilities declare assets; `incan pub` indexes them; CLI and IDE tooling inspect them; RFC 078 actions run them only when explicitly invoked and RFC 076 policy allows it.
+The recommended implementation shape centers on descriptive AI asset metadata and typed action integration rather than runtime execution. Packages and capabilities declare assets; `incan pub` indexes them; CLI and IDE tooling inspect them; RFC 078 actions run them only when explicitly invoked and RFC 076 policy allows it.
 
-This RFC should not block the lifecycle core. AI asset metadata becomes useful after the project can already record provenance, apply capabilities, evaluate policy, and expose typed actions. Early implementations should treat AI assets as descriptive metadata and action references first; model downloads, remote inference, agent workflow execution, and registry-hosted AI graph behavior should come only after RFC 074, RFC 075, RFC 076, and RFC 078 have a working local slice.
+The lifecycle core does not depend on this RFC. AI asset metadata builds on the project's ability to record provenance, apply capabilities, evaluate policy, and expose typed actions. Model downloads, remote inference, agent workflow execution, and registry-hosted AI graph behavior build on RFC 074, RFC 075, RFC 076, and RFC 078.
 
 ## Layers affected
 

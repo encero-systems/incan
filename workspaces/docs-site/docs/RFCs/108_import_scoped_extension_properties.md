@@ -40,9 +40,9 @@ The same shape is useful outside temporal units. `256.mib` can carry byte-size s
 
 The design must not reopen the dynamic-language tradeoff that Incan deliberately avoids. The language should not let libraries mutate primitive types globally, shadow owned members by load order, or hide expensive or fallible runtime work behind property syntax. The useful Ruby/Rails lesson is the fluent domain shape; the Incan lesson is that the shape must remain explicit, typed, scoped, and inspectable.
 
-The earlier typed-unit framing is still important, but too narrow as the authoring model. Test-driving the syntax against `int`, `decimal`, `FrozenStr`, and custom nominal receivers shows that the language feature is import-scoped extension properties, with typed units as the strongest initial family of examples. Naming the broader feature now avoids painting RFC 108 into a unit-only corner while still keeping the unit examples concrete.
+The earlier typed-unit framing is still important, but too narrow as the authoring model. Test-driving the syntax against `int`, `decimal`, `FrozenStr`, and custom nominal receivers shows that the language feature is import-scoped extension properties, with typed units as the strongest family of examples. Naming the broader feature avoids painting RFC 108 into a unit-only corner while still keeping the unit examples concrete.
 
-This RFC also points toward a larger dogfooding direction without taking ownership of it. RFC 027 currently exposes vocab registration through Rust companion crates. A future Incan could author more of its vocabulary metadata, descriptors, and compiler-adjacent surfaces in Incan itself, much as Rust uses Rust to author much of rustc. This RFC's `pub vocab` syntax should align with that direction, but it does not rewrite the existing vocab desugarer architecture.
+This RFC also points toward a larger dogfooding direction without taking ownership of it. RFC 027 exposes vocab registration through Rust companion crates. Incan could author more of its vocabulary metadata, descriptors, and compiler-adjacent surfaces in Incan itself, much as Rust uses Rust to author much of rustc. This RFC's `pub vocab` syntax should align with that direction, but it does not rewrite the existing vocab desugarer architecture.
 
 ### Prior art: Ruby and Rails Active Support
 
@@ -69,7 +69,7 @@ Rust's limitation for this feature is syntax, not semantics. Rust has no field-l
 - Preserve typed-unit examples as the primary readability and safety motivation.
 - Support ordinary value composition such as `3.days + 12.hours` and leave room for aggregate vocabulary properties when the receiver is a checked family composition.
 - Distinguish pure value construction from runtime-anchored conveniences such as `.from_now`, `.ago`, or clock-reading projections.
-- Leave the larger RFC 027 vocab registration and desugarer rewrite as future-compatible but out of scope.
+- Leave the larger RFC 027 vocab registration and desugarer rewrite out of scope, while staying compatible with it.
 
 ## Non-Goals
 
@@ -249,7 +249,7 @@ property name on ReceiverType -> ResultType:
 
 The compiler must typecheck the body under `self: ReceiverType` and against the declared result type. The descriptor fact must be derived from the checked declaration. The lowering target is the property body or an equivalent generated helper with the same checked semantics. Authors must not need to repeat fields such as `constructor =`, `eval =`, or `const =` in a parallel metadata table.
 
-If future syntax allows author-provided purity, const, or runtime-anchor annotations, the compiler must verify those annotations against the body or against trusted lower-level metadata. An unchecked author assertion that a property is pure or const-evaluable does not satisfy this RFC.
+If the language admits author-provided purity, const, or runtime-anchor annotations, the compiler must verify those annotations against the body or against trusted lower-level metadata. An unchecked author assertion that a property is pure or const-evaluable does not satisfy this RFC.
 
 ### Activation and scope
 
@@ -319,7 +319,7 @@ Property syntax should remain value-like. Pure unit construction such as `3.days
 
 A runtime-anchored property must not be const-evaluable. It must be visible to inspection and diagnostics as runtime capability use. Libraries that provide runtime-anchored convenience properties should also provide explicit-context spellings suitable for tests and governed runtimes, such as `duration.after(clock.now())`, `duration.before(anchor)`, or another library-owned equivalent.
 
-Effectful, fallible, I/O-bound, or expensive operations should normally be methods or functions rather than properties. If the language later admits effectful extension properties, the compiler and tooling must make the effect boundary visible rather than allowing Ruby-style surprise behavior.
+Effectful, fallible, I/O-bound, or expensive operations should normally be methods or functions rather than properties. If the language admits effectful extension properties, the compiler and tooling must make the effect boundary visible rather than allowing Ruby-style surprise behavior.
 
 ### Const contexts
 
@@ -360,7 +360,7 @@ Use sites continue to use ordinary property access:
 order.status.badge
 ```
 
-The keyword `vocab` should align with the existing RFC 027 vocabulary direction. This RFC does not require `pub vocab` to replace every Rust companion-crate registration surface, but the spelling should be chosen so future Incan-authored vocabulary metadata can grow in the same direction.
+The keyword `vocab` should align with the existing RFC 027 vocabulary direction. This RFC does not require `pub vocab` to replace every Rust companion-crate registration surface, but the spelling should be chosen so Incan-authored vocabulary metadata can grow in the same direction.
 
 ### Relationship to computed properties
 
@@ -372,7 +372,7 @@ The `on ReceiverType` clause is the explicit source of `self` for an extension p
 
 RFC 027 defines the current Rust-facing registration and desugarer architecture for richer vocabulary surfaces. RFC 108 should not conflict with that architecture. A `pub vocab` block can be understood as an Incan-authored producer of checked vocabulary metadata. The extension-property subset can coexist with Rust companion crates, scoped symbols, scoped operators, block declarations, and external WASM desugarers.
 
-Future work may allow more RFC 027-style metadata and desugar hooks to be authored in Incan. This RFC deliberately avoids specifying that larger rewrite. The compatibility requirement is that `pub vocab` extension properties produce metadata that can live beside existing vocab metadata rather than forming a parallel system.
+Authoring more RFC 027-style metadata and desugar hooks in Incan is a larger rewrite that this RFC deliberately does not specify. The compatibility requirement is that `pub vocab` extension properties produce metadata that can live beside existing vocab metadata rather than forming a parallel system.
 
 ### Relationship to Rust-shaped extension behavior
 
@@ -402,7 +402,7 @@ This RFC is additive. Existing code that does not import a vocabulary is unaffec
 4. **A metadata-only DSL such as `unit_vocab` with `constructor = ...`.** Rejected as the main authoring model because it asks authors to maintain a parallel metadata table and provides places to lie about purity, const behavior, and lowering.
 5. **String-based units such as `unit(3, "days")`.** Easy to implement but loses checked names, completion, docs, refactoring, and source-level type evidence.
 6. **Only support numeric unit receivers.** Too narrow. Test-driving the syntax shows `FrozenStr` and custom nominal overlays are legitimate import-scoped extension-property use cases.
-7. **Rewrite all vocab authoring in Incan now.** Directionally attractive, but too broad for this RFC. RFC 108 should align with that future without owning the desugarer/runtime rewrite.
+7. **Rewrite all vocab authoring in Incan.** Directionally attractive, but too broad for this RFC. RFC 108 should align with that direction without owning the desugarer/runtime rewrite.
 
 ## Drawbacks
 
@@ -417,7 +417,7 @@ This RFC is additive. Existing code that does not import a vocabulary is unaffec
 
 This section is non-normative. A practical implementation can model `pub vocab` declarations as producers of checked vocabulary metadata. During symbol collection or typechecking, each `property name on ReceiverType -> ResultType:` declaration is checked as a property body with an explicit receiver binding. The resulting extension-property facts are attached to the vocabulary symbol and serialized with package metadata. Member lookup asks ordinary owned members first, then active extension-property facts, and lowering emits a static call or generated helper for the selected property body.
 
-Existing RFC 027 metadata and desugarer artifacts can remain valid. `pub vocab` should produce compatible metadata records for the extension-property subset, allowing future Incan-authored vocab declarations to grow beside current Rust companion crates.
+Existing RFC 027 metadata and desugarer artifacts can remain valid. `pub vocab` should produce compatible metadata records for the extension-property subset, allowing Incan-authored vocab declarations to grow beside Rust companion crates.
 
 ## Layers affected
 

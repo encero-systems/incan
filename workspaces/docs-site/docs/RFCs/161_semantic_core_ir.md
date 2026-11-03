@@ -25,7 +25,7 @@ This is a strategic RFC. It defines SCIR, the semantic core of Incan: a small, c
 - a `class` becomes a record with its implementations and trait adoptions;
 - an `error` becomes an enum or record with its error implementation.
 
-Compiler-owned vocabulary normalizes the same way, and library vocabulary under RFC 160 may target SCIR in a later schema version. RFC 104's capabilities are part of the core, not a layer on top. A normalization cannot introduce, hide or drop authority-bearing work. A function's capability requirements are derived from its SCIR. RFC 102's inspection surface and RFC 106's graph read declarations, edges and authority from one place. SCIR is not part of 0.6. The 0.7 program settles this semantic contract; full implementation is unscheduled and is not promised for 0.7, 0.8 or 1.0. This RFC also lists the constraints 0.6 work keeps so the design stays open.
+Compiler-owned vocabulary normalizes the same way, and library vocabulary under RFC 160 may target SCIR in a `std.vocab` schema version. RFC 104's capabilities are part of the core, not a layer on top. A normalization cannot introduce, hide or drop authority-bearing work. A function's capability requirements are derived from its SCIR. RFC 102's inspection surface and RFC 106's graph read declarations, edges and authority from one place. This RFC also lists the constraints compiler work keeps so the design stays open.
 
 ## Core model
 
@@ -66,14 +66,13 @@ Capabilities belong in the same place. RFC 104 makes authority explicit at bound
 - Express surface constructs as named normalization rules with complete provenance.
 - Make capability identity part of every authority-bearing core operation, and derive capability requirements from the core.
 - Give RFC 102 inspection, RFC 104 enforcement and receipts, and RFC 106 graph queries one source of declarations, edges and authority.
-- Let compiler-owned vocabulary, and later library vocabulary, normalize to the same core.
+- Let compiler-owned and library vocabulary normalize to the same core.
 - Keep backends construct-agnostic: they lower SCIR, not `model` or `class`.
 
 ## Non-Goals
 
-- Shipping SCIR in 0.6. This RFC sets its direction and the constraints 0.6 keeps.
-- A user-writable SCIR syntax. The versioned inspection view is read-only; a future separate proposal may define a writable dialect once the semantic contract stabilizes.
-- Changing the meaning of any surface construct. Normalization must preserve today's semantics exactly.
+- A user-writable SCIR syntax. The versioned inspection view is read-only.
+- Changing the meaning of any surface construct. Normalization must preserve its semantics exactly.
 - Turning capabilities into effect types in user signatures. RFC 104's usability rule stands: requirements are derived and inspected, not annotated on every function.
 - A new backend. SCIR lowers to the existing native plan and the pinned compiler adapter.
 
@@ -129,7 +128,7 @@ error: default for field `y` of model `Point` has type `str`, expected `int`
 
 ### The core
 
-- Every checked Incan program must have exactly one SCIR form. Backends must consume only SCIR once it ships.
+- Every checked Incan program must have exactly one SCIR form. Backends must consume only SCIR.
 - SCIR declarations are records, enums, traits, implementations, functions and capability declarations.
 - SCIR bodies are made of places, operations and structured control flow.
 - Every value use in a body must be one of copy, move, shared loan or exclusive loan. Checking decides this, and later stages must not re-derive it.
@@ -143,7 +142,7 @@ error: default for field `y` of model `Point` has type `str`, expected `int`
 - Each surface construct must be defined by a named normalization rule onto SCIR. A rule must preserve the construct's checked meaning exactly.
 - Diagnostics raised while checking or lowering SCIR must be rendered through provenance, in the terms of the surface construct the author wrote.
 - Compiler-owned vocabulary must normalize through the same rules.
-- Library vocabulary under RFC 160 may target SCIR in a later `std.vocab` schema version. Until then, it continues to produce canonical surface syntax that normalizes like authored source.
+- Library vocabulary under RFC 160 may target SCIR in a `std.vocab` schema version. Otherwise, it produces canonical surface syntax that normalizes like authored source.
 
 ### Capabilities
 
@@ -174,28 +173,28 @@ A public function's effective derived capability requirements must be part of it
 
 ### Relationship to the checked body representation
 
-The native route already has a checked body representation with explicit Copy, Move, Clone, Borrow and MutBorrow facts and canonical declaration identities. The intended path is convergence: that representation becomes SCIR's body half, and a definition arena supplies SCIR's records, enums and implementations. A first production step would translate one existing checked workload into SCIR and compare its native plan and execution with the current lowering, while the current path stays available. Widening follows only when ownership, unwind behavior, diagnostics and package identity match.
+The native route already has a checked body representation with explicit Copy, Move, Clone, Borrow and MutBorrow facts and canonical declaration identities. The intended path is convergence: that representation becomes SCIR's body half, and a definition arena supplies SCIR's records, enums and implementations.
 
-### Constraints 0.6 keeps (non-normative)
+### Constraints that keep SCIR open (non-normative)
 
-So that 0.6 does not foreclose SCIR, 0.6 work keeps these properties:
+So that compiler work does not foreclose SCIR, it keeps these properties:
 1. A fact lives once, in the checker or the checked body representation. The lowering reads it and does not re-derive or compensate for it.
 2. Checked body nodes keep canonical identities and source spans. Work that touches span carriers adds the surface construct that produced a node rather than dropping it.
 3. Ownership decisions stay explicit facts in the checked body representation, never inferred by the lowering.
 4. Capability-bearing standard operations are identified by their RFC 104 capability identity at the declaration, never by name matching in a backend.
 5. The native plan stays construct-agnostic: it gains no operation specific to `model`, `class` or `error`.
-6. RFC 160's interchange stays a versioned, structured syntax model, so a later schema version can target SCIR.
+6. RFC 160's interchange stays a versioned, structured syntax model, so a schema version can target SCIR.
 
 ### Relationship to RFC 160 and source surfaces
 
-RFC 160 desugarers return canonical surface syntax. Vocabulary, dialects and frontends under RFC 162 enter the compiler the same way. SCIR is where all of them meet. A future separate proposal could define a writable SCIR dialect for code that needs precise control of ownership and layout. This RFC commits to inspectable facts, not another authored source language.
+RFC 160 desugarers return canonical surface syntax. Vocabulary, dialects and frontends under RFC 162 enter the compiler the same way. SCIR is where all of them meet. This RFC commits to inspectable facts, not another authored source language.
 
 ## Alternatives considered
 
 1. **Keep per-construct checking and lowering.** This was rejected because each construct stays implemented twice, each new surface feature widens both paths, and authority-bearing work produced by desugaring or derivation has no single place to be checked.
 2. **Use Rust's internal representation as the core.** This was rejected because Incan's ownership rules (RFC 129), receivers and authority model differ from Rust's. The core must express Incan semantics, then lower to the pinned compiler.
 3. **Capabilities as effect types in signatures.** This was rejected per RFC 104: requirements are derived and inspected, so ordinary code stays free of capability annotations.
-4. **Expose SCIR as user syntax from the start.** This was deferred because a writable core is a long-term compatibility commitment, and the core should stabilize before users depend on it.
+4. **Expose SCIR as user syntax.** This was rejected because a writable core is a long-term compatibility commitment.
 
 ## Drawbacks
 
@@ -210,13 +209,13 @@ RFC 160 desugarers return canonical surface syntax. Vocabulary, dialects and fro
 - **Checked body representation**: converges into SCIR's body half; gains complete provenance.
 - **IR Lowering**: lowers SCIR to the native plan; construct-specific lowering is removed.
 - **Stdlib / Runtime**: capability identities on authority-bearing standard operations; receipts keyed by SCIR operations.
-- **Vocabulary**: compiler-owned surfaces normalize to SCIR; a later `std.vocab` schema version lets library desugarers target it.
+- **Vocabulary**: compiler-owned surfaces normalize to SCIR; a `std.vocab` schema version lets library desugarers target it.
 - **LSP / Tooling**: `incan inspect` shows SCIR forms; RFC 102 and RFC 106 read SCIR facts; diagnostics render through provenance.
 
 ## Design Decisions
 
-- SCIR is the retained name. The 0.7 scope is design closure; full compiler migration remains unscheduled.
-- Inspection is versioned and read-only. A writable core dialect requires a separate source-language proposal; exposing complete facts to people and tools does not itself define an authored syntax.
+- SCIR is the retained name.
+- Inspection is versioned and read-only. A writable core dialect is not part of this design; exposing complete facts to people and tools does not itself define an authored syntax.
 - Checked generic definitions own semantics. Concrete instances are derived, origin-linked facts; inspection distinguishes both without creating a second semantic authority.
 - Effective public capability requirements are compatibility facts. New required authority must be reported with provenance and deliberately accepted; existing grants are not silently expanded.
-- Selecting the first migration workload is engineering preparation, not an unresolved language policy. Each migrated boundary must replace the authority it assumes and demonstrate ownership, execution, unwind, diagnostics and identity parity before widening. No particular first construct or release date is promised by this design.
+- Each migrated boundary must replace the authority it assumes and demonstrate ownership, execution, unwind, diagnostics and identity parity before widening.

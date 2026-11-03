@@ -57,7 +57,7 @@ There is strong prior art for a Rust-hosted Python-like regex engine. RustPython
 - This RFC does not standardize the third-party Python `regex` package or PCRE2 as Incan's public contract.
 - This RFC does not make `std.re.Pattern` and `std.regex.Regex` the same public type.
 - This RFC does not require regex literals or new parser-level string syntax.
-- This RFC does not include bytes patterns, bytes inputs, or locale-dependent matching. A later RFC may add a separate typed bytes-pattern surface.
+- This RFC does not include bytes patterns, bytes inputs, or locale-dependent matching.
 - This RFC does not expose CPython's diagnostic-only `DEBUG` flag or print backend matcher internals as a side effect of compilation.
 - This RFC does not require a public API for arbitrary engine selection through one overloaded constructor.
 
@@ -172,11 +172,11 @@ def contains_repeated_word(text: str) -> Result[bool, ReError]:
 
 `std.re` must additionally support the CPython 3.14 `re` string-pattern contract, including positive lookahead `(?=...)`, negative lookahead `(?!...)`, fixed-width positive lookbehind `(?<=...)`, fixed-width negative lookbehind `(?<!...)`, numbered pattern backreferences such as `\1`, named pattern backreferences such as `(?P=name)`, non-capturing groups `(?:...)`, comments `(?#...)`, named captures `(?P<name>...)`, conditional subpatterns `(?(id/name)yes|no)`, greedy and lazy quantifiers, and atomic groups. Unsupported CPython 3.14 syntax must fail with `ReError(kind="invalid_pattern")`; it must not be accepted with different semantics.
 
-Lookbehind must require statically fixed width unless a later RFC explicitly chooses a different compatibility target. Backreferences must refer to existing capturing groups and must be rejected when their target is invalid or semantically impossible under the accepted baseline.
+Lookbehind must require statically fixed width. Backreferences must refer to existing capturing groups and must be rejected when their target is invalid or semantically impossible under the accepted baseline.
 
 ### Flags
 
-`std.re` must expose `NOFLAG`, `ASCII`, `IGNORECASE`, `MULTILINE`, `DOTALL`, `VERBOSE`, and `UNICODE`, plus aliases `A`, `I`, `M`, `S`, `X`, and `U`. `UNICODE` must be accepted as a no-op compatibility flag for string patterns because Unicode matching is already the default. `LOCALE`, `L`, and `DEBUG` must not be exposed; passing their CPython numeric bits must return `ReError(kind="invalid_flag")` rather than silently acting as a no-op or printing backend internals. A future bytes-pattern RFC may define locale behavior under a separate typed contract.
+`std.re` must expose `NOFLAG`, `ASCII`, `IGNORECASE`, `MULTILINE`, `DOTALL`, `VERBOSE`, and `UNICODE`, plus aliases `A`, `I`, `M`, `S`, `X`, and `U`. `UNICODE` must be accepted as a no-op compatibility flag for string patterns because Unicode matching is already the default. `LOCALE`, `L`, and `DEBUG` must not be exposed; passing their CPython numeric bits must return `ReError(kind="invalid_flag")` rather than silently acting as a no-op or printing backend internals.
 
 Flags must compose with bitwise OR. APIs accepting `flags` must reject unknown bits and combinations that the module does not support.
 
@@ -284,7 +284,7 @@ pub enum FindAll:
 
 A matcher step is one dispatch of the `std.re` matching engine's compiled instruction stream, including failed transitions, candidate-start advances, zero-width assertion work, and backtracked retries. The counter resets for each top-level API call and is shared across all candidate start positions, iterator results, splits, or substitutions produced by that call. Step totals are deterministic for the same Incan release, pattern, flags, and input; they are a safety ceiling rather than a cross-release performance metric, so compiler/runtime optimizations may change the count in a later release.
 
-Every matching API must return `Result` from the first public release. Exceeding `max_steps` must return `ReError(kind="budget_exceeded")`, and exceeding `max_results` while producing `finditer`, `findall`, or captured split output must return `ReError(kind="result_limit_exceeded")`. One `finditer` match, one whole/single-capture `findall` item, each captured value inside a multi-capture `findall` item, and each returned split field or capture consume one result slot. `finditer` must eagerly snapshot its bounded results before returning the ordinary Incan iterator, matching the ownership pattern already used by `std.regex`; no partial iterator or collection may escape. Substitution remains subject to `max_steps`; replacement allocation follows the ordinary runtime memory contract because callable output size is application behavior rather than matcher result cardinality. Wall-clock timeouts and ambient runtime policy are not part of this contract because they are nondeterministic and hide cost from the call site.
+Every matching API must return `Result`. Exceeding `max_steps` must return `ReError(kind="budget_exceeded")`, and exceeding `max_results` while producing `finditer`, `findall`, or captured split output must return `ReError(kind="result_limit_exceeded")`. One `finditer` match, one whole/single-capture `findall` item, each captured value inside a multi-capture `findall` item, and each returned split field or capture consume one result slot. `finditer` must eagerly snapshot its bounded results before returning the ordinary Incan iterator, matching the ownership pattern already used by `std.regex`; no partial iterator or collection may escape. Substitution remains subject to `max_steps`; replacement allocation follows the ordinary runtime memory contract because callable output size is application behavior rather than matcher result cardinality. Wall-clock timeouts and ambient runtime policy are not part of this contract because they are nondeterministic and hide cost from the call site.
 
 ### Relationship to `std.regex`
 
@@ -310,9 +310,9 @@ Python's module-level helpers cache compiled patterns as an implementation detai
 
 ### Bytes and locale behavior
 
-This RFC standardizes only `str` patterns and `str` inputs. Python's bytes-pattern surface is deliberately deferred because preserving static type separation requires its own `BytesPattern`-style contract rather than a runtime-typed `Pattern`. A later RFC may add that surface, but bytes and string patterns must never be mixed in one call.
+This RFC standardizes only `str` patterns and `str` inputs. Python's bytes-pattern surface is not part of this design because preserving static type separation requires its own `BytesPattern`-style contract rather than a runtime-typed `Pattern`. Bytes and string patterns must never be mixed in one call.
 
-`LOCALE` is excluded from the string API rather than accepted as a no-op. Locale-sensitive matching depends on ambient process state and is meaningful in CPython only for bytes patterns; exposing it here would undermine deterministic matching. Any future locale support must arrive with the bytes-pattern design and define its locale source and reproducibility contract explicitly.
+`LOCALE` is excluded from the string API rather than accepted as a no-op. Locale-sensitive matching depends on ambient process state and is meaningful in CPython only for bytes patterns; exposing it here would undermine deterministic matching. Locale support belongs with a bytes-pattern design, which must define its locale source and reproducibility contract explicitly.
 
 ### Diagnostics and docs
 
@@ -324,7 +324,7 @@ Expanding `std.regex` to accept Pythonic features was rejected because it would 
 
 Adding a `mode="python"` or `engine="backtracking"` argument to `Regex(...)` was rejected because it overloads one type with incompatible promises. It also makes library APIs ambiguous: accepting `Regex` would no longer reveal whether callers may pass a backtracking-capable pattern.
 
-Creating a third-party package instead of `std.re` was rejected for the long-term design because Pythonic regex is central enough to the Python-shaped Incan story. Third-party packages can still explore broader engines such as PCRE2 or the Python `regex` package, but the standard Python-like surface should be stable in stdlib.
+Creating a third-party package instead of `std.re` was rejected because Pythonic regex is central enough to the Python-shaped Incan story. Third-party packages can still explore broader engines such as PCRE2 or the Python `regex` package, but the standard Python-like surface should be stable in stdlib.
 
 Using an existing Rust crate such as a PCRE binding was considered. It may be useful for experimentation, but a direct dependency on a native engine can complicate portability, sandboxing, licensing review, and WASM support. A custom Incan-owned engine family gives the project stronger control over diagnostics, limits, and integration with `Result` and `Option`.
 
@@ -361,10 +361,10 @@ The engine family must expose enough metadata for `std.regex` to reject backtrac
 
 1. **Compatibility has a named baseline.** The required string-pattern surface targets the documented CPython 3.14 `re` contract and an imported compatibility corpus. Incan's specified `Result[..., ReError]`, `Option`, `FindAll`, budget, and bytes/locale deviations take precedence over Python's dynamic or exception-based shapes.
 2. **Every match has deterministic work and materialization budgets.** `MatchBudget` stores positive `max_steps` and `max_results` limits, defaults to `10_000_000` and `100_000`, and can be stored at compilation or overridden per call. Every `std.re` pattern uses the same instrumented Python-compatible backtracking engine, including safe-regular patterns, so step accounting does not switch with backend selection. The API does not use wall-clock timeouts or ambient policy.
-3. **One error type covers the complete module.** Every recoverable failure uses `ReError`, and `PatternError` plus lowercase `error` are aliases rather than distinct types. This keeps `?` propagation valid in current Incan and avoids unsupported `Result[T, E1 | E2]` pseudotypes. An absent match remains `Ok(None)`; invalid patterns, templates, flags, groups, ranges, budgets, exhausted steps, and exhausted result limits use stable `ReError.kind()` categories. `finditer` eagerly snapshots at most `max_results` matches before its iterator escapes, so a failure cannot leave a partial result.
+3. **One error type covers the complete module.** Every recoverable failure uses `ReError`, and `PatternError` plus lowercase `error` are aliases rather than distinct types. This keeps `?` propagation valid and avoids unsupported `Result[T, E1 | E2]` pseudotypes. An absent match remains `Ok(None)`; invalid patterns, templates, flags, groups, ranges, budgets, exhausted steps, and exhausted result limits use stable `ReError.kind()` categories. `finditer` eagerly snapshots at most `max_results` matches before its iterator escapes, so a failure cannot leave a partial result.
 4. **`findall` is included through one typed tagged result.** `FindAll.WholeMatches`, `FindAll.SingleCapture`, and `FindAll.CaptureGroups` preserve the pattern's fixed capture shape, and unmatched captures stay `None`.
 5. **Invalid group references are checked errors.** Existing but unmatched groups retain Python's `None` and `-1` sentinels inside `Ok`; negative, out-of-range, or unknown references return `ReError(kind="invalid_group")`.
 6. **`ReError` is canonical and Python names are aliases.** `PatternError` and lowercase `error` exist for compatibility, while Incan documentation and new code use `ReError`.
-7. **The RFC is string-only.** Bytes patterns and inputs require a separate typed surface and are deferred to a later RFC; they must not be smuggled through the string `Pattern` API.
-8. **`LOCALE` is excluded rather than ignored.** The string surface does not expose `LOCALE` or `L`, and the corresponding numeric bit is rejected. A future bytes RFC must define locale sourcing and determinism before adding it.
+7. **The RFC is string-only.** Bytes patterns and inputs require a separate typed surface and are not part of this design; they must not be smuggled through the string `Pattern` API.
+8. **`LOCALE` is excluded rather than ignored.** The string surface does not expose `LOCALE` or `L`, and the corresponding numeric bit is rejected.
 9. **Changing to the safe regex contract requires explicit recompilation.** There is no direct `std.re.Pattern` to `std.regex.Regex` conversion. Users recompile original source and mapped flags through `std.regex`, which independently rejects unsupported syntax.

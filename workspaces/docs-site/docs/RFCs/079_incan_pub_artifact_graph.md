@@ -57,7 +57,6 @@ RFC 125 defines the Loaf registry foundation, superseding RFC 034, while RFC 117
 - Defining commercial marketplace ranking, billing, telemetry, or recommendation algorithms.
 - Replacing RFC 125 Loaf package identity, trust, or transport semantics, or RFC 117 project and dependency authority.
 - Letting `incan.pub` compute or apply receiver-side project mutation plans.
-- Requiring every artifact type to ship in the first `incan.pub` implementation.
 - Defining AI model execution semantics. RFC 080 owns AI asset metadata and execution constraints.
 
 ## Guide-level explanation
@@ -117,7 +116,7 @@ The exact syntax is not normative in this Draft. The requirement is that artifac
 
 ### Artifact kinds
 
-The artifact graph should support these kinds over time:
+The artifact graph should support these kinds:
 
 - `package`
 - `library`
@@ -209,7 +208,7 @@ Registry state changes should be represented as signed events. Event kinds inclu
 
 This keeps the useful properties usually sought from blockchain-style designs: tamper evidence, provenance, auditable state transitions, and independently verifiable artifact identity. It avoids making consensus, token economics, or irreversible public-chain writes part of the core `incan.pub` contract. Moderation, malware response, accidental secret publication, legal takedowns, private catalogs, and key rotation all require registry-controlled state transitions that remain auditable without pretending every piece of state should be globally immutable.
 
-The event log should be append-only from the registry's perspective, with corrections represented by later events rather than in-place rewrites. Implementations may publish Merkle checkpoints or anchor event-log roots in an external transparency system later, but that is an optional hardening layer. It must not be required for the first useful artifact graph.
+The event log should be append-only from the registry's perspective, with corrections represented by later events rather than in-place rewrites. Implementations may publish Merkle checkpoints or anchor event-log roots in an external transparency system, but that is an optional hardening layer. It must not be required for the artifact graph.
 
 ## Design details
 
@@ -254,13 +253,12 @@ Rejected for the core `incan.pub` design. Blockchain infrastructure adds operati
 - A graph model is more complex than a package index.
 - Artifact cards require authors to maintain metadata.
 - Discovery quality depends on consistent metadata and relationship hygiene.
-- The first implementation must avoid overbuilding marketplace features before package basics are stable.
 
 ## Implementation architecture
 
-The recommended implementation shape is to start by indexing package-provided relationships that already exist in descriptors and manifests. Over time, the registry can add explicit card metadata, artifact pages, advisory relationships, AI asset nodes, and richer graph queries.
+The recommended implementation shape indexes package-provided relationships that already exist in descriptors and manifests, and adds explicit card metadata, artifact pages, advisory relationships, AI asset nodes, and richer graph queries on top of them.
 
-This RFC is intentionally a registry graph direction, not a blocker for the local lifecycle slice. RFC 074, RFC 075, RFC 076, and RFC 078 must be able to work with built-in descriptors and explicit local sources before `incan.pub` provides rich graph semantics. The first useful registry implementation should therefore be narrow: index package-provided relationships, expose source identity and compatibility metadata, and avoid requiring the full artifact taxonomy before local lifecycle behavior can ship.
+The local lifecycle does not depend on this RFC. RFC 074, RFC 075, RFC 076, and RFC 078 must be able to work with built-in descriptors and explicit local sources without `incan.pub` graph semantics.
 
 ## Layers affected
 

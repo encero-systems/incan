@@ -35,7 +35,7 @@ Without a standard archive module, users either write unsafe extraction glue cod
 ## Non-Goals
 
 - Replacing specialized packaging toolchains.
-- Covering every archive format in the first contract.
+- Covering every archive format.
 - Embedding package manager semantics into archive APIs.
 - Implicitly trusting archive paths, links, or metadata from untrusted archives.
 
@@ -100,9 +100,7 @@ Each submodule exposes:
 
 ### Format set
 
-Initial format set is fixed to `tar` and `zip`.
-
-Other formats may be added in later RFCs, but this RFC does not leave the initial set open.
+The format set is fixed to `tar` and `zip`; this RFC does not leave it open.
 
 ### Compression layering
 
@@ -204,7 +202,7 @@ The module should prioritize cross-tool compatibility with mainstream tar/zip to
 
 ## Design Decisions
 
-- The initial format set is `tar` and `zip`.
+- The format set is `tar` and `zip`.
 - `std.archive` is container-focused and is not folded into `std.fs` or `std.compression`.
 - `tar` compression is represented via explicit `compression=...` options.
 - Safe extraction is the default (`policy="safe"`), and unsafe behavior is explicit opt-in.

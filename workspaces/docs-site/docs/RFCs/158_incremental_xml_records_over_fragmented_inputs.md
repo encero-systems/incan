@@ -94,7 +94,7 @@ To process microbatches, a consumer must constrain both record count and retaine
 - A yielded record must be structurally complete and independently owned or governed by an explicit checked borrow lifetime. The example proposes owned records.
 - Retained parser state and record storage must obey explicit byte/depth limits. A giant attribute outside a selected record or growing namespace context must not evade those limits. Limit exhaustion must be a typed error, not uncontrolled allocation or silent truncation.
 - A batch consumer must apply both count and retained-byte limits, including a policy for one record larger than its batch budget.
-- The parser must not resolve external entities, access network resources, or expand unbounded entities implicitly. Any future supported external resolution needs explicit capability and resource limits.
+- The parser must not resolve external entities, access network resources, or expand unbounded entities implicitly. Any supported external resolution needs explicit capability and resource limits.
 
 ### Failure and completion
 
@@ -111,7 +111,7 @@ To process microbatches, a consumer must constrain both record count and retaine
 
 The proposed synchronous foundation builds on BinaryReader's bounded byte contract and RFC 115 fallible iteration. An async source needs a corresponding bounded read contract and RFC 142 integration, without blocking the async executor. Shared fragment concatenation belongs to I/O because JSONL and other formats can also consume a logical byte stream; XML-specific structural completion belongs to std.xml.
 
-The recommended safety boundary is bounded complete-record delivery with explicit selector and parser limits. Typed XML decoding can later reuse checked schemas and validation, but namespace/attribute/text mapping requires its own decisions. Resuming after a checkpoint is also not the same as restarting a parser at an arbitrary record byte offset: namespace and document context may be needed.
+The recommended safety boundary is bounded complete-record delivery with explicit selector and parser limits. Typed XML decoding can reuse checked schemas and validation, but namespace/attribute/text mapping requires its own decisions. Resuming after a checkpoint is also not the same as restarting a parser at an arbitrary record byte offset: namespace and document context may be needed.
 
 ## Alternatives considered
 

@@ -18,7 +18,7 @@
 
 ## Summary
 
-Introduce bracketed sequence patterns for exact-length matching of built-in lists and frozen lists. A pattern such as `[name, alias, role, digest]` checks the length and matches each element with an ordinary nested pattern, making named values available only after the whole match succeeds. Sequence patterns participate in existing pattern-bearing constructs and proposed fallback bindings without changing tuple patterns, consuming arbitrary iterators, or introducing implicit copies. Capturing a variable-length remainder is left for separate design work.
+Introduce bracketed sequence patterns for exact-length matching of built-in lists and frozen lists. A pattern such as `[name, alias, role, digest]` checks the length and matches each element with an ordinary nested pattern, making named values available only after the whole match succeeds. Sequence patterns participate in existing pattern-bearing constructs and proposed fallback bindings without changing tuple patterns, consuming arbitrary iterators, or introducing implicit copies. Capturing a variable-length remainder is not part of this design.
 
 ## Motivation
 
@@ -167,9 +167,9 @@ Borrowed element access must remain tied to its source lifetime. Mutation permis
 
 ## Design details
 
-### Exact shape before remainder capture
+### Exact shape without remainder capture
 
-Exact-length patterns solve a concrete decoding problem without deciding whether a captured remainder is a new owned list, a borrowed view, or a collection-specific value. A later proposal may define `[first, *remaining]`, including its type, ownership, and allocation behavior. This RFC does not reserve an implicit copying policy for that extension.
+Exact-length patterns solve a concrete decoding problem without deciding whether a captured remainder is a new owned list, a borrowed view, or a collection-specific value. Remainder capture such as `[first, *remaining]`, including its type, ownership, and allocation behavior, is not part of this design. This RFC does not reserve an implicit copying policy for it.
 
 ### Lists and tuples remain different
 
@@ -191,7 +191,7 @@ This is additive pattern syntax. Existing list expressions, list comprehensions,
 - **Use tuple patterns on lists.** Saves punctuation choices but hides the distinction between homogeneous runtime-sized lists and statically shaped tuples.
 - **Convert lists to tuples before matching.** Requires an additional fallible shape conversion and creates another representation solely for extraction.
 - **Match every Iterable.** Can consume generators, perform effects, or never finish determining a length. Built-in finite sequences provide a predictable matching contract.
-- **Include starred captures immediately.** Useful for token streams, but their borrowing and allocation behavior require a separate decision. Exact-length decoding does not need to depend on that decision.
+- **Include starred captures.** Useful for token streams, but their borrowing and allocation behavior require a separate decision. Exact-length decoding does not need to depend on that decision.
 
 ## Drawbacks
 

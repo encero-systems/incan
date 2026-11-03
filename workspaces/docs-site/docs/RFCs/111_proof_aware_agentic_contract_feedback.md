@@ -29,7 +29,7 @@ This RFC defines proof-aware contracts for Incan: a source-level contract surfac
 4. **Contracts are source facts:** contracts are not comments, prompt text, or hidden generated-Rust assertions; they are checked Incan declarations with source spans, metadata, and documentation presence.
 5. **Verification is outcome-based:** the compiler reports whether each obligation is proved, violated, unknown, unsupported, or enforced at runtime instead of collapsing all proof failures into a generic type error.
 6. **Runtime fallback is explicit:** unproved obligations may remain protected by generated runtime checks when that is sound and configured, but that fallback is visible in diagnostics, metadata, and graph facts.
-7. **Proof checkers are providers:** SMT solvers, abstract interpreters, range analyzers, symbolic evaluators, or future theorem-prover bridges are verification providers behind a stable Incan outcome vocabulary; no provider owns the language surface.
+7. **Proof checkers are providers:** SMT solvers, abstract interpreters, range analyzers, symbolic evaluators, or theorem-prover bridges are verification providers behind a stable Incan outcome vocabulary; no provider owns the language surface.
 8. **The graph carries repair context:** RFC 106 is the delivery substrate for contract declarations, generated obligations, outcomes, counterexamples, runtime checks, and proof receipts so agents receive targeted repair context.
 9. **Proof is bounded:** Incan proves a clearly defined subset and records assumptions; it must not claim full program correctness beyond the authored contracts and supported reasoning fragment.
 10. **Trust is inspectable:** every proof result must record enough provenance for tools to distinguish compiler-local checks, solver-backed checks, runtime checks, cached results, unsupported fragments, and degraded work-in-progress output.
@@ -71,7 +71,7 @@ This also keeps Incan honest about correctness. A spec can be wrong, incomplete,
 - This RFC does not prove correctness of specifications themselves.
 - This RFC does not infer that a source contract was human-approved, policy-approved, complete, suitable for a particular business purpose, or true about the external world merely because it parsed or was proved.
 - This RFC does not remove runtime validation from validated newtypes, model constructors, or library contracts unless a matching proof result and configuration justify skipping the redundant generated check.
-- This RFC does not define every possible contract predicate in the first release.
+- This RFC does not define every possible contract predicate.
 - This RFC does not make agent output correct by default; it makes agent output more mechanically checkable against human-authored contracts.
 - This RFC does not require remote model inference, remote solver execution, or remote graph indexing.
 
@@ -197,7 +197,7 @@ This RFC defines these contract families:
 - loop termination hints written as `decreases`;
 - model or declaration invariants when a future RFC or a resolved design decision admits that syntax.
 
-Contract declarations must be typechecked before they produce verification obligations. A contract expression must not require arbitrary runtime side effects to evaluate. Contract expressions may refer to function parameters, visible immutable facts, fields of values in scope, prior values through an explicit old-value surface when supported, and local return bindings referenced by nearby `ensures` clauses. A future grammar may also admit a dedicated returned-value binding, but this RFC's examples use explicit locals.
+Contract declarations must be typechecked before they produce verification obligations. A contract expression must not require arbitrary runtime side effects to evaluate. Contract expressions may refer to function parameters, visible immutable facts, fields of values in scope, prior values through an explicit old-value surface when supported, and local return bindings referenced by nearby `ensures` clauses. The contract grammar may also admit a dedicated returned-value binding, but this RFC's examples use explicit locals.
 
 An `assert` statement is not a contract declaration under this RFC. It retains RFC 018's always-on runtime assertion semantics: it checks an implementation fact at a specific program point, may produce a local verification obligation, and may become a fact available to later obligations only after that assertion is itself checked, proved, or runtime-protected. An implementation-local `assert` must not be exported as a caller-visible precondition or postcondition unless the source also declares `requires` or `ensures`.
 
@@ -239,7 +239,7 @@ Every verification result must identify the exact contract declaration or obliga
 
 ### Build and verification modes
 
-The ordinary check/build workflow should remain usable without requiring every project to satisfy strict formal verification. Function contracts and loop invariants are opt-in unless a package, workspace, CI profile, or future policy requires them for a selected scope. In a permissive mode, an `unknown` or `unsupported` obligation may continue when a sound runtime check protects the property and the diagnostic policy allows it. In a strict verification mode, `unknown`, `unsupported`, and unprotected runtime-only obligations must fail unless explicitly allowed by a local policy.
+The ordinary check/build workflow should remain usable without requiring every project to satisfy strict formal verification. Function contracts and loop invariants are opt-in unless a package, workspace, CI profile, or policy requires them for a selected scope. In a permissive mode, an `unknown` or `unsupported` obligation may continue when a sound runtime check protects the property and the diagnostic policy allows it. In a strict verification mode, `unknown`, `unsupported`, and unprotected runtime-only obligations must fail unless explicitly allowed by a local policy.
 
 The compiler must fail for `violated` obligations that are not intentionally guarded by a reachable error path accepted by the contract. For example, a failed callee precondition is a compile-time error in strict checked code, while a validated constructor may remain a fallible runtime path if the surrounding API contract explicitly returns `Result`.
 
@@ -286,7 +286,7 @@ These records must preserve RFC 106 provenance. A solver-backed result must not 
 
 ### Contract syntax
 
-This RFC intentionally starts with readable keyword contracts instead of importing Ada/SPARK, Dafny, F*, WhyML, or ACSL syntax. The exact grammar remains open, but the source shape should look like ordinary Incan:
+This RFC intentionally uses readable keyword contracts instead of importing Ada/SPARK, Dafny, F*, WhyML, or ACSL syntax. The exact grammar remains open, but the source shape should look like ordinary Incan:
 
 ```incan
 def normalize_score(raw: int) -> Percentage:
@@ -301,13 +301,13 @@ def normalize_score(raw: int) -> Percentage:
 
 In the sketch above, `raw` is the ordinary function parameter. `result` is also ordinary source code: the author binds the value that will be returned, then writes `ensures` clauses over that value before returning it. This avoids a hidden keyword while still giving the verifier a clear postcondition target. The exact grammar remains open: Incan must decide whether `ensures` attaches only to the immediately following return, to the enclosing function, or to both through a dedicated contract block.
 
-Contract statements should appear close to the code they constrain. Function-level `requires` should appear before executable statements. `ensures` should appear near the return value it checks, after the value is bound and before the corresponding `return`, unless a future grammar chooses a dedicated function-header contract block. Loop-level `invariant` and `decreases` should appear at the start of the loop body. The formatter should preserve that visual grouping.
+Contract statements should appear close to the code they constrain. Function-level `requires` should appear before executable statements. `ensures` should appear near the return value it checks, after the value is bound and before the corresponding `return`, unless the contract grammar chooses a dedicated function-header contract block. Loop-level `invariant` and `decreases` should appear at the start of the loop body. The formatter should preserve that visual grouping.
 
 `assert` is deliberately separate from `ensures`. An `assert` statement checks a fact at the point where it appears in the implementation; an `ensures` clause declares a postcondition of the function that callers, documentation, verification metadata, and RFC 106 graph context can rely on. A verifier may use a proved `assert` as local evidence for later obligations, but `assert` should not be used as a synonym for "this function promises this after return."
 
 ### Supported predicate fragment
 
-The first proof-aware fragment should be small enough to be useful and predictable. It should prioritize:
+The proof-aware fragment should be small enough to be useful and predictable. It should prioritize:
 
 - integer comparisons and bounded integer arithmetic;
 - string length, prefix, suffix, containment, split, and pattern facts for a deliberately restricted regular-language fragment;
@@ -322,7 +322,7 @@ The compiler must reject, defer, or mark unsupported predicate forms that requir
 
 ### Provider model
 
-Incan should support a provider model rather than embedding one solver identity into the language. A built-in range checker may prove simple bounds without any external tool. An SMT-backed provider may discharge richer arithmetic obligations. A future abstract interpreter may contribute runtime-error absence checks. A future theorem-prover bridge may validate specialized library contracts.
+Incan should support a provider model rather than embedding one solver identity into the language. A built-in range checker may prove simple bounds without any external tool. An SMT-backed provider may discharge richer arithmetic obligations. An abstract interpreter may contribute runtime-error absence checks. A theorem-prover bridge may validate specialized library contracts.
 
 Provider output must normalize into the Incan verification outcome vocabulary. Provider-specific details may be preserved in metadata, but user-facing diagnostics and graph facts should remain stable across provider changes where possible.
 
@@ -390,7 +390,7 @@ Rejected. Dependent types can express powerful specifications, but they would ma
 
 ### Require manual proof scripts
 
-Rejected. Manual proof scripts are appropriate in some ecosystems, but they conflict with this RFC's agentic premise. Humans should write domain contracts; agents and tools should handle much of the implementation repair loop. Future advanced proof hooks may be possible, but they should not be required for the baseline.
+Rejected. Manual proof scripts are appropriate in some ecosystems, but they conflict with this RFC's agentic premise. Humans should write domain contracts; agents and tools should handle much of the implementation repair loop. Advanced proof hooks are not part of this design.
 
 ### Make solver output the public API
 
@@ -400,7 +400,7 @@ Rejected. SMT-LIB, Z3 models, prover traces, or provider-specific proof objects 
 
 This feature adds a new mental model: users must distinguish typechecking, runtime validation, proof, unknown proof results, unsupported fragments, and runtime fallback. Poor diagnostics would make that distinction frustrating.
 
-Verification can be slow or unpredictable if the proof fragment is too broad. The language must define conservative budgets, deterministic reporting, and a small first supported fragment rather than promising arbitrary proof power.
+Verification can be slow or unpredictable if the proof fragment is too broad. The language must define conservative budgets, deterministic reporting, and a small supported fragment rather than promising arbitrary proof power.
 
 Permissive runtime fallback can make some checked paths slower when obligations are not proved. Conversely, skipped checks can make proved paths faster. The performance model therefore depends on verification mode, proof outcome, and where runtime enforcement is needed.
 

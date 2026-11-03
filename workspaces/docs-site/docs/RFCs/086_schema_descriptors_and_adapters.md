@@ -17,13 +17,13 @@
 - **Written against:** v0.3
 - **Shipped in:** —
 
-!!! warning "Deferred from the 0.7 release"
+!!! warning "Not ready for implementation"
 
-    This proposal is not ready for implementation. Revisit it in 0.8 at the earliest, after practical experience with model construction, validation, declaration metadata, and structured reflection. Implementation remains unscheduled; review may move to 0.9 or later if that experience is insufficient. The earlier design below is retained for investigation, not as an accepted implementation contract.
+    This proposal is not ready for implementation. It needs practical experience with model construction, validation, declaration metadata, and structured reflection. Implementation remains unscheduled. The earlier design below is retained for investigation, not as an accepted implementation contract.
 
     Review explored field-first metadata with ordinary indented schema declarations, checked dotted field selectors, profile-specific validators and factories, and whole-record decoding for ordered source data. These explorations did not establish a stable boundary between schemas, canonical model construction, format adapters, and query or ingestion libraries. No callable-schema mapping engine or decoder-hook protocol was accepted for implementation.
 
-    References from other RFCs remain useful design context, but they do not require implementing this deferred proposal in 0.7. In particular, RFC 087's explicit metadata-reconciliation references need a focused dependency review before implementation; this deferral does not silently choose replacement syntax or weaken its accepted conflict diagnostics. Declaration-local field metadata and validation retain their owning RFC contracts.
+    References from other RFCs remain useful design context, but they do not require implementing this proposal. In particular, RFC 087's explicit metadata-reconciliation references need a focused dependency review before implementation; this status does not silently choose replacement syntax or weaken its accepted conflict diagnostics. Declaration-local field metadata and validation retain their owning RFC contracts.
 
 ## Summary
 
@@ -255,7 +255,7 @@ The extracted descriptor representation must preserve at least:
 
 An extracted target-mapping request must remain distinguishable from a mapping validated by a selected adapter. A validated projection must retain the requested mapping, the checked source field identity and constraints, adapter identity and version where available, and its compatibility outcome. Merely extracting or merging metadata must not manufacture a successful adapter validation.
 
-Blast-radius and metadata-layer systems can use this extracted descriptor to answer questions such as which warehouse columns, API properties, ODCS fields, docs pages, generated Protobuf tags, or partner projections are affected by a model field change. Those systems may attach mutable evidence, ownership, review, confidence, lineage, and rollout state to descriptor anchors, but those records remain downstream metadata unless a future RFC promotes them into the checked descriptor.
+Blast-radius and metadata-layer systems can use this extracted descriptor to answer questions such as which warehouse columns, API properties, ODCS fields, docs pages, generated Protobuf tags, or partner projections are affected by a model field change. Those systems may attach mutable evidence, ownership, review, confidence, lineage, and rollout state to descriptor anchors, but those records remain downstream metadata, not part of the checked descriptor.
 
 ### Schema blocks
 
@@ -318,7 +318,7 @@ model User:
 
 `schema from OtherModel` imports metadata by matching canonical field names. It does not import fields, types, methods, defaults, derives, or inheritance behavior. It is metadata-only reuse.
 
-A schema import must not introduce metadata for unknown fields unless the import is explicitly marked as partial-tolerant by a future RFC. Under this RFC, unknown imported fields are compile-time errors.
+A schema import must not introduce metadata for unknown fields. Unknown imported fields are compile-time errors.
 
 ### Named schema overlays
 
@@ -444,7 +444,7 @@ RFC 085 owns field metadata keys, safe metadata values, default factories, and t
 
 RFC 048 owns checked metadata extraction and stable metadata artifacts. RFC 082 owns documentation generation from checked metadata. This RFC defines the schema descriptor facts and aggregation rules those systems must preserve when model schema metadata is present.
 
-For blast-radius and metadata-layer ambitions, RFC 086 descriptors are the bridge between checked model facts and downstream projections. A schema adapter should be able to declare or expose which descriptor and overlay it consumed, so later tooling can relate a model-field change to generated SQL, JSON Schema, Protobuf, ODCS, catalog, or documentation outputs.
+For blast-radius and metadata-layer ambitions, RFC 086 descriptors are the bridge between checked model facts and downstream projections. A schema adapter should be able to declare or expose which descriptor and overlay it consumed, so downstream tooling can relate a model-field change to generated SQL, JSON Schema, Protobuf, ODCS, catalog, or documentation outputs.
 
 ### Compatibility / migration
 
@@ -481,7 +481,7 @@ When metadata belongs to a downstream projection rather than the model owner, pr
 
 Schema blocks add a second place to write field metadata. Deterministic precedence and conflict diagnostics are mandatory to avoid silent drift.
 
-External schema imports add build-input and reproducibility concerns. The feature must stay declarative and local-only unless a future RFC defines stronger supply-chain rules.
+External schema imports add build-input and reproducibility concerns. The feature must stay declarative and local-only.
 
 The descriptor API becomes a stable contract consumed by adapters, docs, package tooling, and possibly registries. Schema evolution will require versioning discipline.
 
@@ -493,7 +493,7 @@ Schema descriptors should be generated from checked model declarations after met
 
 Adapter outputs should be able to carry or reference the descriptor identity they were generated from: base model anchor, selected overlay anchors, descriptor schema version, adapter name/version where available, and source artifact identity. This does not make adapter outputs authoritative, but it gives blast-radius tooling a reliable edge from source contract to projection.
 
-External schema import support can be staged after schema descriptors, schema blocks, and overlays, but the RFC-level contract treats them as one normalized metadata model.
+The RFC-level contract treats external schema imports, schema descriptors, schema blocks, and overlays as one normalized metadata model.
 
 ## Layers affected
 

@@ -186,9 +186,9 @@ RFC 116's binding `link` value gains `c.loaf_library(loaf, configuration=...)`, 
 
 ### Platform files
 
-1. **Linux.** For each supported Linux target, Incan publishes a sysroot: glibc headers, startup objects and linker scripts for glibc 2.28, and the kernel headers of the same environment, taken from the `manylinux_2_28` build image and pinned by that image's digest. Its identity is the digest of its content. The first targets are `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. Oven's final link for a Linux target must use the same sysroot as the plan's native units.
+1. **Linux.** For each supported Linux target, Incan publishes a sysroot: glibc headers, startup objects and linker scripts for glibc 2.28, and the kernel headers of the same environment, taken from the `manylinux_2_28` build image and pinned by that image's digest. Its identity is the digest of its content. Supported Linux targets include `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. Oven's final link for a Linux target must use the same sysroot as the plan's native units.
 2. **Apple.** The Xcode SDK installed on a licensed host. Its identity is the SDK's version and build identifier together with the digest of its contents. It is never published.
-3. **Windows.** For `x86_64-pc-windows-msvc`, the first Windows target, the Windows SDK and the MSVC runtime headers and libraries installed on a licensed host, compiled against through the managed toolchain's `clang-cl` driver. Their identity is the SDK version, the runtime version and the digest of their contents. They are never published.
+3. **Windows.** For `x86_64-pc-windows-msvc`, the Windows SDK and the MSVC runtime headers and libraries installed on a licensed host, compiled against through the managed toolchain's `clang-cl` driver. Their identity is the SDK version, the runtime version and the digest of their contents. They are never published.
 4. A host whose platform files differ from a unit's recorded identity must produce a different unit, never substitute one. A registry may hold units for several platform-file identities of the same configuration; RFC 119 already selects among a binding's records by the owners a host has.
 
 ### Registry adoption of C libraries
@@ -230,7 +230,7 @@ Cloves publish, index and serve as Loaves; their compiled units are assets. An e
 
 ### Compatibility / migration
 
-This is additive. Existing RFC 119 `link` records keep working until they are harvested again. A registry may replace an adopted crate's own native record with a library binding only by the evidence rule above, which leaves its observable build unchanged. Native records harvested with host compilers before the managed toolchain exists are not replayable on other hosts and must be harvested again with it.
+This is additive. Existing RFC 119 `link` records keep working until they are harvested again. A registry may replace an adopted crate's own native record with a library binding only by the evidence rule above, which leaves its observable build unchanged. Native records harvested with host compilers are not replayable on other hosts and must be harvested again with the managed toolchain.
 
 ## Prior art
 
@@ -244,7 +244,7 @@ This is additive. Existing RFC 119 `link` records keep working until they are ha
 
 ### Keep recording native work per machine
 
-Record native facts in each build environment, pin those environments, and bake there. This works and is the interim state, but a fact replays only where its exact compiler and SDK exist, so building from source succeeds only on the machines that harvested the record, and every `-sys` crate version keeps compiling its own copy of the library.
+Record native facts in each build environment, pin those environments, and bake there. This works, but a fact replays only where its exact compiler and SDK exist, so building from source succeeds only on the machines that harvested the record, and every `-sys` crate version keeps compiling its own copy of the library.
 
 ### Use the host's system libraries
 
@@ -304,9 +304,9 @@ This is what RFC 116 selected. It leaves Apple with a second compiler, tied to e
 - **Name and scope.** A C-library Loaf is a **Clove**. Registry-adopted Cloves live under the scope `c/`, with the upstream library's name and version. An upstream project that publishes its own package later is pointed to by a supersession event; published `c/` versions are never renamed or taken over.
 - **glibc floor.** Linux targets use glibc 2.28, matching the selected `manylinux_2_28` baseline. Other Python wheel baselines continue to exist; this is an explicit Incan support choice, not a claim to cover every supported distribution or cloud runtime. No older glibc floor is supported by this RFC.
 - **musl.** musl-based Linux targets are out of scope; a musl target would be a separate target with its own sysroot.
-- **First Linux targets.** `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
+- **Linux targets.** Supported Linux targets include `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
 - **Cross-host identity.** A unit's identity names the toolchain release, not a host's build of it, because every release must pass the cross-host reproduction gate; a host that fails the gate gets its own identity.
 - **Feature-to-configuration mapping.** A binding is matched to a configuration by the exact sources and definitions its harvested record compiled, never by feature names; the registry derives a new configuration from the record when none matches, and host-dependent build scripts remain inadmissible.
 - **Toolchain source.** Incan builds Clang and its tools from one pinned LLVM release with one configuration on every build host. The Linux sysroot is taken from the `manylinux_2_28` build image, pinned by its digest. LLVM's prebuilt releases and bundled cross toolchains are not used.
 - **Apple.** Apple targets use the managed Clang against the Xcode SDK, replacing RFC 116's selection of Xcode's own Clang.
-- **Windows.** The first Windows target is `x86_64-pc-windows-msvc`, compiled with the managed toolchain's `clang-cl` driver against the Windows SDK and the MSVC runtime on licensed registry builders; a unit records the SDK and runtime versions.
+- **Windows.** `x86_64-pc-windows-msvc` is compiled with the managed toolchain's `clang-cl` driver against the Windows SDK and the MSVC runtime on licensed registry builders; a unit records the SDK and runtime versions.

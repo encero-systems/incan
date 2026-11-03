@@ -35,7 +35,7 @@ This RFC proposes `oven architect` as a deterministic code-advice command for di
 7. **Broad collection, precise classification:** The command should scan the requested scope broadly and emit evidence-backed findings across categories. Confidence, category, profile, baseline, and priority decide presentation and action pressure; they should not erase valid findings up front merely because the finding is local, optional, or not architectural.
 8. **Rule authoring is a product surface:** The feature is only maintainable if adding a rule means using stable typed facts and reusable queries, not hand-parsing raw graph nodes or reimplementing per-language syntax walks.
 9. **Peer context is explicit:** Projects may declare locally meaningful peer groups such as command handlers, lowering passes, adapters, registries, or generators. A broad category may contain several valid peer groups; names and filesystem position are useful signals, not sufficient proof of membership or intent.
-10. **Exploration stays subordinate to rules:** Future baseline or similarity analysis may identify review candidates from comparable peers, but it must remain explainable, provenance-aware, and non-authoritative. It cannot silently create an architectural contract or replace deterministic rule detection.
+10. **Exploration stays subordinate to rules:** Baseline or similarity analysis may identify review candidates from comparable peers, but it must remain explainable, provenance-aware, and non-authoritative. It cannot silently create an architectural contract or replace deterministic rule detection.
 
 ## Motivation
 
@@ -45,13 +45,13 @@ The first experiments with an architecture-advice command showed that determinis
 
 Without a formal rule engine, each new check risks becoming a one-off command-private or language-private syntax walk with custom parsing, inconsistent output, and ad hoc severity. That path does not scale, especially when the same project can contain authored Incan and Rust. The value is in a shared substrate: one Oven-selected project graph, one bilingual codegraph, one typed query layer, one finding model, one de-duplication path, and many small rules that are easy to review and calibrate.
 
-This feature also matters for agent workflows. Agents can already make broad refactoring suggestions, but those suggestions are often expensive to verify and easy to overfit. `oven architect` should provide deterministic evidence that an agent can use as grounding: exact files, lines, matched domains, shared patterns, call sites, usage counts, and counterexample risks. A model may later summarize or prioritize findings, but the core detection should remain inspectable and reproducible.
+This feature also matters for agent workflows. Agents can already make broad refactoring suggestions, but those suggestions are often expensive to verify and easy to overfit. `oven architect` should provide deterministic evidence that an agent can use as grounding: exact files, lines, matched domains, shared patterns, call sites, usage counts, and counterexample risks. A model may summarize or prioritize findings, but the core detection should remain inspectable and reproducible.
 
 ## Goals
 
 - Define `oven architect` as the umbrella command for deterministic design, safety, idiom, maintainability, and risk-signal advice.
 - Provide a stable finding model with qualified rule name, category, priority, confidence, evidence, pressure, suggestions, risks, and machine-readable output.
-- Provide direct Incan file and directory scanning outside a Loaf, and Oven-selected package or workspace scanning inside a Loaf, with deterministic source, module, and finding de-duplication across Incan and Rust facets. The same finding model should later support PR-diff and graph-snapshot scopes.
+- Provide direct Incan file and directory scanning outside a Loaf, and Oven-selected package or workspace scanning inside a Loaf, with deterministic source, module, and finding de-duplication across Incan and Rust facets. The same finding model should support PR-diff and graph-snapshot scopes.
 - Treat Rust-only, Incan-only, and mixed Loaves as first-class project analysis scopes.
 - Preserve language, source role, source facet, generation provenance, and selected Oven project authority in graph facts and finding evidence.
 - Establish rule categories and profiles so users can run architecture-only, safety-only, idiom-only, maintainability-only, risk-only, or all-rule scans.
@@ -59,7 +59,7 @@ This feature also matters for agent workflows. Agents can already make broad ref
 - Extend codegraph body facts as needed for rule families such as match dispatch, call sites, references, assignment/update shapes, helper usage, loop-builder shapes, and result-match shapes.
 - Include maintainability findings in scope when they have clear evidence, useful counterexamples, and calibrated confidence.
 - Include deterministic risk findings when local inputs such as coverage, churn, ownership, co-change, or decision records are available, while keeping risk evidence separate from architecture recommendations.
-- Keep detection deterministic for the first version; no language model is required for core finding generation.
+- Keep detection deterministic; no language model is required for core finding generation.
 - Support text output for humans and stable JSON output for tools, agents, editors, and CI.
 - Make suppression and baselining part of the product model so mature codebases can adopt the command incrementally.
 - Define a metadata and fact-model path for project-specific peer context, including peer-group hierarchy, declared boundary constraints, exceptions, and membership provenance.
@@ -71,16 +71,16 @@ This feature also matters for agent workflows. Agents can already make broad ref
 - This RFC does not replace formatter rules, language diagnostics, Clippy, generated-source validation, or project tests. In particular, Architect should not reproduce local Rust lint rules that Clippy already owns without adding project-wide evidence.
 - This RFC does not treat generated Rust as authored Rust or report duplicate authored implementations merely because an Incan declaration has a generated Rust projection.
 - This RFC does not make Oven the owner of Incan or Rust semantic facts. Oven selects project scope; language frontends remain semantic authorities.
-- This RFC does not add arbitrary ambient source languages to a Loaf. Incan and Rust are the built-in authored facets defined by RFCs 117 and 119; later language integrations require their own explicit contracts.
+- This RFC does not add arbitrary ambient source languages to a Loaf. Incan and Rust are the built-in authored facets defined by RFCs 117 and 119; other language integrations require their own explicit contracts.
 - This RFC does not require a small language model or remote AI service for rule detection.
 - This RFC does not attempt to infer developer intent from names alone.
 - This RFC does not make a similarity score, inferred peer membership, or outlier classification an architectural finding by itself.
 - This RFC does not allow an exploratory baseline to fail CI by default, silently update itself from a scan, or promote an observed pattern into a deterministic rule automatically.
-- This RFC does not require every possible maintainability rule or risk signal to ship in the first version.
+- This RFC does not require every possible maintainability rule or risk signal.
 - This RFC does not itself define automatic rewrites or apply fixes. RFC 127 defines the separate `oven architect --fix` mode over catalog findings.
 - This RFC does not itself decide whether a reported finding should be fixed in the current change. RFC 127 preserves that separation through explicit `--fix` invocation and per-rule fix policy; other findings remain decisions for the user, CI, or a fix loop.
 - This RFC does not define a public plugin ABI for third-party binary rule packages.
-- This RFC does not require every codegraph fact to be part of a permanently stable external schema in the first release; the public typed finding contract, its documented projections and command behavior need 0.7 stability; the exact serialization schema is not selected here.
+- This RFC does not require every codegraph fact to be part of a permanently stable external schema; the public typed finding contract, its documented projections and command behavior must be stable; the exact serialization schema is not selected here.
 
 ## Guide-level explanation
 
@@ -297,7 +297,7 @@ Applicability is a precondition, not a confidence adjustment. A rule that requir
 
 Project architecture often has distinctions that compiler facts cannot establish alone. A repository may contain several kinds of command handler, adapter, generator, registry, or lowering pass that share a broad category but have different responsibilities and dependency directions. Architect must therefore support project-specific peer context without treating a filename, directory, declaration name, or one aggregate metric as architectural truth.
 
-A peer group is a named set of comparable source owners, such as files, modules, declarations, or other codegraph-backed scopes. Peer context may describe a hierarchy from broad category to local archetype, declared dependency boundaries, known exceptions, and the provenance of every membership decision. The first useful provenance states are:
+A peer group is a named set of comparable source owners, such as files, modules, declarations, or other codegraph-backed scopes. Peer context may describe a hierarchy from broad category to local archetype, declared dependency boundaries, known exceptions, and the provenance of every membership decision. The provenance states are:
 
 - `declared`: project metadata explicitly assigns the member or boundary;
 - `derived`: a deterministic rule or compiler-backed query establishes the membership; and
@@ -341,7 +341,7 @@ Rules must not emit authored-source findings for generated, projected, or known 
 
 ### Codegraph fact requirements
 
-The codegraph exporter must provide enough source facts for rules to avoid command-private or language-private syntax walks. The first useful fact families are declarations, imports, public API metadata, match dispatches, call sites, references, assignment/update shapes, function body summaries, usage counts, loop-builder shapes, result-match shapes, declaration signatures, source topology, and stable identity/provenance fields.
+The codegraph exporter must provide enough source facts for rules to avoid command-private or language-private syntax walks. The fact families include declarations, imports, public API metadata, match dispatches, call sites, references, assignment/update shapes, function body summaries, usage counts, loop-builder shapes, result-match shapes, declaration signatures, source topology, and stable identity/provenance fields.
 
 Every source-backed fact must carry the RFC 106 language attribute and enough provenance to distinguish authored, generated, projected, and external source. For a Loaf-selected scan, facts must also retain the source facet and selected Oven project or graph authority. Generation and projection relationships must be explicit edges rather than inferred from filenames or output directories.
 
@@ -389,7 +389,7 @@ Priority should be calibrated against likely impact and the cost of ignoring the
 
 Rules should downrank, lower confidence, or route known low-action cases to explicit profiles instead of mislabeling them as urgent. Rules should suppress a match only when counterexample evidence makes it invalid, or when user-selected profiles, suppressions, or baselines hide it. For example, fail-fast calls around trusted constants may be lower priority than fail-fast calls around caller-provided input. Exhaustive matches over a closed domain may be preferable to abstraction when the matched operation is local and the domain changes rarely.
 
-### Examples of initial rules
+### Example rules
 
 `arch.repeated_match_dispatch` reports repeated match expressions that dispatch over the same domain and share multiple explicit arms. The rule should report overlap counts and wildcard/default context.
 
@@ -425,15 +425,15 @@ A general linter would fit small syntax-level advice, but it would understate th
 
 ### Use a language model for rule detection
 
-Model-based detection may be useful later for summarization, clustering, or explaining findings in pull requests. It is not the right foundation for v0.7 rule detection because findings need to be reproducible, testable, source-grounded, and suitable for CI.
+Model-based detection may be useful for summarization, clustering, or explaining findings in pull requests. It is not the right foundation for rule detection because findings need to be reproducible, testable, source-grounded, and suitable for CI.
 
 ### Let every rule walk the AST directly
 
 This is the fastest way to add a first rule and the worst way to maintain many rules. It duplicates traversal logic, fragments fact extraction, and makes rule behavior harder to share with agents, editors, and other code-intelligence tools.
 
-### Make findings auto-fixable from the start
+### Make findings auto-fixable in the engine
 
-Some findings support safe rewrites, such as compound assignment candidates. This RFC keeps those rewrites outside the engine's base contract. RFC 127 takes on the anticipated scope expansion as a separate mode with explicit applicability, policy, formatting, re-evaluation, and reporting contracts.
+Some findings support safe rewrites, such as compound assignment candidates. This RFC keeps those rewrites outside the engine's base contract. RFC 127 defines fixes as a separate mode with explicit applicability, policy, formatting, re-evaluation, and reporting contracts.
 
 ## Drawbacks
 
@@ -443,7 +443,7 @@ The codegraph fact model will grow. If facts are added without a typed query lay
 
 Some maintainability findings are subjective. A helper that looks unnecessary may carry important domain meaning. A loop that could be a comprehension may be clearer as a loop when side effects are about to be added. The finding model must make room for this uncertainty through confidence and risk text.
 
-Project-wide scanning may be slower than entry-point scanning, especially for mixed Loaves whose Rust facts require compiler-grade inspection. The implementation should reuse Oven and codegraph identities where possible and leave room for caching, but v0.7 should prioritize correctness and evidence over premature optimization.
+Project-wide scanning may be slower than entry-point scanning, especially for mixed Loaves whose Rust facts require compiler-grade inspection. The implementation should reuse Oven and codegraph identities where possible and leave room for caching, but correctness and evidence take priority over premature optimization.
 
 ## Implementation architecture
 
@@ -457,9 +457,9 @@ The rule engine should provide a small metadata contract for rule authors. A rul
 
 The report layer should be shared by all rules. Sorting, de-duplication, JSON serialization, text formatting, suppression matching, and baseline matching should not be implemented per rule.
 
-The first version should ship with a small calibrated rule set rather than a large catalog. New rules should be added only when they have clear positive fixtures, negative fixtures, and calibration evidence from real source.
+The rule set should be small and calibrated rather than a large catalog. New rules should be added only when they have clear positive fixtures, negative fixtures, and calibration evidence from real source.
 
-Experimental peer-baseline analysis is a later consumer of the same fact and query layers. It may construct explainable signatures and compare declared or derived peer groups, but it must remain outside the deterministic rule path until its calibration, storage, and user-facing contract are independently settled.
+Experimental peer-baseline analysis is a consumer of the same fact and query layers. It may construct explainable signatures and compare declared or derived peer groups, but it must remain outside the deterministic rule path until its calibration, storage, and user-facing contract are independently settled.
 
 ## Layers affected
 
@@ -471,8 +471,8 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 - **Emission**: No required impact.
 - **Stdlib / Runtime (`incan_stdlib`)**: No required runtime impact, though stdlib feature surfaces such as Result combinators and iterator adapters inform idiom rules.
 - **Formatter**: RFC 105 itself requires no formatter changes. RFC 127 requires the formatter to remain callable as a library after Architect applies safe fixes; the formatter still owns canonical representation rather than lint evaluation.
-- **LSP / Tooling**: The JSON findings format should be usable by editors, agents, CI, and future diagnostics-style surfaces. Editor consumers must see the same selected source authority and language provenance as the CLI.
-- **CLI / Project tooling**: `oven architect` needs direct-source and Oven-selected scope handling, profiles, stable text/JSON output, suppression support, and baseline support. Future peer-baseline tooling needs opt-in invocation and schema-, compiler-, Oven-plan-, and graph-versioned snapshots.
+- **LSP / Tooling**: The JSON findings format should be usable by editors, agents, CI, and other diagnostics-style surfaces. Editor consumers must see the same selected source authority and language provenance as the CLI.
+- **CLI / Project tooling**: `oven architect` needs direct-source and Oven-selected scope handling, profiles, stable text/JSON output, suppression support, and baseline support. Peer-baseline tooling needs opt-in invocation and schema-, compiler-, Oven-plan-, and graph-versioned snapshots.
 - **Documentation**: The CLI reference must document direct-source versus Loaf-selected behavior, Incan/Rust/mixed coverage, source-role provenance, profiles, categories, priorities, confidence, suppressions, peer-context provenance, and examples.
 
 ## Design Decisions
@@ -484,7 +484,7 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 - Rule applicability names required languages and frontend fact capabilities. Missing required facts disable the affected evaluation with a coverage diagnostic rather than a low-confidence guess.
 - RFC 118's no-Cargo boundary applies. Direct-source analysis and the Oven-selected Loaf graph remain the supported authorities; no separate Cargo project discovery mode is introduced.
 - Selecting and calibrating concrete risk rules is implementation work. The evidence and coverage requirements remain binding; missing inputs are not zero risk.
-- Rule registration for 0.7 is repository/catalog-owned. External rule-package loading requires a separately reviewed capability/versioning contract; typed rule interfaces remain extensible.
+- Rule registration is repository/catalog-owned. External rule-package loading is not part of this design; typed rule interfaces remain extensible.
 
 - Oven owns `oven architect`; the Incan-only convenience delegates. Direct Incan and Rust input use the same capability and explicit-selection rules.
 - Project scope follows documented Oven selection and checked `loaf.toml` customization, with effective exclusions visible and no ambient Cargo discovery.

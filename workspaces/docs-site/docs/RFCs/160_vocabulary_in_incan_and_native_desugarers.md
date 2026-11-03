@@ -68,7 +68,7 @@ A desugarer written in Incan and compiled like any other Incan program removes t
 ## Non-Goals
 
 - Changing the vocabulary surface model of RFC 027, RFC 040, RFC 045 or RFC 081: declarations, clauses, activation on import and embedded fragments keep their meaning.
-- Changing RFC 108's `pub vocab` extension properties. Whether registration should be written as source declarations of that kind is an open question below.
+- Changing RFC 108's `pub vocab` extension properties. Registration is the typed `library_vocab()` function, not a declaration of that kind.
 - File-scoped surface activation (a header that selects a surface for a whole file), project-level surface defaults, alternate grammars with Incan semantics, and foreign-language frontends. RFC 162 specifies them; see "Relationship to source surfaces".
 - An operating-system sandbox for desugarers. Provider admission, enforced RFC 104 capabilities, and execution evidence are this RFC's controls; see "Trust and evidence".
 - Loading previously published WebAssembly desugarers.
@@ -195,7 +195,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 
   Being a locked dependency is necessary but not sufficient. The compiler must verify the admitted identity against the worker artifact it starts.
 - The default policy admits providers reached through locked dependencies. A host or project policy may restrict admission further, for example to named providers or to providers with published units. The lock and the invocation evidence must record the policy that admitted each provider.
-- A vocabulary unit declares no authority under this RFC. Any authority beyond a pure function of the request, such as declared file inputs, requires a later contract.
+- A vocabulary unit declares no authority under this RFC. Any authority beyond a pure function of the request, such as declared file inputs, is outside this RFC.
 - A desugarer invocation must run as a governed RFC 104 execution boundary with an empty effective capability grant. A containing build's mode or broader grants must not widen that grant. Any authority-bearing operation a desugarer attempts must be denied before its effect and recorded under RFC 104.
 - Capability enforcement, rather than an operating-system sandbox, is the required authority boundary. Enforcement must cover authority-bearing paths through native dependencies and Rust interop as well as ordinary Incan calls; declaring a capability or admitting a provider is not enforcement by itself. If the selected provider path cannot satisfy that contract, governed execution must be refused with a diagnostic identifying the uncovered boundary. The toolchain must not execute that path under an empty grant while claiming its authority is governed. This RFC does not prescribe the internal enforcement mechanism or claim that the required coverage is already implemented.
 - Oven must record in the build's evidence, for each module it desugared:

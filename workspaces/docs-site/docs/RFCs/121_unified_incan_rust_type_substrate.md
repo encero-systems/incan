@@ -38,8 +38,8 @@ RFC 097 intentionally does not take this on fully — it states the caller-bound
 
 ## Non-Goals
 
-- This RFC does not require implementation in v0.6. It is the intended 1.0 north star, not scoped work for the current milestone; RFC 097 already states its caller-boundary consequences without needing this RFC to land first.
-- This RFC does not itself rewrite RFC 097's "Type projection" section or RFC 005/041/043's conversion rules — those are follow-up revisions once this RFC's model is accepted.
+- This RFC does not schedule implementation. RFC 097 already states its caller-boundary consequences without depending on this RFC.
+- This RFC does not itself rewrite RFC 097's "Type projection" section or RFC 005/041/043's conversion rules — those revisions belong to those RFCs.
 - This RFC does not claim every Incan type can be made representation-identical to a Rust type. It states the principle and the target; specific exceptions, if any prove necessary, are named explicitly rather than silently assumed away.
 - This RFC does not define a new intermediate ABI, FFI boundary, or serialization format. It is the opposite: for representation-identical types, there is no boundary left to define.
 - This RFC does not change Incan's own authoring syntax. `model`, `enum`, and `newtype` keep meaning what they mean to an Incan author; this RFC is about what those declarations compile to, not how they're written.
@@ -108,11 +108,11 @@ A `model`, `enum`, or `newtype` is sugar over an ordinary Rust struct/enum decla
 
 ### Relationship to RFC 097
 
-RFC 097 states the caller-boundary consequences of this model (free functions instead of a handle object, no runtime version check, models already projecting directly to structs) without asserting the general substrate claim this RFC makes. Once this RFC is accepted, RFC 097's "Type projection" section should be revised to describe identity rather than conversion for the categories this RFC covers — a follow-up pass, not a change required to unblock RFC 097 itself.
+RFC 097 states the caller-boundary consequences of this model (free functions instead of a handle object, no runtime version check, models already projecting directly to structs) without asserting the general substrate claim this RFC makes. RFC 097's "Type projection" section should describe identity rather than conversion for the categories this RFC covers.
 
 ### Relationship to RFC 005 / RFC 041 / RFC 043
 
-These RFCs own the reverse interop direction — Incan importing and using Rust — and currently describe that direction in their own terms. For the model in this RFC to be symmetric rather than a one-directional caller-boundary optimization, each needs an equivalent follow-up revision once this RFC's principle is accepted. This RFC does not perform those revisions itself.
+These RFCs own the reverse interop direction — Incan importing and using Rust — and currently describe that direction in their own terms. For the model in this RFC to be symmetric rather than a one-directional caller-boundary optimization, each needs an equivalent revision. This RFC does not perform those revisions itself.
 
 ### Migration/convergence path
 
@@ -121,13 +121,13 @@ Closing any gap between Incan's current internal type representations and this R
 ## Alternatives considered
 
 - **Keep Incan and Rust as two independently-typed systems, bridged by conversion at every boundary (status quo).** This is what RFC 097 and the Rust-interop RFCs currently describe piecemeal. It works, but implies ongoing translation and checking cost, and per-boundary duplicated logic, that a single-toolchain, Oven-owned build graph no longer requires.
-- **Apply this only to RFC 097's caller boundary, leaving the reverse direction conversion-based.** Rejected as the long-term target — it would leave the model asymmetric: the same substrate calling one direction, two systems calling the other.
-- **Write a fully formal, ABI-level unification spec now, in this RFC.** Rejected as premature. This RFC establishes the target principle and what it requires of each category of type; the detailed mechanics (canonical module location, frontend representation changes) belong to implementation-phase follow-up work once actually undertaken, not to this RFC.
+- **Apply this only to RFC 097's caller boundary, leaving the reverse direction conversion-based.** Rejected — it would leave the model asymmetric: the same substrate calling one direction, two systems calling the other.
+- **Write a fully formal, ABI-level unification spec in this RFC.** Rejected. This RFC establishes the target principle and what it requires of each category of type; the detailed mechanics (canonical module location, frontend representation changes) belong to the implementation, not to this RFC.
 
 ## Drawbacks
 
 - Requires the compiler's own type system (HIR/Body IR, frontend) to converge toward representation identity for primitives and stdlib types — real engineering work, not free, and not scoped or scheduled by this RFC.
-- Symmetric treatment means RFC 005, RFC 041, and RFC 043 each need a follow-up revision pass; this RFC creates that obligation without discharging it.
+- Symmetric treatment means RFC 005, RFC 041, and RFC 043 each need a revision pass; this RFC creates that obligation without discharging it.
 - A canonical shared stdlib-type module is new shared infrastructure to design, own, and version.
 - Removes the "checked boundary" safety net for primitives in favor of relying on the frontend's own correctness to guarantee Incan's type semantics genuinely match Rust's — raising the bar on that guarantee rather than backstopping it with a runtime check.
 
@@ -136,8 +136,8 @@ Closing any gap between Incan's current internal type representations and this R
 - **Typechecker / language type system**: primitive and stdlib type definitions must commit to Rust-representation identity at the type-system level, not only at emission time.
 - **IR Lowering / Emission**: no conversion/adapter emission for representation-identical types; lowering passes a real value through rather than constructing a projected copy.
 - **Stdlib (`incan_stdlib`)**: owns the canonical shared definitions for stdlib/compound types.
-- **RFC 097's caller boundary**: "Type projection" section requires a follow-up revision from conversion framing to identity framing.
-- **RFC 005 / RFC 041 / RFC 043's Rust-interop boundary**: require an equivalent follow-up revision for the reverse direction.
+- **RFC 097's caller boundary**: "Type projection" section requires a revision from conversion framing to identity framing.
+- **RFC 005 / RFC 041 / RFC 043's Rust-interop boundary**: require an equivalent revision for the reverse direction.
 
 ## Inspectability and tooling surface
 

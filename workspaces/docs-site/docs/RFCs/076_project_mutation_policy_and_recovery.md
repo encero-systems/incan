@@ -14,7 +14,6 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/404
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
-- **Target scope:** v0.6, slice 7 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[policy]` per RFC 117.
 - **Shipped in:** —
 
 ## Summary
@@ -38,7 +37,7 @@ RFC 074 and RFC 075 make Incan project generation and evolution more powerful by
 
 The missing layer is receiver-side governance. A project may want to allow built-in templates, require immutable pins for git-backed templates, block public catalog sources for internal projects, require review for CI or script changes, permit low-risk docs scaffolding with local confirmation, or quarantine a capability when its source is later yanked. Those choices should be represented as policy instead of scattered across ad-hoc command flags and editor integrations.
 
-This RFC intentionally stays above hosting and registry transport. It captures the policy and recovery contract that local CLI tooling, IDE integrations, registries, private catalogs, and future automation can share.
+This RFC intentionally stays above hosting and registry transport. It captures the policy and recovery contract that local CLI tooling, IDE integrations, registries, private catalogs, and automation can share.
 
 ## Goals
 
@@ -85,7 +84,7 @@ agent-guidance = "require-review"
 docs = "allow"
 ```
 
-The exact policy encoding is not normative in this Draft. The contract is that policy is evaluated by the receiver's lifecycle tooling against the mutation plan that would actually change the project.
+The exact policy encoding in this example is not normative. The contract is that policy is evaluated by the receiver's lifecycle tooling against the mutation plan that would actually change the project.
 
 ### Policy check before mutation
 
@@ -123,10 +122,10 @@ The important behavior is not the exact wording. The important behavior is that 
 Automation may detect that a template or capability source has a newer compatible version or a known advisory:
 
 ```text
-oven mutation propose --stale --security
+oven mutation status --format json
 ```
 
-A valid implementation may choose a different command name, but the behavior should be review-first. Automation creates a patch-sized proposal containing source identity changes, integrity or advisory changes, rendered receiver-side diffs, and policy outcomes. It does not merge, approve, or apply the proposal by itself when policy requires review.
+There is no separate proposal command: automation reads the machine-readable plan that `status`, `diff`, and dry-run `update` already produce, and the behavior is review-first. From that plan, automation creates a patch-sized proposal containing source identity changes, integrity or advisory changes, rendered receiver-side diffs, and policy outcomes. It does not merge, approve, or apply the proposal by itself when policy requires review.
 
 For capability version updates, automation should follow the same shape a user would run manually:
 
@@ -181,7 +180,7 @@ Policy must not rely only on provider-side descriptor diffs or template-source d
 
 ### Risk categories
 
-Mutation plans should classify changes into risk categories. V1 should include at least:
+Mutation plans should classify changes into risk categories, including at least:
 
 - `source`: executable or imported source files
 - `test`: generated test files
@@ -258,7 +257,7 @@ Project-local policy lives in the typed `[policy]` table of `loaf.toml` (RFC 117
 
 Implementations must make the effective policy explainable. When policy blocks or gates a mutation, diagnostics should show which policy source caused the decision when that information is available.
 
-If multiple policies apply, the more restrictive decision should win unless a later RFC defines an explicit precedence model. Policy must not become weaker merely because a less restrictive local setting exists.
+If multiple policies apply, the more restrictive decision should win. Policy must not become weaker merely because a less restrictive local setting exists.
 
 ### Audit and provenance
 
@@ -307,7 +306,7 @@ Rejected because integrity only says what source was selected. It does not answe
 
 ### Let automation apply safe updates automatically
 
-Rejected for v1 because "safe" depends on receiver policy, project context, and rendered diffs. Automation may propose updates, but applying them unattended should be an explicit policy decision outside the default model.
+Rejected because "safe" depends on receiver policy, project context, and rendered diffs. Automation may propose updates, but applying them unattended should be an explicit policy decision outside the default model.
 
 ### Treat recovery as automatic rollback
 
@@ -338,16 +337,16 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 
 ## Design decisions
 
-Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.
+Resolved 2026-09-10.
 
 - **Storage.** Project-local policy is the typed `[policy]` table in `loaf.toml`; organization policy is Oven-controlled organization configuration (RFC 117), optionally fed by signed registry events (RFC 125); a developer profile may only tighten. Audit facts (outcome, policy id, approval kind, approver, source identity and integrity state, plan hash) are receipt facts and never live in the manifest.
-- **Minimum v1 syntax.** `[policy]` carries a `default` outcome, one outcome per standard risk category (`[policy.risk]`), and an ordered list of source rules (`[[policy.sources]]`) each naming a source kind or registry identity, an optional trust tier, and an outcome. Nothing else is required for v1; the schema is additive.
+- **Minimum syntax.** `[policy]` carries a `default` outcome, one outcome per standard risk category (`[policy.risk]`), and an ordered list of source rules (`[[policy.sources]]`) each naming a source kind or registry identity, an optional trust tier, and an outcome. Nothing else is required; the schema is additive.
 - **Standard risk categories.** The eleven categories in the reference section are standardized. Extension categories use an `x-` prefix, must appear in machine-readable output, and default to `require-approval`.
-- **Reviewer and owner requirements.** v1 distinguishes two approval kinds, `local-confirmation` and `independent-approval`, and records the approving identity in the receipt as an opaque stable identifier. It does not implement reviewer assignment or ownership rules; those are interpreted by external review systems and, later, by registry organization events under RFC 125.
+- **Reviewer and owner requirements.** Policy distinguishes two approval kinds, `local-confirmation` and `independent-approval`, and records the approving identity in the receipt as an opaque stable identifier. It does not implement reviewer assignment or ownership rules; those are interpreted by external review systems and by registry organization events under RFC 125.
 - **Organization-level policy discovery.** Through Oven-controlled organization configuration only, with signed registry policy events as an optional source. The most restrictive applicable decision wins. No hosted product semantics are defined here.
 - **Quarantine scope.** A quarantined source blocks future mutation from that source and makes `plan`, `build`, `test`, and `check` emit a warning naming the quarantined provenance; it never fails a build on its own, and locked or offline builds (RFC 020) continue unchanged. This chooses build continuity over policy strictness for v0.6; a blocking quarantine outcome is a candidate for a later revision as Incan and Oven approach v1.0.
 - **Recovery actions in v1.** Status reporting, a revert proposal for unchanged managed files, a pin-or-replace proposal for the source, and quarantine marking. Every recovery action is a mutation plan subject to this policy; none is auto-applied.
-- **Automated proposal creation.** v1 defines only the output contract: the machine-readable mutation plan that `status`, `diff`, and dry-run `update` already produce. No separate proposal command; automation and typed actions (RFC 078) consume that contract.
+- **Automated proposal creation.** This RFC defines only the output contract: the machine-readable mutation plan that `status`, `diff`, and dry-run `update` already produce. No separate proposal command; automation and typed actions (RFC 078) consume that contract.
 - **Audit metadata.** Outcome, policy id, risk categories, approval kind, approver as an opaque identifier, source identity and integrity state, rendered plan hash, and timestamp. No file contents, no reviewer prose, no personal names or addresses; redaction follows RFC 104's markers.
 
 Amendments made at the same time: the table root is `[policy]` (RFC 117), not `[oven.policy]`; RFC 034 references now mean RFC 125.

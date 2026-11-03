@@ -162,7 +162,7 @@ This adds another dimension to constrained primitive syntax. Users must understa
 
 Storage carriers make generated layout more intentional, which means changing `storage` can become a compatibility concern for libraries that expose generated host projections or serialized representations.
 
-The compiler must prove representability from constraints. That proof is straightforward for integer comparison constraints, but it becomes more complex if future RFCs add richer numeric predicates.
+The compiler must prove representability from constraints. That proof is straightforward for integer comparison constraints and becomes more complex for richer numeric predicates.
 
 The feature can be overused. Not every domain integer needs compact storage, and `storage` should not become noise in ordinary model declarations.
 

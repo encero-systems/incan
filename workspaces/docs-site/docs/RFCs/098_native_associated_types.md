@@ -42,7 +42,7 @@ An iterator's item type, a parser's output type, and a streaming hasher's digest
 
 Ordinary generic trait parameters remain useful when distinct instantiations represent distinct capabilities, as with indexing by different key types. They do not, by themselves, express that one implementation determines a unique output type. RFC 025 deliberately allows multiple instantiations of an ordinary generic trait.
 
-The original Draft spelling placed `type Item` inside a trait body and `type Item = str` inside the implementing type. The declaration named a requirement without making the implementation's choice visible in the header. This revision uses `infer Item` to identify the required type relationship where the trait's other type parameters already live, and uses the adoption's argument list to supply the choice.
+The original Draft spelling placed `type Item` inside a trait body and `type Item = str` inside the implementing type. The declaration named a requirement without making the implementation's choice visible in the header. This RFC uses `infer Item` to identify the required type relationship where the trait's other type parameters already live, and uses the adoption's argument list to supply the choice.
 
 RFC 023 deferred iterator item propagation requiring associated-type inference. RFC 042 identified associated types as future native trait-system work. RFC 043 supplies an existing Rust interop contract, but native Incan traits need their own readable authoring surface. The end-state is a shared checked model for these relationships, with source syntax that explains who supplies each type.
 
@@ -63,7 +63,7 @@ RFC 023 deferred iterator item propagation requiring associated-type inference. 
 - Inferring a missing adoption argument from method bodies or return annotations.
 - Defining the complete generic constraint language, trait specialization, or overlapping implementation precedence.
 - Introducing runtime type fields, runtime reflection dispatch, or structural duck typing.
-- Defining generic associated types, associated constants, default associated types, or trait-object dispatch in this revision.
+- Defining generic associated types, associated constants, default associated types, or trait-object dispatch.
 - Changing RFC 128's callable contract or its signature parameter into an inferred member.
 
 ## Guide-level explanation
@@ -279,7 +279,7 @@ RFC 099 trait-owned capability families may supply inferred member bindings from
 
 ### Bounds and explicit output requirements
 
-A bound must supply all ordinary trait arguments. It may omit the entire inferred suffix, leaving those members to be recovered from the selected implementation. It may instead supply the complete inferred suffix, requiring exact type equality with the implementation's selected members. Partial inferred suffixes must be rejected; this revision does not introduce placeholders or named adoption arguments.
+A bound must supply all ordinary trait arguments. It may omit the entire inferred suffix, leaving those members to be recovered from the selected implementation. It may instead supply the complete inferred suffix, requiring exact type equality with the implementation's selected members. Partial inferred suffixes must be rejected; this RFC does not introduce placeholders or named adoption arguments.
 
 For `PullIterator[infer Item]`, `I with PullIterator` exposes `I.Item`; `I with PullIterator[bytes]` additionally requires `I.Item` to equal `bytes`. For `Lookup[K, infer Value]`, `L with Lookup[K]` exposes `L.Value`, while `L with Lookup[K, User]` additionally fixes the required value type. Ordinary argument omission must not be inferred from this rule.
 
@@ -324,7 +324,7 @@ trait Lookup[K, infer Value]:
 
 The adoption supplies all positions. A generic bound may leave the inferred suffix unspecified. This context-sensitive difference is deliberate: declarations identify the relationship, implementations supply it, and consumers either recover it or require a particular choice. Documentation and diagnostics must show the parameter roles rather than treating every bracket position as an ordinary generic parameter.
 
-The restriction to an ordinary prefix and inferred suffix keeps positional omission unambiguous. Arbitrary interleaving would require named arguments, placeholders, or an additional argument grouping syntax, none of which is needed for the initial contract.
+The restriction to an ordinary prefix and inferred suffix keeps positional omission unambiguous. Arbitrary interleaving would require named arguments, placeholders, or an additional argument grouping syntax, none of which this contract needs.
 
 ### Relationship to RFC 141
 
@@ -334,7 +334,7 @@ RFC 141 named operations may consume a valid projection, such as `ElementOf[I.It
 
 ### Relationship to RFCs 025, 099, and 128
 
-RFC 025 remains the authority for dispatch among ordinary trait instantiations. An inferred member is excluded from implementation identity and must not serve as an overload discriminator. This revision does not change method targeting syntax or permit arbitrary freestanding overloads.
+RFC 025 remains the authority for dispatch among ordinary trait instantiations. An inferred member is excluded from implementation identity and must not serve as an overload discriminator. This RFC does not change method targeting syntax or permit arbitrary freestanding overloads.
 
 RFC 099 capability families can expose inferred members, such as a storage carrier, using the same checked binding model. Projected requirements in generic method headers must recover those members through active conformance facts. This RFC does not replace RFC 099's ownership or coherence boundaries.
 
@@ -342,7 +342,7 @@ RFC 128 retains `Callable[S]` as its ordinary signature contract. This proposal 
 
 ### Relationship to Rust interop
 
-RFC 043's existing body-level associated type declarations for imported Rust traits remain valid. This revision proposes the native trait header surface; it does not silently remove or reinterpret the interop spelling. A header-based facade for imported associated members would require a separately specified metadata and migration contract.
+RFC 043's existing body-level associated type declarations for imported Rust traits remain valid. This RFC proposes the native trait header surface; it does not silently remove or reinterpret the interop spelling. A header-based facade for imported associated members would require a separately specified metadata and migration contract.
 
 Native inferred members should lower to Rust associated types where possible, while ordinary trait parameters remain Rust generic parameters. For example, the source adoption `Lookup[str, User]` expresses an implementation of `Lookup[str]` whose associated `Value` is `User`; it must not become a Rust trait with both `str` and `User` as independent generic inputs. A backend unable to preserve the relationship must reject it with a clear diagnostic.
 
@@ -356,7 +356,7 @@ Existing generic traits should migrate only when a unique implementation-chosen 
 
 Generic associated types would let an inferred member itself accept parameters, choosing a type family rather than one type. Their declaration, projection, and borrowing rules need an additional contract; `infer Item` does not implicitly admit `infer Item[Borrow]`. Associated constants instead expose values, such as a digest width, and require constant-evaluation rules beyond checked type relationships.
 
-Default associated types would allow an implementation to omit a choice. They need explicit rules for default substitution, inherited defaults, and compatibility; this revision requires supplied choices so omission has one meaning. Specialization would choose among overlapping implementations, whereas this revision requires unique bindings without implementation precedence. Trait-object dispatch would additionally require object-safety and erased-representation rules. The header spelling alone settles none of these features. These features remain outside this RFC under its Non-Goals; their scope is not reopened by the infer header spelling. Associated constants are a separate value-level contract under RFC 144. Generic associated types, defaults, specialization, and trait-object dispatch require their own explicit design rather than adoption by implication.
+Default associated types would allow an implementation to omit a choice. They need explicit rules for default substitution, inherited defaults, and compatibility; this RFC requires supplied choices so omission has one meaning. Specialization would choose among overlapping implementations, whereas this RFC requires unique bindings without implementation precedence. Trait-object dispatch would additionally require object-safety and erased-representation rules. The header spelling alone settles none of these features. These features remain outside this RFC under its Non-Goals; their scope is not reopened by the infer header spelling. Associated constants are a separate value-level contract under RFC 144. Generic associated types, defaults, specialization, and trait-object dispatch require their own explicit design rather than adoption by implication.
 
 ### Diagnostics
 
@@ -366,7 +366,7 @@ A missing-choice diagnostic should suggest an adoption such as `with PullIterato
 
 ### Expected acceptance
 
-These cases describe required behavior for a future implementation; they are not compiler test results. They assume the trait declarations from the guide.
+These cases describe required behavior; they are not compiler test results. They assume the trait declarations from the guide.
 
 | Case                                                                                | Expected behavior                                                             |
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -385,7 +385,7 @@ These cases describe required behavior for a future implementation; they are not
 
 ### Body-level required type declarations
 
-The previous Draft used `type Item` and `type Item = str` in trait and implementation bodies. Those forms align with Rust associated type items but leave the required implementation choice less visible in the trait header. Adding `= ...` makes the missing definition more explicit while retaining a separate declaration mechanism. This revision instead places both the requirement and its supplied argument beside the capability declaration.
+The previous Draft used `type Item` and `type Item = str` in trait and implementation bodies. Those forms align with Rust associated type items but leave the required implementation choice less visible in the trait header. Adding `= ...` makes the missing definition more explicit while retaining a separate declaration mechanism. This RFC instead places both the requirement and its supplied argument beside the capability declaration.
 
 ### Ordinary generic parameters with an alias
 
@@ -432,4 +432,4 @@ Inferred members should not be represented as runtime fields, synthetic methods,
 - Owner-qualified type projections bind as primary member projections under the rule shared with RFC 144. Ordinary delimiters do not require redundant parentheses; further postfix access and actual attachment ambiguities require explicit grouping.
 - An unbound inferred supertrait requirement is supplied by explicitly adopting its owning supertrait. No additional shorthand is introduced; an already-bound supertrait retains its exact requirement.
 - Nominal-style capitalization is a style convention, not a typechecking restriction. Existing identifier rules govern validity, and source spelling remains part of the API.
-- RFC 043's imported Rust associated-type surface remains valid. A native-header facade for imported traits is outside this RFC; any later facade must use checked member identities and bindings rather than rendered type names.
+- RFC 043's imported Rust associated-type surface remains valid. A native-header facade for imported traits is outside this RFC; any such facade must use checked member identities and bindings rather than rendered type names.

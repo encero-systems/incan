@@ -281,7 +281,7 @@ def run_cli[T with CliCommand](argv: list[str], handler: Callable[[T], Result[in
 
 `Shell` is a plain enum (`Bash`, `Zsh`, `Fish`, `PowerShell`). `render_completions[T]` draws entirely from the same `CliSpec` every other renderer already uses — no second spec, no completion-specific derive.
 
-The exact helper names may change before this RFC moves to Planned, but the committed surface must include typed parse, spec derivation, help rendering, completion rendering, error rendering, and exit-code mapping.
+The committed surface must include typed parse, spec derivation, help rendering, completion rendering, error rendering, and exit-code mapping.
 
 ### CLI spec derivation
 
@@ -291,7 +291,7 @@ A model type that has derived `CliArgs` may describe a single-command CLI. Its f
 
 An enum type that has derived `CliCommand` may describe a multi-command CLI. Each variant becomes a subcommand. A variant with a payload model uses that model as the subcommand argument shape; that payload model must itself have derived `CliArgs`. A payload-free variant is a subcommand with no additional arguments. A variant with unsupported payload shape, or a payload model that has not derived `CliArgs`, must be rejected at spec derivation time.
 
-Field metadata may customize CLI presentation and input sources, but type information remains authoritative. Metadata must not cause a field typed as `int` to parse as `str`, a required field to silently become optional, or a non-collection field to accept repeated values unless a future RFC defines that behavior.
+Field metadata may customize CLI presentation and input sources, but type information remains authoritative. Metadata must not cause a field typed as `int` to parse as `str`, a required field to silently become optional, or a non-collection field to accept repeated values.
 
 ### Relationship to field metadata and reusable fields
 
@@ -321,7 +321,7 @@ General-purpose model field metadata, usable on any field regardless of CLI deri
 
 `std.cli` reuses `env` and `secret` for its own environment-fallback and diagnostic-redaction behavior rather than owning them, the same relationship it already has with `description`. A field using an `option`, `short`, `positional`, or `value_name` key on a type that has not derived `CliArgs` or `CliCommand` must be diagnosed: these four keys are only meaningful on a derived type, and the diagnostic should suggest adding the missing `@derive`.
 
-Aliases, deprecations, hidden commands, grouping, shell completion annotations, prompts, and rich terminal formatting are outside this RFC unless Draft discussion proves they are required for the core contract.
+Aliases, deprecations, hidden commands, grouping, shell completion annotations, prompts, and rich terminal formatting are outside this RFC.
 
 If a type cannot be represented as a CLI spec, `spec_for[T]` and `parse[T]` must fail with a diagnostic that names the unsupported type or field and explains the required shape.
 
@@ -353,7 +353,7 @@ By default, scalar fields become named options. A `bool` field with a default of
 
 The spec must reject a required field that has no command-line source, no default, and no environment fallback.
 
-The spec must reject positional fields after a repeated positional field unless a future RFC defines disambiguation.
+The spec must reject positional fields after a repeated positional field.
 
 ### Requiredness, defaults, and optionality
 
@@ -396,9 +396,9 @@ If a target type has no CLI parse path, spec derivation should fail before runti
 
 A `bool` field with default `false` must accept the positive flag spelling, such as `--reload`, and set the field to `true`.
 
-A `bool` field with default `true` must either require explicit metadata for negation or be rejected until the design settles the spelling. This RFC does not want silent or inconsistent `--no-*` behavior.
+A `bool` field with default `true` must require explicit `negate` metadata for negation. This RFC does not want silent or inconsistent `--no-*` behavior.
 
-Boolean flags must not require a separate value by default. A future RFC may define explicit `--flag=true` compatibility if needed.
+Boolean flags must not require a separate value by default. Explicit `--flag=true` compatibility is not part of this design.
 
 ### Repeated values
 
@@ -428,7 +428,7 @@ Help output must include command names, option spellings, value names, requiredn
 
 Help output must not display secret default values or secret environment values. Metadata should allow a field to mark its value as secret.
 
-Hidden fields and hidden commands are deferred until a follow-up extension defines compatibility rules for undocumented accepted input.
+Hidden fields and hidden commands are outside this RFC.
 
 Help rendering must be deterministic for a given spec.
 
@@ -477,7 +477,7 @@ The framework must define standard exit code categories:
 - CLI usage errors map to a non-zero usage code;
 - application errors map to a non-zero application code unless the handler returns a more specific code.
 
-This RFC should prefer conventional CLI behavior but must document exact numeric values before moving to Planned.
+This RFC follows conventional CLI behavior: usage errors map to `2` and application errors map to `1`.
 
 `run_cli` should catch parse and help outcomes, render the appropriate output, and return the standard exit code. Programs that need custom rendering may call `parse` and rendering helpers directly.
 
@@ -547,7 +547,7 @@ When a CLI argument has `env`, parsing should use the same missing, malformed, p
 
 This RFC is for applications written in Incan. It does not change `oven env run`, matrix expansion, project scripts, or Oven lifecycle commands. Those remain owned by RFCs 019, 073, 117, and 118.
 
-The long-term compiler CLI may eventually dogfood `std.cli`, but this RFC deliberately does not make compiler CLI migration part of the contract. A forced migration would make the RFC larger and tie framework design to current compiler implementation details.
+The compiler CLI may dogfood `std.cli`, but this RFC deliberately does not make compiler CLI migration part of the contract. A forced migration would make the RFC larger and tie framework design to current compiler implementation details.
 
 ### Compatibility and migration
 
@@ -573,7 +573,7 @@ Rejected as the primary surface because it duplicates information already presen
 
 ### CLI eligibility as a plain decorator marker
 
-Rejected. An earlier shape used a bare `@cli.args`/`@cli.command` decorator purely as a checked marker with no generated behavior — functionally adequate for gating `parse[T]`, but an inert annotation that carries no substance and forecloses ever attaching real methods to a CLI-shaped type without a later redesign. `@derive(CliArgs)`/`@derive(CliCommand)` generating a real trait implementation, using the same derive convention `@derive(Debug, Eq, Clone)` already establishes, costs nothing extra today and leaves room to attach real trait methods later without revisiting the eligibility mechanism.
+Rejected. An earlier shape used a bare `@cli.args`/`@cli.command` decorator purely as a checked marker with no generated behavior — functionally adequate for gating `parse[T]`, but an inert annotation that carries no substance and forecloses attaching real methods to a CLI-shaped type without redesigning the eligibility mechanism. `@derive(CliArgs)`/`@derive(CliCommand)` generating a real trait implementation, using the same derive convention `@derive(Debug, Eq, Clone)` already establishes, costs nothing extra and leaves room to attach real trait methods without revisiting the eligibility mechanism.
 
 ### Ambient eligibility via import
 
@@ -631,6 +631,6 @@ Rejected. Dogfooding is valuable, but forcing compiler CLI migration into this R
 - **Exit codes: `0` success, `2` usage error, `1` application error**, matching the widely-recognized Unix convention (bash, Python's `argparse`, GNU tools) this RFC's own Prior Art section already gestures at.
 - **A `negate` metadata key, not automatic `--no-*` generation, for default-`true` bool fields:** a `bool` field defaulting to `true` needs an explicit `negate=true` to generate its `--no-<name>` spelling; there is no implicit negation and no rejection of default-`true` bool fields outright. This is a fifth CLI-specific metadata key (joining `option`/`short`/`positional`/`value_name`), chosen over forcing users to invert a field's polarity (e.g. renaming `color: bool = true` to `no_color: bool = false`) just to satisfy the parser.
 - **The guaranteed CLI parse-path type list is already fully specified** by the "String-boundary parsing and validation" section: `str`, `int` (plus sized integers with overflow/underflow rejection), `float`, `Path`, `bool`, enum values, validated newtypes (covering types like `SecretStr`), `Option[T]`, and collection fields, with the rules composing for nested cases rather than needing per-combination entries. This closes the question; no new type support was added.
-- **No `CliSpec` builder API, now or later:** manual `CliSpec` construction without deriving it from a model is not a compiler-provided fluent/chained builder (`.builder().option(...).build()`) — that shape is borrowed Rust/Java idiom, not native Incan. If manual construction is ever needed, `CliSpec` is an ordinary constructible value using normal Incan value-construction syntax, the same as any other model. This is not "defer the builder until a need appears" — there is no builder pattern to defer.
-- **Long aliases beyond `short` stay deferred**, per this RFC's own existing "outside this RFC unless Draft discussion proves required" language for aliases. No guide-level example has needed a second long spelling for one field; nothing demonstrated the need.
-- **Shell completion is designed and committed now, not deferred to a follow-up RFC.** Initially framed as out of scope purely for contract-size reasons — corrected mid-pass as a "north star first, don't pre-assign versions" mistake, the same principle already applied to RFC 117/118/119: settle the design now, decide implementation phasing (which shells ship first, which release) separately. `render_completions[T](shell: Shell)` generates static completions (command/subcommand names, option spellings, enum-typed value choices) entirely from the existing `CliSpec`, for `Bash`, `Zsh`, `Fish`, and `PowerShell`. Dynamic/context-aware completion callbacks for open-ended values (filesystem paths, remote lookups) remain explicitly out of scope — a genuinely different, runtime-dependent feature, not a scope cut for size alone.
+- **No `CliSpec` builder API:** manual `CliSpec` construction without deriving it from a model is not a compiler-provided fluent/chained builder (`.builder().option(...).build()`) — that shape is borrowed Rust/Java idiom, not native Incan. If manual construction is ever needed, `CliSpec` is an ordinary constructible value using normal Incan value-construction syntax, the same as any other model.
+- **Long aliases beyond `short` are outside this RFC**, per this RFC's own existing exclusion of aliases. No guide-level example has needed a second long spelling for one field; nothing demonstrated the need.
+- **Shell completion is part of this design.** `render_completions[T](shell: Shell)` generates static completions (command/subcommand names, option spellings, enum-typed value choices) entirely from the existing `CliSpec`, for `Bash`, `Zsh`, `Fish`, and `PowerShell`. Dynamic/context-aware completion callbacks for open-ended values (filesystem paths, remote lookups) remain explicitly out of scope — a genuinely different, runtime-dependent feature, not a scope cut for size alone.

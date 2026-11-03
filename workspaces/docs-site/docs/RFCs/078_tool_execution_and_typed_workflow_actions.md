@@ -17,7 +17,6 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
-- **Target scope:** v0.6, slice 7 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[actions]` per RFC 117.
 - **Shipped in:** —
 
 ## Summary
@@ -58,10 +57,10 @@ RFC 015 already has envs and scripts. RFC 075 lets capabilities advertise toolin
 - Replacing general-purpose shells.
 - Defining a remote build or distributed task execution service.
 - Allowing package install or import to run arbitrary setup hooks.
-- Defining exact syntax for every action kind in v1.
+- Defining exact syntax for every action kind.
 - Defining AI model execution semantics in full. RFC 080 owns AI assets and model metadata.
-- Defining no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Action capability and receipt metadata may inform those later RFCs, but this RFC is not the freestanding/kernel RFC.
-- Requiring every project script to be converted to a typed action immediately.
+- Defining no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Action capability and receipt metadata may inform those RFCs, but this RFC is not the freestanding/kernel RFC.
+- Requiring every project script to be converted to a typed action.
 
 ## Guide-level explanation
 
@@ -87,7 +86,7 @@ mutates = ["source"]
 requires-review = true
 ```
 
-The exact encoding is not normative in this Draft. The key requirement is that actions are inspectable before they run.
+The exact encoding in this example is not normative. The key requirement is that actions are inspectable before they run.
 
 ### Running project actions
 
@@ -117,7 +116,7 @@ An isolated tool should not become a project dependency merely because it was ex
 
 ### Action kinds
 
-V1 should standardize a small action-kind vocabulary:
+A small action-kind vocabulary is standardized:
 
 - `run`: run an application entrypoint
 - `test`: run tests
@@ -279,14 +278,14 @@ The recommended implementation shape is to build an action registry from built-i
 
 ## Design decisions
 
-Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.
+Resolved 2026-09-10.
 
-- **Standard action kinds.** The ten kinds in the reference section are standardized for v1. Extension kinds use an `x-` prefix, appear in machine-readable output, and receive conservative policy handling.
+- **Standard action kinds.** The ten kinds in the reference section are standardized. Extension kinds use an `x-` prefix, appear in machine-readable output, and receive conservative policy handling.
 - **`oven run` and `oven test` are not actions.** `run`, `test`, `build`, `bake`, and `check` remain first-class Oven command families with their own plan identities (RFC 118). Actions are the extension mechanism for everything else and are invoked through `oven action run <id>`. A project action may declare kind `run` or `test`, but it never redefines or shadows the built-in operation, so there is no npm-scripts-style override of `oven test`.
 - **Minimum dry-run contract for mutating external tools.** The plan must show the tool's source identity, version, and content hash; execution mode; argv, working directory, and environment additions; declared mutation categories and target paths; capability requirements (RFC 104); and the policy outcome. A tool that cannot predict its outputs declares `outputs = "unpredictable"`, is non-plannable, requires approval by default, and runs in a staging directory whose post-run diff is presented as a mutation plan before anything is adopted into the project (RFC 112 for the atomic adoption).
 - **Isolated tool execution uses the Oven store.** Tools are units under RFC 124, cached globally by unit identity and shared across projects; there is no per-project tool cache. `--fresh` requests a temporary environment for one run.
 - **Inputs and outputs for unpredictable tools.** Declared as `outputs = "unpredictable"`; observed outputs are recorded in the receipt and surfaced as the post-run diff above. Tools that can predict outputs declare them and are checked against the receipt.
 - **Secrets and credentials.** Action metadata may declare named credential requirements (kind and purpose), never values. Policy mediates each request; values are resolved from Oven-controlled secure storage (the credential references RFC 117 already keeps outside the project) as RFC 103 secret values; every request is receipted under RFC 104 with redaction.
-- **AI-backed actions.** Metadata carries three fields, execution locality (`local` or `cloud`), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block cloud execution. The field shapes are fixed here so `[actions]` need not change when RFC 080 lands; their detailed semantics remain RFC 080's.
+- **AI-backed actions.** Metadata carries three fields, execution locality (`local` or `cloud`), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block cloud execution. The field shapes are fixed here; their detailed semantics remain RFC 080's.
 
 Amendment made at the same time: the table root is `[actions]` (RFC 117), not `[oven.actions]`.

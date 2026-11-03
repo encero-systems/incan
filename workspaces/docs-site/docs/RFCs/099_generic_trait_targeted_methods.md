@@ -214,7 +214,7 @@ Source should not spell Rust-style external implementation blocks for this. The 
 
 A `where` constraint in a method generic header may express trait conformance for a type parameter, an associated type projection, or a concrete type expression. Examples include `where T.Storage with FixedWidthInteger` and `where BytesIO with BinaryWrite[T.Storage]`. A `where` constraint must be checked statically and must not be treated as a runtime guard. If the compiler cannot prove a `where` constraint for a candidate substitution, that substitution does not satisfy the adoption family.
 
-This RFC defines method-local `where` constraints only for generic trait-targeted methods. A later RFC may generalize `where` clauses to functions, type aliases, class declarations, and trait declarations, but this RFC does not require that larger surface.
+This RFC defines method-local `where` constraints only for generic trait-targeted methods; `where` clauses on functions, type aliases, class declarations, and trait declarations are not part of this design.
 
 ### Storage-backed integer dispatch
 
@@ -230,7 +230,7 @@ Reading must decode T.Storage, check conversion into T's logical underlying doma
 
 ### Coherence and ambiguity
 
-The compiler must reject overlapping generic trait-targeted methods when two methods could satisfy the same trait instantiation for the same enclosing type and substituted type arguments. This RFC does not introduce specialization, priority ordering, or "more specific wins" selection. If a future RFC adds specialization, it may relax this rule with explicit precedence semantics, but the default behavior must be ambiguity rejection.
+The compiler must reject overlapping generic trait-targeted methods when two methods could satisfy the same trait instantiation for the same enclosing type and substituted type arguments. This RFC does not introduce specialization, priority ordering, or "more specific wins" selection.
 
 Call resolution must continue to treat trait-targeted methods as trait behavior, not arbitrary overloads. A direct method call may use the targeted method when existing trait-method resolution can identify the relevant trait instantiation from argument types, expected result type, or an explicit target. If no target can be proven, the compiler must report an ambiguity or missing-method diagnostic rather than trying every method with a matching name as a runtime overload set.
 
@@ -281,7 +281,7 @@ The `from` clause belongs inside the generic header because the target trait ins
 
 `std.derives.numeric` is the public home of FixedWidthInteger, FixedWidthFloat, FixedWidthNumeric and StorageBackedInteger. Numeric membership must use canonical registry identities: signed and unsigned exact-width integer primitives for the integer family, exact-width float primitives for the float family, and their union for FixedWidthNumeric. Transparent aliases normalize before membership; nominal newtypes must not enter a primitive family merely because of their underlying type. StorageBackedInteger instead applies to the checked RFC 091 constrained-integer declarations carrying explicit storage. The primitive and nominal storage-backed families therefore do not overlap merely by representation. An authored with adoption of a standard automatic numeric/storage family must satisfy that same checked membership predicate; an empty marker body must not let an arbitrary nominal type assert membership.
 
-A standard family uses ordinary trait declarations plus compiler-checked numeric, storage or encoding metadata. The compiler must preserve the source trait's canonical identity and supply every required conformance fact. This RFC admits no unchecked public family-membership annotation, external reopening, arbitrary predicate callback or consumer-specific alternate conformance. The initial standard contracts are the four numeric/storage families and RFC 101's std.collections.OrdinalKey family under its owning deterministic-encoding contract. New automatic families require a separately checked contract rather than a package-level assertion.
+A standard family uses ordinary trait declarations plus compiler-checked numeric, storage or encoding metadata. The compiler must preserve the source trait's canonical identity and supply every required conformance fact. This RFC admits no unchecked public family-membership annotation, external reopening, arbitrary predicate callback or consumer-specific alternate conformance. The standard contracts are the four numeric/storage families and RFC 101's std.collections.OrdinalKey family under its owning deterministic-encoding contract. New automatic families require a separately checked contract rather than a package-level assertion.
 
 ### Interaction with `std.io`
 

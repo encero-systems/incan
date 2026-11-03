@@ -98,7 +98,7 @@ Incan should not copy Koheesio's Python/Pydantic runtime boundary literally. The
 - Provide JSON convenience helpers that compose cleanly with RFC 051 `JsonValue`.
 - Support both one-shot request helpers and a reusable `Client` surface.
 - Make `Client` lifecycle, cleanup, and reuse explicit enough to support connection pooling without hidden globals.
-- Make negotiated HTTP protocol information visible on responses, while avoiding a v1 requirement that every backend support HTTP/2.
+- Make negotiated HTTP protocol information visible on responses, while avoiding a requirement that every backend support HTTP/2.
 - Keep request and response models structured enough to compose with typed workflow actions, pipeline steps, logs, tests, and generated reports.
 - Make retry behavior explicit and policy-shaped rather than automatic and invisible.
 - Leave room for streaming bodies and test transports without leaking backend-specific transport types.
@@ -108,11 +108,11 @@ Incan should not copy Koheesio's Python/Pydantic runtime boundary literally. The
 ## Non-Goals
 
 - Defining server-side HTTP routing or handler APIs here; that belongs with RFC 037 and related web-platform work.
-- Shipping a full browser fetch surface in this RFC; browser-oriented HTTP behavior may reuse the same contract later but is not defined here.
+- Shipping a full browser fetch surface in this RFC; browser-oriented HTTP behavior may reuse the same contract but is not defined here.
 - Making HTTP a language intrinsic or keyword surface.
 - Introducing a GitHub- or cloud-specific SDK into the standard library.
 - Standardizing cookies, OAuth flows, multipart forms, WebSockets, or HTTP/3-specific behavior in the first version.
-- Requiring HTTP/2 support from every v1 implementation.
+- Requiring HTTP/2 support from every implementation.
 
 ## Guide-level explanation
 
@@ -311,7 +311,7 @@ Timeouts must be first-class and explicit. The contract must define:
 - whether a client-level timeout can be overridden per request
 - what error variant a timeout produces
 
-This RFC intentionally does not hardcode one exact default timeout yet; see unresolved questions.
+This RFC intentionally does not hardcode one exact default timeout; see unresolved questions.
 
 Timeouts may start as one total request timeout, but the API should not block later support for distinct connect, read, write, and overall timeout fields.
 
@@ -355,7 +355,7 @@ Implementations must preserve RFC 103 secret non-disclosure in debug-facing requ
 
 Header values constructed from RFC 103 `SecretStr` or `SecretBytes` must be treated as sensitive regardless of header name. Authentication helpers should accept secret value types directly so user code does not need to expose a token as a plain string before constructing a request.
 
-The public contract does not need to prescribe every redacted header name exhaustively in v1, but it must require that sensitive-header treatment is conservative and documented. Header-name heuristics are a fallback; value-level secret typing is the stronger contract when available.
+The public contract does not need to prescribe every redacted header name exhaustively, but it must require that sensitive-header treatment is conservative and documented. Header-name heuristics are a fallback; value-level secret typing is the stronger contract when available.
 
 ### Streaming and transports
 
@@ -392,15 +392,15 @@ The module should not rely on hidden ambient globals for client state, retry beh
 ### Interaction with existing features
 
 - **RFC 051 (`JsonValue`)**: JSON request and response helpers should compose with `JsonValue` as the baseline dynamic JSON type.
-- **RFC 055 (`std.fs`)**: file uploads or downloads may later compose with path or file surfaces, but this RFC does not require multipart or streaming file-transfer APIs.
+- **RFC 055 (`std.fs`)**: file uploads or downloads may compose with path or file surfaces, but this RFC does not require multipart or streaming file-transfer APIs.
 - **RFC 063 (`std.process`)**: HTTP should remain a direct network API, not a wrapper over shelling out to `curl`.
-- **RFC 037 (native web stdlib redesign)**: this RFC covers client-side HTTP. Server-side web contracts remain separate even if they eventually share types such as methods or status codes.
+- **RFC 037 (native web stdlib redesign)**: this RFC covers client-side HTTP. Server-side web contracts remain separate even if they share types such as methods or status codes.
 - **RFC 078 (tool execution and typed workflow actions)**: HTTP-capable tools and actions should be able to surface network access, protocol policy, and remote data flow through action metadata and policy checks.
 - **RFC 103 (`std.secrets`)**: authentication helpers, header builders, diagnostics, retries, telemetry, and workflow output should preserve `SecretStr` and `SecretBytes` redaction semantics.
 
 ### Compatibility / migration
 
-This feature is additive. Existing Rust-interop HTTP wrappers remain valid, but the design claim is that new code, docs, and examples should prefer `std.http` once it exists.
+This feature is additive. Existing Rust-interop HTTP wrappers remain valid, but the design claim is that new code, docs, and examples should prefer `std.http`.
 
 ## Alternatives considered
 
@@ -415,9 +415,9 @@ This feature is additive. Existing Rust-interop HTTP wrappers remain valid, but 
 - **A pipeline-specific HTTP step as the primary API**
     - Rejected because HTTP is a general-purpose stdlib capability. Step and workflow libraries should compose over `std.http`; they should not own the base transport contract.
 - **Separate public sync and async client models**
-    - Rejected for now because Incan should keep one conceptual client contract. Implementations may still provide blocking convenience helpers or async-only methods where the runtime requires them.
-- **Mandatory HTTP/2 in v1**
-    - Rejected because the API should not block on backend coverage or target support. The important v1 contract is that protocol policy and negotiated protocol metadata have a place to live.
+    - Rejected because Incan should keep one conceptual client contract. Implementations may still provide blocking convenience helpers or async-only methods where the runtime requires them.
+- **Mandatory HTTP/2**
+    - Rejected because the API should not block on backend coverage or target support. The important contract is that protocol policy and negotiated protocol metadata have a place to live.
 - **Hide protocol version entirely**
     - Rejected because service-to-service clients, debugging, performance work, and policy checks sometimes need to know whether HTTP/1.x or HTTP/2 was actually used.
 - **Expose backend transport types directly**
@@ -425,9 +425,9 @@ This feature is additive. Existing Rust-interop HTTP wrappers remain valid, but 
 
 ## Drawbacks
 
-- HTTP is a deceptively broad domain, and the API can sprawl if the module tries to cover every advanced transport concern immediately.
+- HTTP is a deceptively broad domain, and the API can sprawl if the module tries to cover every advanced transport concern.
 - Timeout, retry, redirect, and status behavior need very careful wording or users will make conflicting assumptions.
-- Protocol negotiation adds visible surface area before every implementation can support every protocol.
+- Protocol negotiation adds visible surface area even though not every implementation supports every protocol.
 - Streaming and transport seams are easy to over-design if they are not tied to concrete tests and `std.web` integration cases.
 - Redaction rules and debug output need discipline or the module will create accidental secret leakage.
 

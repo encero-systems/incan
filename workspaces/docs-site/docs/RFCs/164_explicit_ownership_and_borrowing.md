@@ -20,7 +20,7 @@
 
 ## Summary
 
-Add optional explicit ownership contracts alongside duckborrowing: `Borrowed[T]` for shared access, `BorrowedMut[T]` for exclusive input access, `Owned[T]` for ownership transfer, and `Reference[T] from source` for returned exclusive access to existing storage. Returned references support fluent chains and nested projections without copying or retaining their owners independently. Ordinary annotations and calls retain RFC 129's inference and mutation rules. Result-source relationships survive `Result` and other containers; failures propagate without implicit rollback. Implementation is targeted for 0.6; this specification and its examples do not claim shipped support.
+Add optional explicit ownership contracts alongside duckborrowing: `Borrowed[T]` for shared access, `BorrowedMut[T]` for exclusive input access, `Owned[T]` for ownership transfer, and `Reference[T] from source` for returned exclusive access to existing storage. Returned references support fluent chains and nested projections without copying or retaining their owners independently. Ordinary annotations and calls retain RFC 129's inference and mutation rules. Result-source relationships survive `Result` and other containers; failures propagate without implicit rollback. This specification and its examples do not claim shipped support.
 
 ## Core model
 
@@ -341,7 +341,7 @@ Adoption must demonstrate accepted and refused programs for shared field returns
 
 ### Relationship to existing borrowing RFCs
 
-RFC 129 remains the authority for ordinary inferred bindings and its `mut` contract. This RFC defines an optional explicit boundary and names where it extends the ordinary annotation rule. It does not reopen write-through assignment or permit hidden clone repair. RFC 005 and RFC 023 remain historical records of earlier interop and inference contracts; this proposal supplies a future explicit surface without requiring those annotations in ordinary code.
+RFC 129 remains the authority for ordinary inferred bindings and its `mut` contract. This RFC defines an optional explicit boundary and names where it extends the ordinary annotation rule. It does not reopen write-through assignment or permit hidden clone repair. RFC 005 and RFC 023 remain historical records of earlier interop and inference contracts; this proposal supplies an explicit surface without requiring those annotations in ordinary code.
 
 RFC 121 owns canonical Incan/Rust type identity. Borrowing annotations must use that identity rather than introduce lookalike owned and borrowed user types. Existing native reference annotations remain supported and must preserve their canonical access and lifetime contracts. Native shared references correspond to shared borrowed access and native mutable references to exclusive access; no extra wrapper allocation or cloning is implied. String and slice projections require checked representation-compatible conversions: `Borrowed[str]` must not silently equate distinct native string representations. Unsupported native lifetime relationships require diagnostics at the boundary, not guessed ownership. This extends the recognized surface without making Incan users write native lifetime syntax for ordinary code. RFC 128 must preserve the resulting contracts in callable metadata and syntax.
 
@@ -380,7 +380,7 @@ Explicit modes add vocabulary and expose lifetime errors that inference cannot h
 
 ## Design Decisions
 
-- **Target release: 0.6.** Explicit borrowing is implementable independently of the later database, graph, debugging and primitives proposals. Supporting examples use those domains to test the contract, not to impose their delivery as prerequisites.
+- **Consumers are not prerequisites.** Explicit borrowing is implementable independently of the database, graph, debugging and primitives proposals. Supporting examples use those domains to test the contract, not to impose their delivery as prerequisites.
 - **Duckborrowing remains the default.** Bare annotations, ordinary calls and RFC 129's `mut` rules keep their meanings. Explicit contracts constrain inference; they do not create another ownership system.
 - **Prelude forms require no imports.** `Borrowed`, `BorrowedMut`, `Reference` and `Owned` are recognized through canonical declarations, never by arbitrary matching names.
 - **Inputs and returned access have readable roles.** `Borrowed[T]` supplies shared access and read-only returned views; `BorrowedMut[T]` explicitly requires exclusive input access; `Reference[T]` expresses returned exclusive access for continued use. `Owned[T]` explicitly requests ownership.
@@ -392,5 +392,5 @@ Explicit modes add vocabulary and expose lifetime errors that inference cannot h
 - **Failure is not rollback.** `Err` and `?` preserve already-performed changes. Errors that retain no borrow permit recovery through the original owner after temporary access ends; explicitly borrowed error payloads retain their dependencies. Atomicity belongs to the operation's documented implementation.
 - **Last dependent use governs exclusivity.** Analysis accounts for branches, loops, reborrows, closures and suspension; it is not a textual end-of-block rule.
 - **Native compatibility preserves safety.** Existing native references and canonical types retain their actual access and lifetime contracts. Unsupported projections or lifetime relationships receive diagnostics, not erased dependencies or fabricated clones.
-- **Additional lifetime syntax is not introduced here.** Independent multiple-source clauses, explicitly lifetime-parameterized user fields and higher-ranked callable binders require a separate syntax extension. The accepted contract must reject a boundary it cannot express rather than pretending it is single-source.
+- **Additional lifetime syntax is not introduced here.** Independent multiple-source clauses, explicitly lifetime-parameterized user fields and higher-ranked callable binders are not part of this design. The accepted contract must reject a boundary it cannot express rather than pretending it is single-source.
 - **Diagnostics explain the relationship.** Identify the requested access, originating source, conflicting operation and dependent use; expose inferred versus explicit contracts to tooling.

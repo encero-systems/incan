@@ -28,7 +28,7 @@ An .incn file selects its syntax through an explicit header or a project default
 - a dialect needs a parsing and lowering worker;
 - a frontend also needs lowerability diagnostics, a compatibility declaration and runtime requirements.
 
-Every provider's output is RFC 160's canonical surface representation, and later SCIR under RFC 161, with a source map back to the original bytes. A construct a provider cannot lower faithfully is reported as a diagnostic, never as a silent change of meaning.
+Every provider's output is RFC 160's canonical surface representation, normalized into SCIR under RFC 161, with a source map back to the original bytes. A construct a provider cannot lower faithfully is reported as a diagnostic, never as a silent change of meaning.
 
 ## Core model
 
@@ -224,7 +224,7 @@ A response that lacks a field its kind requires must be refused as malformed und
 
 ### Checking, authority and inspection
 
-- Output from every surface must be checked by the ordinary Incan checker, under RFC 161 once the semantic core exists.
+- Output from every surface must be checked by the ordinary Incan checker, under RFC 161.
 - Authority-bearing operations in output from any surface must carry their RFC 104 capability identities exactly as authored Incan would.
 - `incan inspect` must be able to show the canonical form of any file, with its source map.
 
@@ -243,7 +243,7 @@ RFC 160 is the substrate: how a provider Loaf is built, admitted, run, reused an
 - each kind's execution shape;
 - selection, compatibility levels and lowerability.
 
-RFC 161 is the common destination: once the semantic core exists, every surface's output normalizes into it, and authority and ownership are explicit whatever surface produced the code.
+RFC 161 is the common destination: every surface's output normalizes into it, and authority and ownership are explicit whatever surface produced the code.
 
 ### Relationship to block vocabulary
 
@@ -291,4 +291,4 @@ A Loaf may contain unchanged native-language sources selected by the explicit fr
 - File syntax is the umbrella term; vocabulary changes words, dialect changes grammar, and frontend translates a declared external-language subset. The built-in #!syntax incan header explicitly selects canonical Incan without a provider. The proposed registration descriptor is FileSyntax, and the project default uses [source] syntax.
 - Native files retain their extension and bytes. Explicit loaf.toml provider/include/exclude rules select them without inserting directives; #!frontend remains an explicit override in an .incn file. Recursive ** and component-local * are path globs, and conflicting providers diagnose rather than use rule-order precedence.
 - Every AST/IR/backend path preserves the responsible source token or construct. Diagnostics use that same provenance standard for Incan, Rust-origin code and custom frontends; generated nodes retain honest authored origins and generation facts.
-- Full SCIR implementation is not a prerequisite: providers use RFC 160's canonical structured representation today and normalize through RFC 161 once that core is delivered. This design does not schedule the compiler-wide migration.
+- Providers use RFC 160's canonical structured representation and normalize through RFC 161.

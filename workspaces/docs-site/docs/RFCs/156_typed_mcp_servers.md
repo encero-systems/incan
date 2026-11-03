@@ -84,7 +84,7 @@ def main() -> Result[None, McpError]:
 
 The candidate Server constructor accepts a checked tool catalog; resources and prompts default to empty catalogs. `serve_stdio() -> Result[None, McpError]` owns the protocol loop. A malformed wire request does not call summarize_title. A valid call first constructs TitleArgs under the same field and validation rules as other typed JSON boundaries, then invokes the function and encodes TitleSummary.
 
-The generated tool name is summarize_title unless explicit naming is selected later. Its input has a required string title; its output has a required string text. An advertised schema must not claim that arbitrary model validators are fully expressible in JSON Schema. Such checks still execute during canonical construction, with their limits described in the checked descriptor.
+The generated tool name is summarize_title unless explicit naming is selected. Its input has a required string title; its output has a required string text. An advertised schema must not claim that arbitrary model validators are fully expressible in JSON Schema. Such checks still execute during canonical construction, with their limits described in the checked descriptor.
 
 No ordinary println output belongs in this example's protocol loop. Protocol messages use stdout; application diagnostics need the server's safe diagnostic channel.
 
