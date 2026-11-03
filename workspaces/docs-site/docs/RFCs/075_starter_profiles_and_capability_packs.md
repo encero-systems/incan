@@ -209,7 +209,7 @@ Files:
     action: requires policy approval
 ```
 
-The user-facing update unit is the mix because that is how the project concern was applied. RFC 074 still owns the lower-level template behavior for individual files: managed files may be updated when unchanged, bootstrap files are not rewritten by normal mix updates, advisory files are explained but not owned, and edited managed files must stop with a conflict or use a documented merge strategy. RFC 076 evaluates the resulting mutation plan before anything is written.
+The user-facing update unit is the mix because that is how the project concern was applied. Each file's ownership policy, defined under File ownership below, decides what the update may do: managed files may be updated, bootstrap files are not rewritten by normal mix updates, and advisory files are explained but not owned. RFC 074 owns the lower-level template mechanics, including the three-way merge that keeps user edits in a managed file and stops at each real conflict. RFC 076 evaluates the resulting mutation plan before anything is written.
 
 `oven mix diff` should show the receiver-side patch that would land in the project. Catalog or registry source diffs between descriptor versions are useful supporting evidence, but they are not a substitute for the rendered project diff.
 
@@ -584,7 +584,8 @@ Before applying a starter or mix, the CLI must build a mutation plan. The plan m
 - files to create
 - files to merge
 - files that would conflict
-- generated-file ownership policies from RFC 074
+- the ownership policy of every file
+- optional file groups included or skipped, with the reason for each
 - manifest tables and keys to add or update
 - dependency and dev-dependency changes
 - applicability states and back-off decisions
@@ -611,7 +612,32 @@ A descriptor must not overwrite an existing file by default. If a file conflict 
 
 File entries may reference templates governed by RFC 074. Starter and mix application must consume rendered files from the template layer; it must not define a second templating language or execute arbitrary generator code.
 
-If a file entry references an RFC 074 template, the mutation plan must carry the template's generated-file ownership policy. Bootstrap-owned files are created during greenfield application but should not be updated by normal mix refreshes. Managed files may participate in explicit template update workflows. Advisory files may record origin metadata without granting future ownership to the toolchain.
+### File ownership
+
+Every file entry carries one ownership policy, and this RFC is its single definition. RFC 074's template descriptors use the same `ownership` field and template provenance records it; neither layer may define a second ownership flag.
+
+- `bootstrap`: created during initial application and not rewritten by normal mix refreshes or template updates. It suits files users customize immediately, such as application source, domain models, local configuration examples and initial docs.
+- `managed`: eligible for explicit updates, through mix refreshes or RFC 074 template updates, while preserving user edits under RFC 074's merge and conflict rules. It suits files that should follow upstream evolution, such as tool configuration, shared helpers, CI boilerplate and formatter or linter configuration.
+- `advisory`: origin metadata only. Tooling may explain where the file came from but must never treat it as owned.
+
+A recorded rendering digest is a precondition fact for an update, never permission to erase a file that has changed.
+
+### Optional file groups
+
+A starter or mix may declare optional groups of files, such as docs, CI, test fixtures, backend-specific files or deployment scaffolding, and the condition that enables each:
+
+```toml
+[[file_groups]]
+id = "docs"
+enabled_by = "enable_docs"
+
+[[file_groups.files]]
+source = "templates/docs/index.md.template"
+target = "docs/index.md"
+language = "markdown"
+```
+
+The planner must decide every group before any file is rendered, and must hand RFC 074's renderer the explicit selected file set. It must not create a full tree and delete disabled parts afterward: that makes dry runs less honest and leaves provenance unable to tell an excluded file from one the user later removed. The plan must report each group as included, skipped, blocked or unavailable, with the parameter, project metadata, source compatibility or policy condition that decided it.
 
 ### Manifest mutation rules
 
