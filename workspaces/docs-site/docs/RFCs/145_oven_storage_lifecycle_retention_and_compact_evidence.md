@@ -1,6 +1,6 @@
 # RFC 145: Oven storage lifecycle, retention and compact evidence
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-15
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
