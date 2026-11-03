@@ -109,7 +109,7 @@
 <text x="1060" y="378" class="dd13-t">E2</text>
 <text x="1152" y="400" class="dd13-n dd13-c">Ranked semantic graph</text>
 <text x="1152" y="418" class="dd13-s dd13-c">general compiler producers</text>
-<text x="1152" y="432" class="dd13-s dd13-c">cold-oracle edit matrix</text>
+<text x="1152" y="432" class="dd13-s dd13-c">cold-baseline edit matrix</text>
 <rect x="792" y="360" width="208" height="88" rx="6" class="dd13-box"/>
 <text x="804" y="378" class="dd13-t">E3</text>
 <text x="896" y="400" class="dd13-n dd13-c">Loaf admission</text>

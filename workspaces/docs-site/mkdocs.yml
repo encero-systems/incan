@@ -339,7 +339,6 @@ nav:
           - Layering rules: contributing/explanation/layering.md
           - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
           - Build engine architecture: contributing/explanation/build_engine_architecture.md
-          - Build engine design: contributing/explanation/build_engine_design.md
           - Bakery storage design: contributing/explanation/bakery_storage_design.md
           - Native linkage during development: contributing/explanation/development-linking.md
           - "Post-mortem: v0.5.1": contributing/explanation/postmortem_v051.md

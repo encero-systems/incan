@@ -77,7 +77,7 @@ Revisit if a producer needs whole-program state that per-record reads cannot exp
 
 ## Provenance
 
-The maintainer approved the engine design (v2, with decision register BE-01 to BE-33 and stages E1 to E7) and the storage design it builds on (stages S1 to S4) on 2026-10-30. The [build engine architecture](../contributing/explanation/build_engine_architecture.md) assembles them with the rules added in review of this record: capture and freshness, Rust and C interop, comments, docs and source positions (BE-34), and damaged records. The full design texts are versioned as the [build engine design](../contributing/explanation/build_engine_design.md) and the [bakery storage design](../contributing/explanation/bakery_storage_design.md); where they differ from the architecture page, the architecture page governs.
+The maintainer approved the engine design (v2, with decision register BE-01 to BE-33 and stages E1 to E7) and the storage design it builds on (stages S1 to S4) on 2026-10-30. The [build engine architecture](../contributing/explanation/build_engine_architecture.md) assembles them with the rules added in review of this record: capture and freshness, Rust and C interop, comments, docs and source positions (BE-34), and damaged records. The architecture page also holds the full engine design as its detailed contracts; the storage design is the [bakery storage design](../contributing/explanation/bakery_storage_design.md), and where it differs from the architecture page, the architecture page governs.
 
 ## References
 

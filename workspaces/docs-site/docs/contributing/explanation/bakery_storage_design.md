@@ -1,6 +1,6 @@
 # Bakery storage design
 
-This page is the storage contract under the [build engine architecture](build_engine_architecture.md), which [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md) commits to; it was accepted with the [build engine design](build_engine_design.md) on 2026-10-30. The architecture page governs where they differ. In particular, DD-0013 supersedes DD-0012's rule that a damaged record is a miss; §5.3 gives the recovery rules.
+This page is the storage contract under the [build engine architecture](build_engine_architecture.md), which [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md) commits to; it was accepted with the build engine design, now the architecture page's detailed contracts, on 2026-10-30. The architecture page governs where they differ. In particular, DD-0013 supersedes DD-0012's rule that a damaged record is a miss; §5.3 gives the recovery rules.
 
 **Scope:** one embedded store per physical bakery, with Incan homes as virtual stores over it, and portable sealed record sets for Loaves and the registry.
 
@@ -516,7 +516,7 @@ The existing semantic digest implementation already distinguishes structural mea
 
 The checked-artifact codec can seed per-family serialization/validation, but a codec for an aggregate artifact is not automatically a random-access record codec. The implementation must inventory its actual entry points and expose one-family/one-revision encoding with golden round trips. The inspected code concretely provides `CheckedExportReplay`, semantic fact/dependency models, and semantic digests; this note does not claim that a complete fine-grained persisted read-witness API already exists.
 
-Publish newly computed read witnesses and outputs together: the result first, then any state that says it was produced. RFC 165 keeps storing a result for a snapshot distinct from selecting it. Never advance a "checked" or "applied" marker when only the input observation was stored. Keep full-result/cold compilation available as the oracle.
+Publish newly computed read witnesses and outputs together: the result first, then any state that says it was produced. RFC 165 keeps storing a result for a snapshot distinct from selecting it. Never advance a "checked" or "applied" marker when only the input observation was stored. Keep full-result/cold compilation available as the baseline.
 
 All new storage and adapter semantics are authored in Incan. Existing Rust implementation sites are integration evidence, not permission to write a replacement Rust subsystem. Where an existing compiler boundary cannot consume the proposed Incan views/records, identify and track that interop/ownership boundary before implementation. No Cargo-backed workaround is part of this plan.
 
@@ -544,7 +544,7 @@ Do not gate this on attractive timing alone. Each property needs an identity/cor
 | Stored once | Two Loaves share dependency sets/units; partial-overlap import; local bake then remote import | One selected canonical object per identity, no duplicate per-project native closure; import normalization and transient bytes reported |
 | Frozen Loaves | Read L1, import L2, instantiate a generic, keep another L1 consumer live | Frozen records unchanged; bindings are snapshot-specific; only missing applicable instances compute |
 | Correct identity | Relocation, source-position-only edit, feature/target/toolchain change, injected 128-bit collision | Reuse only where the compiler/unit contract allows; full-key checks prevent collision aliasing |
-| Correct edges | Missing name becomes present, signature/default changes, changed read set with unchanged output | All and only justified readers re-evaluate; changed witnesses survive early cutoff; cold oracle agrees |
+| Correct edges | Missing name becomes present, signature/default changes, changed read set with unchanged output | All and only justified readers re-evaluate; changed witnesses survive early cutoff; cold baseline agrees |
 | No stale fallback | Damage latest record, directory separator, negative-lookup page, frame bytes, manifest, or payload | Explicit error; no older value/false absence accepted; compiler repairs only from authoritative inputs |
 | Atomic publication | Kill/fail writes at every protocol boundary; ENOSPC; two disjoint and two conflicting writers | Readers see complete old or complete new state; output and witnesses agree; ambiguous acknowledgment resolved by transaction ID |
 | Shared memory | 1/2/4/8 readers of equal and disjoint page sets | Timestamp-aligned shared/private/PSS or footprint evidence; copies/decoded arenas accounted separately |
@@ -601,7 +601,7 @@ Preserve the existing `map_read` and native-consumer integration. Align the modu
 
 ### References
 
-- [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md), the [build engine architecture](build_engine_architecture.md) and the [build engine design](build_engine_design.md): the engine this store serves.
+- [DD-0013: The Incan build engine](../../design_records/0013_the_incan_build_engine.md) and the [build engine architecture](build_engine_architecture.md), with its detailed contracts: the engine this store serves.
 - [DD-0012: Incremental compilation over a persistent semantic store](../../design_records/0012_incremental_compilation_over_a_semantic_store.md): per-declaration facets, name slots, the ranked graph, frozen Loaves and deterministic compaction.
 - RFC 124 (Oven store unit identity and cross-plan artifact sharing) and RFC 125 (incan.pub Loaf registry and baked asset distribution).
 - RFC 165 (typed embedded storage with `std.db`, over the `incan_platform.store` substrate) and RFC 166 (indexed graphs and snapshot-bound graph access in `std.graph`): the contracts this store implements and serves.
