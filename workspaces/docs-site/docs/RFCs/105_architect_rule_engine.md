@@ -1,6 +1,6 @@
 # RFC 105: `oven architect` rule engine for design, safety, idiom, maintainability, and risk findings
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-24
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
