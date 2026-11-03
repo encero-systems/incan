@@ -15,7 +15,7 @@
     - RFC 169 (typed datasets and structured streams)
 - **Issue:** [#2524](https://github.com/encero-systems/incan/issues/2524)
 - **RFC PR:** —
-- **Written against:** v0.6.0-dev.9
+- **Written against:** v0.6
 - **Shipped in:** —
 
 ## Summary

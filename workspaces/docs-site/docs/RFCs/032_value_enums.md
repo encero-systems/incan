@@ -434,7 +434,7 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 - [x] Surface value-enum backing metadata in LSP/completion/hover details.
 - [x] Update authored user-facing docs for value enum syntax and behavior.
 - [x] Add release notes for RFC 032 implementation.
-- [x] Bump active dev version to `0.3.0-dev.23`.
+- [x] Bump the active development version.
 
 ### Verification
 

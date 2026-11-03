@@ -16,7 +16,7 @@
     - RFC 120, RFC 121, RFC 123, and RFC 124 (source, type, executable, and compiled-unit identity)
 - **Issue:** [#1638](https://github.com/encero-systems/incan/issues/1638)
 - **RFC PR:** —
-- **Written against:** v0.6.0-dev.4
+- **Written against:** v0.6
 - **Shipped in:** —
 
 ## Summary

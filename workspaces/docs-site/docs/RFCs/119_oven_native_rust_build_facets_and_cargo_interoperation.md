@@ -375,7 +375,7 @@ Rejected. It would revive implicit Cargo semantics, surprise build-script/proc-m
 
 ## Progress Checklist
 
-This checklist tracks the full RFC. The dev.6 ecosystem slice (#1561) delivers the inert-script, declared-input, adoption, and conformance work; it does not by itself complete the remaining Rust roles, IDE, or caller surfaces.
+This checklist tracks the full RFC. The ecosystem work in #1561 delivers the inert-script, declared-input, adoption, and conformance work; it does not by itself complete the remaining Rust roles, IDE, or caller surfaces.
 
 ### Spec reconciliation
 

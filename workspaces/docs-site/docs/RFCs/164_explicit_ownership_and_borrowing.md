@@ -15,7 +15,7 @@
     - RFC 166 (indexed graphs and snapshot-bound access)
 - **Issue:** [#2500](https://github.com/encero-systems/incan/issues/2500)
 - **RFC PR:** —
-- **Written against:** v0.6.0-dev.9
+- **Written against:** v0.6
 - **Shipped in:** —
 
 ## Summary

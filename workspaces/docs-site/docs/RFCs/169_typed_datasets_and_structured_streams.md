@@ -270,7 +270,7 @@ The proposed `Dataset[T]` describes a finite typed source, while `StructuredStre
 | RFC 166 | Graph identity, typed relationships, adjacency, and traversal |
 | RFC 169 | Shared heterogeneous schemas, type-aware projections, structured batches, and stream data semantics |
 
-RFC 165's existing typed family and single-family projection contracts remain valid independently. RFC 166 may support several model payloads through a declared enum or explicit family adapters without first implementing this entire RFC. This RFC supplies their common dataset and streaming interface; it must not become an accidental prerequisite for basic graph storage or the dev.9 database primitive.
+RFC 165's existing typed family and single-family projection contracts remain valid independently. RFC 166 may support several model payloads through a declared enum or explicit family adapters without first implementing this entire RFC. This RFC supplies their common dataset and streaming interface; it must not become an accidental prerequisite for basic graph storage or the RFC 165 database primitive.
 
 Module ownership is directional: dataset definitions and consumption protocols must not require a database or a graph package. Database and graph adapters consume those neutral interfaces. Primitive codec and platform layers must not import the higher-level dataset surface.
 
