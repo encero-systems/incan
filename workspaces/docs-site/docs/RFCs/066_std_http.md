@@ -1,6 +1,6 @@
 # RFC 066: `std.http` — Incan-first HTTP client and request/response surface
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-16
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
