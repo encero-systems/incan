@@ -45,6 +45,7 @@ use incan_lang::errors::ErrorKind;
 pub use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::errors;
 use incan_lang::lang::surface::string_methods::StringMethodId;
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics::NumericTypeId;
 use serde::{Deserialize, Serialize};
 
@@ -1469,13 +1470,17 @@ pub struct CheckedOwnedInitializer {
 }
 
 /// A body's result borrows one slot of `Body::params` (a method's receiver is slot 0) with shared or exclusive
-/// access. The body requires a checked profile, and so does every caller.
+/// access, either as the whole result or as one payload of a `Result` or `Option` result. The body requires a
+/// checked profile, and so does every caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReturnedView {
     /// Zero-based index in the owning `Body::params` inventory.
     pub slot: usize,
     /// `Shared` for a `Borrowed[T]` result, `Exclusive` for a `Reference[T]` result.
     pub access: crate::IncanInputAccess,
+    /// The result payload carrying the view: `0` for the `Ok` or `Some` payload, `1` for the `Err` payload; `None` for
+    /// a view that is the whole result.
+    pub carried: Option<usize>,
 }
 
 /// An explicit local binding's checked input access, retained on its body independently of the checked profile.
@@ -1677,6 +1682,16 @@ impl Body {
             ) || source.is_none_or(|source| source.input_access == crate::IncanInputAccess::Owned)
             {
                 return Some("returned view must borrow an existing parameter slot with shared or exclusive access");
+            }
+            // A `Result` carries a view in either payload; an `Option` only in its one payload.
+            if let Some(payload) = view.carried
+                && !match self.return_type.collection() {
+                    Some((CollectionTypeId::Result, [_, _])) => payload < 2,
+                    Some((CollectionTypeId::Option, [_])) => payload == 0,
+                    _ => false,
+                }
+            {
+                return Some("carried returned view requires a payload of a Result or Option result");
             }
         }
         if profile.version == 1 && !profile.owned_initializers.is_empty() {

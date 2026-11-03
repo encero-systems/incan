@@ -47,7 +47,7 @@ mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_work;
-pub(crate) use body_check::BodyIrOracleInputs;
+pub(crate) use body_check::BodyIrBaselineInputs;
 #[cfg(test)]
 pub(crate) use body_check::CheckedBodyInputError;
 pub use check_work::CheckWork;
@@ -76,6 +76,7 @@ mod nominal_identities;
 mod nominal_type_param_bounds;
 mod open_native_owners;
 mod ownership_contracts;
+pub(crate) use ownership_contracts::carried_view_binding;
 pub(crate) use ownership_contracts::projection::{CheckedInputBody, CheckedInputInvocation, CheckedInputSource};
 mod reachability;
 mod receiver_change;
@@ -554,13 +555,13 @@ struct CheckingNominalScope {
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
-    /// Test-only cold oracle bypasses local table extraction while retaining the original semantic operations.
+    /// Test-only cold baseline bypasses local table extraction while retaining the original semantic operations.
     #[cfg(test)]
     legacy_body_checking: bool,
     /// Verification-only declaration activations; a statement producer may not run inside any of them.
     #[cfg(test)]
     active_declaration_checks: Vec<Span>,
-    /// Per-body complete compatibility snapshots for cold-oracle comparisons, absent from production.
+    /// Per-body complete compatibility snapshots for cold-baseline comparisons, absent from production.
     #[cfg(test)]
     body_local_observations: Vec<(Span, String)>,
     /// Verification-only enclosing writers needed to reconstruct complete snapshots inside nominal declarations.
@@ -2812,11 +2813,11 @@ impl TypeChecker {
         &self.type_info
     }
 
-    /// Hand the accumulated type information to a later stage once checking is over. The opt-in Body IR oracle also
+    /// Hand the accumulated type information to a later stage once checking is over. The opt-in Body IR baseline also
     /// retains indexed immutable owner references; checking and settlement are never repeated.
     pub fn into_type_info(mut self) -> TypeCheckInfo {
-        if std::env::var_os("INCAN_BODY_IR_FREE_ORACLE").is_some() {
-            self.type_info.body_ir_oracle_inputs = Some(self.body_ir_oracle_inputs());
+        if std::env::var_os("INCAN_BODY_IR_FREE_BASELINE").is_some() {
+            self.type_info.body_ir_baseline_inputs = Some(self.body_ir_baseline_inputs());
         }
         self.type_info
     }
@@ -6125,17 +6126,21 @@ impl TypeChecker {
     /// body is checked. Every other annotation role, nested mode, malformed wrapper and returned dependency stays
     /// refused.
     fn resolve_type_checked_for_input(&mut self, ty: &Spanned<Type>, defer_input: bool) -> ResolvedType {
-        self.resolve_type_checked_deferring(ty, |mode| {
-            defer_input && mode != incan_lang::lang::types::ownership::OwnershipMode::Reference
-        })
+        self.resolve_type_checked_deferring(
+            ty,
+            |mode| defer_input && mode != incan_lang::lang::types::ownership::OwnershipMode::Reference,
+            false,
+        )
     }
 
     /// Resolve an annotation whose outer ownership mode, when `defer` selects it, is checked by its declaration's
-    /// contract instead of being refused here. Nested modes are always refused.
+    /// contract instead of being refused here. With `carried`, the mode of one `Result` or `Option` payload is
+    /// deferred the same way, for a view carried in the result. Other nested modes are always refused.
     fn resolve_type_checked_deferring(
         &mut self,
         ty: &Spanned<Type>,
         defer: impl Fn(incan_lang::lang::types::ownership::OwnershipMode) -> bool,
+        carried: bool,
     ) -> ResolvedType {
         self.resolve_qualified_type_annotations(ty);
         if self.validate_source_type_names {
@@ -6144,6 +6149,26 @@ impl TypeChecker {
                 && self.explicit_ownership_mode(name).is_some_and(&defer)
             {
                 self.refuse_unimplemented_ownership_annotation(&arguments[0]);
+            } else if carried
+                && let Type::Generic(carrier, arguments) = &ty.node
+                && matches!(
+                    incan_lang::lang::types::collections::from_str(carrier),
+                    Some(CollectionTypeId::Result | CollectionTypeId::Option)
+                )
+                && let Some(index) = arguments.iter().position(|argument| {
+                    matches!(&argument.node, Type::Generic(name, payload)
+                        if payload.len() == 1 && self.explicit_ownership_mode(name).is_some_and(&defer))
+                })
+            {
+                // One payload carries the view; every other payload stays an ordinary type.
+                for (position, argument) in arguments.iter().enumerate() {
+                    match &argument.node {
+                        Type::Generic(_, payload) if position == index => {
+                            self.refuse_unimplemented_ownership_annotation(&payload[0]);
+                        }
+                        _ => self.refuse_unimplemented_ownership_annotation(argument),
+                    }
+                }
             } else {
                 self.refuse_unimplemented_ownership_annotation(ty);
             }

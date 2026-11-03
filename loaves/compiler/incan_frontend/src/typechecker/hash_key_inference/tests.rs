@@ -197,7 +197,7 @@ fn assert_checkers(
             + candidate.check_work.property_bodies
     );
     eprintln!(
-        "body-local-oracle\tchecks={}\tobservations={}\terrors={}\twarnings={}\tdefaults={}\tmutation_settlements={}\tdictionary_settlements={}\topen_value_settlements={}\tdifferences=0",
+        "body-local-baseline\tchecks={}\tobservations={}\terrors={}\twarnings={}\tdefaults={}\tmutation_settlements={}\tdictionary_settlements={}\topen_value_settlements={}\tdifferences=0",
         candidate.check_work.body_local_checks,
         candidate.body_local_observations.len(),
         candidate_result.as_ref().err().map_or(0, Vec::len),
@@ -411,7 +411,7 @@ fn assert_environment_source(source: &str) -> Result<(), Box<dyn std::error::Err
         }
     }
     eprintln!(
-        "environment-oracle\t{}\t{}",
+        "environment-baseline\t{}\t{}",
         program.declarations.len(),
         candidate.check_work().function_bodies
     );
@@ -609,8 +609,8 @@ fn compare_nominal_methods(
     Ok(())
 }
 
-/// Extend the cold oracle with the G2 effect, deferred-use, lexical inference and diagnostic matrix. Both routes
-/// check fresh source, including an unreachable refusal; the oracle never provides input to the local route.
+/// Extend the cold baseline with the G2 effect, deferred-use, lexical inference and diagnostic matrix. Both routes
+/// check fresh source, including an unreachable refusal; the baseline never provides input to the local route.
 fn assert_body_local_matrix() -> Result<(), Box<dyn std::error::Error>> {
     let variants = [
         "def first(mut items: list[int]) -> None:\n    second(items)\ndef second(mut items: list[int]) -> None:\n    first(items)\n    items.append(1)\ndef caller() -> None:\n    items = [1]\n    first(items)\n",

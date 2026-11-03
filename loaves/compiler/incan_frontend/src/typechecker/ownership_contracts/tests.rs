@@ -84,7 +84,7 @@ fn source_graph(source: &str) -> Result<Result<flow::Graph, super::source::Unava
 }
 
 /// Local modes keep their callable owner through settlement, and an ordinary following function does not
-/// inherit a previous body's ownership profile, including in the legacy cold-oracle comparison route.
+/// inherit a previous body's ownership profile, including in the legacy cold-baseline comparison route.
 #[test]
 fn local_mode_facts_stay_with_their_callable() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def borrowed() -> int:\n    mut value = 1\n    mut view: BorrowedMut[int] = value\n    view = 2\n    return value\ndef ordinary() -> int:\n    return 3\n";
@@ -394,7 +394,6 @@ fn source_flow_tracks_inputs_through_branches_and_loops() -> Result<(), Box<dyn 
 fn source_flow_refuses_unprojected_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
         "def show(value: Borrowed[int]) -> int:\n    return abs(value)\n",
-        "def view(value: Borrowed[str]) -> Result[Borrowed[str], str] from value:\n    return Ok(value)\n",
         "def local(value: Borrowed[str]) -> None:\n    let view: Reference[str] = value\n",
         "def temporary() -> None:\n    let view: Borrowed[str] = \"temporary\"\n",
     ] {
@@ -2568,6 +2567,82 @@ fn explicit_bodies_propagate_construct_and_match_results() -> Result<(), Box<dyn
             .any(|error| error.stable_code() == Some("INCAN-T0123")),
         "{:?}",
         staged.errors
+    );
+    Ok(())
+}
+
+/// RFC 164's fallible buffer: a view carried in a `Result` comes out of its carrier with `?`, chains into the next
+/// call, propagates its error through every caller, and leaves the owner usable for recovery once the failed
+/// operation's borrows end. A carried view must still carry its declared source place.
+#[test]
+fn carried_views_propagate_and_recover() -> Result<(), Box<dyn std::error::Error>> {
+    let shared =
+        checked("def view(value: Borrowed[str]) -> Result[Borrowed[str], str] from value:\n    return Ok(value)\n")?;
+    assert!(
+        shared.errors.is_empty(),
+        "{:?} {:?}",
+        shared.errors,
+        flow_summary(&shared)
+    );
+    let buffer = "class SampleBuffer:\n    pub capacity: int\n    pub samples: list[int]\n\n    def append(mut self, sample: int) -> Result[Reference[Self], str] from self:\n        if len(self.samples) >= self.capacity:\n            return Err(\"full\")\n        self.samples.append(sample)\n        return Ok(self)\n\n    def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:\n        for sample in samples:\n            self.append(sample)?\n        return Ok(self)\n\n";
+    let accepted = checked(&format!(
+        "{buffer}def fill(mut buffer: BorrowedMut[SampleBuffer]) -> Result[None, str]:\n    (buffer.append(10)?).append_all([20, 30])?\n    return Ok(None)\n\ndef recover() -> Result[None, str]:\n    mut buffer = SampleBuffer(capacity=2, samples=[])\n    match fill(buffer):\n        Ok(_) => println(\"All samples added\")\n        Err(error) =>\n            println(error)\n            assert len(buffer.samples) == 2\n            buffer.capacity = 3\n            buffer.append(30)?\n    assert len(buffer.samples) == 3\n    return Ok(None)\n"
+    ))?;
+    assert!(
+        accepted.errors.is_empty(),
+        "{:?} {:?}",
+        accepted.errors,
+        flow_summary(&accepted)
+    );
+    // Every call and `?` sees the projected value type, in the checked expression types and in every call-result
+    // record Body IR reads: no type still carries the written mode.
+    let leaked = accepted
+        .type_info
+        .expressions
+        .expr_types
+        .iter()
+        .chain(&accepted.type_info.expressions.body_ir_expr_types)
+        .chain(&accepted.type_info.calls.body_ir_call_result_types)
+        .filter(|(_, ty)| format!("{ty:?}").contains("Reference"))
+        .map(|(span, ty)| format!("{span:?}: {ty:?}"))
+        .collect::<Vec<_>>();
+    assert!(leaked.is_empty(), "{leaked:?}");
+    let refused = checked(&format!(
+        "{buffer}def other(mut buffer: BorrowedMut[SampleBuffer], mut spare: BorrowedMut[SampleBuffer]) -> Result[Reference[SampleBuffer], str] from buffer:\n    return Ok(spare)\n"
+    ))?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0124")),
+        "{:?}",
+        refused.errors
+    );
+    Ok(())
+}
+
+/// A builtin list method changes or reads its receiver place in place: an exclusive receiver's field may grow,
+/// while a shared input cannot be changed through its borrow.
+#[test]
+fn explicit_bodies_call_builtin_list_methods_on_places() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "class SampleBuffer:\n    pub capacity: int\n    pub samples: list[int]\n\n    def add(mut self, sample: Borrowed[int]) -> bool:\n        self.samples.append(sample)\n        return self.samples.contains(sample)\n\ndef main() -> None:\n    mut buffer = SampleBuffer(capacity=2, samples=[])\n    buffer.add(10)\n    println(len(buffer.samples))\n",
+    )?;
+    assert!(
+        accepted.errors.is_empty(),
+        "{:?} {:?}",
+        accepted.errors,
+        flow_summary(&accepted)
+    );
+    let refused = checked("def grow(values: Borrowed[list[int]]) -> None:\n    values.append(1)\n")?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?} {:?}",
+        refused.errors,
+        flow_summary(&refused)
     );
     Ok(())
 }

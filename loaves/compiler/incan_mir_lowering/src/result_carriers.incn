@@ -40,7 +40,7 @@ from frame import place_type, Builder, temporary, track_rvalue_moves, read_place
 from lists import is_exclusive_borrow
 from checked_values import scalar_place, target_read
 from operators import operand_type
-from statements import is_nominal_type
+from statements import carrier_payload, is_nominal_type
 from assignments import assignment_place
 from formatting import display_plan_operand
 from list_values import indexed_read, value_operand
@@ -90,7 +90,7 @@ pub def lower_result_construction(
     mut slot = 0
     if variant.kind == ResultVariantKind.Err:
         slot = 1
-    operand = boundary_operand(builder, variant.payload, declaration.variants[slot].fields[0], span)?
+    operand = carrier_payload(builder, variant.payload, declaration.variants[slot].fields[0], span)?
     assign_carrier(builder, target, owner, slot, [operand], span)
     return Ok(None)
 
@@ -112,7 +112,7 @@ pub def lower_option_construction(
     match elements[0].as_one():
         Some(payload) =>
             ty = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
-            value = boundary_operand(builder, payload, ty, span)?
+            value = carrier_payload(builder, payload, ty, span)?
             assign_carrier(builder, target, owner, 1, [value], span)
             return Ok(None)
         _ => return Err("unsupported Body IR Some spread payload")

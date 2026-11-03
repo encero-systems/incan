@@ -1,5 +1,6 @@
 //! Preserve checker-proven narrowed reads of nested Option and union storage (#1337, #1698).
 
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{
     IncanType,
     body_ir::{Place, PlaceElem},
@@ -11,16 +12,17 @@ pub(super) fn retain_checked_narrowing(place: &mut Place, storage: &IncanType, c
     if storage == checked {
         return;
     }
-    let IncanType::Generic { base, args } = storage else {
+    if let Some([payload]) = storage.collection_arguments(CollectionTypeId::Option) {
+        if contains_checked_type(payload, checked) {
+            place.projection.push(PlaceElem::OptionPayload {
+                option_type: storage.clone(),
+                payload_type: payload.clone(),
+            });
+            retain_checked_narrowing(place, payload, checked);
+        }
         return;
-    };
-    if base == "Option" && args.len() == 1 && contains_checked_type(&args[0], checked) {
-        place.projection.push(PlaceElem::OptionPayload {
-            option_type: storage.clone(),
-            payload_type: args[0].clone(),
-        });
-        retain_checked_narrowing(place, &args[0], checked);
-    } else if base == "Union" {
+    }
+    if let Some(args) = storage.union_members() {
         if args.contains(checked) {
             place.projection.push(PlaceElem::UnionMember { ty: checked.clone() });
             return;
@@ -40,13 +42,10 @@ fn contains_checked_type(storage: &IncanType, checked: &IncanType) -> bool {
     if storage == checked {
         return true;
     }
-    match storage {
-        IncanType::Generic { base, args } if base == "Option" && args.len() == 1 => {
-            contains_checked_type(&args[0], checked)
-        }
-        IncanType::Generic { base, args } if base == "Union" => {
-            args.iter().any(|member| contains_checked_type(member, checked))
-        }
-        _ => false,
+    if let Some([payload]) = storage.collection_arguments(CollectionTypeId::Option) {
+        return contains_checked_type(payload, checked);
     }
+    storage
+        .union_members()
+        .is_some_and(|members| members.iter().any(|member| contains_checked_type(member, checked)))
 }

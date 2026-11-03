@@ -19,6 +19,7 @@ from pub::incan_mir_plan import (
 from layout_types import shared_receiver_type, native_alias_boundary, native_source_type
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Operand as RustOperand, OwnershipFact
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from generators import generator_shape
 from table_views import borrowed_at
 from decls import library_enum_item
@@ -349,7 +350,7 @@ def isinstance_source_type(
     """Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing."""
     match checked:
         RustType.Generic(base=base, args=_arguments) =>
-            if base == "Union" or base == "Option":
+            if base == "Union" or collection_type(str(base)) == Some(CollectionTypeId.Option):
                 source = isinstance_place(builder, value, span)?
                 return Ok(place_type(builder.locals, source))
         _ => pass

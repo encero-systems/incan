@@ -460,7 +460,7 @@ def hashed_leaf(
         None => pass
     match ty:
         RustType.Generic(base=base, args=arguments) =>
-            if base == "Option" or base == "Result":
+            if standard_carrier(str(base)):
                 for argument in arguments:
                     hashed_leaf(constructors, nominals, enums, argument, intrinsics)?
                 mut index = 0
@@ -478,7 +478,15 @@ def hashed_leaf(
 def intrinsic_carrier(ty: &RustType) -> bool:
     """Whether a checked type can name a retained intrinsic carrier: only Option, Result and Union are retained."""
     match ty:
-        RustType.Generic(base=base, args=_arguments) => return base == "Option" or base == "Result" or base == "Union"
+        RustType.Generic(base=base, args=_arguments) => return standard_carrier(str(base)) or base == "Union"
+        _ => return false
+
+
+pub def standard_carrier(base: str) -> bool:
+    """Whether a checked generic base names the standard Option or Result, read through the collection vocabulary."""
+    match collection_type(base):
+        Some(CollectionTypeId.Option) => return true
+        Some(CollectionTypeId.Result) => return true
         _ => return false
 
 

@@ -42,7 +42,7 @@ impl BodyBuilder<'_, '_> {
             return None;
         }
         if !self.type_info.has_local_input_annotation(&identity) {
-            return self.lower_view_local(assignment, &identity, scope, out);
+            return self.lower_view_local(assignment, &identity, remaining, scope, span, out);
         }
         Some((|| {
             let proof = self
@@ -93,7 +93,9 @@ impl BodyBuilder<'_, '_> {
         &mut self,
         assignment: &ast::AssignmentStmt,
         identity: &CanonicalSymbolId,
+        remaining: &[ast::Spanned<ast::Statement>],
         scope: bir::ScopeId,
+        span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> Option<Result<(), String>> {
         let access = self
@@ -101,12 +103,26 @@ impl BodyBuilder<'_, '_> {
             .as_ref()
             .ok()?
             .as_ref()?
-            .view_local(identity, hir_span(assignment.value.span));
+            .view_local(identity, &assignment.value);
         let access = match access {
             Ok(access) => access?,
             Err(reason) => return Some(Err(reason.into())),
         };
         self.retain_input_local_binding(assignment, identity, access);
+        // A local bound to a call that carries a view stores the carrier itself, typed as the call's own result; a
+        // later match takes the view out of it at the call's substituted place.
+        if let Some((call, payload)) = self.carried_view_call(&assignment.value) {
+            self.carried_view_locals.insert(identity.clone(), call);
+            return Some((|| {
+                let ty = super::returned_views::reference_carrier(self.resolve_ty(call), access, payload);
+                let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+                let place = self
+                    .assignment_target_place(assignment, ty, remaining, scope, span, out)
+                    .ok_or("carried view local has no checked storage")?;
+                self.finish_assignment(assignment, place, value, false, span, out);
+                Ok(())
+            })());
+        }
         Some((|| {
             let bir::Operand::Place(read) = self.lower_expr_to_operand(&assignment.value, scope, out) else {
                 return Err("returned view local has no substituted place".into());
@@ -124,6 +140,29 @@ impl BodyBuilder<'_, '_> {
             );
             Ok(())
         })())
+    }
+
+    /// Bind the arm of the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the error) of a
+    /// match on a carried view's call to the call's substituted place, as `view = call()?` binds it. A pattern
+    /// binding follows the place it binds, so an exclusive view writes through it. Returns the identity to unbind
+    /// after the arm, or `None` when the arm binds an ordinary payload.
+    pub(super) fn bind_carried_arm_view(
+        &mut self,
+        pattern: &ast::Spanned<ast::Pattern>,
+        view: &(bir::Place, IncanInputAccess, usize),
+    ) -> Option<CanonicalSymbolId> {
+        let (place, access, payload) = view.clone();
+        let (name, span) = crate::typechecker::carried_view_binding(pattern, payload)?;
+        let identity = self.type_info.resolved_write_identity(span, name)?.clone();
+        self.input_local_bindings.push(bir::ExplicitInputBinding {
+            declaration: hir_span(span),
+            identity: Some(identity.clone()),
+            access,
+        });
+        let writable = access == IncanInputAccess::Exclusive;
+        self.input_aliases
+            .insert(identity.clone(), LocalInputAlias { place, writable });
+        Some(identity)
     }
 
     /// Record the binding's obligation before lowering it, so a body that later refuses still names every explicit

@@ -4,6 +4,7 @@
 //! proves an environment-capable parameter; a returning type-test branch removes its exact checked member from the
 //! remaining path. Assignments and unproven effects invalidate residual knowledge.
 
+use incan_lang::lang::types::UNION_TYPE_NAME;
 use incan_semantics_core::body_ir as bir;
 use incan_semantics_core::{IncanType, SemanticSourceTargetKind, SymbolOrigin};
 use std::collections::HashMap;
@@ -231,10 +232,8 @@ fn whole_local(operand: &bir::Operand) -> Option<bir::LocalId> {
 
 /// Remove one exact checked union member, retaining an ordinary member type when only one alternative remains.
 fn exclude_member(before: &IncanType, target: &IncanType) -> Option<IncanType> {
-    let IncanType::Generic { base, args } = before else {
-        return None;
-    };
-    if base != "Union" || !args.contains(target) {
+    let args = before.union_members()?;
+    if !args.contains(target) {
         return None;
     }
     let remaining: Vec<_> = args.iter().filter(|member| *member != target).cloned().collect();
@@ -242,7 +241,7 @@ fn exclude_member(before: &IncanType, target: &IncanType) -> Option<IncanType> {
         [member] => Some(member.clone()),
         [] => None,
         _ => Some(IncanType::Generic {
-            base: base.clone(),
+            base: UNION_TYPE_NAME.to_string(),
             args: remaining,
         }),
     }

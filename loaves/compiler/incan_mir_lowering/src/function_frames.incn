@@ -14,6 +14,7 @@ from pub::incan_mir_plan import (
     assign as plan_assign,
     place as plan_place,
 )
+from explicit_arguments import direct_view_access
 from layout_types import native_source_type
 from signature_lifetimes import signature_lifetimes
 from rust::incan_semantics_core import (
@@ -153,11 +154,14 @@ pub def lower_function(
         initializing_decorator,
         span,
     )?
+    if body.returned_view.is_some() and (body.is_async or body.is_generator()):
+        return Err("unsupported Body IR returned view in an async or generator frame")
+    # A carried view's carrier is an ordinary owned result whose carrying payload already holds the borrow.
+    match direct_view_access(body):
+        Some(access) => builder.returned_view = access
+        None => pass
     match body.returned_view:
-        Some(view) =>
-            if body.is_async or body.is_generator():
-                return Err("unsupported Body IR returned view in an async or generator frame")
-            builder.returned_view = view.access
+        Some(view) => builder.carries_view = view.carried.is_some()
         None => pass
     initialize_body_frame(module, body, builder, parameters, declared_type, span)?
     lower_block(module, builder, body.block)?
@@ -180,7 +184,7 @@ pub def lower_function(
     )
     # A returned view's result shares its source parameter's loan; instances recompute the same relation.
     match body.returned_view:
-        Some(_view) => function.signature_lifetimes = signature_lifetimes(body, type_arguments)
+        Some(_view) => function.signature_lifetimes = signature_lifetimes(body, type_arguments)?
         None => pass
     if body.is_generator():
         match generator_shape(declared_type):

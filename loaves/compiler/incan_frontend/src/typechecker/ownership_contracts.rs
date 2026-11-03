@@ -7,6 +7,7 @@ use incan_lang::lang::types::ownership::{self, OwnershipMode};
 use incan_semantics_core::SymbolOrigin;
 
 mod admission;
+mod builtins;
 mod checked;
 mod copy;
 pub(super) mod flow;
@@ -15,6 +16,7 @@ mod report;
 mod source;
 
 pub(super) use admission::{direct_function_boundary, direct_method_boundary};
+pub(crate) use builtins::carried_view_binding;
 pub(super) use source::{CallableSource, Unavailable};
 
 use super::TypeChecker;
@@ -138,10 +140,25 @@ impl TypeChecker {
         if let Err(reason) = admission
             && !view_refused
         {
-            self.errors.push(CompileError::type_error(
+            let mut error = CompileError::type_error(
                 format!("Ownership contract cannot be proved: {reason}"), span,
             ).with_stable_code("INCAN-T0123")
-                .with_note("The entire owning body must retain supported access, storage and cleanup facts; a valid annotation alone is insufficient"));
+                .with_note("The entire owning body must retain supported access, storage and cleanup facts; a valid annotation alone is insufficient");
+            // Name the construct source analysis stopped at, or the graph fault it found, so the refusal points at
+            // what to change.
+            match self.type_info.protocols.explicit_input_flow.get(&identity) {
+                Some(InputFlow::Unavailable(unavailable)) => {
+                    error = error.with_note(format!("source analysis stops: {}", unavailable.reason));
+                    if unavailable.span != span {
+                        error = error.with_related_span(unavailable.span, "source analysis stops here");
+                    }
+                }
+                Some(InputFlow::Invalid { fault, .. }) => {
+                    error = error.with_note(format!("source analysis produced an invalid graph: {}", fault.0));
+                }
+                _ => {}
+            }
+            self.errors.push(error);
         }
     }
 

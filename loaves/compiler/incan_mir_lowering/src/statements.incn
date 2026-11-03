@@ -18,7 +18,7 @@ from pub::incan_mir_plan import (
     assign as plan_assign,
     place as plan_place,
 )
-from explicit_arguments import explicit_place_argument
+from explicit_arguments import explicit_place_argument, reference_contract
 from loop_exits import exits_to
 from rust::incan_semantics_core import IncanInputAccess
 from rust::incan_semantics_core::body_ir import (
@@ -426,12 +426,51 @@ def view_return_operand(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Borrow a returned view's source place with the view's access; the checker proved the place is the declared one."""
+    access = builder.returned_view
+    return view_operand(builder, operand, return_type, access, span)
+
+
+def view_operand(
+    mut builder: Builder,
+    operand: &RustOperand,
+    expected: PlanType,
+    access: IncanInputAccess,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """The one loan of a view's source place, for a direct view's return and a carried view's payload alike."""
     match operand:
         RustOperand.Place(read) =>
             source = scalar_place(builder, read.place, span)?
-            access = builder.returned_view
-            return explicit_place_argument(builder, source, read.fact, return_type, access, span)
+            return explicit_place_argument(builder, source, read.fact, expected, access, span)
         _ => return Err("unsupported Body IR returned view without a source place")
+
+
+pub def carrier_payload(
+    mut builder: Builder,
+    payload: &RustOperand,
+    field: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    In a body that carries a view, a reference payload Body IR borrows from a source place is that view's loan; any
+    other payload, such as an already borrowed parameter wrapped for a call, crosses the ordinary value boundary.
+    """
+    if builder.carries_view and borrowed_payload(payload):
+        match reference_contract(field):
+            Ok((_referent, writable)) =>
+                mut access = IncanInputAccess.Shared
+                if writable:
+                    access = IncanInputAccess.Exclusive
+                return view_operand(builder, payload, field, access, span)
+            Err(_reason) => pass
+    return boundary_operand(builder, payload, field, span)
+
+
+def borrowed_payload(payload: &RustOperand) -> bool:
+    """Whether Body IR reads the payload's place under a shared or exclusive borrow."""
+    match payload:
+        RustOperand.Place(read) => return read.fact == OwnershipFact.Borrow or read.fact == OwnershipFact.MutBorrow
+        _ => return false
 
 
 pub def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:

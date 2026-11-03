@@ -60,6 +60,7 @@ from generators import generator_type, is_generator_type
 from frame import Builder
 from type_parameters import Instance, instantiate, instantiate_parameter
 from call_arguments import call_parameter_type
+from explicit_arguments import direct_view_access
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
@@ -295,11 +296,12 @@ pub def local_representation(body: &RustBody, local: int, ty: PlanType) -> PlanT
 
 pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType, str]:
     """
-    A function whose one returned closure captures returns that closure's owned callable object. A returned view is
-    a shared or exclusive reference to its source place, with the view's access.
+    A function whose one returned closure captures returns that closure's owned callable object. A direct returned
+    view is a shared or exclusive reference to its source place, with the view's access; a carried view's carrier is
+    an owned result.
     """
-    match body.returned_view:
-        Some(view) => return signature_input(ty, false, false, view.access)
+    match direct_view_access(body):
+        Some(access) => return signature_input(ty, false, false, access)
         None => pass
     match ty:
         PlanType.FunctionPointer(signature) =>

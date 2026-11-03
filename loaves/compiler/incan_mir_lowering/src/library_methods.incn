@@ -33,6 +33,7 @@ from async_ import construct_boxed_future
 from type_parameters import substitute
 from sdk_generic_callables import sdk_owned_callable_bindings, sdk_callable_type, sdk_callable_type_arguments
 from shared_callables import shared_sdk_operands
+from closures import return_representation
 from lowering import BodyIrModule
 from checked_values import scalar_place
 from calls import instantiated_external_call, library_call_operands, native_delegation
@@ -208,14 +209,19 @@ def library_method_result(
             None => pass
     returned: RustType = substitute(delegation.return_type, names, closed)?
     _ = require_native_union_signature(returned, builder.intrinsics, native_delegation(delegation))?
-    return native_source_type(
+    result = native_source_type(
         builder.constructors,
         builder.nominals,
         builder.enums,
         builder.unions,
         returned,
         builder.intrinsics,
-    )
+    )?
+    # A published method's declaration frame represents its result as a function's does: a direct returned view is
+    # a reference to its source place.
+    match delegation.declaration_frame():
+        Some(frame) => return return_representation(frame, result)
+        None => return Ok(result)
 
 
 def library_receiver_arguments(builder: &Builder, receiver: Place, names: list[str]) -> Result[list[RustType], str]:

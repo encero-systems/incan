@@ -1,7 +1,7 @@
 //! Checker-selected fail-fast newtype validation ingress, through local bodies or published Loaf signatures.
 
 use super::args::fixed_elements;
-use super::{BodyBuilder, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, bir};
+use super::{BodyBuilder, CanonicalSymbolId, CollectionTypeId, CompilerNodeId, HirSourceSpan, IncanType, bir};
 use crate::typechecker::FunctionBindingInfo;
 
 impl BodyBuilder<'_, '_> {
@@ -153,10 +153,10 @@ impl BodyBuilder<'_, '_> {
         } else {
             return self.unsupported_operand("checked-newtype hook without its declaration".into(), scope, span, out);
         };
-        let IncanType::Generic { base, args } = &returned else {
-            return self.unsupported_operand("checked-newtype hook return".into(), scope, span, out);
+        let Some([ok_type, _]) = returned.collection_arguments(CollectionTypeId::Result) else {
+            return self.unsupported_operand("checked-newtype hook result carrier".into(), scope, span, out);
         };
-        if base != "Result" || args.len() != 2 || &args[0] != ty {
+        if ok_type != ty {
             return self.unsupported_operand("checked-newtype hook result carrier".into(), scope, span, out);
         }
         let hook_name = identity.declaration_name.clone();

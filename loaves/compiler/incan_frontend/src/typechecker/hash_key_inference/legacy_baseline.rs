@@ -1,4 +1,4 @@
-//! Original syntax-rescanning transfer, retained only as the cold influence oracle.
+//! Original syntax-rescanning transfer, retained only as the cold influence baseline.
 
 use super::{
     BTreeSet, CallArg, CollectionTypeId, DictEntry, Expr, HashKeyCallable, HashMap, ParamKind, Pattern, ResolvedType,
@@ -195,7 +195,7 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
-    /// Run the frozen pre-split declaration/check sequence for comparisons. This oracle is compiled only into the
+    /// Run the frozen pre-split declaration/check sequence for comparisons. This baseline is compiled only into the
     /// frontend test harness and is never an input or fallback for a record activation.
     pub(in crate::typechecker) fn legacy_check_program(
         &mut self,

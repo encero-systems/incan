@@ -58,7 +58,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-pub use free_function_oracle::verify_module as verify_free_function_inputs;
+pub use free_function_baseline::verify_module as verify_free_function_inputs;
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
 pub use source_comparison::required_published_defaults as required_comparison_defaults;
@@ -156,7 +156,7 @@ pub fn build_body_ir_module(
 }
 
 /// Construct the compatibility module before representation refinement. This remains the whole-module route;
-/// separating its seed lets the cold oracle compare individual representation operations from identical inputs.
+/// separating its seed lets the cold baseline compare individual representation operations from identical inputs.
 fn build_module_seed(
     program: &ast::Program,
     module_path: &[String],
@@ -1202,6 +1202,11 @@ struct BodyBuilder<'type_info, 'source> {
     input_local_bindings: Vec<bir::ExplicitInputBinding>,
     /// The declared view this body returns, once its parameter locals exist.
     returned_view: Option<returned_views::ReturnedViewSource>,
+    /// Each lowered call carrying a view in its `Result` or `Option`, by call span: its substituted place, access and
+    /// the payload carrying the view.
+    carried_view_places: HashMap<ast::Span, (bir::Place, incan_semantics_core::IncanInputAccess, usize)>,
+    /// Each local bound to such a call, by identity: the call's span, whose substituted place a match takes out.
+    carried_view_locals: HashMap<incan_semantics_core::CanonicalSymbolId, ast::Span>,
     /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
     input_if_scopes: Vec<bir::ScopeId>,
     /// Statement loops whose exit states are joined for authenticated whole owners, innermost last.
@@ -1354,6 +1359,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             input_owned_initializers: Vec::new(),
             input_local_bindings: Vec::new(),
             returned_view: None,
+            carried_view_places: HashMap::new(),
+            carried_view_locals: HashMap::new(),
             input_if_scopes: Vec::new(),
             input_loops: Vec::new(),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
@@ -1550,13 +1557,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     && args.len() == 1
                     && (self.intrinsic_result_constructor(callee, value.span).is_some()
                         || (self.intrinsic_option_constructor(callee)
-                            && primitives::collection_member_types(destination, CollectionTypeId::Option)
-                                .is_some())) =>
+                            && destination.collection_arguments(CollectionTypeId::Option).is_some())) =>
             {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::List(entries) => {
-                let Some([member]) = primitives::collection_member_types(destination, CollectionTypeId::List) else {
+                let Some([member]) = destination.collection_arguments(CollectionTypeId::List) else {
                     return;
                 };
                 for entry in entries {
@@ -1567,7 +1573,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::Set(elements) => {
-                let Some([member]) = primitives::collection_member_types(destination, CollectionTypeId::Set) else {
+                let Some([member]) = destination.collection_arguments(CollectionTypeId::Set) else {
                     return;
                 };
                 for element in elements {
@@ -1576,8 +1582,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.settle_open_value_type(value.span, destination);
             }
             ast::Expr::Dict(entries) => {
-                let Some([key_ty, value_ty]) = primitives::collection_member_types(destination, CollectionTypeId::Dict)
-                else {
+                let Some([key_ty, value_ty]) = destination.collection_arguments(CollectionTypeId::Dict) else {
                     return;
                 };
                 for entry in entries {
@@ -1675,8 +1680,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             (IncanType::Unknown | IncanType::Infer, _) => settled.clone(),
             (IncanType::TypeVar(name), _) if !self.type_parameters.contains(name) => settled.clone(),
-            (_, IncanType::Generic { base, args })
-                if base == "Union" && recorded != settled && args.iter().any(|member| member == recorded) =>
+            (_, _)
+                if recorded != settled
+                    && settled
+                        .union_members()
+                        .is_some_and(|members| members.contains(recorded)) =>
             {
                 settled.clone()
             }
@@ -2155,7 +2163,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.borrowed_parameters.contains(&local)
             || self.locals.get(local.index()).is_some_and(|decl| {
                 matches!(decl.origin, bir::LocalOrigin::Parameter)
-                    && matches!(&decl.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict)))
+                    && matches!(
+                        decl.ty.collection(),
+                        Some((
+                            CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict,
+                            _
+                        ))
+                    )
             })
     }
 
@@ -2402,7 +2416,7 @@ mod collect;
 mod collection_context;
 mod decorated_bindings;
 mod entrypoint_effects;
-mod free_function_oracle;
+mod free_function_baseline;
 mod model_constants;
 mod published_methods;
 mod registry_descriptions;
@@ -2442,27 +2456,27 @@ use reads::*;
 mod representation_tests;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/union_layouts.rs"]
+#[path = "body_ir/baselines/union_layouts.rs"]
 mod legacy_union_layouts;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/opaque_returns.rs"]
+#[path = "body_ir/baselines/opaque_returns.rs"]
 mod legacy_opaque_returns;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/shared_reads.rs"]
+#[path = "body_ir/baselines/shared_reads.rs"]
 mod legacy_shared_reads;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/source_comparison.rs"]
+#[path = "body_ir/baselines/source_comparison.rs"]
 mod legacy_source_comparison;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/trait_returns.rs"]
+#[path = "body_ir/baselines/trait_returns.rs"]
 mod legacy_trait_returns;
 
 #[cfg(test)]
-#[path = "body_ir/oracle/trait_values.rs"]
+#[path = "body_ir/baselines/trait_values.rs"]
 mod legacy_trait_values;
 
 #[cfg(test)]

@@ -162,8 +162,9 @@ pub(super) fn surface_expr_label(payload: &ast::SurfaceExprPayload) -> String {
 /// [`IncanType::Tuple`], while a written `tuple[A, B]` *annotation* resolves through the collection-type registry and
 /// therefore arrives as an [`IncanType::Generic`] whose base is that registry's canonical name. Matching only the first
 /// spelling silently degraded every element of an annotated tuple to `Unknown`, which in turn made each element read
-/// `Borrow` rather than its real Copy/non-Copy fact. The generic base is classified through [`collections::from_str`]
-/// rather than compared against a literal name, so the registry stays the single source of truth for that vocabulary.
+/// `Borrow` rather than its real Copy/non-Copy fact. The generic base is classified through
+/// [`IncanType::collection_arguments`] rather than compared against a literal name, so the registry stays the single
+/// source of truth for that vocabulary.
 /// Why a statement-level destructure of `value_ty` into `arity` names cannot be lowered, or `None` when it can.
 ///
 /// The statement sibling of [`unsupported_for_pattern`], and it exempts the same two types for the same reason:
@@ -232,8 +233,7 @@ pub(super) fn tuple_type_elements(ty: &IncanType) -> Option<&[IncanType]> {
     match ty {
         IncanType::Tuple(items) => Some(items),
         IncanType::Ref(inner) | IncanType::RefMut(inner) => tuple_type_elements(inner),
-        IncanType::Generic { base, args } if collections::from_str(base) == Some(CollectionTypeId::Tuple) => Some(args),
-        _ => None,
+        _ => ty.collection_arguments(CollectionTypeId::Tuple),
     }
 }
 /// Whether `pattern` is representable by [`bir::Pattern`]'s closed vocabulary. The only unrepresentable shape is a

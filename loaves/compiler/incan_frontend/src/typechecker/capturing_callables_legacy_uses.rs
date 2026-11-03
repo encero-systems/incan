@@ -1,4 +1,4 @@
-//! The original whole-source use scan, retained only for the cold checker oracle.
+//! The original whole-source use scan, retained only for the cold checker baseline.
 
 use super::{TypeChecker, ValueReads};
 use crate::ast::{Declaration, Decorator, Expr, MethodDecl, Program, Spanned};
@@ -52,7 +52,7 @@ fn legacy_value_reads(program: &Program) -> ValueReads {
 }
 
 impl TypeChecker {
-    /// Retain the legacy source-use selection only in the test oracle; production always consumes contributions.
+    /// Retain the legacy source-use selection only in the test baseline; production always consumes contributions.
     pub(in crate::typechecker) fn legacy_plan_closure_holding_callables(&mut self, program: &Program) {
         self.capturing_callables = super::CapturingCallables::default();
         if !self.checks_standard_library_source() {

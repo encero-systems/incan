@@ -174,7 +174,7 @@ pub def lower_instances(
         original_callable = request.original_callable
         body = instantiate(request.body, arguments, owned_callable_slots)?
         storage_arguments = callable_storage_arguments(request.body, arguments, owned_callable_slots)?
-        lifetimes = signature_lifetimes(request.body, arguments)
+        lifetimes = signature_lifetimes(request.body, arguments)?
         declarations = retain_frame_nominals(template_constructors, context, templates, body, nominal_instances)?
         for declaration in declarations:
             context.nominal_declarations.push(declaration.clone())

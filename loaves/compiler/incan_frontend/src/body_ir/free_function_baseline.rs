@@ -1,4 +1,4 @@
-//! Free-function input migration oracle. Whole-module facets are deliberately confined to this comparison adapter;
+//! Free-function input migration baseline. Whole-module facets are deliberately confined to this comparison adapter;
 //! successful comparisons prove settled-local input equivalence, not keyed reads, record authentication or reuse.
 
 use super::{BodyIrLoweringFacts, TypeCheckInfo, ast, bir, lower_function_body};
@@ -8,7 +8,7 @@ use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Verify every physical free-function seed in a compatibility module. This deliberately builds the module and
-/// exists only as a migration oracle; the production keyed producer must never call it to obtain inputs.
+/// exists only as a migration baseline; the production keyed producer must never call it to obtain inputs.
 pub fn verify_module(
     program: &ast::Program,
     module_path: &[String],
@@ -72,7 +72,7 @@ pub fn verify_module(
 
 /// Keep the complete native and publication comparisons independent; serde intentionally omits native attributes.
 /// Each completed report is published by rename; an interrupted compiler can leave only an unselected temporary
-/// file, never a truncated JSON row among the oracle's accepted observations.
+/// file, never a truncated JSON row among the baseline's accepted observations.
 fn compare_inputs(
     function: &ast::FunctionDecl,
     span: ast::Span,
@@ -82,9 +82,9 @@ fn compare_inputs(
 ) -> Result<bir::Body, Box<dyn std::error::Error>> {
     let owners = facts
         .type_info
-        .body_ir_oracle_inputs
+        .body_ir_baseline_inputs
         .as_ref()
-        .ok_or("missing oracle owner capture")?;
+        .ok_or("missing baseline owner capture")?;
     let (checked, declaration) = owners.owners(span).ok_or("missing settled free-function owners")?;
     let mut info = shared_inputs(facts.type_info);
     checked.append_lowering_inputs(declaration, &mut info)?;
@@ -138,7 +138,7 @@ pub(super) fn record_comparison(
 
     // ---- Receipt: bind the result and digests to this comparison ----
     let row = serde_json::json!({
-        "schema": "incan.body-ir-free-input-oracle/1",
+        "schema": "incan.body-ir-free-input-baseline/1",
         "identity": expected.decl_id, "name": expected.name, "phase": phase,
         "span": [expected.span.start, expected.span.end], "comparison": prefix,
         "equal": same, "native_equal": expected == actual && before == after,
@@ -178,7 +178,7 @@ fn first_difference(before: &str, after: &str) -> Option<String> {
     }
 }
 
-/// Copy only the compatibility earlier facets. This oracle adapter intentionally leaves local expression, call,
+/// Copy only the compatibility earlier facets. This baseline adapter intentionally leaves local expression, call,
 /// reference and protocol tables empty until the two selected settled owners supply them. These broad earlier
 /// facets are not a production BodyFactsView and their copy costs are not producer read measurements.
 fn shared_inputs(source: &TypeCheckInfo) -> TypeCheckInfo {
@@ -322,7 +322,7 @@ fn complete_publication_inputs(source: &TypeCheckInfo, target: &mut TypeCheckInf
 /// production must obtain these default projections through the shared scoped reader rather than this native source.
 fn append_default_inputs(
     facts: &BodyIrLoweringFacts<'_, '_>,
-    owners: &crate::typechecker::BodyIrOracleInputs,
+    owners: &crate::typechecker::BodyIrBaselineInputs,
     target: &mut TypeCheckInfo,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // ---- Suppliers: follow canonical references to retained source defaults ----
