@@ -1220,7 +1220,7 @@ def compile_local_rust_library(
     held = claim_rust(store, name)?
     view_prior_evidence(store, name, directory, dependencies)?
     if let Some(identity) = baked_identity(facet, directory, arguments, environment, request, toolchain)?:
-        if baked_rust(store, identity, directory, facet.project)?:
+        if baked_rust(store, identity, directory, facet.project, name)?:
             match library_artifact(directory, declared.crate_name, context, declared.kind)?:
                 None => pass
                 Some(artifact) =>
@@ -1563,7 +1563,7 @@ pub def compile_binary(
         [],
         "rust binary",
     )?
-    register_root(store, facet.project, current.digest)?
+    register_root(store, facet.project, rust_unit_name("binary", output_name, ""), [current.digest])?
     view(store, fact, output_name, binary)?
     view(store, fact, f"{output_name}.d", dependencies)?
     println(f"compiled {name}")
@@ -1590,7 +1590,7 @@ def view_baked_binary(
     match find(store, key.digest)?:
         None => return Ok(false)
         Some(fact) =>
-            register_root(store, project, key.digest)?
+            register_root(store, project, rust_unit_name("binary", output_name, ""), [key.digest])?
             view(store, fact, output_name, directory.joinpath(output_name))?
             view(store, fact, f"{output_name}.d", directory.joinpath(f"{output_name}.d"))?
             trace(f"unit {name} rust binary: reused")
