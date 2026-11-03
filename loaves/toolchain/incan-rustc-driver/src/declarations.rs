@@ -24,6 +24,42 @@ fn standard_path(segments: &[&str], span: Span) -> ast::Path {
     path
 }
 
+/// The standard enum a native Option/Result carrier aliases, below `std`, and its type arguments in variant order.
+pub(crate) fn standard_carrier(carrier: &crate::plan::EnumDeclaration) -> ([&'static str; 2], Vec<PlanType>) {
+    let path = if carrier.carrier == "Option" {
+        ["option", "Option"]
+    } else {
+        ["result", "Result"]
+    };
+    let arguments = carrier
+        .variants
+        .iter()
+        .flat_map(|variant| variant.fields.iter().cloned())
+        .collect();
+    (path, arguments)
+}
+
+/// Spell a carried view's result as its standard enum, so each payload reference is a signature loan position.
+fn carried_output_ty(carrier: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Ty> {
+    let (segments, arguments) = standard_carrier(carrier);
+    let mut path = standard_path(&segments, span);
+    if let Some(segment) = path.segments.last_mut() {
+        segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+            span,
+            args: arguments
+                .iter()
+                .map(|argument| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(argument, span))))
+                .collect(),
+        })));
+    }
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    })
+}
+
 /// Name the shared builtin carrier directly, so compiling the runtime never needs its own already-built facade.
 fn runtime_carrier_ty(carrier: RuntimeCarrier, span: Span) -> ast::TyKind {
     let mut segments = thin_vec![ast::PathSegment::path_root(span)];
@@ -611,8 +647,13 @@ fn placeholder(span: Span) -> Box<ast::Block> {
 }
 
 /// Inject one source-named function's declaration with no authored body in the AST. Future boxing constructors tie
-/// their explicit reference inputs and boxed result to the same lifetime before rustc checks the native call.
-pub fn function(function: &Function, span: Span) -> Result<Box<ast::Item>, crate::error::PlanError> {
+/// their explicit reference inputs and boxed result to the same lifetime before rustc checks the native call; a
+/// carried view's result exposes its payload loan to the retained lifetime contract.
+pub fn function(
+    plan: &crate::plan::Plan,
+    function: &Function,
+    span: Span,
+) -> Result<Box<ast::Item>, crate::error::PlanError> {
     let inputs = function
         .parameters
         .iter()
@@ -632,7 +673,11 @@ pub fn function(function: &Function, span: Span) -> Result<Box<ast::Item>, crate
         })
         .collect();
     let output = ast::FnRetTy::Ty(
-        crate::futures::constructor_return_type(function, span).unwrap_or_else(|| ty(&function.return_type, span)),
+        crate::futures::constructor_return_type(function, span)
+            .or_else(|| {
+                crate::validation::carried_output(plan, function).map(|carrier| carried_output_ty(carrier, span))
+            })
+            .unwrap_or_else(|| ty(&function.return_type, span)),
     );
     let mut declaration = ast::FnDecl { inputs, output };
     let mut generics = crate::futures::constructor_generics(function, span);

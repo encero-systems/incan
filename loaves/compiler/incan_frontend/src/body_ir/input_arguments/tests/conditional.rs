@@ -498,3 +498,58 @@ fn conditional_projection_keeps_nested_unsupported_cleanup_refused() -> Result<(
     }
     Ok(())
 }
+
+/// Collect the declared type of every `?` operand local, through loops and branches.
+fn try_operand_types(
+    statements: &[bir::Statement],
+    locals: &[bir::LocalDecl],
+    out: &mut Vec<incan_semantics_core::IncanType>,
+) {
+    for statement in statements {
+        match &statement.kind {
+            bir::StatementKind::TryPropagate {
+                operand: bir::Operand::Place(read),
+                ..
+            } => {
+                if let Some(local) = read.place.local_id().and_then(|id| locals.get(id.index())) {
+                    out.push(local.ty.clone());
+                }
+            }
+            bir::StatementKind::Loop { body } => try_operand_types(&body.stmts, locals, out),
+            bir::StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                try_operand_types(&then_block.stmts, locals, out);
+                if let Some(block) = else_block {
+                    try_operand_types(&block.stmts, locals, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A carried view's call holds its callee's carrier, whose success payload is the view's reference, and `?`
+/// propagates from that carrier; the caller continues on the substituted place.
+#[test]
+fn carried_view_calls_hold_the_reference_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class SampleBuffer:\n    pub capacity: int\n    pub samples: list[int]\n\n    def append(mut self, sample: int) -> Result[Reference[Self], str] from self:\n        if len(self.samples) >= self.capacity:\n            return Err(\"full\")\n        self.samples.append(sample)\n        return Ok(self)\n\n    def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:\n        for sample in samples:\n            self.append(sample)?\n        return Ok(self)\n";
+    let module = staged(source, false)?;
+    let lowered = module
+        .bodies
+        .iter()
+        .find(|lowered| lowered.name.ends_with("append_all"))
+        .ok_or("missing append_all")?;
+    let mut operands = Vec::new();
+    try_operand_types(&lowered.block.stmts, &lowered.locals, &mut operands);
+    assert!(
+        !operands.is_empty()
+            && operands.iter().all(
+                |ty| matches!(ty, incan_semantics_core::IncanType::Generic { base, args }
+                if base == "Result" && matches!(args.first(), Some(incan_semantics_core::IncanType::RefMut(_))))
+            ),
+        "{operands:?}\n{:#?}",
+        lowered.block
+    );
+    Ok(())
+}

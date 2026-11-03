@@ -7,9 +7,10 @@ impl BodyBuilder<'_, '_> {
     /// storage. An owned projected read needs Clone; a reference consumer explicitly retains a borrow at its call
     /// boundary.
     pub(super) fn is_checked_enum_value(&self, ty: &IncanType) -> bool {
-        if matches!(ty, IncanType::Generic { base, .. }
-            if matches!(super::collections::from_str(base), Some(super::CollectionTypeId::Option | super::CollectionTypeId::Result)))
-        {
+        if matches!(
+            ty.collection(),
+            Some((super::CollectionTypeId::Option | super::CollectionTypeId::Result, _))
+        ) {
             return true;
         }
         let name = match ty {

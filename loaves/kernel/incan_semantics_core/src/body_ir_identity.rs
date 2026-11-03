@@ -7,7 +7,7 @@
 //! coherent-looking foreign record. These checks never mint or complete an identity; they only confirm that the
 //! retained ones agree with each other and belong to this module. They answer the same question for every consumer.
 
-use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::collections::CollectionTypeId;
 use std::collections::BTreeSet;
 
 use crate::body_ir::{
@@ -866,14 +866,11 @@ impl BodyIrModule {
                 args: vec![underlying.clone()],
             }
         };
-        body.return_type
-            == IncanType::Generic {
-                base: "Result".to_owned(),
-                args: vec![
-                    owner,
-                    IncanType::NativeBuiltin(crate::RuntimeBuiltinType::ValidationError),
-                ],
-            }
+        let expected = [
+            owner,
+            IncanType::NativeBuiltin(crate::RuntimeBuiltinType::ValidationError),
+        ];
+        body.return_type.collection_arguments(CollectionTypeId::Result) == Some(expected.as_slice())
     }
 
     /// Check retained storage consistency without inferring support or activation from a raw tuple layout.
@@ -1040,19 +1037,19 @@ fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer)
                 && body.return_type == *ty
         }
         StaticInitializer::Literal(value) => literal_static_carrier_matches(ty, value),
-        StaticInitializer::List(values) => match collection_arguments(ty, CollectionTypeId::List) {
+        StaticInitializer::List(values) => match ty.collection_arguments(CollectionTypeId::List) {
             Some([element]) => {
-                primitive_static_carrier(element)
+                element.static_literal_carrier()
                     && values
                         .iter()
                         .all(|value| literal_static_carrier_matches(element, value))
             }
             _ => false,
         },
-        StaticInitializer::Dict(entries) => match collection_arguments(ty, CollectionTypeId::Dict) {
+        StaticInitializer::Dict(entries) => match ty.collection_arguments(CollectionTypeId::Dict) {
             Some([key, value]) => {
-                hashed_static_carrier(key)
-                    && primitive_static_carrier(value)
+                key.hashed_static_literal_carrier()
+                    && value.static_literal_carrier()
                     && entries.iter().all(|(entry_key, entry_value)| {
                         literal_static_carrier_matches(key, entry_key)
                             && literal_static_carrier_matches(value, entry_value)
@@ -1060,9 +1057,9 @@ fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer)
             }
             _ => false,
         },
-        StaticInitializer::Set(members) => match collection_arguments(ty, CollectionTypeId::Set) {
+        StaticInitializer::Set(members) => match ty.collection_arguments(CollectionTypeId::Set) {
             Some([element]) => {
-                hashed_static_carrier(element)
+                element.hashed_static_literal_carrier()
                     && members
                         .iter()
                         .all(|member| literal_static_carrier_matches(element, member))
@@ -1070,29 +1067,6 @@ fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer)
             _ => false,
         },
     }
-}
-
-/// The type arguments of a checked builtin collection type of the expected kind.
-fn collection_arguments(ty: &IncanType, expected: CollectionTypeId) -> Option<&[IncanType]> {
-    match ty {
-        IncanType::Generic { base, args } if collections::from_str(base) == Some(expected) => Some(args.as_slice()),
-        _ => None,
-    }
-}
-
-/// A primitive storage carrier a static literal may hold, even when an initializer has no element to validate.
-fn primitive_static_carrier(ty: &IncanType) -> bool {
-    matches!(
-        ty,
-        IncanType::Primitive(
-            IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool | IncanPrimitiveType::Str
-        )
-    )
-}
-
-/// A primitive hash key or set member: floating point lacks the Eq and Hash legacy hashed collections require.
-fn hashed_static_carrier(ty: &IncanType) -> bool {
-    primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
 }
 
 /// Validate a literal payload against its exact primitive storage or collection element carrier.

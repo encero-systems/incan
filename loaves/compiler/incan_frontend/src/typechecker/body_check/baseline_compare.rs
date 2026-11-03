@@ -1,4 +1,4 @@
-//! Full native comparison for cold oracles only; never a schema, identity or production input.
+//! Full native comparison for cold baselines only; never a schema, identity or production input.
 
 /// Sort unordered Debug containers while preserving variants, sequences, scalars and quoted bytes. This exact test
 /// comparator is never used for production identity, storage or semantic projection.

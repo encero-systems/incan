@@ -94,8 +94,9 @@ impl<'a> CheckedInputBody<'a> {
 }
 
 impl TypeCheckInfo {
-    /// The returned view a selected call produces, read from its callee's contract: the access, the source slot
-    /// and the declared stored-field path. Calls without a returned view, or without selected facts, give `None`.
+    /// The direct returned view a selected call produces, read from its callee's contract: the access, the source
+    /// slot and the declared stored-field path. Calls without a direct returned view, including calls whose view is
+    /// carried in a `Result` or `Option`, or without selected facts, give `None`.
     pub(crate) fn selected_call_view(
         &self,
         span: HirSourceSpan,
@@ -104,10 +105,37 @@ impl TypeCheckInfo {
         crate::ownership_metadata::SourceSlot,
         Vec<CanonicalSymbolId>,
     )> {
+        let view = self
+            .selected_returned_view(span)
+            .filter(|view| view.carried.is_none())?;
+        Some((view.access, view.source.slot.clone(), view.source.fields.clone()))
+    }
+
+    /// The returned view a selected call carries in one payload of its `Result` or `Option` result, with the same
+    /// access, source slot and stored-field path as a direct view, and the payload carrying it: `0` for `Ok` or
+    /// `Some`, `1` for `Err`.
+    pub(crate) fn selected_carried_view(
+        &self,
+        span: HirSourceSpan,
+    ) -> Option<(
+        IncanInputAccess,
+        crate::ownership_metadata::SourceSlot,
+        Vec<CanonicalSymbolId>,
+        usize,
+    )> {
+        let view = self.selected_returned_view(span)?;
+        Some((
+            view.access,
+            view.source.slot.clone(),
+            view.source.fields.clone(),
+            view.carried?,
+        ))
+    }
+
+    fn selected_returned_view(&self, span: HirSourceSpan) -> Option<crate::ownership_metadata::ReturnedView<'_>> {
         let call = self.protocols.explicit_input_calls.get(&span)?;
         let contract = self.selected_input_contract(call).ok()?;
-        let view = crate::ownership_metadata::returned_view(contract).ok()??;
-        Some((view.access, view.source.slot.clone(), view.source.fields.clone()))
+        crate::ownership_metadata::returned_view(contract).ok()?
     }
 
     /// Select the explicit route even when its owning body proof is absent, so defaults and indirect evaluations

@@ -9,31 +9,18 @@ use super::*;
 /// pattern payload is being bound, and whether `?` preserves the enclosing error type exactly. It does not infer
 /// a conversion or admit a differently shaped generic carrier.
 pub(super) fn result_type_parts(ty: &IncanType) -> Option<(&IncanType, &IncanType)> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    (collections::from_str(base) == Some(CollectionTypeId::Result)).then_some(())?;
-    match args.as_slice() {
+    match ty.collection_arguments(CollectionTypeId::Result)? {
         [ok_type, error_type] => Some((ok_type, error_type)),
         _ => None,
     }
 }
-/// Return the member types of `ty` when it is the builtin collection `kind` (a list's or set's element type, a dict's
-/// key and value types).
-pub(super) fn collection_member_types(ty: &IncanType, kind: CollectionTypeId) -> Option<&[IncanType]> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    (collections::from_str(base) == Some(kind)).then_some(args.as_slice())
-}
 /// Report whether a checked type is an optional union (`int | str | None`): an intrinsic `Option` whose payload is a
 /// union, so a member pattern over it selects `Some` and then the member of that payload.
 pub(super) fn is_optional_union(ty: &IncanType) -> bool {
-    let IncanType::Generic { base, args } = ty else {
-        return false;
-    };
-    collections::from_str(base) == Some(CollectionTypeId::Option)
-        && matches!(args.as_slice(), [IncanType::Generic { base, .. }] if base == "Union")
+    matches!(
+        ty.collection_arguments(CollectionTypeId::Option),
+        Some([payload]) if payload.union_members().is_some()
+    )
 }
 /// Return just the checked error channel for an intrinsic `Result` carrier.
 pub(super) fn result_error_type(ty: &IncanType) -> Option<&IncanType> {
@@ -84,14 +71,8 @@ pub(super) fn string_helper_for_binop(op: ast::BinaryOp) -> Option<bir::HelperOp
 /// Reads the collection registry rather than comparing base names against literals, so adding a collection to
 /// `incan_lang` cannot silently leave this mapping stale.
 fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    if args.is_empty() {
-        return None;
-    }
-    match collections::from_str(base) {
-        Some(id @ (CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict)) => Some(id),
+    match ty.collection()? {
+        (id @ (CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict), [_, ..]) => Some(id),
         _ => None,
     }
 }
@@ -116,16 +97,11 @@ fn shared_equality_operand(ty: &IncanType) -> bool {
 
 /// The mutable collection a `FrozenList`, `FrozenSet` or `FrozenDict` type answers membership like, or `None`.
 fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    if args.is_empty() {
-        return None;
-    }
-    match collections::from_str(base)? {
-        CollectionTypeId::FrozenList => Some(CollectionTypeId::List),
-        CollectionTypeId::FrozenSet => Some(CollectionTypeId::Set),
-        CollectionTypeId::FrozenDict => Some(CollectionTypeId::Dict),
+    match ty.collection()? {
+        (_, []) => None,
+        (CollectionTypeId::FrozenList, _) => Some(CollectionTypeId::List),
+        (CollectionTypeId::FrozenSet, _) => Some(CollectionTypeId::Set),
+        (CollectionTypeId::FrozenDict, _) => Some(CollectionTypeId::Dict),
         _ => None,
     }
 }

@@ -607,6 +607,23 @@ impl LibraryIdentityGraph {
             .collect()
     }
 
+    /// Every distinct function identity published from one declaring source path, in graph order, whichever public
+    /// paths expose it: the identities a consumer's call to that function can select.
+    pub fn function_identities_for_source_path(&self, source_path: &[String]) -> Vec<CanonicalSymbolId> {
+        let mut identities = Vec::new();
+        for identity in self
+            .exports
+            .iter()
+            .filter(|entry| entry.source_path == source_path && entry.kind == ExportIdentityKind::Function)
+            .filter_map(|entry| entry.canonical.as_ref()?.hydrate())
+        {
+            if !identities.contains(&identity) {
+                identities.push(identity);
+            }
+        }
+        identities
+    }
+
     /// Return every canonical identity published at one exact package-visible path, in graph order.
     pub fn canonicals_at_public_path(&self, public_path: &[String]) -> Vec<CanonicalSymbolId> {
         let mut canonicals = Vec::new();

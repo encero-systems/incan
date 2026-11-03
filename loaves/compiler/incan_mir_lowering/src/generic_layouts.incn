@@ -7,6 +7,7 @@ from rust::incan_semantics_core import (
     IncanCallableParamKind,
     IncanInputAccess,
 )
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -237,12 +238,11 @@ def generic_callable_input(
 
 def generic_layout_path(module: &BodyIrModule, base: str) -> Result[str, str]:
     """Use the checked declaration's native item or its local carrier; collection heads have fixed native ADTs."""
-    if base == "List":
-        return Ok("std::vec::Vec")
-    if base == "Option":
-        return Ok("std::option::Option")
-    if base == "Result":
-        return Ok("std::result::Result")
+    match collection_type(base):
+        Some(CollectionTypeId.List) => return Ok("std::vec::Vec")
+        Some(CollectionTypeId.Option) => return Ok("std::option::Option")
+        Some(CollectionTypeId.Result) => return Ok("std::result::Result")
+        _ => pass
     for declaration_position in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, declaration_position)
         if str(declaration.name) != base:

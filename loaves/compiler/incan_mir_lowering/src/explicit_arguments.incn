@@ -10,6 +10,16 @@ from program_context import body_at
 from table_views import borrowed_at
 
 
+pub def direct_view_access(body: &RustBody) -> Option[IncanInputAccess]:
+    """The access of a body's direct returned view; a carried view returns an owned carrier and has none."""
+    match body.returned_view:
+        Some(view) =>
+            if view.carried.is_none():
+                return Some(view.access)
+        None => pass
+    return None
+
+
 pub def validate_source_input_call(builder: &Builder, callee: &RustBody) -> Result[None, str]:
     """Authenticate the caller independently of the selected source callee; lifted frames inherit no permission."""
     # A returned view obliges its caller to alias the substituted place under a checked profile.
@@ -116,7 +126,7 @@ pub def explicit_input_operation(
     return Ok(RvalueKind.Borrow(borrowed))
 
 
-def reference_contract(ty: PlanType) -> Result[tuple[PlanType, bool], str]:
+pub def reference_contract(ty: PlanType) -> Result[tuple[PlanType, bool], str]:
     """Recover the exact referent and write authority from supported native reference carriers."""
     match ty:
         PlanType.StringRef => return Ok((PlanType.String, false))

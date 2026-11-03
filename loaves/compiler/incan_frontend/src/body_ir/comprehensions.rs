@@ -3,7 +3,6 @@
 use super::args::*;
 use super::control_flow::intersect_local_states;
 use super::free_vars::*;
-use super::primitives::collection_member_types;
 use super::reads::*;
 use super::*;
 use crate::typechecker::ProtocolIterationInfo;
@@ -33,7 +32,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         );
         // An `Ok(...)` or `Err(...)` element is built with the element type the checker settled for the
         // comprehension, which fixes the side the constructor leaves open.
-        if let Some([element_ty]) = collection_member_types(&ty, CollectionTypeId::List) {
+        if let Some([element_ty]) = ty.collection_arguments(CollectionTypeId::List) {
             self.settle_open_result_value(&comp.expr, element_ty);
         }
         if let Some(filled) = self.lower_uniform_range_list(comp, &ty, span, scope, out) {

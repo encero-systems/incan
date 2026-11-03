@@ -128,7 +128,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(Some(returned)) if self.returned_view.is_some() => {
-                if let Err(reason) = self.lower_view_return(returned, scope, span, out) {
+                let carried = self.returned_view.as_ref().and_then(|source| source.view.carried);
+                let lowered = match carried {
+                    Some(payload) => self.lower_carried_return(returned, payload, scope, span, out),
+                    None => self.lower_view_return(returned, scope, span, out),
+                };
+                if let Err(reason) = lowered {
                     self.push_unsupported_stmt(reason, span, out);
                 }
             }
@@ -163,8 +168,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     self.lower_yield(value, scope, span, out);
                 } else {
                     let value = self.lower_expr_to_operand(expr, scope, out);
-                    // A discarded view call already ran for its effects; its substituted place is not read.
-                    if self.type_info.selected_call_view(expr.span).is_none() {
+                    // A discarded view call, or a carried view `?` took out, already ran for its effects; its
+                    // substituted place is not read.
+                    if self.type_info.selected_call_view(expr.span).is_none() && !self.carried_view_try(expr) {
                         out.push(bir::Statement {
                             kind: bir::StatementKind::Expr { value },
                             span,
@@ -192,7 +198,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// New loops inside the return expression still establish their own repeated-read scopes. Borrowed receivers and
     /// parameters retain their normal ownership rules, and Result constructors use the declared return channels.
     /// Reads in sibling return branches cannot keep an owned local alive on this terminal path.
-    fn lower_return_operand(
+    pub(super) fn lower_return_operand(
         &mut self,
         returned: &ast::Spanned<ast::Expr>,
         scope: bir::ScopeId,
@@ -1322,11 +1328,17 @@ fn chained_integer_literal_types(
 /// Return whether two types are the same kind of container: both `Option`, `List`, `Set` or `Dict`, or tuples of one
 /// length, the only nodes a chained value's per-target evaluation retypes wholesale.
 fn same_container_kind(left: &IncanType, right: &IncanType) -> bool {
-    match (left, right) {
-        (IncanType::Generic { base: left, .. }, IncanType::Generic { base: right, .. }) => {
-            left == right && matches!(left.as_str(), "Option" | "List" | "Set" | "Dict")
+    if let (IncanType::Tuple(left), IncanType::Tuple(right)) = (left, right) {
+        return left.len() == right.len();
+    }
+    match (left.collection(), right.collection()) {
+        (Some((left, _)), Some((right, _))) => {
+            left == right
+                && matches!(
+                    left,
+                    CollectionTypeId::Option | CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict
+                )
         }
-        (IncanType::Tuple(left), IncanType::Tuple(right)) => left.len() == right.len(),
         _ => false,
     }
 }

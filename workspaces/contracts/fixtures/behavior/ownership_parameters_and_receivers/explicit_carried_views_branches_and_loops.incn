@@ -1,0 +1,63 @@
+# behavior: a local bound to a call that carries a view can be matched in either branch of an `if` and the source is usable again after the branches join; a carried call bound and matched inside a loop body takes a fresh view on every iteration (#2500).
+# expect-stdout:
+#   3
+#   14
+#   9
+#   closed
+#   -1
+#   true
+
+"""Take carried views out on branches and inside loops, and edit the source once they end."""
+
+
+class Counter:
+    pub value: int
+    pub open: bool
+
+    def bump(mut self) -> Result[Reference[Self], str] from self:
+        if not self.open:
+            return Err("closed")
+        self.value += 1
+        return Ok(self)
+
+
+def settle(mut counter: BorrowedMut[Counter], twice: bool) -> int:
+    mut result = counter.bump()
+    mut seen = 0
+    if twice:
+        match result:
+            Ok(view) =>
+                view.value += 1
+                seen = view.value
+            Err(_) => seen = -1
+    else:
+        match result:
+            Ok(view) => seen = view.value
+            Err(_) => seen = -2
+    counter.value += 10
+    return seen
+
+
+def tally(mut counter: BorrowedMut[Counter], times: int) -> int:
+    mut total = 0
+    mut index = 0
+    while index < times:
+        result = counter.bump()
+        match result:
+            Ok(view) => total += view.value
+            Err(error) =>
+                println(error)
+                total -= 1
+        index += 1
+    return total
+
+
+def main() -> None:
+    mut counter = Counter(value=1, open=true)
+    println(settle(counter, true))
+    println(settle(counter, false))
+    counter.value = 3
+    println(tally(counter, 2))
+    counter.open = false
+    println(tally(counter, 1))
+    println(counter.value == 5)

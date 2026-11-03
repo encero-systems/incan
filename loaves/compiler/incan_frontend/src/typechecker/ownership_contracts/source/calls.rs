@@ -48,6 +48,45 @@ impl Builder<'_> {
         self.apply_call(None, arguments, span, incoming)
     }
 
+    /// A builtin list method reads or changes its receiver place in place, after evaluating its arguments. An element
+    /// is fresh or Copy until values moved into a collection gain checked transfer materialization.
+    pub(super) fn list_method(
+        &mut self,
+        receiver: &Spanned<Expr>,
+        writes: bool,
+        arguments: &[CallArg],
+        span: Span,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let place = self.place(receiver)?;
+        let mut incoming = self.evaluate_place(receiver, incoming)?;
+        for argument in arguments {
+            let CallArg::Positional(value) = argument else {
+                return Err(Unavailable {
+                    span,
+                    reason: "list method needs positional arguments".into(),
+                });
+            };
+            if !self.fresh_or_copy_field(value) && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "a non-Copy list element needs checked ownership transfer materialization".into(),
+                });
+            }
+            incoming = self.expression(value, incoming, false)?;
+        }
+        let access = if writes { Access::Write } else { Access::Read };
+        Ok(self.event(
+            incoming,
+            Event::Access {
+                place: place.place,
+                access,
+                through: place.through,
+            },
+            span,
+        ))
+    }
+
     /// Primitive observers read their arguments through a checker-selected builtin identity. Nominal display and
     /// length hooks, native adapters and source functions with the same name require their own callable facts.
     fn observer_call(
@@ -205,9 +244,9 @@ impl Builder<'_> {
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, receiver.span);
             // A chained receiver continues on the place its inner call's returned view substituted.
-            let source = match self.view_relation(receiver)? {
-                Some(relation) => {
-                    let (evaluated, path) = self.evaluate_view_call(receiver, relation, incoming)?;
+            let source = match self.view_source(receiver)? {
+                Some(view) => {
+                    let (evaluated, path) = self.evaluate_view_source(receiver, view, incoming)?;
                     incoming = evaluated;
                     path
                 }
@@ -368,8 +407,9 @@ impl Builder<'_> {
         }
     }
 
-    /// A fresh scalar or owned byte-string expression may be borrowed for this call. Existing places keep their
-    /// original permissions even through parentheses; evaluating a temporary preserves nested moves and loans.
+    /// A fresh scalar or owned byte-string expression, or a list literal of Copy scalars, may be borrowed for this
+    /// call. Existing places keep their original permissions even through parentheses; evaluating a temporary
+    /// preserves nested moves and loans.
     fn borrowed_argument_source(
         &mut self,
         expression: &Spanned<Expr>,
@@ -383,7 +423,8 @@ impl Builder<'_> {
             span: expression.span,
             reason: "temporary argument has no checked type".into(),
         })?;
-        if !plain_result(ty) {
+        // A list literal's own evaluation admits only Copy scalar elements, so it retains no dependency either.
+        if !plain_result(ty) && !matches!(expression.node, Expr::List(_)) {
             return Err(Unavailable {
                 span: expression.span,
                 reason: "temporary argument needs retained dependency facts".into(),
@@ -433,10 +474,81 @@ impl Builder<'_> {
         id
     }
 
-    /// The returned view a selected call produces, read from its callee's contract without its body.
+    /// The place view an expression produces: a selected call returning a direct view, or `?` taking a carried view
+    /// out of its `Result` or `Option` success payload. A call returning a carried view is itself a carrier value, not
+    /// a place. `?` on a call whose error carries the view would pass that view on out of this body, and `?` in a body
+    /// whose own error carries its view would return another error; neither executes yet.
     pub(super) fn view_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
         match &expression.node {
-            Expr::Paren(inner) => return self.view_relation(inner),
+            Expr::Paren(inner) => self.view_relation(inner),
+            Expr::Try(inner) => match self.call_relation(inner)? {
+                Some(relation) if relation.carried == Some(1) => Err(Unavailable {
+                    span: expression.span,
+                    reason: "`?` passing on an error that carries a view".into(),
+                }),
+                _ if self.view_carried == Some(1) => Err(super::error_view_try(expression.span)),
+                Some(relation) if relation.carried == Some(0) => Ok(Some(ViewRelation {
+                    carried: None,
+                    ..relation
+                })),
+                _ => Ok(None),
+            },
+            _ => Ok(self
+                .call_relation(expression)?
+                .filter(|relation| relation.carried.is_none())),
+        }
+    }
+
+    /// The place view an expression produces, from a call as `view_relation` selects it or from `?` on a local still
+    /// holding a carried call. `?` on such a local takes the view out as `?` on the call does.
+    pub(super) fn view_source(&self, expression: &Spanned<Expr>) -> Result<Option<ViewSource>, Unavailable> {
+        if let Some(relation) = self.view_relation(expression)? {
+            return Ok(Some(ViewSource::Call(relation)));
+        }
+        match &expression.node {
+            Expr::Paren(inner) => self.view_source(inner),
+            Expr::Try(inner) => {
+                let Some((identity, payload)) = self.bound_carrier(inner) else {
+                    return Ok(None);
+                };
+                if payload != 0 {
+                    return Err(Unavailable {
+                        span: expression.span,
+                        reason: "`?` passing on an error that carries a view".into(),
+                    });
+                }
+                if self.view_carried == Some(1) {
+                    return Err(super::error_view_try(expression.span));
+                }
+                Ok(Some(ViewSource::Carrier(identity)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Evaluate the place view `view_source` selected, then borrow the caller's place under its result loan.
+    pub(super) fn evaluate_view_source(
+        &mut self,
+        expression: &Spanned<Expr>,
+        source: ViewSource,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, Path), Unavailable> {
+        match (source, &expression.node) {
+            (ViewSource::Call(relation), _) => self.evaluate_view_call(expression, relation, incoming),
+            (source @ ViewSource::Carrier(_), Expr::Paren(inner)) => self.evaluate_view_source(inner, source, incoming),
+            (ViewSource::Carrier(identity), Expr::Try(inner)) => self.take_bound_view(inner, identity, incoming),
+            (ViewSource::Carrier(_), _) => Err(Unavailable {
+                span: expression.span,
+                reason: "bound carried view needs `?` or a match to take the view out".into(),
+            }),
+        }
+    }
+
+    /// The returned view relation of a selected call itself, direct or carried, read from its callee's contract
+    /// without its body.
+    pub(super) fn call_relation(&self, expression: &Spanned<Expr>) -> Result<Option<ViewRelation>, Unavailable> {
+        match &expression.node {
+            Expr::Paren(inner) => return self.call_relation(inner),
             Expr::Call(..) | Expr::MethodCall(..) => {}
             _ => return Ok(None),
         }
@@ -455,6 +567,7 @@ impl Builder<'_> {
                 exclusive: view.access == IncanInputAccess::Exclusive,
                 slot: view.source.slot.clone(),
                 fields: view.source.fields.clone(),
+                carried: view.carried,
             }))
     }
 
@@ -469,7 +582,8 @@ impl Builder<'_> {
     ) -> Result<(Vec<usize>, Path), Unavailable> {
         let span = expression.span;
         let incoming = match &expression.node {
-            Expr::Paren(inner) => return self.evaluate_view_call(inner, relation, incoming),
+            // `?` continues on the carried view's place; its error path leaves the body carrying no loan.
+            Expr::Paren(inner) | Expr::Try(inner) => return self.evaluate_view_call(inner, relation, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.apply_call(Some(receiver), arguments, span, incoming)?
             }
@@ -531,11 +645,19 @@ impl Builder<'_> {
     }
 }
 
-/// A selected callee's returned view: its access, the source slot and the declared stored-field path.
+/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the `Result` or
+/// `Option` payload carrying the view, if any.
 pub(super) struct ViewRelation {
     exclusive: bool,
     slot: SourceSlot,
     fields: Vec<incan_semantics_core::CanonicalSymbolId>,
+    pub(super) carried: Option<usize>,
+}
+
+/// Where a place view comes from: a call returning a view, or `?` on a local still holding a carried call.
+pub(super) enum ViewSource {
+    Call(ViewRelation),
+    Carrier(incan_semantics_core::CanonicalSymbolId),
 }
 
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`

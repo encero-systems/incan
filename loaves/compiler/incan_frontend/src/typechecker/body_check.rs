@@ -134,7 +134,7 @@ impl BodyLocal {
     /// root inventory requires every added artifact to choose local, declaration or final-settlement ownership.
     fn take(checker: &mut TypeChecker) -> Self {
         let TypeCheckInfo {
-            body_ir_oracle_inputs: _,
+            body_ir_baseline_inputs: _,
             traits,
             derivations: _,
             expressions,
@@ -765,7 +765,7 @@ impl TypeChecker {
     }
 }
 
-mod oracle_compare;
+mod baseline_compare;
 pub(crate) mod records;
 #[cfg(test)]
 mod tests;
@@ -1232,19 +1232,19 @@ pub(crate) enum CheckedBodyInputError {
     RefusedOwner,
 }
 
-/// Native read-only settled owners retained for an explicit Body IR oracle activation. The compatibility module
+/// Native read-only settled owners retained for an explicit Body IR baseline activation. The compatibility module
 /// projection is not a keyed fact source; retaining it must never be mistaken for record-backed production.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct BodyIrOracleInputs {
+pub(crate) struct BodyIrBaselineInputs {
     declarations: BTreeMap<Span, Arc<CheckedBodyView>>,
     bodies: BTreeMap<Span, Arc<CheckedBodyView>>,
 }
 
 impl TypeChecker {
-    /// Retain indexed references to completed native owners for the Body IR migration oracle, without checking or
+    /// Retain indexed references to completed native owners for the Body IR migration baseline, without checking or
     /// settling them again.
-    pub(crate) fn body_ir_oracle_inputs(&self) -> BodyIrOracleInputs {
-        BodyIrOracleInputs {
+    pub(crate) fn body_ir_baseline_inputs(&self) -> BodyIrBaselineInputs {
+        BodyIrBaselineInputs {
             declarations: self
                 .checked_declarations
                 .iter()
@@ -1259,7 +1259,7 @@ impl TypeChecker {
     }
 }
 
-impl BodyIrOracleInputs {
+impl BodyIrBaselineInputs {
     /// Locate a default's exact checked writer by its expression key, not by a preset binding's signature span or
     /// an inferred source-range enclosure. Ambiguous ownership is unavailable, never an arbitrary chosen writer.
     pub(crate) fn default_owner(&self, expression: Span) -> Option<&CheckedBodyView> {
@@ -1275,7 +1275,7 @@ impl BodyIrOracleInputs {
     }
 
     /// Locate two settled owners by their revision-local source handle. Persistent source identity and snapshot
-    /// authentication belong to the scoped record source, not to this compatibility oracle container.
+    /// authentication belong to the scoped record source, not to this compatibility baseline container.
     pub(crate) fn owners(&self, span: Span) -> Option<(&CheckedBodyView, &CheckedBodyView)> {
         let body = self.bodies.get(&span)?;
         let declaration = self.declarations.get(&span)?;

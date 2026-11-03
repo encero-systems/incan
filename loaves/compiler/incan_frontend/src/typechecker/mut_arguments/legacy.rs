@@ -1,4 +1,4 @@
-//! Frozen mutation settlement for the fresh-check oracle; never used as a production fallback.
+//! Frozen mutation settlement for the fresh-check baseline; never used as a production fallback.
 
 use super::{
     ArgumentPlace, CanonicalSymbolId, HashSet, MutArgumentPlace, MutParameterChange, MutParameterLabel, Span,

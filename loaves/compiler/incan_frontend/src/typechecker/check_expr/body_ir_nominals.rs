@@ -61,6 +61,11 @@ impl TypeChecker {
         };
         let (_, returned) = self.method_types_substituting_call_site_self(&member, &closed_receiver);
         let returned = substitute_resolved_type(&returned, &bindings);
+        // The call produces the declaration's value type, through the same projection as its checked expression type.
+        let returned = match member.identity.as_ref() {
+            Some(identity) => self.returned_value_type(identity, &returned),
+            None => returned,
+        };
         if !Self::is_settled_type_argument(&returned) {
             return None;
         }

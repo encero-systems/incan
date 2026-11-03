@@ -1,0 +1,16 @@
+# behavior: `?` on a local bound to a call that carries a view consumes the local; applying `?` to it again is refused (#2500).
+# expect-diagnostic: INCAN-T0123
+
+class Counter:
+    pub value: int
+
+    def bump(mut self) -> Result[Reference[Self], str] from self:
+        self.value += 1
+        return Ok(self)
+
+
+def twice(mut counter: BorrowedMut[Counter]) -> Result[int, str]:
+    result = counter.bump()
+    first = result?
+    second = result?
+    return Ok(first.value + second.value)

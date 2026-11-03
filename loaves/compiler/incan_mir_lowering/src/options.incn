@@ -1,6 +1,7 @@
 """Concrete standard Option and Result layouts shared with native enum operations."""
 
 from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind, generic
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -471,7 +472,10 @@ pub def retain_carrier(
         RustType.Generic(base=base, args=arguments) =>
             for argument in arguments:
                 retain_carrier(constructors, module, declarations, argument, file)?
-            if base != "Option" and base != "Result" and base != "Union":
+            kind: Option[CollectionTypeId] = collection_type(str(base))
+            is_option = kind == Some(CollectionTypeId.Option)
+            is_result = kind == Some(CollectionTypeId.Result)
+            if not is_option and not is_result and base != "Union":
                 return Ok(None)
             # Wrap the checked type once and compare each borrowed carrier's key in place, copying neither.
             key = Some(ty.clone())
@@ -482,7 +486,7 @@ pub def retain_carrier(
                 declaration = lower_union_declaration(constructors, module, ty, file, declarations)?
                 declarations.append(declaration)
                 return Ok(None)
-            if (base == "Option" and len(arguments) != 1) or (base == "Result" and len(arguments) != 2):
+            if (is_option and len(arguments) != 1) or (is_result and len(arguments) != 2):
                 return Err(f"unsupported Body IR type {ty}")
             mut fields: list[PlanType] = []
             unions: list[RustType] = []
@@ -498,7 +502,7 @@ pub def retain_carrier(
                     Ok(field) => fields.append(field)
                     Err(reason) => return Err(f"{reason} in {base} payload {index} of {ty}")
             mut variants = [EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[fields[0]])]
-            if base == "Result":
+            if is_result:
                 variants = [EnumVariant(name="Ok", fields=[fields[0]]), EnumVariant(name="Err", fields=[fields[1]])]
             declarations.append(
                 EnumDeclaration(

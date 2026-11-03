@@ -85,11 +85,11 @@ pub(super) fn layout(ty: IncanType) -> Option<bir::NativeUnionDeclaration> {
 /// Traverse checked carrier structure once, preserving each exact semantic union identity.
 fn collect(ty: &IncanType, types: &mut Vec<IncanType>) {
     match ty {
-        IncanType::Generic { base, args } => {
+        IncanType::Generic { args, .. } => {
             for argument in args {
                 collect(argument, types);
             }
-            if base == "Union" && !types.contains(ty) {
+            if ty.union_members().is_some() && !types.contains(ty) {
                 types.push(ty.clone());
             }
         }

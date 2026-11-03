@@ -229,7 +229,7 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 .into_iter()
                 .map(|ty| retain_checked_nominal_names(ty, facts))
                 .collect();
-            if base == "Union" {
+            if base == crate::symbols::UNION_TYPE_NAME {
                 args.sort_by_cached_key(ToString::to_string);
             }
             IncanType::Generic { base, args }

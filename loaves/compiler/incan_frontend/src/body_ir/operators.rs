@@ -390,10 +390,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))];
 
         // ---- Parts: retain three typed Option slots ----
-        let option_int = IncanType::Generic {
-            base: "Option".to_string(),
-            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
-        };
+        let option_int = IncanType::builtin_collection(
+            CollectionTypeId::Option,
+            vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        );
         for part in [&slice.start, &slice.end, &slice.step] {
             let value = match part {
                 Some(expression) => {

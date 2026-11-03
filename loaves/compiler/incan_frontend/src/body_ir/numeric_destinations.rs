@@ -5,7 +5,6 @@ use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::body_ir::nominal_carrier_key;
 
 use super::operators::numeric_carrier_id;
-use super::primitives::collection_member_types;
 use super::{BodyBuilder, IncanType, ast, bir, hir_span};
 
 /// Choose a checked numeric destination or legacy's first eligible closed primitive union member through Option layers.
@@ -15,20 +14,15 @@ use super::{BodyBuilder, IncanType, ast, bir, hir_span};
 fn numeric_destination(source: &IncanType, destination: &IncanType) -> Option<IncanType> {
     let source_id = numeric_carrier_id(source)?;
     let mut destination = destination;
-    while let IncanType::Generic { base, args } = destination {
-        if base != "Option" || args.len() != 1 {
-            break;
-        }
-        destination = &args[0];
+    while let Some([payload]) = destination.collection_arguments(CollectionTypeId::Option) {
+        destination = payload;
     }
     if let Some(target_id) = numeric_carrier_id(destination) {
         return (source_id != target_id && numeric_type_losslessly_widens_to(source_id, target_id))
             .then(|| destination.clone());
     }
-    let IncanType::Generic { base, args } = destination else {
-        return None;
-    };
-    if base != "Union" || !args.iter().all(|member| matches!(member, IncanType::Primitive(_))) {
+    let args = destination.union_members()?;
+    if !args.iter().all(|member| matches!(member, IncanType::Primitive(_))) {
         return None;
     }
     if args.iter().any(|member| numeric_carrier_id(member) == Some(source_id)) {
@@ -48,7 +42,11 @@ fn numeric_destination(source: &IncanType, destination: &IncanType) -> Option<In
 pub(super) fn collection_numeric_destination(source: &IncanType, collection: &IncanType) -> Option<IncanType> {
     [CollectionTypeId::List, CollectionTypeId::Set, CollectionTypeId::Dict]
         .into_iter()
-        .find_map(|kind| collection_member_types(collection, kind).and_then(|members| members.first()))
+        .find_map(|kind| {
+            collection
+                .collection_arguments(kind)
+                .and_then(|members| members.first())
+        })
         .and_then(|member| numeric_destination(source, member))
 }
 

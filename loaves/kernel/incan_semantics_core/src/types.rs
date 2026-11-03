@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+use incan_lang::lang::types::UNION_TYPE_NAME;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 use serde::{Deserialize, Serialize};
@@ -260,6 +262,60 @@ impl IncanType {
             | Self::NativeCChar => AbiV0Representation::RustInterop,
             Self::Never | Self::Infer | Self::Unknown | Self::Unsupported(_) => AbiV0Representation::Unknown,
         }
+    }
+
+    /// The builtin collection type `id` applied to `args`, spelled with the collection's canonical name.
+    pub fn builtin_collection(id: CollectionTypeId, args: Vec<IncanType>) -> IncanType {
+        Self::Generic {
+            base: collections::as_str(id).to_string(),
+            args,
+        }
+    }
+
+    /// The builtin collection this type instantiates, with its checked type arguments.
+    ///
+    /// The collection is read through the language's one collection vocabulary, so every accepted spelling of a
+    /// builtin (`Result` and `result`) names the same collection. Callers consult this rather than comparing the
+    /// written base name.
+    pub fn collection(&self) -> Option<(CollectionTypeId, &[IncanType])> {
+        match self {
+            Self::Generic { base, args } => collections::from_str(base).map(|id| (id, args.as_slice())),
+            _ => None,
+        }
+    }
+
+    /// The type arguments of this type when it instantiates the expected builtin collection.
+    pub fn collection_arguments(&self, expected: CollectionTypeId) -> Option<&[IncanType]> {
+        self.collection()
+            .and_then(|(id, args)| (id == expected).then_some(args))
+    }
+
+    /// The member types of an anonymous union (`int | str`), read through the language's one union name.
+    pub fn union_members(&self) -> Option<&[IncanType]> {
+        match self {
+            Self::Generic { base, args } if base == UNION_TYPE_NAME => Some(args.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Whether a static literal may be stored in this primitive carrier, alone or as a collection element. Body IR's
+    /// static initializers and their validation both read this rule.
+    pub fn static_literal_carrier(&self) -> bool {
+        matches!(
+            self,
+            Self::Primitive(
+                IncanPrimitiveType::Int
+                    | IncanPrimitiveType::Float
+                    | IncanPrimitiveType::Bool
+                    | IncanPrimitiveType::Str
+            )
+        )
+    }
+
+    /// Whether a static literal may be a hash key or set member of this carrier: floating point lacks the Eq and Hash
+    /// that hashed collections require.
+    pub fn hashed_static_literal_carrier(&self) -> bool {
+        self.static_literal_carrier() && !matches!(self, Self::Primitive(IncanPrimitiveType::Float))
     }
 }
 

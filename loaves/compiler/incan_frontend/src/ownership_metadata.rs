@@ -157,17 +157,20 @@ pub(crate) fn direct_input_access(
         .map_or(incan_semantics_core::IncanInputAccess::Inferred, |(_, access)| access))
 }
 
-/// A whole result that is a view of exactly one source place: the declared parameter or receiver with its stored
-/// field path. The access is shared for `Borrowed[T]` and exclusive for `Reference[T]`.
+/// A result that is a view of exactly one source place: the declared parameter or receiver with its stored field
+/// path. The access is shared for `Borrowed[T]` and exclusive for `Reference[T]`. A carried view is one payload of a
+/// `Result` or `Option` result rather than the whole result; the declaration's header check confirms the carrier.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReturnedView<'a> {
     pub mode: &'a AccessMode<crate::symbols::ResolvedType>,
     pub access: incan_semantics_core::IncanInputAccess,
     pub source: &'a ResultDependency<incan_semantics_core::CanonicalSymbolId>,
+    /// The carrier payload holding the view: `0` for `Ok` or `Some`, `1` for `Err`; `None` for a view returned whole.
+    pub carried: Option<usize>,
 }
 
-/// Resolve a direct returned view. Owned aggregates retaining a dependency and views nested inside another result
-/// type need aggregate dependency facts and stay refused; absence of both result facts is an ordinary result.
+/// Resolve a direct or carried returned view. Owned aggregates retaining a dependency and views nested elsewhere in a
+/// result type need aggregate dependency facts and stay refused; absence of both result facts is an ordinary result.
 pub(crate) fn returned_view(
     contract: Option<&CheckedOwnershipContract>,
 ) -> Result<Option<ReturnedView<'_>>, &'static str> {
@@ -183,7 +186,12 @@ pub(crate) fn returned_view(
         (None, Some(_)) => Err("an owned result that retains a source dependency requires aggregate dependency facts"),
         (Some(_), None) => Err("borrowed result has no source dependency"),
         (Some(mode), Some(source)) => {
-            if results.next().is_some() || !mode.component.children.is_empty() {
+            let carried = match mode.component.children.as_slice() {
+                [] => None,
+                [payload @ (0 | 1)] => Some(*payload),
+                _ => return Err("returned access inside another type requires aggregate dependency facts"),
+            };
+            if results.next().is_some() {
                 return Err("returned access inside another type requires aggregate dependency facts");
             }
             let access = match mode.mode {
@@ -192,27 +200,45 @@ pub(crate) fn returned_view(
                 OwnershipMode::BorrowedMut => return Err("returned exclusive access is written Reference[T]"),
                 OwnershipMode::Owned => return Err("an owned result cannot retain access to its source"),
             };
-            Ok(Some(ReturnedView { mode, access, source }))
+            Ok(Some(ReturnedView {
+                mode,
+                access,
+                source,
+                carried,
+            }))
         }
     }
 }
 
-/// Expose a returned view's value type only when its canonical declaration authorizes the direct result mode, as for
-/// inputs. An ordinary result is returned unchanged.
-pub(crate) fn result_value_type<'a>(
+/// Expose a returned view's value type only when its canonical declaration authorizes the result mode, as for inputs:
+/// `T` for a direct view and `Result[T, E]` or `Option[T]` for a carried one. An ordinary result is returned unchanged.
+pub(crate) fn result_value_type(
     contract: Option<&CheckedOwnershipContract>,
-    result: &'a crate::symbols::ResolvedType,
-) -> Result<&'a crate::symbols::ResolvedType, &'static str> {
-    if returned_view(contract)?.is_none() {
-        return Ok(result);
+    result: &crate::symbols::ResolvedType,
+) -> Result<crate::symbols::ResolvedType, &'static str> {
+    use crate::symbols::ResolvedType;
+    let Some(view) = returned_view(contract)? else {
+        return Ok(result.clone());
+    };
+    let underlying = |view_type: &ResolvedType| match view_type {
+        ResolvedType::Generic(_, arguments) => match arguments.as_slice() {
+            [underlying] => Ok(underlying.clone()),
+            _ => Err("selected returned access requires exactly one value type"),
+        },
+        _ => Err("selected ownership contract does not match its result metadata"),
+    };
+    let Some(payload) = view.carried else {
+        return underlying(result);
+    };
+    let ResolvedType::Generic(carrier, arguments) = result else {
+        return Err("a carried returned view requires a Result or Option result");
+    };
+    if !(result.is_result() || result.is_option()) || payload >= arguments.len() {
+        return Err("a carried returned view requires a Result or Option payload");
     }
-    let crate::symbols::ResolvedType::Generic(_, arguments) = result else {
-        return Err("selected ownership contract does not match its result metadata");
-    };
-    let [underlying] = arguments.as_slice() else {
-        return Err("selected returned access requires exactly one value type");
-    };
-    Ok(underlying)
+    let mut values = arguments.clone();
+    values[payload] = underlying(&arguments[payload])?;
+    Ok(ResolvedType::Generic(carrier.clone(), values))
 }
 
 /// Keep the source mode and its payload together after validating the selected structural slot.

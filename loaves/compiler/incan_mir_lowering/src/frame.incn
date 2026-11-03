@@ -27,7 +27,11 @@ from pub::incan_mir_plan import tuple_element_type
 from type_parameters import Instance
 from program_context import ProgramContext
 from native_type_identity import ConstructorIndex
-from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId, IncanInputAccess
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    IncanInputAccess,
+)
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
@@ -137,6 +141,8 @@ pub model Builder:
     pub reference_values: list[int] = []
     # A returned view's access: its return borrows the declared source place. Inferred for every other frame.
     pub returned_view: IncanInputAccess = IncanInputAccess.Inferred
+    # Whether the result carries a view in its success payload, so a borrowed reference payload is that view's loan.
+    pub carries_view: bool = false
 
     property nominals -> &list[RustNominalDeclaration]:
         """Borrow the module's specialized nominal table without retaining a frame-local copy."""

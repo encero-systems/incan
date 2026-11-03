@@ -28,7 +28,7 @@ pub fn lower_authored_modules(
             registry_package: Some(&unit.package),
             library_package: (unit.kind == UnitKind::Library).then_some(unit.package.as_str()),
         };
-        if let Some(directory) = std::env::var_os("INCAN_BODY_IR_FREE_ORACLE") {
+        if let Some(directory) = std::env::var_os("INCAN_BODY_IR_FREE_BASELINE") {
             incan_frontend::body_ir::verify_free_function_inputs(
                 &module.ast,
                 &module.path_segments,
@@ -36,7 +36,7 @@ pub fn lower_authored_modules(
                 &context,
                 std::path::Path::new(&directory),
             )
-            .map_err(|error| format!("Body IR free-function input oracle: {error}"))?;
+            .map_err(|error| format!("Body IR free-function input baseline: {error}"))?;
         }
         let lowered =
             incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);

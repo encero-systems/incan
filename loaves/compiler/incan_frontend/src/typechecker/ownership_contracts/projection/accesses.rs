@@ -7,8 +7,8 @@ use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{
-    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, MatchBody,
-    Spanned, Statement,
+    AssertKind, AssignmentStmt, BindingKind, CallArg, Condition, Expr, FStringPart, ForStmt, ListEntry, Literal,
+    MatchBody, Spanned, Statement,
 };
 use crate::typechecker::ownership_contracts::CallableSource;
 
@@ -193,8 +193,9 @@ impl SourceAccesses<'_, '_> {
             }
             Expr::Literal(_) => {}
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, consume)?,
-            // `?` consumes its carrier, as the source flow evaluates it.
-            Expr::Try(inner) => self.expression(inner, true)?,
+            // `?` consumes its carrier, as the source flow evaluates it; a local still holding a carried call is read
+            // through its loan instead, as a match on it is.
+            Expr::Try(inner) => self.expression(inner, self.proof.carrier_loan(inner).is_none())?,
             Expr::Binary(left, _, right) => {
                 self.expression(left, false)?;
                 self.expression(right, false)?;
@@ -214,6 +215,30 @@ impl SourceAccesses<'_, '_> {
                     self.expression(value, false)?;
                 }
             }
+            // A builtin list method evaluates its arguments, then reads or writes its receiver place in place.
+            Expr::MethodCall(receiver, method, _, arguments)
+                if super::super::builtins::list_method_writes(self.proof.facts, receiver, method, expression.span)
+                    .is_some() =>
+            {
+                let writes =
+                    super::super::builtins::list_method_writes(self.proof.facts, receiver, method, expression.span)
+                        == Some(true);
+                let (place, through) = self
+                    .place(receiver)?
+                    .ok_or("source list method has no stored receiver")?;
+                for argument in arguments {
+                    let CallArg::Positional(value) = argument else {
+                        return Err("source access needs positional list method arguments");
+                    };
+                    self.expression(value, false)?;
+                }
+                let access = if writes {
+                    flow::Access::Write
+                } else {
+                    flow::Access::Read
+                };
+                self.access(expression.span, &place, through, access)?;
+            }
             Expr::MethodCall(receiver, _, _, arguments) => {
                 // A checked receiver is borrowed in place: evaluating it reads its address, not its value.
                 let invocation = self
@@ -225,9 +250,13 @@ impl SourceAccesses<'_, '_> {
                 if invocation.receiver.is_none() {
                     return Err("source access method receiver has no stored place");
                 }
-                // A chained receiver is an inner checked view call; its own arguments are evaluated first.
+                // A chained receiver is an inner checked view call, whose own arguments are evaluated first, or `?` on
+                // a local still holding one.
                 if self.place(receiver)?.is_none() {
-                    if !self.proof.graph.invocations.contains_key(&receiver.span) {
+                    let inner = super::super::builtins::view_call(receiver);
+                    if !self.proof.graph.invocations.contains_key(&inner.span)
+                        && self.proof.carrier_loan(inner).is_none()
+                    {
                         return Err("source access method receiver has no stored place");
                     }
                     self.expression(receiver, false)?;
@@ -265,7 +294,7 @@ impl SourceAccesses<'_, '_> {
             .then(|| self.proof.facts.protocols.explicit_local_modes.get(&root))
             .flatten();
         // A new unannotated local whose loan is its initializer call's result aliases a returned view: the call is
-        // evaluated, and the binding takes a borrow rather than a value.
+        // evaluated, and the binding takes a borrow rather than a value. `?` takes a carried view out of its call.
         if mode.is_none()
             && root.declaration_span == assignment.name_span
             && let Some(id) = self.proof.graph.local_loans.get(&root)
@@ -276,7 +305,7 @@ impl SourceAccesses<'_, '_> {
                 .loans
                 .get(id.0)
                 .ok_or("returned view local has no result loan")?;
-            if loan.span != assignment.value.span {
+            if loan.span != self.proof.view_call_span(&assignment.value) {
                 return Err("returned view local differs from its initializer call");
             }
             return self.expression(&assignment.value, false);
@@ -370,16 +399,11 @@ impl SourceAccesses<'_, '_> {
                             .get(self.proof.canonical_owner()),
                     )?;
                     match (value, view) {
-                        // A returned view borrows its source place: the graph holds a borrow, not a value access.
-                        (Some(value), Some(_)) => {
-                            if self.place(value)?.is_none() {
-                                // A chained view return evaluates its checked inner call.
-                                if !self.proof.graph.invocations.contains_key(&value.span) {
-                                    return Err("returned view has no stored source place");
-                                }
-                                self.expression(value, false)?;
-                            }
-                        }
+                        (Some(value), Some(view)) => match view.carried {
+                            Some(payload) => self.carried_return(value, payload)?,
+                            // A returned view borrows its source place: the graph holds a borrow, not a value access.
+                            None => self.view_return(value)?,
+                        },
                         (Some(value), None) => self.expression(value, true)?,
                         (None, _) => {}
                     }
@@ -477,6 +501,39 @@ impl SourceAccesses<'_, '_> {
             }
         }
         Ok(true)
+    }
+
+    /// A returned view borrows its source place, recorded as a borrow rather than an access; a chained view return
+    /// evaluates its checked inner call.
+    fn view_return(&mut self, value: &Spanned<Expr>) -> Result<(), &'static str> {
+        if self.place(value)?.is_none() {
+            if !self.proof.graph.invocations.contains_key(&value.span) {
+                return Err("returned view has no stored source place");
+            }
+            self.expression(value, false)?;
+        }
+        Ok(())
+    }
+
+    /// A carried view's return: the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the
+    /// error) of the declared place is a view return, another variant is an owned value, `None` evaluates nothing, and
+    /// a carried view call of the same source is evaluated.
+    fn carried_return(&mut self, value: &Spanned<Expr>, carried: usize) -> Result<(), &'static str> {
+        match super::super::builtins::carrier_construction(self.proof.facts, value) {
+            Some((variant, [CallArg::Positional(payload)]))
+                if super::super::builtins::variant_carries_view(variant, carried) =>
+            {
+                self.view_return(payload)
+            }
+            Some(_) => self.expression(value, true),
+            _ if matches!(value.node, Expr::Literal(Literal::None)) => Ok(()),
+            _ => {
+                if !self.proof.graph.invocations.contains_key(&value.span) {
+                    return Err("returned carried view has no checked carried call");
+                }
+                self.expression(value, false)
+            }
+        }
     }
 
     /// A loop evaluates its iterable once; a loop that takes the list's items consumes it. Each poll of a stored

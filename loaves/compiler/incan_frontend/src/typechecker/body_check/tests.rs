@@ -1,7 +1,7 @@
 //! Complete per-body cold comparisons with the original shared-output checker.
 
 use super::super::canonical_nodes::{NodeBindingError, SemanticNodeBindings};
-use super::oracle_compare::canonical_debug;
+use super::baseline_compare::canonical_debug;
 use super::{AnchorFault, BodyLocal, CheckedBodyView, DiagnosticPositions, TypeChecker};
 use crate::ast::Span;
 
@@ -167,7 +167,7 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
-    /// Extend the existing cold oracle with edit reuse: applicability is proved from exact unchanged ASTs and G1
+    /// Extend the existing cold baseline with edit reuse: applicability is proved from exact unchanged ASTs and G1
     /// declaration projections at fixed coordinates. The harness calls the production local/finalization adapters;
     /// it is not an incremental engine, a persistent cache, or proof of position remapping.
     pub(in crate::typechecker) fn assert_body_edit_reuse() -> Result<(), Box<dyn std::error::Error>> {
@@ -619,9 +619,9 @@ fn assert_canonical_record_fields() -> Result<(), Box<dyn std::error::Error>> {
             assert!(
                 matches!(
                     super::records::verify_fixture(moved, "main", corrupted),
-                    Err(NodeBindingError::OracleDifference(_))
+                    Err(NodeBindingError::BaselineDifference(_))
                 ),
-                "the oracle compares native facts, not just their keys"
+                "the baseline compares native facts, not just their keys"
             );
         }
     }

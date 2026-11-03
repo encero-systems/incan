@@ -581,7 +581,7 @@ fn function_return_type(
     binding
         .map(|binding| {
             parameter_types::checked_context_type(
-                returned_value(binding, facts),
+                &returned_value(binding, facts),
                 facts.type_info,
                 type_parameters,
                 facts.runtime_type_conflicts,
@@ -594,6 +594,7 @@ fn function_return_type(
                 ty
             }
         })
+        .map(|ty| carried_return_type(binding, ty, facts))
         .unwrap_or(IncanType::Unknown)
 }
 
@@ -608,7 +609,7 @@ fn method_return_type(
     let ty = binding
         .map(|binding| {
             parameter_types::checked_context_type(
-                returned_value(binding, facts),
+                &returned_value(binding, facts),
                 facts.type_info,
                 type_parameters,
                 facts.runtime_type_conflicts,
@@ -619,18 +620,38 @@ fn method_return_type(
     if ty == IncanType::SelfType {
         receiver_ty.clone()
     } else {
-        ty
+        carried_return_type(binding, ty, facts)
     }
 }
 
 /// A returned view's body returns its source's value type; the view's access travels as the body's returned view.
 /// The binding keeps the written mode for callers, as the checker's own body context does.
-fn returned_value<'a>(binding: &'a FunctionBindingInfo, facts: &BodyIrLoweringFacts<'_, '_>) -> &'a ResolvedType {
+fn returned_value(binding: &FunctionBindingInfo, facts: &BodyIrLoweringFacts<'_, '_>) -> ResolvedType {
     let contract = binding
         .identity
         .as_ref()
         .and_then(|identity| facts.type_info.declarations.ownership_contracts.get(identity));
-    crate::ownership_metadata::result_value_type(contract, &binding.return_type).unwrap_or(&binding.return_type)
+    crate::ownership_metadata::result_value_type(contract, &binding.return_type)
+        .unwrap_or_else(|_| binding.return_type.clone())
+}
+
+/// A carried view's body returns its carrier with the view's reference as the carrying payload, through the same
+/// `reference_carrier` its callers use for the call's result. Other bodies keep their checked return type.
+fn carried_return_type(
+    binding: Option<&FunctionBindingInfo>,
+    ty: IncanType,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> IncanType {
+    let contract = binding
+        .and_then(|binding| binding.identity.as_ref())
+        .and_then(|identity| facts.type_info.declarations.ownership_contracts.get(identity));
+    match crate::ownership_metadata::returned_view(contract) {
+        Ok(Some(view)) => match view.carried {
+            Some(payload) => super::returned_views::reference_carrier(ty, view.access, payload),
+            None => ty,
+        },
+        _ => ty,
+    }
 }
 
 /// Declare every free-function parameter before lowering defaults, preserving the shared replacement receiver

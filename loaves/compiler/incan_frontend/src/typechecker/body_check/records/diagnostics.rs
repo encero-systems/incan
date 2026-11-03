@@ -122,7 +122,7 @@ fn count(values: &mut std::slice::Iter<'_, String>) -> Result<usize, NodeBinding
     Ok(count)
 }
 
-/// Preserve note/hint order without consulting the current diagnostic oracle.
+/// Preserve note/hint order without consulting the current diagnostic baseline.
 fn strings(values: &mut std::slice::Iter<'_, String>) -> Result<Vec<String>, NodeBindingError> {
     let count = count(values)?;
     Ok(values.take(count).cloned().collect())

@@ -10,7 +10,7 @@ use super::flow::{
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, MethodDecl, Param, Receiver, Span, Spanned, Statement,
+    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -91,11 +91,18 @@ struct Builder<'a> {
     graph: Graph,
     locals: BTreeMap<CanonicalSymbolId, Permission>,
     aliases: BTreeMap<CanonicalSymbolId, Path>,
+    /// Locals bound to a call that carries a view, not yet consumed. Each aliases the view's place under the call's
+    /// result loan, which it holds until a `match` or `?` takes the view out; any other use of it is refused.
+    carriers: BTreeMap<CanonicalSymbolId, matches::BoundCarrier>,
+    /// Locals a `match` or `?` already took a carried view out of; any later use of them is refused.
+    taken_carriers: BTreeSet<CanonicalSymbolId>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
     /// The declared returned view: whether it is exclusive, and the exact source place every return borrows.
     view: Option<(bool, Place)>,
+    /// The `Result` or `Option` payload carrying the returned view, or `None` for a view returned whole.
+    view_carried: Option<usize>,
     /// Returns that do not borrow the declared view source. These are program errors, reported by the caller.
     view_errors: Vec<crate::diagnostics::CompileError>,
 }
@@ -220,8 +227,11 @@ fn build_graph(
         constrained: BTreeSet::new(),
         borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
+        carriers: BTreeMap::new(),
+        taken_carriers: BTreeSet::new(),
         loops: Vec::new(),
         view: None,
+        view_carried: None,
         view_errors: Vec::new(),
     };
     builder.inputs(parameters, identity)?;
@@ -262,6 +272,7 @@ fn build_graph(
             projection: view.source.fields.iter().cloned().map(Projection::Field).collect(),
         };
         builder.view = Some((view.access == incan_semantics_core::IncanInputAccess::Exclusive, place));
+        builder.view_carried = view.carried;
     }
     let result = builder.block(body, vec![0]);
     view_errors.append(&mut builder.view_errors);
@@ -378,6 +389,15 @@ impl Builder<'_> {
                         reason: "missing checked place identity".into(),
                     })?
                     .clone();
+                if self.carriers.contains_key(&identity) {
+                    return Err(Unavailable {
+                        span: expression.span,
+                        reason: "a bound carried view needs a match or `?` to take the view out".into(),
+                    });
+                }
+                if self.taken_carriers.contains(&identity) {
+                    return Err(taken_carrier(expression.span));
+                }
                 match self.aliases.get(&identity) {
                     Some(path) => Ok(path.clone()),
                     None => Ok(Path {
@@ -490,19 +510,41 @@ impl Builder<'_> {
             Expr::Literal(_) => Ok(incoming),
             Expr::List(entries) => self.scalar_list(entries, incoming),
             Expr::FString(parts) => self.formatted_text(parts, expression.span, incoming),
-            // A returned view is a place, not a value: it may be bound, used as a receiver or returned as a view.
-            Expr::Call(..) | Expr::MethodCall(..) if self.view_relation(expression)?.is_some() => Err(Unavailable {
-                span: expression.span,
-                reason: "a returned view needs a local binding, a receiver or a returned view position".into(),
-            }),
+            // A returned view, including one `?` takes out of its carrier, is a place, not a value: it may be bound,
+            // used as a receiver or returned as a view.
+            Expr::Call(..) | Expr::MethodCall(..) | Expr::Try(..) if self.view_source(expression)?.is_some() => {
+                Err(Unavailable {
+                    span: expression.span,
+                    reason: "a returned view needs a local binding, a receiver or a returned view position".into(),
+                })
+            }
+            // A carried view stays in its carrier until `?` or a match takes it out; the carrier holds a loan.
+            Expr::Call(..) | Expr::MethodCall(..)
+                if self
+                    .call_relation(expression)?
+                    .is_some_and(|relation| relation.carried.is_some()) =>
+            {
+                Err(Unavailable {
+                    span: expression.span,
+                    reason: "a carried view needs `?` or a returned carried view position".into(),
+                })
+            }
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
-            Expr::MethodCall(receiver, _, _, arguments) => {
-                self.apply_call(Some(receiver), arguments, expression.span, incoming)
+            Expr::MethodCall(receiver, method, _, arguments) => {
+                match super::builtins::list_method_writes(&self.checker.type_info, receiver, method, expression.span) {
+                    Some(writes) => self.list_method(receiver, writes, arguments, expression.span, incoming),
+                    None => self.apply_call(Some(receiver), arguments, expression.span, incoming),
+                }
             }
             Expr::Paren(inner) | Expr::Unary(_, inner) => self.expression(inner, incoming, consume),
             // `?` consumes its carrier and continues with the success payload; the error path leaves the body as a
-            // `return` does, carrying only the carrier's own error value. A returned view's body has no such exit yet.
-            Expr::Try(inner) if self.view.is_none() => self.expression(inner, incoming, true),
+            // `return` does, carrying only the carrier's own error value. Only a body without a returned view, or one
+            // whose view is carried in the success payload, has that exit; an error that carries the view must be the
+            // declared source's.
+            Expr::Try(inner) if self.view.is_none() || self.view_carried == Some(0) => {
+                self.expression(inner, incoming, true)
+            }
+            Expr::Try(_) if self.view_carried == Some(1) => Err(error_view_try(expression.span)),
             Expr::Binary(left, operation, right) => {
                 let incoming = self.expression(left, incoming, false)?;
                 let (incoming, left_dependency) = self.retain_operation_operand(left, incoming)?;
@@ -530,6 +572,39 @@ impl Builder<'_> {
     /// authorizes duplication, including inside tuples and native carriers with incomplete trait metadata.
     fn copy_value(&self, ty: &ResolvedType) -> bool {
         self.checker.input_copy_value(ty)
+    }
+
+    /// A statement `if` evaluates each condition on the path where the previous ones were false, and its branches,
+    /// including an absent `else`, join after it. Each branch starts from the carriers as that path left them.
+    fn if_statement(&mut self, branch: &IfStmt, incoming: Vec<usize>) -> Result<Vec<usize>, Unavailable> {
+        let mut remaining = self.condition(&branch.condition, incoming)?;
+        let mut fallthrough = self.carrier_state();
+        let mut ends = Vec::new();
+        let mut outgoing = self.block(&branch.then_body, remaining.clone())?;
+        if !outgoing.is_empty() {
+            ends.push(self.carrier_state());
+        }
+        for (condition, body) in &branch.elif_branches {
+            self.restore_carrier_state(&fallthrough);
+            remaining = self.expression(condition, remaining, false)?;
+            fallthrough = self.carrier_state();
+            let continuing = self.block(body, remaining.clone())?;
+            if !continuing.is_empty() {
+                ends.push(self.carrier_state());
+            }
+            outgoing.extend(continuing);
+        }
+        self.restore_carrier_state(&fallthrough);
+        let continuing = match &branch.else_body {
+            Some(body) => self.block(body, remaining)?,
+            None => remaining,
+        };
+        if !continuing.is_empty() {
+            ends.push(self.carrier_state());
+        }
+        outgoing.extend(continuing);
+        self.join_carrier_states(&fallthrough, &ends);
+        Ok(outgoing)
     }
 
     /// Patterns need binding-specific dependency transfer and are unavailable until their checked projection exists.
@@ -568,8 +643,8 @@ impl Builder<'_> {
         incoming: Vec<usize>,
     ) -> Result<(), Unavailable> {
         // A call returning a view of exactly the declared source satisfies the relation through its result loan.
-        if let Some(relation) = self.view_relation(value)? {
-            let (incoming, path) = self.evaluate_view_call(value, relation, incoming)?;
+        if let Some(view) = self.view_source(value)? {
+            let (incoming, path) = self.evaluate_view_source(value, view, incoming)?;
             if path.place == *source {
                 let loan = self.call_loan(path, exclusive, exclusive, value.span);
                 self.event(incoming, Event::Borrow(loan), value.span);
@@ -639,9 +714,9 @@ impl Builder<'_> {
         if mode.is_none()
             && root.declaration_span == assignment.name_span
             && root.kind == SemanticSourceTargetKind::Local
-            && let Some(relation) = self.view_relation(&assignment.value)?
+            && let Some(view) = self.view_source(&assignment.value)?
         {
-            let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
+            let (incoming, path) = self.evaluate_view_source(&assignment.value, view, incoming)?;
             let loan = path.through.ok_or(Unavailable {
                 span: assignment.value.span,
                 reason: "returned view has no result loan".into(),
@@ -653,6 +728,31 @@ impl Builder<'_> {
                 });
             }
             self.aliases.insert(root, path);
+            return Ok(incoming);
+        }
+        // A new local bound to a call that carries a view holds the call's result loan as the view's alias until a
+        // match consumes it.
+        if mode.is_none()
+            && root.declaration_span == assignment.name_span
+            && root.kind == SemanticSourceTargetKind::Local
+            && let Some(relation) = self.call_relation(&assignment.value)?
+            && let Some(payload) = relation.carried
+        {
+            let (incoming, path) = self.evaluate_view_call(&assignment.value, relation, incoming)?;
+            let loan = path.through.ok_or(Unavailable {
+                span: assignment.value.span,
+                reason: "carried view has no result loan".into(),
+            })?;
+            if self.graph.local_loans.insert(root.clone(), loan).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "local declaration has more than one ownership destination".into(),
+                });
+            }
+            self.aliases.insert(root.clone(), path);
+            let loop_depth = self.loops.len();
+            self.carriers
+                .insert(root, matches::BoundCarrier { payload, loop_depth });
             return Ok(incoming);
         }
         let source = self.optional_place(&assignment.value)?;
@@ -963,10 +1063,14 @@ impl Builder<'_> {
                 node: Expr::Match(scrutinee, arms),
                 ..
             }) => self.match_statement(scrutinee, arms, incoming),
-            // A discarded returned view still borrows its source for the call; its result loan is never used.
-            Statement::Expr(value) => match self.view_relation(value)? {
-                Some(relation) => Ok(self.evaluate_view_call(value, relation, incoming)?.0),
-                None => self.expression(value, incoming, false),
+            // A discarded returned view still borrows its source for the call; its result loan is never used. A
+            // discarded call that carries a view drops its carrier the same way, with its view and its error.
+            Statement::Expr(value) => match self.view_source(value)? {
+                Some(view) => Ok(self.evaluate_view_source(value, view, incoming)?.0),
+                None => match self.call_relation(value)?.filter(|relation| relation.carried.is_some()) {
+                    Some(relation) => Ok(self.evaluate_view_call(value, relation, incoming)?.0),
+                    None => self.expression(value, incoming, false),
+                },
             },
             Statement::Assert(assertion) => {
                 let crate::ast::AssertKind::Condition(condition) = &assertion.kind else {
@@ -1000,9 +1104,10 @@ impl Builder<'_> {
             }
             Statement::Return(value) => {
                 match (value, self.view.clone()) {
-                    (Some(value), Some((exclusive, source))) => {
-                        self.view_return(value, exclusive, &source, incoming)?
-                    }
+                    (Some(value), Some((exclusive, source))) => match self.view_carried {
+                        Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
+                        None => self.view_return(value, exclusive, &source, incoming)?,
+                    },
                     (None, Some(_)) => self.view_errors.push(view_error(
                         "A returned view must return its declared source place",
                         statement.span,
@@ -1017,19 +1122,7 @@ impl Builder<'_> {
             Statement::Assignment(assignment) => self.assignment(assignment, statement.span, incoming),
             Statement::FieldAssignment(assignment) => self.field_assignment(assignment, incoming),
             Statement::CompoundAssignment(assignment) => self.compound_assignment(assignment, statement.span, incoming),
-            Statement::If(branch) => {
-                let mut remaining = self.condition(&branch.condition, incoming)?;
-                let mut outgoing = self.block(&branch.then_body, remaining.clone())?;
-                for (condition, body) in &branch.elif_branches {
-                    remaining = self.expression(condition, remaining, false)?;
-                    outgoing.extend(self.block(body, remaining.clone())?);
-                }
-                outgoing.extend(match &branch.else_body {
-                    Some(body) => self.block(body, remaining)?,
-                    None => remaining,
-                });
-                Ok(outgoing)
-            }
+            Statement::If(branch) => self.if_statement(branch, incoming),
             Statement::While(loop_) => {
                 let header = self.event(incoming, Event::Nothing, statement.span)[0];
                 let condition = self.condition(&loop_.condition, vec![header])?;
@@ -1091,6 +1184,22 @@ impl Builder<'_> {
                 reason: "statement needs additional checked dependency facts".into(),
             }),
         }
+    }
+}
+
+/// A local whose carried view a `match` or `?` already took out; it holds nothing more to use.
+fn taken_carrier(span: Span) -> Unavailable {
+    Unavailable {
+        span,
+        reason: "the view was already taken out of this carried result".into(),
+    }
+}
+
+/// `?` in a body whose error carries its view: the exit would return the carrier's own error, not the source place.
+fn error_view_try(span: Span) -> Unavailable {
+    Unavailable {
+        span,
+        reason: "`?` in a body whose error carries a view would return an error other than its source place".into(),
     }
 }
 

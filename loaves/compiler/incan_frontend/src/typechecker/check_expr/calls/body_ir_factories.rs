@@ -112,6 +112,11 @@ impl TypeChecker {
             .body_ir_factory_owner_types
             .insert(span, ResolvedType::Generic(owner, arguments.clone()));
         self.type_info.calls.body_ir_call_type_arguments.insert(span, arguments);
+        // The call produces the declaration's value type, through the same projection as its checked expression type.
+        let output = match method.identity.as_ref() {
+            Some(identity) => self.returned_value_type(identity, &output),
+            None => output,
+        };
         self.type_info.calls.body_ir_call_result_types.insert(span, output);
     }
 

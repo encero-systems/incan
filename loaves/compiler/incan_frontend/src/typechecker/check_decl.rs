@@ -6872,11 +6872,11 @@ impl TypeChecker {
         let function_identity =
             self.symbols
                 .module_declaration_identity(&func.name, SemanticSourceTargetKind::Function, decl_span);
-        self.symbols
-            .set_return_type(self.returned_value_type(&function_identity, &return_type));
+        let body_return_type = self.returned_value_type(&function_identity, &return_type);
+        self.symbols.set_return_type(body_return_type.clone());
 
-        // Set error type for ? checking
-        self.current_return_error_type = return_type.result_err_type().cloned();
+        // Set error type for ? checking: the value type, so a view carried in the error compares as its value.
+        self.current_return_error_type = body_return_type.result_err_type().cloned();
 
         let previous_c_abi_raw_call_owner =
             self.current_c_abi_raw_call_owner
@@ -7116,9 +7116,10 @@ impl TypeChecker {
 
     /// Resolve a callable return annotation and apply its nominal, nested-trait and Rust lifetime restrictions in
     /// order. Signature owners retain responsibility for route-specific checks and recording their final binding.
-    /// A result with a `from` source defers its outer ownership mode to the declaration's returned-view check.
+    /// A result with a `from` source defers its outer ownership mode, or the mode of a carrier's first payload, to the
+    /// declaration's returned-view check.
     fn resolve_callable_return_annotation(&mut self, annotation: &Spanned<Type>, has_source: bool) -> ResolvedType {
-        let ty = self.resolve_type_checked_deferring(annotation, |_| has_source);
+        let ty = self.resolve_type_checked_deferring(annotation, |_| has_source, has_source);
         self.refuse_unbounded_nominal_type_arguments(&ty, annotation.span);
         self.refuse_trait_type_nested_in_annotation(&ty, annotation.span);
         self.refuse_lifetime_bearing_rust_type(&ty, annotation.span);
@@ -7576,8 +7577,8 @@ impl TypeChecker {
         let body_return_type = self.returned_value_type(&method_identity, &return_type);
         let yield_context = self.set_method_return_context(method, &body_return_type, &self_ty);
 
-        // Set error type for ? checking
-        self.current_return_error_type = return_type.result_err_type().cloned();
+        // Set error type for ? checking: the value type, so a view carried in the error compares as its value.
+        self.current_return_error_type = body_return_type.result_err_type().cloned();
 
         // ---- Prepared inputs ----
         PreparedMethodCheck {

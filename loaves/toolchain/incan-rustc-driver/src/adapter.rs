@@ -100,20 +100,12 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
         .iter()
         .find(|value| !value.carrier.is_empty() && name.as_str() == value.name)
     {
-        let path = if carrier.carrier == "Option" {
-            "std::option::Option"
-        } else {
-            "std::result::Result"
-        };
-        let native = match callees::library_item(tcx, path, rustc_hir::def::DefKind::Enum) {
+        let (segments, fields) = crate::declarations::standard_carrier(carrier);
+        let path = format!("std::{}", segments.join("::"));
+        let native = match callees::library_item(tcx, &path, rustc_hir::def::DefKind::Enum) {
             Ok(native) => native,
             Err(error) => refuse(tcx, error),
         };
-        let fields = carrier
-            .variants
-            .iter()
-            .flat_map(|variant| variant.fields.iter().cloned())
-            .collect::<Vec<_>>();
         let arguments = match callees::arguments(tcx, native, &fields) {
             Ok(arguments) => arguments,
             Err(error) => refuse(tcx, error),
@@ -335,7 +327,7 @@ impl Callbacks<'_> {
                     compiler.sess.dcx().fatal(message);
                 }
             };
-            let mut item = match declarations::function(function, span) {
+            let mut item = match declarations::function(&self.plan, function, span) {
                 Ok(item) => item,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };

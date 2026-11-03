@@ -1,0 +1,38 @@
+# behavior: a local bound to a call that carries a view holds the caller's value borrowed until a `match` takes the view out; other work can run in between, and the error arm can repair the value (#2500).
+# expect-stdout:
+#   9
+#   closed
+#   -1
+#   true
+
+"""Bind a carried result to a local, do other work, then take the view out with a match."""
+
+
+class Counter:
+    pub value: int
+    pub open: bool
+
+    def bump(mut self) -> Result[Reference[Self], str] from self:
+        if not self.open:
+            return Err("closed")
+        self.value += 1
+        return Ok(self)
+
+
+def later(mut counter: BorrowedMut[Counter]) -> int:
+    result = counter.bump()
+    marker = 7
+    match result:
+        Ok(view) => return view.value + marker
+        Err(error) =>
+            println(error)
+            counter.open = true
+            return -1
+
+
+def main() -> None:
+    mut counter = Counter(value=1, open=true)
+    println(later(counter))
+    counter.open = false
+    println(later(counter))
+    println(counter.open)
