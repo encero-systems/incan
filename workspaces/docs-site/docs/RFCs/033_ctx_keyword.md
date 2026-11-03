@@ -21,6 +21,7 @@
     - RFC 135 (lazy Option defaults)
     - RFC 141 (type matching and named type operations)
     - RFC 143 (clone with field overrides; excludes ctx values)
+    - RFC 164 (explicit ownership and borrowing; a published context is never `Owned`)
     - RFC 163 (compile-time conditions; distinct from runtime ctx contributions)
 - **Issue:** [#167](https://github.com/encero-systems/incan/issues/167)
 - **RFC PR:** —
@@ -29,7 +30,7 @@
 
 ## Summary
 
-Introduce `ctx` as a core language keyword for typed, environment-aware configuration. A declaration describes typed fields, deferred model construction, and layered resolution from defaults, ordered recursive contributions from nestable `if` blocks, explicitly declared YAML sources, and environment variables. First use resolves the whole context at runtime and publishes a completed frozen value for subsequent reads. An explicit fallible `preflight()` performs the same resolution early for callers that want to handle failures; an unchecked first-use failure reports the typed diagnostic and terminates execution unsuccessfully. Resolved context values are non-cloneable; separate declarations provide separate retained sessions while reusing ordinary model contracts. Tests use ordinary sources and fixtures with runner-provided isolation. Resolution retains explainable, secret-safe provenance rather than reducing configuration failures to panic messages.
+Introduce `ctx` as a core language keyword for typed, environment-aware configuration. A declaration describes typed fields, deferred model construction, and layered resolution from defaults, ordered recursive contributions from nestable `if` blocks, explicitly declared YAML sources, and environment variables. First use resolves the whole context at runtime and publishes a completed frozen value for subsequent reads. An explicit fallible `preflight()` performs the same resolution early for callers that want to handle failures; an unchecked first-use failure reports the typed diagnostic and terminates execution unsuccessfully. While a context is open, code may contribute values such as parsed command-line arguments. Resolved contexts are read-only at every depth, non-cloneable and safe to read from any thread, and may hold resources built from their settings on first read; separate declarations provide separate retained sessions while reusing ordinary model contracts. Tests use `std.testing.ctx_override` or ordinary sources and fixtures, with isolation per test case. Resolution retains explainable, secret-safe provenance rather than reducing configuration failures to panic messages.
 
 ## Motivation
 
@@ -68,8 +69,10 @@ Static checking validates authored field references, defaults, and overrides. It
 - Compose explicit YAML sources, including common and environment-specific files selected from resolved fields, through the same checked configuration shape.
 - Resolve contexts on first runtime use and provide an explicit fallible preflight for early checks.
 - Support independently resolved session declarations with separate environment namespaces and reusable external model contracts.
-- Keep resolved context values frozen and non-cloneable, independent of their fields' individual capabilities.
-- Test ordinary configuration access through existing fixtures with isolated resolution state per test.
+- Let code contribute values, such as parsed command-line arguments, while a context is open, and freeze it when it first resolves.
+- Hold resources built from settings, such as a connection pool, built once on first use.
+- Keep published contexts read-only at every depth and non-cloneable, and safe to read from any thread or task without annotations.
+- Test configuration through ordinary reads, with typed `ctx_override` values and isolated context state per test case.
 - Preserve explicit optional clearing separately from missing overrides.
 - Explain source selection using structured, secret-safe provenance and governed source access.
 
@@ -78,11 +81,11 @@ Static checking validates authored field references, defaults, and overrides. It
 - Runtime configuration reload or implicit replacement of a published application value.
 - Cloning a resolved context, including zero-argument copying and clone-with-overrides reconstruction.
 - Explicit whole-collection replacement, clearing, or entry-removal markers during recursive composition.
-- Implicit deep freezing, deep cloning, or thread-safety guarantees from fixed field bindings alone.
+- Deep cloning, or freezing the internal state of a resource that synchronizes itself, such as the connections a pool hands out.
 - A configuration-only type system, Literal validator, secret wrapper, or capability authority.
-- Dotenv files, automatic file discovery, or CLI override syntax in this proposal.
+- Dotenv files, automatic file discovery, or CLI override syntax; command-line values reach a context through `contribute`.
 - Implicit transport of configuration between an orchestrator and worker processes.
-- Defining managed resource entry, exit, ownership transfer, cleanup, or shutdown; that design is deferred to RFC 094.
+- Defining cleanup or shutdown for the resources a context holds, or managed resource entry, exit and ownership transfer; that design is deferred to RFC 094.
 
 Multiple selectors, compound Boolean conditions, nested `if` blocks, and dotted field contributions are included. Selected blocks compose in source order; recursive merging preserves unspecified fields and dictionary entries and appends list contributions. Environment-specific entries belong in their corresponding conditional blocks or selected YAML files. Explicit collection replacement and removal are out of scope; explicit factories govern external work, and declared collection types select checked JSON environment decoding.
 
@@ -195,6 +198,52 @@ Failed attempts do not publish partial values. A fresh attempt may reevaluate de
 Concurrent callers using one unresolved published context share one in-progress resolution attempt. If one worker starts preflight while another reaches the same context, the second waits for that attempt's outcome instead of resolving a competing value. Success makes the same completed frozen context available to both callers and all subsequent reads. Callers joining a failed attempt observe that attempt's failure; waiting must not silently initiate another attempt. A later explicit preflight may retry under the application-controlled recovery rule.
 
 Each caller retains its chosen failure boundary: preflight returns a Result, while an unchecked field access reports failure and terminates execution. Coordination applies while initialization is in progress. After successful publication, stored values are reused without repeated resolution or validation. This coordination does not introduce an async return type or implicit await for field access.
+
+### Contribute values before the context freezes
+
+A context is open until it resolves. While it is open, code may contribute values, such as parsed command-line arguments:
+
+```incan
+ctx AppConfig(env_prefix="APP_"):
+    env: Literal["dev", "prod"] = "dev"
+    workers: int = 1
+
+def main() -> Result[None, ConfigError]:
+    args = Cli.parse()                    # an application RFC 090 CliArgs model
+    AppConfig.contribute(workers=args.workers)?
+    AppConfig.preflight()?
+    run()
+    return Ok(None)
+```
+
+`contribute` takes keyword arguments named after the context's fields, checked against their declared types, so `AppConfig.contribute(wokers=8)` is a compile error. Contributions are the highest-priority source: they apply above direct environment inputs and compose under the same rules as every other source. `explain()` reports each one with its source location.
+
+The context freezes when its first resolution succeeds, whether that resolution was started by `preflight()` or by the first field read. From then on it is read-only, and `contribute` returns `ConfigError.AlreadyResolved`, which names the read or preflight that resolved the context:
+
+```text
+AppConfig was resolved at logging.incn:12; contribute before that read
+```
+
+A stray early read is therefore reported, rather than silently losing the values `main` meant to supply. A failed resolution leaves the context open, so an application may contribute a correction and preflight again. An application that never contributes never needs to think about this phase.
+
+### Resources built from settings
+
+A context may hold resources built from its settings, such as a connection pool or an HTTP client:
+
+```incan
+def open_pool(url: str, pool_size: int) -> Result[Pool, PoolError]:
+    return Pool.open(url, size=pool_size)
+
+ctx Database(env_prefix="DB_"):
+    url: str
+    pool_size: int = 10
+    pool [default_factory=open_pool]: Pool
+
+def load_user(id: int) -> User:
+    return Database.pool.fetch_one(User, id=id)
+```
+
+The settings resolve and freeze together. A factory field that no other field depends on is built the first time it is read, from the frozen settings, so logging `Database.url` does not open connections. It is built once: concurrent first reads share one build, as concurrent first uses share one resolution. `preflight()` builds every factory field as well, so an application that wants to know at startup that the database is reachable gets that from the same call. A contributed value replaces the factory, which then never runs.
 
 ### Resolve dependencies and diagnose cycles
 
@@ -611,22 +660,57 @@ These are session configuration declarations, not claims that the example opens 
 
 Multiple contexts can be active together. A shared declaration is resolved once; it is not a factory for arbitrarily many runtime sessions. Applications needing such factories may define them through ordinary application types and APIs. Resource initialization and cleanup remain subject to the checked ownership and effect contracts; separately naming a context does not grant authority or thread safety. Managed resource lifetimes and any ctx integration with them are deferred to RFC 094. These configuration examples establish no new entry, exit, ownership-transfer, cleanup, or shutdown protocol and must not imply public cleanup guarantees based solely on backend destruction.
 
-### Frozen and non-cloneable contexts
+### Read-only, non-cloneable and safe to share
 
 ```incan
 # Uses PostgresSession declared above.
-PostgresSession.host = "backup.example.com"  # rejected: frozen field
-PostgresSession.clone()                     # rejected: ctx is non-cloneable
-PostgresSession.clone(host="backup")        # rejected: ctx is non-cloneable
+PostgresSession.host = "backup.example.com"  # rejected: a published context is read-only
+PostgresSession.retry.attempts = 5           # rejected: read-only at every depth
+PostgresSession.clone()                      # rejected: ctx is non-cloneable
+PostgresSession.clone(host="backup")         # rejected: ctx is non-cloneable
+
+def describe(session: PostgresSession) -> str:   # a read-only view of the published value
+    return f"{session.host}:{session.port}"
+
+describe(PostgresSession)                     # accepted
 ```
 
-The restriction applies to resolved context values as well as declaration-name access. There is no ctx Clone implementation, implicit whole-value copy capability, or generated clone-with-overrides surface. Generic Clone APIs must not bypass this restriction, even if every field is individually cloneable.
+Every path to a published context is a read: field reads, the declaration name used as a value, and borrowed views of either. Assignment at any depth, a mutating method such as `append` on a contained list, a `mut` parameter and `Owned[...]` are refused. A context therefore cannot change under its readers, however deeply a value is nested.
 
-Ordinary model values and resource handles stored in a context retain their own checked capabilities. A shared pool handle may support cloning under its own contract; that operation does not clone the context or reconnect using different settings. Frozen bindings remain shallow and do not freeze a database, guarantee deep independence, or make mutable contents thread-safe.
+Because nothing can write to it, any thread or task can read a published context without locks. The compiler checks that each field's type is safe for that, so the developer never writes a thread-safety annotation. Data is always safe. A resource meant to be shared across threads, such as a connection pool, synchronizes its own internal state and is safe for that reason. A type whose read operations change internal state without synchronizing is refused, with a diagnostic naming the field and its type. Read-only applies to the context's bindings and settings; a pool still hands out connections, because that is its own synchronized behavior.
 
-### Test the ordinary access path
+The restriction on cloning applies to resolved context values as well as declaration-name access. There is no ctx Clone implementation, implicit whole-value copy capability, or generated clone-with-overrides surface. Generic Clone APIs must not bypass this restriction, even if every field is individually cloneable.
 
-Tests use ordinary configuration sources and existing fixtures. RFC 019 provides the `env` fixture and TestEnv helper for temporary environment values; RFC 018 supplies the imported testing marker. The proposed ctx integration is fresh resolution state for each test case:
+### Test with `ctx_override`
+
+`std.testing.ctx_override` gives a test its own context values, in the way a time-freezing helper fixes the clock for a test. It works as a decorator on a test or as a `with` block:
+
+```incan
+from std.testing import test, ctx_override
+
+@test
+@ctx_override(AppConfig, env="prod")
+def test_prod_uses_eight_workers():
+    assert AppConfig.workers == 8
+
+@test
+def test_workers_follow_env():
+    with ctx_override(AppConfig, env="prod"):
+        assert AppConfig.workers == 8
+    with ctx_override(AppConfig, env="dev"):
+        assert AppConfig.workers == 1
+
+@test
+@ctx_override(Database, pool=seeded_test_pool())
+def test_loads_user():
+    assert load_user(1).name == "Ada"
+```
+
+`seeded_test_pool` is an application test helper. Override values are checked against the context's field names and types, as `contribute` is, so a misspelled field is a compile error. Inside the scope the context starts fresh: it resolves on its first read with the override values as contributions, stays frozen for the rest of the scope, and is discarded at exit, after which the enclosing state returns. The two `with` blocks above therefore resolve independently. Overriding a factory field supplies its value, so `test_loads_user` never opens a real pool. `explain()` reports override values with the test's source location. The `with` form uses RFC 094's context-manager protocol.
+
+### Test the environment path
+
+Tests that exercise environment variables use ordinary configuration sources and existing fixtures. RFC 019 provides the `env` fixture and TestEnv helper for temporary environment values; RFC 018 supplies the imported testing marker:
 
 ```incan
 ctx AppConfig(env_prefix="APP_"):
@@ -650,7 +734,7 @@ module tests:
         assert request_timeout() == 60
 ```
 
-The helper is application-defined and reads configuration normally. The fixture installs the input before first use and restores the process environment afterward. Each test has fresh ctx resolution state, so a runner worker process must not reuse one case's ctx cache for another. This isolation does not refresh ordinary values retained by a shared fixture: fixture lifetimes and retained data follow RFC 019's normal rules, without a ctx-specific prohibition or automatic fixture rebuilding. Within each test, successful initialization remains fixed and reused. The function return-annotation omission follows RFC 130. This example does not require an independent resolution method or a production reset operation.
+The helper is application-defined and reads configuration normally. The fixture installs the input before first use and restores the process environment afterward. Each test case has its own ctx state, including contributions and its frozen value, so neither a later case in the same worker process nor a case running in parallel in another thread sees it. This isolation does not refresh ordinary values retained by a shared fixture: fixture lifetimes and retained data follow RFC 019's normal rules, without a ctx-specific prohibition or automatic fixture rebuilding. Within each test, successful initialization remains fixed and reused. The function return-annotation omission follows RFC 130. This example does not require an independent resolution method or a production reset operation.
 
 ### Explain context state and resolved settings
 
@@ -712,8 +796,8 @@ field_path     ::= IDENT ("." IDENT)*
 3. **Contributions** must be compatible with the destination's declared type. Dotted paths must resolve through checked field identities and respect construction and visibility rules. A scalar `int` field cannot receive a string contribution. Ordinary expected-type assignment conversions must apply to defaults and contributions, including compatible plain values written into `Option[T]` destinations. Authors must not be required to wrap those values in `Some(...)`; None and explicit Option values must retain their ordinary meanings.
 4. **Implicit model construction** must recursively collect pending inputs for a model-typed field without an initializer, using declared field defaults and selected contributions. This rule applies during ctx construction, not to ordinary model construction elsewhere. Required scalar inputs must remain missing until supplied; the process must not invent zero or empty values. Recursive model expansion without a finite construction boundary must be diagnosed rather than recurse indefinitely.
 5. **Final construction** must validate the complete inputs and preserve ordinary model construction contracts before publication. Resolution must not construct an incomplete model and mutate it to fill required fields. An explicitly supplied model value contains its stored field values; it must not be treated as a partial constructor merely because some values originated from constructor defaults.
-6. **Typed access** through `AppConfig.field_name` must use the declared field type. The resolved value must remain suitable for checked model-like access; its exact naming and trait surface remain open.
-7. **Freezing** must fix resolved field bindings under RFC 132's shallow contract. Assigning to a published field must be rejected. Composition must not mutate completed frozen instances or retained lower-priority values through aliases. Freezing alone must not authorize deep immutability or cross-thread sharing.
+6. **Typed access** through `AppConfig.field_name` must use the declared field type. A ctx declaration must declare a frozen model type of the same name, whose one value is the published context. The declaration name used as a value must denote the published value and resolve it on first use, as a field read does. A `ctx` declaration may adopt traits with `with` when their operations only read the value; it must refuse Clone, Copy, Default, Deserialize and any trait whose operations construct another value of the context's type.
+7. **Freezing** must make the published value read-only at every depth under the lifecycle's read-only access rule, which is stronger than RFC 132's shallow contract. Composition must not mutate completed frozen instances or retained lower-priority values through aliases.
 
 ### Env var type coercion
 
@@ -854,6 +938,7 @@ The proposed `std.config.ConfigError` umbrella must use RFC 131's native error c
 | `ConfigError.SourceFailure` | The selected source identity and the actual retained read, decoding, denied-access or secret-ingress failure. Available source locations remain attached. |
 | `ConfigError.DependencyCycle` | The reached dependency chain of checked fields, conditions or contexts, with available source locations. |
 | `ConfigError.Multiple` | The independently discovered direct failures and the facts identifying dependents blocked by those failures. |
+| `ConfigError.AlreadyResolved` | The context, the rejected contribution's location, and the location of the read or preflight that resolved the context. |
 
 Field paths must retain structured checked segments, rather than become strings used for dispatch. Source identities must distinguish environment names, YAML file locations and declaration locations. Raw supplied values and raw secrets must not be mandatory diagnostic payloads. A single failure must use its category; multiple independent failures must retain the members under `Multiple`, through RFC 131's shared reporting contract. This RFC must not add a parallel cause-traversal mechanism or reduce typed originals to messages.
 
@@ -869,7 +954,9 @@ A field or condition whose required dependency failed must be identified as bloc
 
 ### Lifecycle
 
-1. **Resolution** must be fallible and produce a complete frozen value or a typed configuration failure. It must resolve pending defaults, selector inputs, ordered conditional contributions, and supplied environment values under the declared priority rules.
+1. **Resolution** must be fallible and produce a complete frozen value or a typed configuration failure. It must resolve pending defaults, selector inputs, ordered conditional contributions, supplied environment values and code contributions under the declared priority rules.
+    - A context is open from program start until a resolution succeeds. `ContextName.contribute(...)` must be available while it is open and return `Result[None, ConfigError]`. Its keyword arguments must name declared fields and be checked against their types at compile time. Contributions must be the highest-priority source, compose under the same rules as other sources, and be retained in provenance with their source locations.
+    - A contribution made while an attempt is in progress must wait for that attempt's outcome. After a successful resolution, `contribute` must return `ConfigError.AlreadyResolved`, identifying the read or preflight that resolved the context. A failed attempt must leave the context open, so later contributions apply to the next attempt.
 2. **First use** must resolve the whole context at runtime before returning its first declaration-name field value. Merely declaring, importing, or statically referencing a context must not activate it. Unused contexts must not require environment values or acquire source capabilities. Successful resolution must publish the completed value once; failure must not publish partial state. There must be no automatic pre-main sweep.
 3. **Preflight** must be available as `ContextName.preflight()` and return `Result[None, ConfigError]`. It must perform the same resolution and prepare the same published value as first use. After successful publication, preflight and field reads must reuse that value without rereading sources or revalidating a different environment. A failed preflight must remain recoverable through ordinary Result handling.
     - A failed attempt must leave the context unresolved, without poisoning it permanently or publishing partial values. A subsequent explicit preflight must be allowed to make a fresh attempt against the declared sources. Each invocation must initiate at most one attempt; resolution must not automatically loop or retry. Application code owns recovery decisions and retry timing.
@@ -877,9 +964,15 @@ A field or condition whose required dependency failed must be identified as bloc
 4. **Unchecked failure** during a direct field read must report the full typed configuration diagnostic and terminate the application unsuccessfully. The report must use RFC 131's common diagnostic contract, retaining available causes, origins, and stacks with secret redaction. This boundary must not pretend to return a Result through a plain field access, introduce catchable exceptions, or convert ordinary invalid configuration into a generated panic. Callers requiring recovery must preflight before the read.
 5. **Separate sessions and non-cloneability** must be expressed through separate ctx declarations, each with its own environment prefix and retained resolution state. External model contracts may be reused without automatically sharing instances. Resolved ctx values must not expose Clone, Copy, or RFC 143 clone-with-overrides capabilities, including through aliases, imports, or generic APIs. This restriction applies even when every retained field is individually cloneable. Contained ordinary values must retain their own checked capabilities; their operations must not implicitly duplicate the whole context or restart its resolution.
 6. **Concurrent resolution** must coordinate callers of the same unresolved published context around one in-progress attempt. Joining callers must wait for and observe that attempt's outcome without seeing partial values or silently initiating a retry. Success must publish one completed value reused by every caller. On failure, a joining preflight must return the failure from that attempt; a joining unchecked read must follow the fatal diagnostic rule. A later explicit preflight may start a new attempt. Coordination must preserve the synchronous Result contract of preflight and must not introduce implicit await into field reads. Waiting must remain subject to dependency-cycle detection.
-7. **Sharing** must obey the checked ownership, borrowing, and thread-safety contracts of every retained field. Freezing alone must not authorize sharing mutable descendants across tasks or threads.
+7. **Read-only access and sharing.** Every access to a published context, through its declaration name or through a value of its type, must be a read. Assignment at any depth, calling a method that requires `mut` access on any contained value, passing the context or a contained value to a `mut` parameter, and `Owned[...]` transfer must be refused. Every field type must be safe for concurrent reads, and the compiler must check this without an author annotation:
+    - scalars, strings, secret values, enums, newtypes, literal types, and models, tuples, options and collections whose elements are safe, are safe;
+    - a type that synchronizes its own internal state, such as a standard connection pool or a Rust type that Rust allows to be shared across threads, is safe;
+    - a type whose read operations change unsynchronized internal state is not, and the diagnostic must name the field, its type and the reason.
 8. **Dependencies** between contexts must be permitted during resolution. A reached dependency must supply a completed value before its dependent resolution uses it. Cyclic dependencies, including cycles across concurrent attempts, must produce typed configuration failures rather than deadlock or expose partial state. The diagnostic must retain the observed dependency chain and available source locations. A preflight must return a cycle encountered by its resolution as a failure; unchecked first use must follow the fatal diagnostic rule. Dependency evidence must describe actual reached resolution relationships rather than treating an unused declaration as an active dependency.
-9. **Test isolation** must give each test case fresh ctx resolution state through RFC 019's runner lifecycle, including before its function-scoped fixture setup. Ordinary application calls within the test must use that test's state. Within one test, first use, preflight, coordinated initialization, retained successful values, and failure behavior must follow the normal contracts. Reusing a worker process across test cases must not reuse a prior case's ctx cache. Tests must configure ordinary sources through existing fixtures rather than require a special resolution or reset API. Process-environment fixture concurrency and restoration remain governed by RFC 019; per-test ctx state must not be mistaken for isolation of the underlying process environment. Shared fixture lifetimes and ordinary retained values must follow RFC 019 rather than introduce a ctx-specific restriction, automatic refresh, or fixture rebuild.
+9. **Test isolation** must give each test case fresh ctx resolution state through RFC 019's runner lifecycle, including before its function-scoped fixture setup. Ordinary application calls within the test must use that test's state. Within one test, first use, preflight, coordinated initialization, retained successful values, and failure behavior must follow the normal contracts. Neither a later case in a reused worker process nor a case running concurrently in another thread may observe another case's contributions or resolved value.
+    - `std.testing.ctx_override(Context, field=value, ...)` must be usable as a test decorator and as a `with` block under RFC 094. Its arguments must be checked as `contribute` arguments are. Within its scope the named context must start from fresh state with the override values as contributions, resolve on its first read, and remain frozen for the rest of the scope. On exit the scope's state must be discarded and the enclosing state restored. Nested scopes must follow the same rule.
+    - Tests that exercise environment inputs configure them through existing fixtures. Neither form requires a production resolution or reset API. Process-environment fixture concurrency and restoration remain governed by RFC 019; per-test ctx state must not be mistaken for isolation of the underlying process environment. Shared fixture lifetimes and ordinary retained values must follow RFC 019 rather than introduce a ctx-specific restriction, automatic refresh, or fixture rebuild.
+10. **Factory fields.** A field whose value comes from `default_factory` and on which no other field, condition or source depends must be built on its first read, from the resolved settings, rather than during whole-context resolution. Concurrent first reads must share one build. A failed build must follow the unchecked failure rule for a plain read. `preflight()` must build every such field before it returns, and return a build failure as its `ConfigError`. A contributed or overridden value must replace the factory, which then must not run.
 
 ### Lowering model
 
@@ -889,8 +982,8 @@ The compiler lowers each `ctx` declaration to a resolved-value representation, a
 2. obtains the selector inputs required by conditions, including their direct environment inputs;
 3. applies selected `if` contributions in source order, recursively visiting nested blocks and merging their inputs;
 4. resolves declared source paths and combines their checked fragments in listed order, above conditional contributions;
-5. gives direct environment inputs precedence over other contributions, without appending the same source twice;
-6. validates the complete result and constructs a frozen value;
+5. gives direct environment inputs precedence over other declared sources, and code contributions precedence over all of them, without appending the same source twice;
+6. validates the complete result and constructs a frozen value, leaving independent factory fields to be built on first read;
 7. retains source-selection provenance and publishes the successful application value for ordinary read access.
 
 These are logical resolution requirements, not rigid execution phases. Dependencies must resolve before their consumers use them, and discarded scalar defaults must not be evaluated solely for construction. Field declaration order must not affect dependency results; selected conditional contributions retain their source order. The explicit-factory effect boundary above applies throughout resolution.
@@ -923,7 +1016,7 @@ The report must describe the retained attempt without initiating resolution, ret
 | **How many**            | Many instances, created freely   | One retained value per declaration                    |
 | **How you access it**   | Via a variable: `user.name`      | Declaration-name reads or checked access to its value |
 | **How it's created**    | `User(name="Alice", age=30)`     | First use or preflight                                |
-| **Mutability**          | Per-instance (mutable via `mut`) | Frozen field bindings; shallow contents contract      |
+| **Mutability**          | Per-instance (mutable via `mut`) | Read-only at every depth once resolved                |
 | **Conditional blocks**  | No                               | Nestable `if` blocks and recursive composition      |
 | **Env var integration** | No                               | Yes — fields auto-read from env vars                  |
 
@@ -953,9 +1046,9 @@ A ctx declaration is not itself an ordinary instance field value. Its resolved c
 
 ### Interaction with existing features
 
-**Traits:** declaration-name configuration access does not make the declaration an ordinary instance. The resolved value's trait and construction surface must follow its checked representation; exact generated traits remain open.
+**Traits:** a context may adopt traits that only read its value, such as Debug, Eq, Hash and Serialize. Traits that would construct another value of the context's type, such as Clone, Copy, Default and Deserialize, are refused, so the published value stays the only one.
 
-**async/await:** published fields are synchronously available after successful initialization. Reading them does not require `await`. Cross-task or cross-thread access still requires the retained values to satisfy the ordinary sharing rules; shallow freezing does not establish those rules automatically.
+**async/await:** published fields are synchronously available after successful initialization. Reading them does not require `await`. Any task or thread may read them, because access is read-only and every field type is checked to be safe for concurrent reads.
 
 **Imports/modules:** `ctx` declarations follow normal module visibility. A `pub ctx` in a library can be imported by consumers. Importing the library or declaration does not resolve it. Only runtime first use or an explicit preflight activates its published configuration; unused library contexts do not impose configuration requirements on the application.
 
@@ -1022,7 +1115,8 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - **Order-sensitive composition**: moving overlapping contributions can change results. Lists append rather than replace inside conditional composition, so ordinary-looking assignments need clear documentation and provenance.
 - **Deferred construction**: pending model inputs and condition dependencies require diagnostics for missing values and cycles without eager incomplete instances.
 - **Global dependency**: convenient published-name access still couples callers to the retained application configuration. Contexts cannot be cloned to obtain variations; another retained session requires a separate declaration or an ordinary application-owned factory.
-- **Shallow freezing**: fixed field bindings do not guarantee recursively immutable contents or thread safety. Retained field types and access paths need checked sharing contracts.
+- **Read-only access limits what a context can hold**: a type whose reads change unsynchronized state, or a resource whose useful operations need `mut` access, cannot be a context field. Such a value belongs in application code that a context's settings configure.
+- **A late contribution is a runtime error**: a read that resolves a context before `main` contributes is reported by `contribute`, not by the compiler.
 - **Retained evidence**: source-selection provenance costs runtime storage and must preserve redaction, including when upstream validation fails.
 - **Late failure**: a direct read may first resolve configuration during application work and terminate execution if it fails. This dependency is not represented as a Result in the reader's signature. Explicit preflight offers early, recoverable checks, but callers must choose to use it.
 
@@ -1036,7 +1130,8 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - **Runtime / governance** — secret-safe retained provenance, RFC 103 secret ingress, RFC 104 governed environment and file access, and ordinary checked sharing rules.
 - **Formatter** — `ctx` declarations, dotted contributions, and nested `if` blocks should format predictably.
 - **LSP / tooling** — completions and hover for `CtxName.field` access, structured field types, mapped sources, and resolution explanations.
-- **Test support** — RFC 019 fixture integration, fresh ctx resolution state per case, and ordinary application access without a production reset API.
+- **Test support** — `std.testing.ctx_override`, RFC 019 fixture integration, ctx state per test case including under parallel execution, and ordinary application access without a production reset API.
+- **Checker** — read-only access at every depth, the safe-for-concurrent-reads check on field types, checked `contribute` and `ctx_override` arguments, and refused traits.
 
 ## Design Decisions
 
@@ -1052,8 +1147,12 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - Context resolution may depend on other contexts. Reached cycles produce typed configuration errors containing the dependency chain and available source locations, including cycles across workers. Preflight returns the failure; unchecked first use reports it and terminates execution. No path may deadlock or expose partial values.
 - Resolution preserves original parsing and validation failures under RFC 131. An unchecked first-use failure reports the full typed diagnostic and terminates execution unsuccessfully. It is not Result propagation through a plain field access, a new catchable exception, or a generated panic. Callers requiring recovery use preflight before reading fields.
 - Independently discoverable resolution failures are reported together in one typed configuration failure, retaining each original error and source evidence. Dependent expressions blocked by failed inputs are identified without evaluating them or manufacturing extra errors. No partial context is published.
-- Resolved ctx values have fixed field bindings under RFC 132's shallow freezing contract and are non-cloneable. Whole-context Clone, Copy, and RFC 143 clone-with-overrides are prohibited, including through generic APIs. Separate declarations provide independently resolved sessions and can reuse external model contracts. Contained model values and resource handles retain their own checked capabilities; freezing does not establish deep immutability or thread safety.
-- Tests configure ordinary sources through existing fixtures and exercise normal ctx reads. RFC 019's runner supplies fresh ctx resolution state per case, including before function-scoped fixture setup, without reusing a prior case's ctx cache across worker-process reuse. Successful initialization remains fixed within each test. Ordinary data retained by shared fixtures follows normal fixture lifetimes; ctx introduces no special shared-fixture prohibition, automatic refresh, or fixture rebuilding. An independent-value or production reset API is not required for testing.
+- A ctx declaration declares a frozen model type and its one published value. Ordinary model validation runs once, when resolution constructs the value. The declaration may adopt traits that only read the value, such as Debug, Eq, Hash and Serialize, with RFC 103 redaction; traits that would construct another value, such as Clone, Copy, Default and Deserialize, are refused. The declaration name used as a value denotes the published value, passed read-only.
+- A published context is read-only at every depth, not only at its field bindings, and non-cloneable. Whole-context Clone, Copy, and RFC 143 clone-with-overrides are prohibited, including through generic APIs. Separate declarations provide independently resolved sessions and can reuse external model contracts.
+- Any thread or task may read a published context without locks. The compiler checks that every field type is safe for concurrent reads, without an author annotation: data is safe, a type that synchronizes its own state is safe, and a type whose reads change unsynchronized state is refused with a diagnostic. The rule is stated in terms of types, so other shared storage can adopt it.
+- A context is open until its first resolution succeeds. While open, `contribute` adds the highest-priority, compile-time-checked contributions, such as parsed command-line arguments. Afterward it returns `ConfigError.AlreadyResolved` naming the read or preflight that resolved the context. A failed resolution leaves the context open.
+- A context may hold resources built from its settings through `default_factory`. A factory field that nothing else depends on is built on first read, once, from the frozen settings; `preflight()` builds every such field, and a contributed value replaces the factory.
+- Tests configure contexts with `std.testing.ctx_override`, as a decorator or a `with` block, in the way a time-freezing helper fixes the clock. Its values are checked like `contribute`. Each scope starts from fresh state, resolves on first read, stays frozen for the scope, and is discarded at exit. Tests that exercise environment inputs keep using RFC 019's fixtures. Each test case has its own ctx state, including under parallel execution in one process. Successful initialization remains fixed within each scope. Ordinary data retained by shared fixtures follows normal fixture lifetimes; ctx introduces no special shared-fixture prohibition, automatic refresh, or fixture rebuilding. No production reset API is required for testing.
 - Declared types remain authoritative, including RFC 133 Literal constraints. Shared field metadata and structured type information are reused rather than introducing a parallel configuration type system.
 - Required fields may rely entirely on declared runtime sources, without source defaults or exhaustive condition coverage. Missing required input produces a typed resolution failure; no partial application value is published. A provably unsourceable required field is rejected statically, but compilation does not depend on deployment environment values.
 - `env_prefix` is required and explicit. Renaming a context declaration must not implicitly change its environment-variable namespace; per-field explicit environment names remain authoritative.
@@ -1066,13 +1165,7 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - Dependent defaults and conditions observe resolved field values, including conditional contributions and direct environment inputs. Field declaration order does not affect dependency results. Replaced scalar defaults are not evaluated solely for construction; contributing collection fragments remain part of recursive composition. Reached cycles produce typed dependency diagnostics without fixed-point recalculation. Defaults are construction inputs, and successful context resolution is retained rather than recalculated on reads.
 - Explicit YAML sources use the proposed `std.config.yaml` adapter and an ordered `sources` tuple. Their recursive contributions apply above conditional settings and below direct environment inputs. A common file may be followed by `yaml(f"config/{env}.yaml")`, with the filename selector resolved independently before that selected file is read. Header source expressions may refer to checked ctx fields. Files are required by default; `required=false` permits absence without hiding malformed or unreadable present inputs. Loading is lazy, successful values are retained, unknown field paths receive diagnostics, and source evidence retains file locations under redaction. No YAML-root selection API or automatic cross-process transport is required by this decision.
 - Environment-specific collection entries belong in their respective `if` blocks or selected environment files, with unconditional defaults and common files reserved for universal contributions. Empty collections do not clear lower-priority contents. Explicit replacement, clearing, and removal markers are out of scope.
-- Managed resource lifetimes and their integration with ctx are deferred to RFC 094, including cleanup after partial initialization and the lifetime of successfully retained resources. RFC 033 introduces no separate resource lifecycle or destructor-only public cleanup guarantee. This is a scope deferral, not an unresolved question for RFC 033.
+- Cleanup and shutdown of resources a context holds are deferred to RFC 094, including cleanup after partial initialization and at the end of a test scope. RFC 033 introduces no separate resource lifecycle or destructor-only public cleanup guarantee. This is a scope deferral, not an unresolved question for RFC 033.
 - An absent override preserves the previously selected value; an explicit optional clear replaces it with None. Nested absence must not be flattened during layer resolution. Ordinary optional defaults may be None. An application selector may contribute None, and YAML null may clear an inherited present value. No __CLEAR, __NONE, empty-string sentinel or literal-text sentinel is added to the environment contract.
 - `ContextName.explain()` returns a structured report of resolution state and available retained evidence without initializing or retrying the context, reading runtime sources, or evaluating initializers. It supports passive interactive inspection before first use, clearly distinguishes unresolved, in-progress, failed, and successfully resolved state, and does not present failure evidence as a published value. Resolution retains the full observed, ordered contribution history, including superseded scalar and surviving collection contributions, with RFC 103 redaction and RFC 104 authority checks and receipts. Missing or omitted evidence is explicit rather than silently truncating the explanation to the winning source; evidence retention does not require whole-file copies, raw secrets, or evaluating otherwise skipped expressions. Inspection does not reread sources and misrepresent current values as historical evidence. Typed ContextReport records expose these facts independently of rendering.
-- The standard configuration umbrella is `std.config.ConfigError`, with MissingInput, InvalidInput, SourceFailure, DependencyCycle and Multiple categories. Checked paths, source identities, retained originals and blocked dependencies remain structured and secret-safe. Single failures retain their category; independent failures aggregate without evaluating blocked expressions. Preflight returns `Result[None, ConfigError]`; unchecked reads report the same attempt facts and terminate unsuccessfully.
-
-## Unresolved questions
-
-1. **Resolved-value construction and sharing.** What checked representation exposes fields, validation, and eligible traits while keeping the context frozen and non-cloneable? Which retained field types and access paths permit global or cross-thread publication while preserving RFC 132's shallow contract?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- The standard configuration umbrella is `std.config.ConfigError`, with MissingInput, InvalidInput, SourceFailure, DependencyCycle, Multiple and AlreadyResolved categories. Checked paths, source identities, retained originals and blocked dependencies remain structured and secret-safe. Single failures retain their category; independent failures aggregate without evaluating blocked expressions. Preflight returns `Result[None, ConfigError]`; unchecked reads report the same attempt facts and terminate unsuccessfully.
