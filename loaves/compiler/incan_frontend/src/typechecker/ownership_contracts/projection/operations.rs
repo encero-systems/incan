@@ -270,6 +270,19 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(value, parameters, execution, seen)?;
                 }
             }
+            // A native associated function written on its type has no receiver; it is called like a free function.
+            Expr::MethodCall(_, _, _, arguments) if self.facts.native_associated_call(expression.span) => {
+                for argument in arguments {
+                    let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                        return Err("operation coverage needs checked fixed call arguments");
+                    };
+                    self.visit_operation_expression(value, parameters, execution, seen)?;
+                }
+                self.validate_call_expression(expression.span, arguments)?;
+                if !seen.invocations.insert(expression.span) {
+                    return Err("source call has duplicate retained evaluation");
+                }
+            }
             Expr::MethodCall(receiver, _, _, arguments) => {
                 self.visit_operation_expression(receiver, parameters, execution, seen)?;
                 for argument in arguments {
