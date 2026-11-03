@@ -1,10 +1,11 @@
 //! Shared CLI-session source-to-Body-IR glue. All Body-IR-to-plan decisions belong to the Incan lowering Loaf.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::dependency_report::RootOrigin;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
 use incan_driver::diagnostics::CliDiagnosticFailure;
 use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, write_loaf};
@@ -99,6 +100,8 @@ fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
 struct RuntimeDependencyContext {
     loaves: std::sync::Arc<LoafIndex>,
     requested: BTreeSet<CanonicalSymbolId>,
+    /// Why each requested root is requested: checked source, a selected default or a runtime operation.
+    origins: BTreeMap<CanonicalSymbolId, RootOrigin>,
     checked_local: BTreeSet<CanonicalSymbolId>,
     package: String,
     authored: Vec<BodyIrModule>,
@@ -117,7 +120,8 @@ struct CheckedProgram {
     /// The first of the program's own modules; the Loaf declarations it reaches come before it.
     own: usize,
     /// Standard native closures constrain linking only when this checked declaration closure reaches their package.
-    reached_loaves: BTreeSet<String>,
+    /// Each reached package keeps the requester chains of the declarations that entered it.
+    reached_loaves: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
     /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
     manifest: Option<LibraryManifest>,
     /// The owning library's portable graph bytes, encoded while its checked source context is still owned here.
@@ -264,7 +268,7 @@ fn checked_modules(
     let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
-    let reached_loaves = resolved.package_versions.into_keys().collect();
+    let reached_loaves = resolved.entries;
     let mut bodies = resolved.modules;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
     let mut files = bodies
@@ -300,6 +304,10 @@ fn checked_modules(
             dependencies: RuntimeDependencyContext {
                 loaves: std::sync::Arc::clone(session.loaves()),
                 requested: requested.clone(),
+                origins: requested
+                    .iter()
+                    .map(|identity| (identity.clone(), RootOrigin::Source))
+                    .collect(),
                 checked_local: checked_local.clone(),
                 package: package_identity.to_owned(),
                 authored: bodies[loaf_modules..].to_vec(),
@@ -403,19 +411,25 @@ fn complete_dependency_context_in_place(
     package_identity: &str,
     checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(), String> {
-    let mut defaults = incan_frontend::body_ir::required_comparison_defaults(&program.modules[program.own..])
+    let comparisons = incan_frontend::body_ir::required_comparison_defaults(&program.modules[program.own..])
         .into_iter()
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
         )
-        .collect::<BTreeSet<_>>();
-    defaults.extend(
-        incan_frontend::body_ir::required_primitive_adapters(loaves, &requested).map_err(|error| error.to_string())?,
-    );
-    if !defaults.is_subset(&requested) {
-        requested.extend(defaults);
+        .map(|identity| (identity, RootOrigin::ComparisonDefault));
+    let adapters = incan_frontend::body_ir::required_primitive_adapters(loaves, &requested)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|identity| (identity, RootOrigin::PrimitiveAdapter));
+    let defaults = comparisons.chain(adapters).collect::<BTreeMap<_, _>>();
+    if !defaults.keys().all(|identity| requested.contains(identity)) {
+        for (identity, origin) in defaults {
+            if requested.insert(identity.clone()) {
+                program.dependencies.origins.insert(identity, origin);
+            }
+        }
         let resolved = load_loaf_modules(loaves, &requested, checked_local)?;
-        program.reached_loaves = resolved.package_versions.into_keys().collect();
+        program.reached_loaves = resolved.entries;
         let mut expanded = resolved.modules;
         let own = program.modules.split_off(program.own);
         let mut files = program.files.split_off(program.own);
@@ -534,7 +548,18 @@ fn satisfy_runtime_requirements(
     program.sources = sources;
     program.entry = own + context.entry;
     program.own = own;
-    program.reached_loaves = resolved.package_versions.into_keys().collect();
+    program.reached_loaves = resolved.entries;
+    for requirement in &requirements {
+        context.origins.insert(
+            requirement.canonical.clone(),
+            RootOrigin::Runtime {
+                path: requirement.path.clone(),
+                file: requirement.span.file.to_string(),
+                line: requirement.span.line,
+                column: requirement.span.column,
+            },
+        );
+    }
     context.requested = next;
     prepare_dependency_context(program)
 }
@@ -1184,6 +1209,42 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     compile_unit(arguments, false)
 }
 
+/// Print the unit's settled dependency closure. Checking and planning run exactly as for compilation, so the report
+/// names the closure a build of the same description links; nothing is generated or published.
+pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let [unit_path, sysroot, options @ ..] = arguments else {
+        return Err("usage: --dependencies UNIT SYSROOT [--library]".into());
+    };
+    crate::identity::verify(Path::new(sysroot))?;
+    let mut unit = UnitDescription::read(Path::new(unit_path)).map_err(|error| error.message)?;
+    let dependencies = dependencies(&unit, options)?;
+    if dependencies.library {
+        unit.kind = UnitKind::Library;
+    }
+    let (kind, source, project_root) = (unit.kind, unit.source.clone(), unit.project_root.clone());
+    let overflow_checks = unit.profile != "release";
+    let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
+    let receipt = RefusalReceipt(None);
+    let mut program = check_compilation_source(unit, rust, false, receipt.clone())?;
+    lower_compilation_plan(&mut program, kind, overflow_checks, &source, &receipt, &mut Vec::new())?;
+    print!(
+        "{}",
+        crate::dependency_report::render(
+            &program.dependencies.package,
+            kind,
+            &program.reached_loaves,
+            &program.dependencies.origins,
+            &project_root,
+        )
+    );
+    Ok(())
+}
+
+/// The names of the packages the checked declaration closure reaches.
+fn reached_names(program: &CheckedProgram) -> BTreeSet<String> {
+    program.reached_loaves.keys().cloned().collect()
+}
+
 /// Publish checked declarations and governed bodies before a library's native artifact exists. This uses the same
 /// source-to-Body-IR pass and publication as compilation, but provides no compiled callable or native layout. It
 /// breaks source dependency cycles such as the runtime's standard trait bounds without importing a prior runtime.
@@ -1295,7 +1356,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let native_externs =
-        crate::native_crates::link_externs(&plan, &dependencies.externs, &loaves, &program.reached_loaves)?;
+        crate::native_crates::link_externs(&plan, &dependencies.externs, &loaves, &reached_names(&program))?;
     crate::adapter::compile(
         plan,
         &arguments[1],

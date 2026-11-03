@@ -15,6 +15,7 @@ const DESCRIBE_USAGE: str = "incan describe-unit PATH [UNIT OPTIONS]"
 const BUILD_USAGE: str = "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
 const OWNER_USAGE: str = "incan owner stop"
 const BAKERY_USAGE: str = "incan bakery gc [--keep-days N] | verify | repair-payload SHA256 FILE"
+const DEPENDENCIES_USAGE: str = "incan inspect dependencies PATH [UNIT OPTIONS]"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--features",
@@ -39,6 +40,7 @@ pub def usage() -> str:
             OWNER_USAGE,
             BAKERY_USAGE,
             GRAPH_USAGE,
+            DEPENDENCIES_USAGE,
             MCP_USAGE,
             PACK_USAGE,
             INSTALL_USAGE,
@@ -67,6 +69,8 @@ pub def command_help(command: str, arguments: list[str]) -> Option[str]:
         return Some(render(OWNER_USAGE, [], "incan owner stop"))
     elif command == "inspect" and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
         return Some(graph_help())
+    elif command == "inspect" and nested_help(arguments, "dependencies", list(UNIT_VALUE_OPTIONS)):
+        return Some(unit_help("inspect dependencies"))
     elif command == "inspect" and nested_help(arguments, "run"):
         return Some(
             render(
@@ -119,6 +123,8 @@ def unit_help(command: str) -> str:
         return render(TEST_USAGE, options, "incan test tests/test_example.incn")
     if command == "describe-unit":
         return render(DESCRIBE_USAGE, options, "incan describe-unit src/main.incn")
+    if command == "inspect dependencies":
+        return render(DEPENDENCIES_USAGE, options, "incan inspect dependencies src/main.incn")
     return render(
         BUILD_USAGE,
         options + [

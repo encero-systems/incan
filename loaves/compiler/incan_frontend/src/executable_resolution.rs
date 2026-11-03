@@ -102,6 +102,10 @@ pub struct ResolvedExecutableModules {
     pub content_bytes_verified: u64,
     /// Package versions bound to the returned module identities for preflight refusal diagnostics.
     pub package_versions: BTreeMap<String, String>,
+    /// Why each reached package is reached: for every declaration that entered it from a requested root or from
+    /// another package, its requester chain from that root. A package selected only by an explicitly uncovered root
+    /// has no entry.
+    pub entries: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
 }
 
 /// One indexed Loaf's manifest and governed-body file.
@@ -304,6 +308,7 @@ fn resolve_from_catalog(
         resolved.decoded_declarations += 1;
         resolved.payload_bytes_read += length;
     }
+    resolved.entries = package_entries(&resolved.package_versions, &visited, &parents);
     for module in modules.values_mut() {
         crate::body_ir::retain_published_module(module);
         // Canonical lookup is name-first; module initialization follows checked physical declaration order.
@@ -325,6 +330,28 @@ fn retain_dependency_parent(
     if !roots.contains(dependency) {
         parents.entry(dependency.clone()).or_insert_with(|| parent.clone());
     }
+}
+
+/// Group each loaded declaration that a root or another package requested under its package, with its requester
+/// chain. Same-package edges stay inside the entry that reached them.
+fn package_entries(
+    packages: &BTreeMap<String, String>,
+    visited: &BTreeSet<CanonicalSymbolId>,
+    parents: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+) -> BTreeMap<String, Vec<Vec<CanonicalSymbolId>>> {
+    let mut entries: BTreeMap<_, Vec<_>> = packages.keys().map(|library| (library.clone(), Vec::new())).collect();
+    for identity in visited {
+        let SymbolOrigin::Package { library, .. } = &identity.origin else {
+            continue;
+        };
+        let crosses = parents.get(identity).is_none_or(
+            |parent| !matches!(&parent.origin, SymbolOrigin::Package { library: owner, .. } if owner == library),
+        );
+        if crosses && let Some(entry) = entries.get_mut(library) {
+            entry.push(dependency_chain(identity, parents));
+        }
+    }
+    entries
 }
 
 /// Recover canonical requester ancestry; a cycle in declaration requirements stops at its first repeated identity.
@@ -605,7 +632,7 @@ fn malformed(reason: impl Into<String>) -> ExecutableRepresentationError {
 }
 #[cfg(test)]
 mod tests {
-    use super::{ExecutableResolutionError, dependency_chain, resolve_loaf_declarations};
+    use super::{ExecutableResolutionError, dependency_chain, package_entries, resolve_loaf_declarations};
     use crate::loaf_index::LoafIndex;
     use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
     use std::collections::{BTreeMap, BTreeSet};
@@ -663,5 +690,25 @@ mod tests {
         let second = declaration("second", "read");
         let parents = BTreeMap::from([(first.clone(), second.clone()), (second.clone(), first.clone())]);
         assert_eq!(dependency_chain(&first, &parents), vec![second, first]);
+    }
+
+    /// A package's entries are its roots and the declarations another package requested; same-package edges stay
+    /// inside the entry that reached them, and a package selected only by an uncovered root keeps an empty entry.
+    #[test]
+    fn package_entries_list_only_declarations_that_cross_into_a_package() {
+        let root = declaration("codecs", "hexlify");
+        let helper = declaration("codecs", "nibble");
+        let runtime = declaration("runtime", "append_list");
+        let parents = BTreeMap::from([(helper.clone(), root.clone()), (runtime.clone(), helper.clone())]);
+        let visited = BTreeSet::from([root.clone(), helper.clone(), runtime.clone()]);
+        let packages = BTreeMap::from([
+            ("codecs".to_owned(), "1".to_owned()),
+            ("runtime".to_owned(), "1".to_owned()),
+            ("uncovered".to_owned(), "1".to_owned()),
+        ]);
+        let entries = package_entries(&packages, &visited, &parents);
+        assert_eq!(entries["codecs"], vec![vec![root.clone()]]);
+        assert_eq!(entries["runtime"], vec![vec![root, helper, runtime]]);
+        assert!(entries["uncovered"].is_empty());
     }
 }

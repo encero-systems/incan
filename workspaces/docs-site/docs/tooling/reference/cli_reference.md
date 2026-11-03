@@ -17,6 +17,7 @@ incan fmt [--check] PATH...
 incan owner stop
 incan bakery gc [--keep-days N] | verify | repair-payload SHA256 FILE
 incan inspect codegraph PATH [GRAPH OPTIONS]
+incan inspect dependencies PATH [UNIT OPTIONS]
 incan inspect run ID --proofs
 incan mcp PATH
 incan toolchain pack OUT
@@ -27,7 +28,7 @@ There is no implicit command or implicit source path.
 
 ## Help and version
 
-`incan --help`, `incan -h` and `incan help` print the command synopses above and the CLI reference location, then exit `0`. `incan COMMAND --help` or `incan COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `incan owner stop --help`, `incan inspect codegraph --help`, `incan toolchain pack --help` and `incan toolchain install --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
+`incan --help`, `incan -h` and `incan help` print the command synopses above and the CLI reference location, then exit `0`. `incan COMMAND --help` or `incan COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `incan owner stop --help`, `incan inspect codegraph --help`, `incan inspect dependencies --help`, `incan toolchain pack --help` and `incan toolchain install --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
 
 `incan --version` prints `incan 0.6.0-dev.8` and exits `0`. `incan --version --help` prints its usage and example.
 
@@ -125,6 +126,20 @@ Re-admits an explicit replacement file only when its full SHA-256 digest matches
 ## `incan inspect codegraph`
 
 Graph options, schemas, queries, context packs and snapshot checks are specified in [Agent context CLI and MCP](agent_context_cli.md). `--strict` refuses a graph containing unchecked units. The default returns available facts and warns about unchecked units.
+
+## `incan inspect dependencies`
+
+Prints the packages the unit at `PATH` reaches, as a build of the same unit links them. The unit is checked and planned as for `incan build`; nothing is generated or published. Execution-only options are refused. The text report is:
+
+```text
+KIND `PACKAGE` reaches N package(s)
+LIBRARY
+  DECLARATION
+    via REQUESTER -> ... -> REQUESTER
+    requested by ORIGIN
+```
+
+`KIND` is `program`, `library` or `test`. Packages are listed by name in ascending order. Under each package, every declaration that entered it from the unit or from another package is listed as its kind and canonical path, for example `function pub::incan_stdlib_codecs::encoding::hex::hexlify`. The `via` line lists the declarations that requested it, starting at the requested root, and is omitted when the declaration is itself a root. `ORIGIN` is `checked source`, `a selected comparison default`, `a selected primitive adapter`, or `runtime operation NAME at FILE:LINE:COLUMN`, with `FILE` relative to the project. A package that a requested but uncovered root selects is listed with `selected by an uncovered root; no declaration is loaded`. Declared dependencies and standard packages the closure does not reach are not listed; [`incan describe-unit`](#incan-describe-unit) lists everything available. A failure exits `1` with the same diagnostic a build reports.
 
 ## `incan mcp`
 
