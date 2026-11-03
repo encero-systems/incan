@@ -6,10 +6,7 @@ from rust::std::process import Command
 from std.fs import Path
 from std.fs.locking import FileLock
 from bakery import (
-    Fact,
     claim,
-    claim_file,
-    collect,
     fact_file,
     find,
     forget_verified,
@@ -17,15 +14,15 @@ from bakery import (
     view,
     lookup,
     library_directory,
-    register_root,
     seal,
     prepare_seal,
     staging,
-    staging_root,
     view_directory,
     verify_all,
     repair_derived,
 )
+from bakery_records import Fact, claim_file, staging_root
+from bakery_roots import collect, register_root
 from segment_store import begin, commit, delete, get, keys, put, put_payload, payload_path, readmit_payload, snapshot
 from files import make_directory, read, write as write_file
 from incan_units import compile_executable, obtain_executable
@@ -320,6 +317,29 @@ pub def test_superseded_and_orphaned_registrations_expire() -> Result[None, str]
     assert payload_text(store, shared, "payload")? == "shared"
     again = collect(store, -1)?
     assert again.removed == 0 and again.roots_dropped == 0, "a second collection expired more"
+    return Ok(None)
+
+
+pub def test_prefixed_unit_identities_register_and_expire() -> Result[None, str]:
+    """
+    An Incan unit's identity is its digest with a `sha256:` prefix. Its registration retains it like any other, and a
+    newer result of the same registration retires the one it replaced.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    old = "sha256:" + digest_of("a7")
+    recent = "sha256:" + digest_of("b7")
+    assert bake(store, old, "old program", [], "app-old")?
+    assert bake(store, recent, "new program", [], "app")?
+    project = scratch.path().joinpath("project")
+    make_directory(project)?
+    register_root(store, project.0, "unit\tapp\tprogram", [old])?
+    kept = collect(store, -1)?
+    assert kept.removed == 0 and found(find(store, old)?), "a registered program unit expired"
+    register_root(store, project.0, "unit\tapp\tprogram", [recent])?
+    collected = collect(store, -1)?
+    assert collected.removed == 1 and not found(find(store, old)?), "a replaced program unit was kept"
+    assert found(find(store, recent)?), "the current program unit expired"
     return Ok(None)
 
 

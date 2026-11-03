@@ -18,7 +18,8 @@ from loaf_local_graph import unique
 from observation import observe
 from publication import publish
 from retained_readings import recall, retain
-from rust_units import RegistryUnits, read_registry_units
+from rust_registry import read_registry_units
+from registry_units import RegistryUnits
 from toolchain import Toolchain, toolchain_file
 
 const SCHEMA: str = "incan.search-index/1"

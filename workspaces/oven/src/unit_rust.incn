@@ -11,30 +11,23 @@ from bakery import (
     view_directory,
     lookup,
     reached,
-    register_root,
     seal,
+    prior_size,
     staging,
     unit_identity,
     unit_name,
 )
+from bakery_roots import register_root
 from features import FeatureRequest
 from json_fields import array, strings
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from rust_activation import DependencyDomain
-from rust_units import (
-    BuiltUnit,
-    RegistryUnits,
-    RustBuild,
-    build_dependencies,
-    closure_search,
-    facet_bindings,
-    incan_artifacts,
-    read_registry_units,
-    registry_selection,
-    selected_registry,
-    rust_facet,
-    target_configuration,
-)
+from rust_units import build_dependencies, closure_search
+from rust_build import BuiltUnit, RustBuild, facet_bindings, incan_artifacts
+from rust_registry import read_registry_units, registry_selection, selected_registry
+from rust_manifest import rust_facet
+from registry_units import RegistryUnits
+from rust_target import target_configuration
 from search_index import search_index
 from sysroot_access import declared_libraries, runtime_sysroot
 from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
@@ -156,7 +149,7 @@ pub def compile_library_unit(
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(0)
     # 3. A failed compilation publishes nothing.
-    staged = staging(store, identity)?
+    staged = staging(store, identity, prior_size(store, unit_name(library)))?
     stage_vocabulary(library, staged)?
     compiled = compile_prepared_unit(
         library,

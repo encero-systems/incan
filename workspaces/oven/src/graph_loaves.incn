@@ -11,14 +11,10 @@ from home import standard_artifact_dir, standard_packages
 from intake import ManifestReader, library_source
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
-from rust_units import (
-    RegistryUnits,
-    RustBuild,
-    project_registry,
-    registry_selection,
-    selected_registry,
-    target_configuration,
-)
+from rust_build import RustBuild
+from rust_registry import project_registry, registry_selection, selected_registry
+from registry_units import RegistryUnits
+from rust_target import target_configuration
 from toolchain import Toolchain, rust_compiler
 
 

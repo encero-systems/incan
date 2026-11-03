@@ -7,7 +7,7 @@ from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.fs import Path
 from files import write, json_text
-from bakery import Collected, collect
+from bakery_roots import Collected, collect
 from engine_programs import read_program, select_program, program_handle, NativeUnit, obtain, selected_program
 from engine_epochs import prepare_submit
 from engine_client import service_identity

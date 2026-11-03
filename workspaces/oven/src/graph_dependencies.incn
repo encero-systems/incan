@@ -16,25 +16,12 @@ from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from publication import publish
 from observation import trace
 from rust_activation import DependencyDomain
-from rust_units import (
-    BuiltUnit,
-    RustBuild,
-    RegistryUnits,
-    build_dependencies,
-    facet_bindings,
-    compile_rust_library,
-    ordered,
-    read_receipt,
-    read_registry_units,
-    project_registry,
-    receipt_document,
-    registry_selection,
-    selected_registry,
-    rust_facet,
-    rust_output,
-    stored_library,
-    target_configuration,
-)
+from rust_units import build_dependencies, compile_rust_library, read_receipt, receipt_document, stored_library
+from rust_build import BuiltUnit, RustBuild, facet_bindings, ordered, rust_output
+from rust_registry import project_registry, read_registry_units, registry_selection, selected_registry
+from rust_manifest import rust_facet
+from registry_units import RegistryUnits
+from rust_target import target_configuration
 from toml_fields import optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitLoaf

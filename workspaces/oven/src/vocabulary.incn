@@ -10,12 +10,13 @@ from json_fields import required_text
 from observation import file_digest, observe
 from graph_queries import nested
 from publication import publish
-from rust_units import decoded
+from rust_target import decoded
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import compile_prepared_unit
 from unit_freshness import Key, fingerprint, unit_key
-from bakery import bakery, claim, find, register_root, seal, staging, view
+from bakery import bakery, claim, find, seal, staging, view
+from bakery_roots import register_root
 from unit_publication import record_payload, record_verified_payload
 from vocabulary_policy import admit_vocabulary
 

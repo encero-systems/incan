@@ -6,7 +6,9 @@ from std.fs.locking import FileLock
 from rust::std::rc import Rc
 from engine_capture import BuildEpoch, InputRole
 from std.json import JsonValue, parse
-from bakery import Fact, find, fact_file, register_root
+from bakery import find, fact_file
+from bakery_records import Fact
+from bakery_roots import register_root
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text

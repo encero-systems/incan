@@ -27,15 +27,19 @@ pub def claim_export(entry: Path) -> Result[FileLock, str]:
     return claim(bakery()?, entry.parent().name())
 
 
-pub def pending_export(entry: Path, provenance: Path) -> Result[Path, str]:
+pub def pending_export(entry: Path, provenance: Path, claimed: str = "") -> Result[Path, str]:
     """
     Stage one producer's export privately; unchecked diagnostics are never admitted as a relocatable fact.
 
     Staging provenance distinguishes equal source at different roots within one request. It is not an input to the
-    checked export identity and is never published in a graph record.
+    checked export identity and is never published in a graph record. The producer holds the claim of `claimed`, the
+    export identity unless named, which proves the staging alive.
     """
     pending = fingerprint([entry.parent().name(), provenance.0])?
-    return Ok(staging(bakery()?, pending)?.joinpath("unit.incngraph"))
+    mut owner = claimed
+    if owner == "":
+        owner = entry.parent().name()
+    return Ok(staging(bakery()?, pending, 0, owner)?.joinpath("unit.incngraph"))
 
 
 pub def publish_export(entry: Path, pending: Path, name: str = "") -> Result[Path, str]:
