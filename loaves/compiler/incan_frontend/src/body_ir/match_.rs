@@ -988,8 +988,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Retain the compiler-owned Some payload from an already-checked Option carrier when legacy left the pattern open.
-    /// A conflicting checked constructor or a differently shaped carrier never acquires intrinsic meaning by spelling.
+    /// Retain the compiler-owned Option constructors of an already-checked Option carrier when legacy left the pattern
+    /// open: `Some` with its payload, and the bare `None` an `assert value is None` pattern spells. A conflicting
+    /// checked constructor or a differently shaped carrier never acquires intrinsic meaning by spelling.
     #[allow(clippy::too_many_arguments)] // Shares the recursive pattern context with lower_match_pattern.
     fn lower_intrinsic_option_pattern(
         &mut self,
@@ -1002,16 +1003,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         seen: &mut HashMap<String, bir::LocalId>,
         saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
     ) -> Option<bir::Pattern> {
-        if constructors::from_str(&name.node) != Some(ConstructorId::Some) {
-            return None;
-        }
+        let constructor = constructors::from_str(&name.node)
+            .filter(|constructor| matches!(constructor, ConstructorId::Some | ConstructorId::None))?;
         let [payload_type] = expected_ty.collection_arguments(CollectionTypeId::Option)? else {
             return None;
         };
-        let [ast::PatternArg::Positional(payload)] = args else {
-            return None;
-        };
-        let canonical = crate::symbols::canonical_builtin_constructor_identity(ConstructorId::Some);
+        let canonical = crate::symbols::canonical_builtin_constructor_identity(constructor);
         if self
             .type_info
             .resolved_identity(name.span)
@@ -1019,24 +1016,30 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return None;
         }
-        let mut payload_place = place.clone();
-        payload_place
-            .projection
-            .push(bir::PlaceElem::structural_field("0".to_string()));
-        let field = self.lower_match_pattern(
-            payload,
-            payload_type,
-            &payload_place,
-            arm_scope,
-            reads,
-            seen,
-            saved_bindings,
-        );
+        let fields = match (constructor, args) {
+            (ConstructorId::None, []) => Vec::new(),
+            (ConstructorId::Some, [ast::PatternArg::Positional(payload)]) => {
+                let mut payload_place = place.clone();
+                payload_place
+                    .projection
+                    .push(bir::PlaceElem::structural_field("0".to_string()));
+                vec![self.lower_match_pattern(
+                    payload,
+                    payload_type,
+                    &payload_place,
+                    arm_scope,
+                    reads,
+                    seen,
+                    saved_bindings,
+                )]
+            }
+            _ => return None,
+        };
         Some(bir::Pattern::Enum {
             canonical: Some(canonical),
             name: "Option".to_string(),
-            variant: constructors::as_str(ConstructorId::Some).to_string(),
-            fields: vec![field],
+            variant: constructors::as_str(constructor).to_string(),
+            fields,
         })
     }
 }
