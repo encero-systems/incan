@@ -1,6 +1,6 @@
 # RFC 095: `span` vocabulary blocks
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -16,7 +16,7 @@
     - RFC 142 (async composition and task context)
     - RFC 160 (vocabulary in Incan)
     - OpenTelemetry specification and semantic conventions (external)
-- **Issue:** #561
+- **Issue:** [#561](https://github.com/encero-systems/incan/issues/561)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
