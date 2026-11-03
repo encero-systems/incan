@@ -1,6 +1,6 @@
 # RFC 124: Oven store unit identity and cross-plan artifact sharing
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-09
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,7 +11,7 @@
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
     - RFC 123 (package executable representation)
     - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
-- **Issue:** —
+- **Issue:** [#2481](https://github.com/encero-systems/incan/issues/2481)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —
@@ -265,7 +265,7 @@ The store gains a new layout version. Existing entries are not rewritten; they r
 - **Identity is only as portable as the compiler is deterministic.** Known nondeterminism, notably in Windows debug information, forces some units to be marked machine-local, which limits registry export on those targets until the compiler improves.
 - **Planning does more work.** Computing Merkle identities and consulting the index adds a step before any compilation. It is small against the compilation it avoids, but it is not free for tiny plans.
 - **Refusal surfaces earlier.** Plans that today link two compiled instances of one package and happen to work will be refused at plan time until they either unify the closure or declare an isolation boundary. This is the intended behavior and will feel like a regression to anyone relying on the accident.
-- **Collection needs a policy.** A shared store that is never collected grows without bound; one collected too eagerly rebakes. Defaults are an unresolved question.
+- **Collection is a deliberate step.** The bakery has no capacity trigger and no background collector, so it keeps every unit until `prune` reclaims what nothing reaches. A machine that never prunes keeps growing; `preview_prune` shows what a prune would reclaim before anything is removed.
 - **A new store layout is a migration**, even a lazy one, and two layouts coexist until old entries age out.
 
 ## Implementation architecture
