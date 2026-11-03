@@ -1,0 +1,379 @@
+"""Native body nodes: locals, places, operands, rvalues, statements, calls, terminators and blocks, with builders."""
+
+from _types import SourceSpan, ListLeaf, PlanType
+
+
+@derive(Clone, PartialEq)
+pub model Parameter:
+    """A named function parameter; its local index follows declaration order."""
+
+    pub name: str
+    pub ty: PlanType
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model Local:
+    """A typed body local; parameters and the return place are included."""
+
+    pub ty: PlanType
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model FieldProjection:
+    """One typed projection step. A negative slot is a dereference-only step; ordinary slots select a field."""
+
+    pub slot: int
+    pub ty: PlanType
+    # A nonnegative variant selects the checked enum payload before this field; -1 keeps an ordinary field.
+    pub variant: int = -1
+    pub dereferences: int = 0
+
+
+@derive(Clone, PartialEq)
+pub enum Projection:
+    """Whole local, checked component, typed reference dereference, canonical field path, or downcast enum payload."""
+
+    Whole
+    NumericValue(PlanType)
+    Value
+    Overflow
+    VariantField(int, int, PlanType)
+    Field(int, PlanType)
+    Deref(PlanType)
+    DerefField(int, PlanType)
+    Fields(list[FieldProjection])
+    DerefFields(list[FieldProjection])
+
+
+@derive(Clone, PartialEq)
+pub model Place:
+    """An indexed local with a checked arithmetic, nominal field, or typed reference projection."""
+
+    pub local: int
+    pub projection: Projection
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub enum Constant:
+    """A scalar literal or borrowed static text. Numeric retains exact integer digits or IEEE bit digits with its carrier, never a host-width approximation."""
+
+    Numeric(str, PlanType)
+    RustItem(str, PlanType)
+    Int(int)
+    Float(float)
+    Bool(bool)
+    Unit
+    Text(str)
+
+
+@derive(Clone, PartialEq)
+pub enum OperandKind:
+    """Explicit copy, move, or constant; ownership intent is never inferred."""
+
+    Copy(Place)
+    Move(Place)
+    Literal(Constant)
+
+
+@derive(Clone, PartialEq)
+pub model Operand:
+    """A source-located value read by a statement or terminator."""
+
+    pub kind: OperandKind
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub enum BinaryOp:
+    """
+    Checked integer arithmetic, scalar comparisons, floating arithmetic, and integer bit operations.
+
+    Add, Subtract, and Multiply on int produce CheckedInt. Comparisons produce
+    Bool. The other arithmetic operations require float operands.
+    BitAnd, BitOr, and BitXor take two operands of one integer type and keep it. A shift keeps its left operand's
+    integer type, counts with any integer type, and masks the count to that width as Rust's unchecked release shift does.
+    """
+
+    Add
+    Subtract
+    Multiply
+    Divide
+    Equal
+    NotEqual
+    Less
+    LessEqual
+    Greater
+    GreaterEqual
+    BitAnd
+    BitOr
+    BitXor
+    ShiftLeft
+    ShiftRight
+
+
+@derive(Clone, PartialEq)
+pub enum UnaryOp:
+    """Boolean inversion, numeric negation, or the bitwise complement of an integer that keeps its type."""
+
+    Not
+    Negate
+    Invert
+
+
+@derive(Clone, PartialEq)
+pub enum RvalueKind:
+    """
+    An explicit native expression assigned to a checked place.
+
+    Enum construction names the owner and variant indices. Discriminant reads without moving the enum; VariantField
+    projections are valid only on the selected variant branch.
+
+    NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
+    NativeAlias forwards ownership between retained plan aliases only after rustc proves their native types identical.
+
+    Tuple preserves the ordered operand layout of its destination type.
+    Range preserves the four scalar operands in Body IR's declared range field order and requires a RangeValue destination.
+    FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; a dynamic text operand is refused.
+    FrozenBytes wraps exact unsigned literal bytes in the dependency-owned static byte carrier.
+    Array moves or copies its listed operands into a fixed array. Borrow creates
+    a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
+    to the corresponding shared slice without changing ownership of its owner.
+    """
+
+    Use(Operand)
+    # Preserve one native value across two retained plan aliases; rustc must prove their native types identical.
+    NativeAlias(Operand, PlanType, PlanType)
+    # Reify a validated zero-argument unit function for the canonical async entry bridge.
+    UnitFunction(str)
+    FrozenText(Operand)
+    FrozenBytes(list[int])
+    FrozenCollection(PlanType, list[FrozenValue])
+    Binary(BinaryOp, Operand, Operand)
+    Unary(UnaryOp, Operand)
+    NumericCast(Operand, PlanType, PlanType)
+    IntToFloat(Operand)
+    FloatToInt(Operand)
+    BoolToInt(Operand)
+    Array(list[Operand])
+    Enum(int, int, list[Operand])
+    Discriminant(Place)
+    TagToInt(Operand)
+    Model(int, list[Operand])
+    Tuple(list[Operand])
+    Range(list[Operand])
+    Borrow(Place)
+    MutBorrow(Place)
+    UnsizeSlice(Operand)
+    # A reference to a concrete value, as a reference to a Rust trait object of the same mutability: source type, then
+    # target type. rustc proves the value implements the object's every bound before the conversion is built.
+    UnsizeTraitObject(Operand, PlanType, PlanType)
+    FunctionItem(Callee)
+    ReifyFunction(Operand)
+    # Expose a checked function pointer's address without changing its argument or return signature.
+    FunctionAddress(Operand)
+    # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
+    ClosureObject(Place)
+    # Test the selected variant using Rust's actual discriminant type and value, including explicit repr values.
+    IsVariant(Place, int)
+    # Addresses and offsets are emitted only from checked bridge facts, never from source pointer arithmetic.
+    RawAddressOf(Place, bool)
+    PointerCast(Operand, PlanType)
+    PointerOffset(Operand, Operand)
+    # Observe an address for a null guard without permitting integer-to-pointer construction.
+    PointerAddress(Operand)
+
+
+@derive(Clone, PartialEq)
+pub enum FrozenValue:
+    """Effect-free static data: scalars, raw bytes, and nested frozen collections in source order."""
+
+    Scalar(Constant)
+    Bytes(list[int])
+    Collection(PlanType, list[FrozenValue])
+
+
+@derive(Clone, PartialEq)
+pub model Rvalue:
+    """A source-located scalar expression."""
+
+    pub kind: RvalueKind
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub enum StatementKind:
+    """Assignment and explicit local storage lifetime boundaries."""
+
+    Assign(Place, Rvalue)
+    StorageLive(int)
+    StorageDead(int)
+
+
+@derive(Clone, PartialEq)
+pub model Statement:
+    """One source-located operation before a block's terminator."""
+
+    pub kind: StatementKind
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub enum CalleeKind:
+    """A planned function, canonical external path, checked model clone, explicit generic instantiation, exact legacy generator runtime operation, or a local item/pointer operand with its retained type."""
+
+    Planned(str)
+    External(str)
+    CloneEnum(int, str)
+    CloneModel(int, str)
+    # Every type argument in the external's checked parameter order, including callable arguments.
+    Instantiated(str, list[PlanType])
+    # A checked inherent SDK method future keeps owner arguments on its type path, not on its method segment.
+    FutureMethod(str, list[PlanType])
+    # The explicit producer takes its yield handle before the source-ordered owned captures. A zero-capture spawn
+    # uses a function item; a captured spawn is a constructor whose call arguments initialize one native FnOnce environment.
+    SpawnGenerator(str, ListLeaf, int)
+    YieldGenerator(ListLeaf, int)
+    CollectGenerator(ListLeaf, int)
+    Value(Operand)
+    # A synthesized constructor's boxed environment. Its closure forwards the leading captured parameters, then its own
+    # inputs, to the named lifted function; the count says how many of that function's parameters are captures.
+    ClosureBody(str, int)
+    # A validated bridge transfers a boxed callable into the SDK's cloneable immutable environment carrier.
+    SharedCallableBody(list[PlanType])
+    # The exact declaration owner and native FieldInfo carrier of a checked generated metadata hook.
+    FieldMetadata(int, int)
+    # A constructor and lifted body for a consuming environment, forwarded by value exactly once.
+    ClosureBodyOnce(str, int)
+    # Invoke a borrowed callable object of this signature with one packed argument tuple.
+    CallClosure(list[PlanType])
+    # Invoke the owned callable object by moving it with one packed argument tuple.
+    CallClosureOnce(list[PlanType])
+    # Invoke the shared view of a callable object that holds a borrowed capture, with one packed argument tuple.
+    CallBorrowingClosure(list[PlanType])
+    # Read a clone of computed static storage slot `n`, running its initializer first if nothing has yet.
+    StaticLoad(int)
+    # Replace the value of computed static storage slot `n`.
+    StaticStore(int)
+    # Run computed static slot `n`'s initializer unless it has already run, keeping the value in its storage.
+    StaticForce(int)
+    # Observe or publish completion of this module's declaration-order initialization, keyed by its first cell.
+    ModuleInitialized(int)
+    ModuleComplete(int)
+    # Call the selected planned method while holding computed slot n's actual shared or exclusive storage guard.
+    StaticMethod(int, str)
+    # Clone the captured concrete environment behind an authenticated shared callable object.
+    CloneClosure(list[PlanType])
+    # Format the exact native carrier through rustc's Debug (true) or Display (false) implementation.
+    FormatValue(PlanType, bool)
+    # Box a checked noncapturing native callback and install it through Rust's standard panic API.
+    InstallPanicHook(list[PlanType])
+    # A target-verified foreign declaration; the physical symbol and link capability are never reconstructed.
+    Foreign(ForeignFunction)
+
+
+@derive(Clone, PartialEq)
+pub model ForeignFunction:
+    """One target-verified C function with its exact symbol, explicit system library, and native signature."""
+
+    pub name: str
+    pub symbol: str
+    pub library: str
+    pub parameters: list[PlanType]
+    pub return_type: PlanType
+
+
+@derive(Clone, PartialEq)
+pub model Callee:
+    """A function reference, resolved by source name or canonical module path."""
+
+    pub kind: CalleeKind
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub enum Unwind:
+    """Propagate unwinding, enter cleanup, or abort a second panic during cleanup."""
+
+    Continue
+    Cleanup(int)
+    Terminate
+
+
+@derive(Clone, PartialEq)
+pub enum TerminatorKind:
+    """
+    Control flow, calls, drops, overflow checks, and unwinding exits.
+
+    SwitchBool records the false and true targets explicitly. AssertOverflow
+    checks a checked arithmetic overflow flag against false and retains both
+    inputs for the native panic message. Call and Drop carry explicit unwinding.
+    """
+
+    Goto(int)
+    SwitchBool(Operand, int, int)
+    Call(Callee, list[Operand], Place, int, Unwind)
+    Drop(Place, int, Unwind)
+    AssertOverflow(Operand, BinaryOp, Operand, Operand, int, Unwind)
+    # Polling and completed-future destruction have distinct owner cleanup states; cancellation drops suspended owners.
+    Await(Place, Place, int, int, Unwind, Unwind)
+    CoroutineDrop
+    Return
+    Unreachable
+    UnwindResume
+
+
+@derive(Clone, PartialEq)
+pub model Terminator:
+    """The source-located exit of a basic block."""
+
+    pub kind: TerminatorKind
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model BasicBlock:
+    """An indexed block; cleanup blocks may only run on the unwind path."""
+
+    pub statements: list[Statement]
+    pub terminator: Terminator
+    pub cleanup: bool
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model FieldMetadata:
+    """Immutable source field presentation values selected by the checked reflection visibility policy."""
+
+    pub name: str
+    pub alias: Option[str]
+    pub description: Option[str]
+    pub type_name: str
+    pub has_default: bool
+
+
+pub def place(local: int, span: SourceSpan) -> Place:
+    """Name a whole local without exposing projection bookkeeping to builders."""
+    return Place(local=local, projection=Projection.Whole, span=span)
+
+
+pub def integer(value: int, span: SourceSpan) -> Operand:
+    """Build an int literal, represented natively as a signed 64-bit constant."""
+    return Operand(kind=OperandKind.Literal(Constant.Int(value)), span=span)
+
+
+pub def copy(local: int, span: SourceSpan) -> Operand:
+    """Read a scalar local while leaving it available to later operations."""
+    return Operand(kind=OperandKind.Copy(place(local, span)), span=span)
+
+
+pub def assign(destination: Place, value: RvalueKind, span: SourceSpan) -> Statement:
+    """Assign one scalar expression and retain the statement's source location."""
+    return Statement(kind=StatementKind.Assign(destination, Rvalue(kind=value, span=span)), span=span)
+
+
+pub def block(statements: list[Statement], exit: TerminatorKind, span: SourceSpan) -> BasicBlock:
+    """Build a normal block; cleanup blocks are constructed explicitly."""
+    return BasicBlock(statements=statements, terminator=Terminator(kind=exit, span=span), cleanup=false, span=span)
