@@ -1,6 +1,6 @@
 # RFC 082: Checked API documentation generation
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-28
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
